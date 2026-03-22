@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Plus, MoreHorizontal, Building2, CheckCircle, XCircle, Trash2, PauseCircle, PlayCircle, Eye } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Plus, MoreHorizontal, Building2, CheckCircle, XCircle, Trash2, PauseCircle, PlayCircle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -25,6 +25,7 @@ interface Org {
 }
 
 export default function Organisations() {
+  const navigate = useNavigate();
   const [orgs, setOrgs] = useState<Org[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -116,7 +117,11 @@ export default function Organisations() {
                     </TableRow>
                   )
                 : filtered.map(org => (
-                    <TableRow key={org.id}>
+                    <TableRow
+                      key={org.id}
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() => navigate(`/system/organisations/${org.id}`)}
+                    >
                       <TableCell className="font-medium">{org.name}</TableCell>
                       <TableCell className="font-mono text-sm text-muted-foreground">{org.slug}</TableCell>
                       <TableCell>
@@ -128,22 +133,19 @@ export default function Organisations() {
                         }
                       </TableCell>
                       <TableCell className="text-muted-foreground text-sm">{fmtDateShort(org.created_at)}</TableCell>
-                      <TableCell>
+                      <TableCell onClick={e => e.stopPropagation()}>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent>
-                            <DropdownMenuItem asChild>
-                              <Link to={`/org?org_id=${org.id}`}><Eye className="h-4 w-4" />View Details</Link>
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
                             <DropdownMenuItem onClick={() => handleSuspend(org)}>
                               {org.suspended_at
                                 ? <><PlayCircle className="h-4 w-4" />Unsuspend</>
                                 : <><PauseCircle className="h-4 w-4" />Suspend</>
                               }
                             </DropdownMenuItem>
+                            <DropdownMenuSeparator />
                             <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteTarget(org)}>
                               <Trash2 className="h-4 w-4" />Delete
                             </DropdownMenuItem>

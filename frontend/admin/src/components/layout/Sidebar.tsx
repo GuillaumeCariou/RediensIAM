@@ -82,10 +82,13 @@ export default function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <div className="flex flex-1 flex-col overflow-y-auto p-3 gap-6">
+      <div className="flex flex-1 flex-col overflow-y-auto p-3 gap-4">
         {isSuperAdmin && (
-          <div>
-            <p className="px-3 mb-1 text-xs font-semibold text-sidebar-foreground/40 uppercase tracking-wider">System</p>
+          <div className="rounded-lg border border-primary/20 bg-primary/5 p-2">
+            <div className="flex items-center gap-1.5 px-1 mb-1.5">
+              <Shield className="h-3 w-3 text-primary" />
+              <p className="text-xs font-semibold text-primary/80 uppercase tracking-wider">System</p>
+            </div>
             <nav className="space-y-0.5">
               {systemNav.map(item => <NavLink key={item.to} item={item} />)}
             </nav>
