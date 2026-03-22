@@ -14,6 +14,7 @@ public class AdminController(
     KetoService keto,
     PasswordService passwords,
     AuditLogService audit,
+    PatGenerationService patGen,
     IConfiguration config) : ControllerBase
 {
     [HttpGet("/admin/config")]
@@ -264,8 +265,151 @@ public class AdminController(
         if (!HasAdminAccess) return StatusCode(403);
         var sas = await db.ServiceAccounts
             .Where(sa => sa.UserList.OrgId == null)
-            .Select(sa => new { sa.Id, sa.Name, sa.Description, sa.Active }).ToListAsync();
+            .Select(sa => new { sa.Id, sa.Name, sa.Description, sa.Active, sa.LastUsedAt, sa.CreatedAt }).ToListAsync();
         return Ok(sas);
+    }
+
+    [HttpPost("/admin/service-accounts")]
+    public async Task<IActionResult> CreateSystemServiceAccount([FromBody] CreateSystemSaRequest body)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var rootList = await GetOrCreateRootListAsync();
+        var sa = new ServiceAccount
+        {
+            UserListId = rootList.Id,
+            Name = body.Name,
+            Description = body.Description,
+            Active = true,
+            CreatedBy = GetActorId(),
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        db.ServiceAccounts.Add(sa);
+        await db.SaveChangesAsync();
+        await audit.RecordAsync(null, null, GetActorId(), "sa.created", "service_account", sa.Id.ToString());
+        return Created($"/admin/service-accounts/{sa.Id}", new { sa.Id, sa.Name, sa.Description });
+    }
+
+    [HttpGet("/admin/service-accounts/{id}")]
+    public async Task<IActionResult> GetSystemServiceAccount(Guid id)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var sa = await db.ServiceAccounts
+            .Include(sa => sa.PersonalAccessTokens)
+            .Include(sa => sa.OrgRoles)
+            .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == null);
+        if (sa == null) return NotFound();
+        return Ok(new
+        {
+            sa.Id, sa.Name, sa.Description, sa.Active, sa.LastUsedAt, sa.CreatedAt,
+            pats = sa.PersonalAccessTokens.Select(p => new { p.Id, p.Name, p.ExpiresAt, p.LastUsedAt, p.CreatedAt }),
+            roles = sa.OrgRoles.Select(r => new { r.Id, r.Role, r.GrantedAt })
+        });
+    }
+
+    [HttpDelete("/admin/service-accounts/{id}")]
+    public async Task<IActionResult> DeleteSystemServiceAccount(Guid id)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var sa = await db.ServiceAccounts
+            .Include(sa => sa.UserList)
+            .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == null);
+        if (sa == null) return NotFound();
+        db.ServiceAccounts.Remove(sa);
+        await db.SaveChangesAsync();
+        await audit.RecordAsync(null, null, GetActorId(), "sa.deleted", "service_account", id.ToString());
+        return NoContent();
+    }
+
+    [HttpPost("/admin/service-accounts/{id}/pat")]
+    public async Task<IActionResult> GenerateSystemPat(Guid id, [FromBody] GeneratePatRequest body)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var sa = await db.ServiceAccounts
+            .Include(sa => sa.UserList)
+            .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == null);
+        if (sa == null) return NotFound();
+        var (raw, pat) = await patGen.GenerateAsync(id, body.Name, body.ExpiresAt, GetActorId());
+        return Created($"/admin/service-accounts/{id}/pat/{pat.Id}", new
+        {
+            pat.Id, pat.Name, pat.ExpiresAt,
+            token = raw
+        });
+    }
+
+    [HttpGet("/admin/service-accounts/{id}/pat")]
+    public async Task<IActionResult> ListSystemPats(Guid id)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var pats = await db.PersonalAccessTokens
+            .Where(p => p.ServiceAccountId == id)
+            .Select(p => new { p.Id, p.Name, p.ExpiresAt, p.LastUsedAt, p.CreatedAt })
+            .ToListAsync();
+        return Ok(pats);
+    }
+
+    [HttpDelete("/admin/service-accounts/{id}/pat/{patId}")]
+    public async Task<IActionResult> RevokeSystemPat(Guid id, Guid patId)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var pat = await db.PersonalAccessTokens.FirstOrDefaultAsync(p => p.Id == patId && p.ServiceAccountId == id);
+        if (pat == null) return NotFound();
+        db.PersonalAccessTokens.Remove(pat);
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+
+    [HttpGet("/admin/service-accounts/{id}/roles")]
+    public async Task<IActionResult> ListSystemSaRoles(Guid id)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var roles = await db.ServiceAccountOrgRoles
+            .Where(r => r.ServiceAccountId == id)
+            .Select(r => new { r.Id, r.Role, r.GrantedAt })
+            .ToListAsync();
+        return Ok(roles);
+    }
+
+    [HttpPost("/admin/service-accounts/{id}/roles")]
+    public async Task<IActionResult> AssignSystemSaRole(Guid id, [FromBody] AssignSystemSaRoleRequest body)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var sa = await db.ServiceAccounts
+            .Include(sa => sa.UserList)
+            .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == null);
+        if (sa == null) return NotFound();
+        var existing = await db.ServiceAccountOrgRoles.FirstOrDefaultAsync(r => r.ServiceAccountId == id && r.Role == body.Role);
+        if (existing != null) return Ok(new { existing.Id, existing.Role, existing.GrantedAt });
+        var role = new ServiceAccountOrgRole
+        {
+            ServiceAccountId = id,
+            Role = body.Role,
+            GrantedBy = GetActorId(),
+            GrantedAt = DateTimeOffset.UtcNow
+        };
+        db.ServiceAccountOrgRoles.Add(role);
+        await db.SaveChangesAsync();
+        return Created($"/admin/service-accounts/{id}/roles/{role.Id}", new { role.Id, role.Role, role.GrantedAt });
+    }
+
+    [HttpDelete("/admin/service-accounts/{id}/roles/{roleId}")]
+    public async Task<IActionResult> RemoveSystemSaRole(Guid id, Guid roleId)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var role = await db.ServiceAccountOrgRoles.FirstOrDefaultAsync(r => r.Id == roleId && r.ServiceAccountId == id);
+        if (role == null) return NotFound();
+        db.ServiceAccountOrgRoles.Remove(role);
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+
+    private async Task<UserList> GetOrCreateRootListAsync()
+    {
+        var list = await db.UserLists.FirstOrDefaultAsync(ul => ul.OrgId == null && ul.Immovable);
+        if (list != null) return list;
+        list = new UserList { Name = "__system__", OrgId = null, Immovable = true, CreatedAt = DateTimeOffset.UtcNow };
+        db.UserLists.Add(list);
+        await db.SaveChangesAsync();
+        return list;
     }
 
     // ── Audit + Metrics ────────────────────────────────────────────────────────
@@ -542,4 +686,6 @@ public record AdminCreateUserListRequest(string Name, Guid OrgId);
 public record AdminCreateProjectRequest(string Name, string Slug, bool RequireRoleToLogin, string[]? RedirectUris);
 public record AdminUpdateProjectRequest(string? Name, bool? RequireRoleToLogin, bool? AllowSelfRegistration, bool? EmailVerificationEnabled, bool? SmsVerificationEnabled);
 public record AdminAssignUserListRequest(Guid UserListId);
+public record CreateSystemSaRequest(string Name, string? Description);
+public record AssignSystemSaRoleRequest(string Role);
 public record AdminCreateRoleRequest(string Name, string? Description, int? Rank);

@@ -216,6 +216,35 @@ export async function adminUnassignUserList(projectId: string) {
   return apiFetch(`/admin/projects/${projectId}/assign-userlist`, { method: 'DELETE' });
 }
 
+// ── System Service Accounts ────────────────────────────────────────
+export async function createSystemServiceAccount(body: { name: string; description?: string }) {
+  return (await apiFetch('/admin/service-accounts', { method: 'POST', body: JSON.stringify(body) })).json();
+}
+export async function getSystemServiceAccount(id: string) {
+  return (await apiFetch(`/admin/service-accounts/${id}`)).json();
+}
+export async function deleteSystemServiceAccount(id: string) {
+  return apiFetch(`/admin/service-accounts/${id}`, { method: 'DELETE' });
+}
+export async function generateSystemPat(saId: string, body: { name: string; expires_at?: string }) {
+  return (await apiFetch(`/admin/service-accounts/${saId}/pat`, { method: 'POST', body: JSON.stringify(body) })).json();
+}
+export async function listSystemPats(saId: string) {
+  return (await apiFetch(`/admin/service-accounts/${saId}/pat`)).json();
+}
+export async function revokeSystemPat(saId: string, patId: string) {
+  return apiFetch(`/admin/service-accounts/${saId}/pat/${patId}`, { method: 'DELETE' });
+}
+export async function listSystemSaRoles(saId: string) {
+  return (await apiFetch(`/admin/service-accounts/${saId}/roles`)).json();
+}
+export async function assignSystemSaRole(saId: string, role: string) {
+  return (await apiFetch(`/admin/service-accounts/${saId}/roles`, { method: 'POST', body: JSON.stringify({ role }) })).json();
+}
+export async function removeSystemSaRole(saId: string, roleId: string) {
+  return apiFetch(`/admin/service-accounts/${saId}/roles/${roleId}`, { method: 'DELETE' });
+}
+
 // ── Admin-scoped role management ──────────────────────────────────
 export async function adminListRoles(projectId: string) {
   return (await apiFetch(`/admin/projects/${projectId}/roles`)).json();

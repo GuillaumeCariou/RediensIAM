@@ -15,6 +15,7 @@ import SystemServiceAccounts from './pages/system/SystemServiceAccounts';
 import SystemUserListDetail from './pages/system/UserListDetail';
 import OrgDetail from './pages/system/OrgDetail';
 import SystemProjectDetail from './pages/system/SystemProjectDetail';
+import SystemServiceAccountDetail from './pages/system/SystemServiceAccountDetail';
 
 // Org pages
 import OrgDashboard from './pages/org/OrgDashboard';
@@ -60,6 +61,7 @@ function AppRoutes() {
         <Route path="system/userlists" element={<SystemUserLists />} />
         <Route path="system/userlists/:id" element={<SystemUserListDetail />} />
         <Route path="system/service-accounts" element={<SystemServiceAccounts />} />
+        <Route path="system/service-accounts/:id" element={<SystemServiceAccountDetail />} />
         <Route path="system/hydra-clients" element={<HydraClients />} />
         <Route path="system/audit-log" element={<AuditLog />} />
         <Route path="system/metrics" element={<SystemMetrics />} />

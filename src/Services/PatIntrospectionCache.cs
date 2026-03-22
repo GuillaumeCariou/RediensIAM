@@ -39,19 +39,35 @@ public class PatIntrospectionService(
 
         // Resolve context from the SA's UserList → Org
         var userList = await db.UserLists
-            .Include(ul => ul.Organisation)
             .FirstOrDefaultAsync(ul => ul.Id == pat.ServiceAccount.UserListId);
 
-        var orgId = userList?.OrgId?.ToString() ?? "";
-        var roles = pat.ServiceAccount.ProjectRoles.Select(r => r.Role).ToList();
-
-        var result = new IntrospectionResponse(
-            Active: true,
-            Sub: $"sa:{pat.ServiceAccount.Id}",
-            OrgId: orgId,
-            ProjectId: pat.ServiceAccount.ProjectRoles.FirstOrDefault()?.ProjectId.ToString() ?? "",
-            Roles: roles,
-            IsServiceAccount: true);
+        IntrospectionResponse result;
+        if (userList?.OrgId == null)
+        {
+            // System SA — get roles from ServiceAccountOrgRole
+            var sysRoles = await db.ServiceAccountOrgRoles
+                .Where(r => r.ServiceAccountId == pat.ServiceAccount.Id)
+                .Select(r => r.Role)
+                .ToListAsync();
+            result = new IntrospectionResponse(
+                Active: true,
+                Sub: $"sa:{pat.ServiceAccount.Id}",
+                OrgId: "",
+                ProjectId: "",
+                Roles: sysRoles,
+                IsServiceAccount: true);
+        }
+        else
+        {
+            var roles = pat.ServiceAccount.ProjectRoles.Select(r => r.Role).ToList();
+            result = new IntrospectionResponse(
+                Active: true,
+                Sub: $"sa:{pat.ServiceAccount.Id}",
+                OrgId: userList.OrgId.ToString()!,
+                ProjectId: pat.ServiceAccount.ProjectRoles.FirstOrDefault()?.ProjectId.ToString() ?? "",
+                Roles: roles,
+                IsServiceAccount: true);
+        }
 
         await _cache.StringSetAsync(cacheKey, JsonSerializer.Serialize(result), _ttl);
         return result;

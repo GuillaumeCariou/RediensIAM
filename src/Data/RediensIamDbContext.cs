@@ -15,6 +15,7 @@ public class RediensIamDbContext(DbContextOptions<RediensIamDbContext> options) 
     public DbSet<UserProjectRole> UserProjectRoles => Set<UserProjectRole>();
     public DbSet<OrgRole> OrgRoles => Set<OrgRole>();
     public DbSet<ServiceAccountProjectRole> ServiceAccountProjectRoles => Set<ServiceAccountProjectRole>();
+    public DbSet<ServiceAccountOrgRole> ServiceAccountOrgRoles => Set<ServiceAccountOrgRole>();
     public DbSet<WebAuthnCredential> WebAuthnCredentials => Set<WebAuthnCredential>();
     public DbSet<BackupCode> BackupCodes => Set<BackupCode>();
     public DbSet<EmailToken> EmailTokens => Set<EmailToken>();

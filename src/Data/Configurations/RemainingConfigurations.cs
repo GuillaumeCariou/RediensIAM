@@ -94,6 +94,20 @@ public class ServiceAccountProjectRoleConfiguration : IEntityTypeConfiguration<S
     }
 }
 
+public class ServiceAccountOrgRoleConfiguration : IEntityTypeConfiguration<ServiceAccountOrgRole>
+{
+    public void Configure(EntityTypeBuilder<ServiceAccountOrgRole> builder)
+    {
+        builder.ToTable("service_account_org_roles");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+        builder.Property(x => x.Role).IsRequired().HasMaxLength(100);
+        builder.Property(x => x.GrantedAt).HasDefaultValueSql("now()");
+        builder.HasOne(x => x.ServiceAccount).WithMany(x => x.OrgRoles).HasForeignKey(x => x.ServiceAccountId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasIndex(x => new { x.ServiceAccountId, x.Role }).IsUnique();
+    }
+}
+
 public class WebAuthnCredentialConfiguration : IEntityTypeConfiguration<WebAuthnCredential>
 {
     public void Configure(EntityTypeBuilder<WebAuthnCredential> builder)

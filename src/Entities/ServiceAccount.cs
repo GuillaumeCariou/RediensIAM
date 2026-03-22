@@ -15,4 +15,5 @@ public class ServiceAccount
     public UserList UserList { get; set; } = null!;
     public ICollection<PersonalAccessToken> PersonalAccessTokens { get; set; } = [];
     public ICollection<ServiceAccountProjectRole> ProjectRoles { get; set; } = [];
+    public ICollection<ServiceAccountOrgRole> OrgRoles { get; set; } = [];
 }
