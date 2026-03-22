@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-keto-namespaces
+  namespace: {{ .Release.Namespace }}
+data:
+  config.yaml: |
+    - id: 0
+      name: System
+    - id: 1
+      name: Organisations
+    - id: 2
+      name: Projects
+    - id: 3
+      name: UserLists

@@ -1,0 +1,146 @@
+# ── App URL (change this for each environment) ────────────────────────────────
+# dev:  http://localhost
+# prod: https://auth.rediens.net
+appUrl: "http://localhost"
+
+# ── RediensIAM ───────────────────────────────────────────────────────────────
+image:
+  repository: rediensiam
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  public:
+    port: 5000
+  admin:
+    port: 5001
+    nodePort: 30501
+
+ingress:
+  enabled: true
+  className: traefik
+  host: localhost
+
+env:
+  IAM_ADMIN_PATH: "/admin"
+  IAM_BOOTSTRAP_EMAIL: "admin@local"
+  IAM_BOOTSTRAP_PASSWORD: "Admin1234!"
+  Hydra__AdminUrl: "http://rediensiam-hydra-admin:4445"
+  Hydra__PublicUrl: "http://rediensiam-hydra-public:4444"
+  Keto__ReadUrl: "http://rediensiam-keto-read:4466"
+  Keto__WriteUrl: "http://rediensiam-keto-write:4467"
+  App__PublicUrl: "http://localhost"
+
+secrets:
+  databaseUrl: "Host=rediensiam-postgres;Database=rediensiam;Username=iam;Password=changeme"
+  cacheUrl: "rediensiam-dragonfly:6379,abortConnect=false"
+  totpEncryptionKey: "CHANGE_ME_32_BYTE_KEY_BASE64_ENC"
+  argon2Pepper: "CHANGE_ME_PEPPER"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# ── PostgreSQL ────────────────────────────────────────────────────────────────
+postgres:
+  image: postgres:16-alpine
+  password: changeme
+  storage: 2Gi
+
+# ── Dragonfly ─────────────────────────────────────────────────────────────────
+dragonfly:
+  image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+
+# ── Hydra (subchart) ─────────────────────────────────────────────────────────
+hydra:
+  hydra:
+    config:
+      dsn: "postgres://iam:changeme@rediensiam-postgres:5432/hydra?sslmode=disable"
+      urls:
+        self:
+          issuer: "http://localhost"
+        login: "http://localhost/login"
+        consent: "http://localhost/auth/consent"
+        logout: "http://localhost/auth/logout"
+        post_logout_redirect: "http://localhost/admin/"
+      strategies:
+        access_token: jwt
+      secrets:
+        system:
+          - "CHANGE_ME_HYDRA_SYSTEM_SECRET_32CHARS"
+      log:
+        level: info
+        format: json
+      serve:
+        public:
+          port: 4444
+          host: "0.0.0.0"
+        admin:
+          port: 4445
+          host: "0.0.0.0"
+    dev: false
+    dangerousForceHttp: false
+    automigration:
+      enabled: true
+      type: initContainer
+  service:
+    public:
+      type: ClusterIP
+      port: 4444
+    admin:
+      type: ClusterIP
+      port: 4445
+  ingress:
+    public:
+      enabled: true
+      className: traefik
+      hosts:
+        - host: localhost
+          paths:
+            - path: /oauth2
+              pathType: Prefix
+            - path: /.well-known
+              pathType: Prefix
+            - path: /userinfo
+              pathType: Prefix
+    admin:
+      enabled: false
+
+# ── Keto (subchart) ──────────────────────────────────────────────────────────
+keto:
+  keto:
+    config:
+      dsn: "postgres://iam:changeme@rediensiam-postgres:5432/keto?sslmode=disable"
+      namespaces:
+        - id: 0
+          name: System
+        - id: 1
+          name: Organisations
+        - id: 2
+          name: Projects
+        - id: 3
+          name: UserLists
+      log:
+        level: info
+        format: json
+      serve:
+        read:
+          port: 4466
+        write:
+          port: 4467
+    automigration:
+      enabled: true
+      type: initContainer
+  service:
+    read:
+      type: ClusterIP
+      port: 4466
+    write:
+      type: ClusterIP
+      port: 4467

@@ -1,0 +1,83 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-egress
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  policyTypes: [Egress, Ingress]
+  egress:
+    - ports: [{port: 5432}]
+      to:
+        - podSelector:
+            matchLabels:
+              app: {{ .Release.Name }}-postgres
+    - ports: [{port: 6379}]
+      to:
+        - podSelector:
+            matchLabels:
+              app: {{ .Release.Name }}-dragonfly
+    - ports: [{port: 4445}]
+      to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: hydra
+    - ports: [{port: 4466}, {port: 4467}]
+      to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: keto
+    - ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - ports: [{port: 587}, {port: 465}, {port: 25}, {port: 1025}]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports: [{port: 5000}, {port: 5001}]
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: default
+      ports: [{port: 5000}, {port: 5001}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-hydra-lockdown
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: hydra
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports: [{port: 4444}]
+    - from:
+        - podSelector:
+            matchLabels:
+              app: {{ .Release.Name }}
+      ports: [{port: 4445}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-keto-lockdown
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: keto
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: {{ .Release.Name }}
+      ports: [{port: 4466}, {port: 4467}]

@@ -1,0 +1,13 @@
+apiVersion: v2
+name: rediensiam
+description: RediensIAM — Multi-tenant IAM on Ory stack
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: hydra
+    version: "0.60.1"
+    repository: "https://k8s.ory.sh/helm/charts"
+  - name: keto
+    version: "0.60.1"
+    repository: "https://k8s.ory.sh/helm/charts"

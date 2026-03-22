@@ -1,0 +1,9 @@
+dependencies:
+- name: hydra
+  repository: https://k8s.ory.sh/helm/charts
+  version: 0.60.1
+- name: keto
+  repository: https://k8s.ory.sh/helm/charts
+  version: 0.60.1
+digest: sha256:b54b5c917e72ccf7ba419e81d6ca635438d459ef69ec7a5b0a5c4e9a94e17ea6
+generated: "2026-03-22T11:21:22.856732267+01:00"
