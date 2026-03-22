@@ -17,7 +17,7 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   getOrg, suspendOrg, unsuspendOrg, updateOrg,
-  listSystemUserListMembers, listOrgAdmins, assignOrgAdmin, removeOrgAdmin,
+  listSystemUserListMembers, listOrgAdmins, assignOrgAdmin,
   addUserToList, removeSystemUserFromList,
   listOrgServiceAccounts,
   listUserLists, createUserList,
