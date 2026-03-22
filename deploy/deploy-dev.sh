@@ -93,11 +93,18 @@ if [ "${PROD}" = "true" ] && [ ! -f "${SECRETS_FILE}" ]; then
   HYDRA_SECRET=$(openssl rand -hex 32)
   TOTP_KEY=$(openssl rand -base64 32)
   ARGON_PEPPER=$(openssl rand -hex 32)
-  BOOTSTRAP_PASS=$(openssl rand -base64 16 | tr -d '/+=' | head -c 20)
+
+  read -rp "  Bootstrap admin email    [admin@rediens.net]: " BOOTSTRAP_EMAIL
+  BOOTSTRAP_EMAIL="${BOOTSTRAP_EMAIL:-admin@rediens.net}"
+  read -rsp "  Bootstrap admin password: " BOOTSTRAP_PASS
+  echo ""
+  if [ -z "${BOOTSTRAP_PASS}" ]; then
+    echo "  ERROR: bootstrap password cannot be empty"; exit 1
+  fi
 
   cat > "${SECRETS_FILE}" <<EOF
 env:
-  IAM_BOOTSTRAP_EMAIL: "admin@rediens.net"
+  IAM_BOOTSTRAP_EMAIL: "${BOOTSTRAP_EMAIL}"
   IAM_BOOTSTRAP_PASSWORD: "${BOOTSTRAP_PASS}"
 
 secrets:
@@ -123,7 +130,6 @@ keto:
       dsn: "postgres://iam:${DB_PASS}@rediensiam-postgres:5432/keto?sslmode=disable"
 EOF
   echo "  Secrets written to ${SECRETS_FILE}"
-  echo "  Bootstrap password: ${BOOTSTRAP_PASS}"
   echo "  (move this file somewhere safe before committing)"
 fi
 
