@@ -144,6 +144,29 @@ export async function revokePat(saId: string, patId: string) {
   return apiFetch(`/org/service-accounts/${saId}/pat/${patId}`, { method: 'DELETE' });
 }
 
+// ── Account (self) ────────────────────────────────────────────────
+export async function getMe() {
+  return (await apiFetch('/account/me')).json();
+}
+export async function updateMe(body: { display_name?: string }) {
+  return (await apiFetch('/account/me', { method: 'PATCH', body: JSON.stringify(body) })).json();
+}
+export async function changePassword(body: { current_password: string; new_password: string }) {
+  return (await apiFetch('/account/change-password', { method: 'POST', body: JSON.stringify(body) })).json();
+}
+export async function getMfaStatus() {
+  return (await apiFetch('/account/mfa')).json();
+}
+export async function setupTotp() {
+  return (await apiFetch('/account/mfa/totp/setup', { method: 'POST' })).json();
+}
+export async function confirmTotp(body: { code: string }) {
+  return (await apiFetch('/account/mfa/totp/confirm', { method: 'POST', body: JSON.stringify(body) })).json();
+}
+export async function regenerateBackupCodes() {
+  return (await apiFetch('/account/mfa/backup-codes/generate', { method: 'POST' })).json();
+}
+
 // ── Audit log ─────────────────────────────────────────────────────
 export async function getAuditLog(params?: { org_id?: string; project_id?: string; limit?: number; offset?: number }) {
   const q = new URLSearchParams();

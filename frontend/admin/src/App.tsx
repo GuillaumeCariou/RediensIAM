@@ -3,6 +3,9 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import Shell from './components/layout/Shell';
 
+// Account page
+import AccountPage from './pages/account/AccountPage';
+
 // System pages
 import SystemDashboard from './pages/system/Dashboard';
 import Organisations from './pages/system/Organisations';
@@ -16,6 +19,7 @@ import SystemUserListDetail from './pages/system/UserListDetail';
 import OrgDetail from './pages/system/OrgDetail';
 import SystemProjectDetail from './pages/system/SystemProjectDetail';
 import SystemServiceAccountDetail from './pages/system/SystemServiceAccountDetail';
+import SystemAdmins from './pages/system/SystemAdmins';
 
 // Org pages
 import OrgDashboard from './pages/org/OrgDashboard';
@@ -59,9 +63,13 @@ function AppRoutes() {
       <Routes>
         <Route index element={<Navigate to={home} replace />} />
 
+        {/* Account — all authenticated users */}
+        <Route path="account" element={<AccountPage />} />
+
         {/* System — super_admin only */}
         <Route element={isSuperAdmin ? <Outlet /> : <Navigate to={home} replace />}>
           <Route path="system" element={<SystemDashboard />} />
+          <Route path="system/admins" element={<SystemAdmins />} />
           <Route path="system/organisations" element={<Organisations />} />
           <Route path="system/organisations/:id" element={<OrgDetail />} />
           <Route path="system/organisations/:id/userlists" element={<UserLists />} />

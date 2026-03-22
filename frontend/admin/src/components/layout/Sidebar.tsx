@@ -1,8 +1,8 @@
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Building2, Users, List, FolderKanban,
   Shield, Bot, ScrollText, BarChart3, Key, LogOut, ChevronRight,
-  Sun, Moon, Monitor, Palette,
+  Sun, Moon, Monitor, Palette, UserCog, User,
 } from 'lucide-react';
 import { useTheme, type Theme } from '@/context/ThemeContext';
 import { cn } from '@/lib/utils';
@@ -21,6 +21,7 @@ interface NavItem {
 const systemNav: NavItem[] = [
   { label: 'Dashboard',        to: '/system',                  icon: <LayoutDashboard className="h-4 w-4" />, exact: true },
   { label: 'Organisations',    to: '/system/organisations',    icon: <Building2 className="h-4 w-4" /> },
+  { label: 'Admins',           to: '/system/admins',           icon: <UserCog className="h-4 w-4" />,     superOnly: true },
   { label: 'Users',            to: '/system/users',            icon: <Users className="h-4 w-4" />,       superOnly: true },
   { label: 'User Lists',       to: '/system/userlists',        icon: <List className="h-4 w-4" />,        superOnly: true },
   { label: 'Service Accounts', to: '/system/service-accounts', icon: <Bot className="h-4 w-4" />,         superOnly: true },
@@ -55,6 +56,7 @@ const themeOptions: { value: Theme; icon: React.ReactNode; label: string }[] = [
 
 export default function Sidebar() {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   const { isSuperAdmin, isOrgAdmin, isProjectManager, logout } = useAuth();
   const { theme, setTheme } = useTheme();
 
@@ -194,6 +196,18 @@ export default function Sidebar() {
 
       {/* Footer */}
       <div className="border-t border-sidebar-border p-3 space-y-0.5">
+        <button
+          onClick={() => navigate('/account')}
+          className={cn(
+            'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+            pathname === '/account'
+              ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+              : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground'
+          )}
+        >
+          <User className="h-4 w-4" />
+          My Account
+        </button>
         <button
           onClick={nextTheme}
           title={`Theme: ${current.label} (click to change)`}
