@@ -128,6 +128,32 @@ public class HydraAdminService(IHttpClientFactory http, IConfiguration config)
             resp.EnsureSuccessStatusCode();
     }
 
+    public async Task<System.Text.Json.JsonElement?> GetOAuth2ClientAsync(string clientId)
+    {
+        var resp = await Client.GetAsync($"{_adminUrl}/admin/clients/{Uri.EscapeDataString(clientId)}");
+        if (!resp.IsSuccessStatusCode) return null;
+        return await resp.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(_json);
+    }
+
+    public async Task CreateOrUpdateServiceAccountClientAsync(string clientId, string saName, System.Text.Json.JsonElement jwk)
+    {
+        var body = new
+        {
+            client_id   = clientId,
+            client_name = saName,
+            grant_types = new[] { "client_credentials" },
+            token_endpoint_auth_method = "private_key_jwt",
+            jwks = new { keys = new[] { jwk } }
+        };
+        var exists = await Client.GetAsync($"{_adminUrl}/admin/clients/{Uri.EscapeDataString(clientId)}");
+        System.Net.Http.HttpResponseMessage resp;
+        if (exists.IsSuccessStatusCode)
+            resp = await Client.PutAsJsonAsync($"{_adminUrl}/admin/clients/{Uri.EscapeDataString(clientId)}", body);
+        else
+            resp = await Client.PostAsJsonAsync($"{_adminUrl}/admin/clients", body);
+        resp.EnsureSuccessStatusCode();
+    }
+
     public async Task RevokeSessionsAsync(string subject, string? clientId = null)
     {
         var url = $"{_adminUrl}/admin/oauth2/auth/sessions/consent?subject={Uri.EscapeDataString(subject)}";

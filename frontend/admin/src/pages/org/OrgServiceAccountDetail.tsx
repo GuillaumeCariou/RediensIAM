@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, Trash2, MoreHorizontal, Copy, Check } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, MoreHorizontal, Copy, Check, KeyRound, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -10,16 +10,113 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { getOrgServiceAccount, deleteServiceAccount, generatePat, revokePat } from '@/api';
+import { getOrgServiceAccount, deleteServiceAccount, generatePat, revokePat, getServiceAccountKeys, addServiceAccountKey, removeServiceAccountKey } from '@/api';
 import { useOrgContext } from '@/hooks/useOrgContext';
 import { fmtDateShort } from '@/lib/utils';
 
 interface Sa {
   id: string; name: string; description: string | null;
   active: boolean; last_used_at: string | null; created_at: string;
-  pats: Pat[];
+  hydra_client_id: string | null; pats: Pat[];
 }
 interface Pat { id: string; name: string; expires_at: string | null; last_used_at: string | null; created_at: string; }
+
+// ── JWT Profile Keys section ───────────────────────────────────────────────
+function JwtProfileSection({ saId, getKeys, addKey, removeKey }: {
+  saId: string;
+  getKeys: (id: string) => Promise<{ client_id: string | null; has_key: boolean; kid: string | null }>;
+  addKey: (id: string, jwk: object) => Promise<{ client_id?: string; error?: string }>;
+  removeKey: (id: string) => Promise<void>;
+}) {
+  const [keyInfo, setKeyInfo] = useState<{ client_id: string | null; has_key: boolean; kid: string | null } | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(() => {
+    getKeys(saId).then(setKeyInfo).catch(console.error);
+  }, [saId, getKeys]);
+  useEffect(load, [load]);
+
+  const handleGenerate = async () => {
+    setError('');
+    setGenerating(true);
+    try {
+      const keyPair = await crypto.subtle.generateKey(
+        { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+        true, ['sign', 'verify']
+      );
+      const publicJwk  = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+      const privateJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+
+      // Add kid and usage hint
+      const kid = `${saId}-${Date.now()}`;
+      (publicJwk as Record<string, unknown>).kid  = kid;
+      (publicJwk as Record<string, unknown>).use  = 'sig';
+      (privateJwk as Record<string, unknown>).kid = kid;
+
+      const res = await addKey(saId, publicJwk);
+      if (res.error) { setError('Failed to register key: ' + res.error); return; }
+
+      // Download private key
+      const blob = new Blob([JSON.stringify({ private_key: privateJwk, client_id: res.client_id, alg: 'RS256', note: 'Keep this safe — it will not be shown again.' }, null, 2)], { type: 'application/json' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href = url; a.download = `sa-${saId}-private-key.json`; a.click();
+      URL.revokeObjectURL(url);
+      load();
+    } catch (e) {
+      setError('Key generation failed: ' + (e instanceof Error ? e.message : String(e)));
+    } finally { setGenerating(false); }
+  };
+
+  const handleRemove = async () => {
+    setRemoving(true);
+    try { await removeKey(saId); load(); }
+    finally { setRemoving(false); }
+  };
+
+  return (
+    <div className="rounded-xl border bg-card overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 border-b">
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">JWT Profile (private_key_jwt)</h2>
+        {keyInfo?.has_key
+          ? <Button size="sm" variant="outline" className="text-destructive border-destructive/40 hover:bg-destructive/10" onClick={handleRemove} disabled={removing}>
+              <Trash2 className="h-4 w-4" />{removing ? 'Removing…' : 'Remove key'}
+            </Button>
+          : <Button size="sm" onClick={handleGenerate} disabled={generating}>
+              <KeyRound className="h-4 w-4" />{generating ? 'Generating…' : 'Generate keypair'}
+            </Button>
+        }
+      </div>
+      <div className="px-4 py-4 space-y-2">
+        {keyInfo?.has_key ? (
+          <div className="space-y-1 text-sm">
+            <div className="flex gap-2 text-muted-foreground">
+              <span className="font-medium w-24">Client ID</span>
+              <code className="font-mono text-xs">{keyInfo.client_id}</code>
+            </div>
+            <div className="flex gap-2 text-muted-foreground">
+              <span className="font-medium w-24">Key ID (kid)</span>
+              <code className="font-mono text-xs">{keyInfo.kid ?? '—'}</code>
+            </div>
+            <div className="flex gap-2 text-muted-foreground">
+              <span className="font-medium w-24">Algorithm</span>
+              <code className="font-mono text-xs">RS256</code>
+            </div>
+            <p className="text-xs text-muted-foreground pt-1">Use <code className="font-mono">client_credentials</code> grant with a signed JWT assertion (<code className="font-mono">private_key_jwt</code>) at Hydra's token endpoint.</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">No key configured. Generate a keypair — the public key is sent to Hydra, the private key is downloaded once.</p>
+            {error && <p className="text-sm text-destructive">{error}</p>}
+          </div>
+        )}
+        {keyInfo?.has_key && error && <p className="text-sm text-destructive">{error}</p>}
+      </div>
+    </div>
+  );
+}
 
 export default function OrgServiceAccountDetail() {
   const { saId } = useParams<{ saId: string }>();
@@ -159,6 +256,16 @@ export default function OrgServiceAccountDetail() {
           </TableBody>
         </Table>
       </div>
+
+      {/* JWT Profile */}
+      {saId && (
+        <JwtProfileSection
+          saId={saId}
+          getKeys={getServiceAccountKeys}
+          addKey={addServiceAccountKey}
+          removeKey={removeServiceAccountKey}
+        />
+      )}
 
       {/* Generate PAT dialog */}
       <Dialog open={patOpen} onOpenChange={setPatOpen}>

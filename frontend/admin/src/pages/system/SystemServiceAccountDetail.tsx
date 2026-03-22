@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, Trash2, MoreHorizontal, Copy, Check } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, MoreHorizontal, Copy, Check, KeyRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -15,8 +15,82 @@ import {
   getSystemServiceAccount, deleteSystemServiceAccount,
   generateSystemPat, revokeSystemPat,
   assignSystemSaRole, removeSystemSaRole,
+  getSystemSaKeys, addSystemSaKey, removeSystemSaKey,
 } from '@/api';
 import { fmtDateShort } from '@/lib/utils';
+
+function JwtProfileSection({ saId }: { saId: string }) {
+  type KeyInfo = { client_id: string | null; has_key: boolean; kid: string | null };
+  const [keyInfo, setKeyInfo] = useState<KeyInfo | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(() => { getSystemSaKeys(saId).then(setKeyInfo).catch(console.error); }, [saId]);
+  useEffect(load, [load]);
+
+  const handleGenerate = async () => {
+    setError('');
+    setGenerating(true);
+    try {
+      const keyPair = await crypto.subtle.generateKey(
+        { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+        true, ['sign', 'verify']
+      );
+      const publicJwk  = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+      const privateJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+      const kid = `${saId}-${Date.now()}`;
+      (publicJwk as Record<string, unknown>).kid = kid;
+      (publicJwk as Record<string, unknown>).use = 'sig';
+      (privateJwk as Record<string, unknown>).kid = kid;
+      const res = await addSystemSaKey(saId, publicJwk);
+      if (res.error) { setError('Failed: ' + res.error); return; }
+      const blob = new Blob([JSON.stringify({ private_key: privateJwk, client_id: res.client_id, alg: 'RS256', note: 'Keep this safe — it will not be shown again.' }, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a   = document.createElement('a');
+      a.href = url; a.download = `sa-${saId}-private-key.json`; a.click();
+      URL.revokeObjectURL(url);
+      load();
+    } catch (e) {
+      setError('Key generation failed: ' + (e instanceof Error ? e.message : String(e)));
+    } finally { setGenerating(false); }
+  };
+
+  const handleRemove = async () => {
+    setRemoving(true);
+    try { await removeSystemSaKey(saId); load(); }
+    finally { setRemoving(false); }
+  };
+
+  return (
+    <div className="rounded-xl border bg-card overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 border-b">
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">JWT Profile (private_key_jwt)</h2>
+        {keyInfo?.has_key
+          ? <Button size="sm" variant="outline" className="text-destructive border-destructive/40 hover:bg-destructive/10" onClick={handleRemove} disabled={removing}>
+              <Trash2 className="h-4 w-4" />{removing ? 'Removing…' : 'Remove key'}
+            </Button>
+          : <Button size="sm" onClick={handleGenerate} disabled={generating}>
+              <KeyRound className="h-4 w-4" />{generating ? 'Generating…' : 'Generate keypair'}
+            </Button>
+        }
+      </div>
+      <div className="px-4 py-4 space-y-2">
+        {keyInfo?.has_key ? (
+          <div className="space-y-1 text-sm">
+            <div className="flex gap-2 text-muted-foreground"><span className="font-medium w-24">Client ID</span><code className="font-mono text-xs">{keyInfo.client_id}</code></div>
+            <div className="flex gap-2 text-muted-foreground"><span className="font-medium w-24">Key ID (kid)</span><code className="font-mono text-xs">{keyInfo.kid ?? '—'}</code></div>
+            <div className="flex gap-2 text-muted-foreground"><span className="font-medium w-24">Algorithm</span><code className="font-mono text-xs">RS256</code></div>
+            <p className="text-xs text-muted-foreground pt-1">Use <code className="font-mono">client_credentials</code> grant with a signed JWT assertion at Hydra's token endpoint.</p>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">No key configured. Generate a keypair — the public key is sent to Hydra, the private key is downloaded once.</p>
+        )}
+        {error && <p className="text-sm text-destructive">{error}</p>}
+      </div>
+    </div>
+  );
+}
 
 interface Sa {
   id: string; name: string; description: string | null;
@@ -246,6 +320,9 @@ export default function SystemServiceAccountDetail() {
           </TableBody>
         </Table>
       </div>
+
+      {/* ── JWT Profile ───────────────────────────────────────────────── */}
+      {id && <JwtProfileSection saId={id} />}
 
       {/* ── Dialogs ───────────────────────────────────────────────────── */}
 

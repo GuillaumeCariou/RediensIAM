@@ -464,6 +464,53 @@ public class AdminController(
         return NoContent();
     }
 
+    // ── JWT Profile keys (system SAs) ─────────────────────────────────────────
+
+    [HttpGet("/admin/service-accounts/{id}/keys")]
+    public async Task<IActionResult> GetSystemSaKeys(Guid id)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var sa = await db.ServiceAccounts.FindAsync(id);
+        if (sa == null) return NotFound();
+        if (sa.HydraClientId == null) return Ok(new { client_id = (string?)null, has_key = false });
+        var client = await hydra.GetOAuth2ClientAsync(sa.HydraClientId);
+        if (client is null) return Ok(new { client_id = sa.HydraClientId, has_key = false });
+        var hasJwks = client.Value.TryGetProperty("jwks", out var jwks)
+            && jwks.TryGetProperty("keys", out var keys) && keys.GetArrayLength() > 0;
+        var kid = hasJwks && jwks.TryGetProperty("keys", out var ks) && ks.GetArrayLength() > 0
+            ? ks[0].TryGetProperty("kid", out var k) ? k.GetString() : null : null;
+        return Ok(new { client_id = sa.HydraClientId, has_key = hasJwks, kid });
+    }
+
+    [HttpPost("/admin/service-accounts/{id}/keys")]
+    public async Task<IActionResult> AddSystemSaKey(Guid id, [FromBody] SaKeyRequest body)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var sa = await db.ServiceAccounts.FindAsync(id);
+        if (sa == null) return NotFound();
+        var clientId = $"sa_{id}";
+        try { await hydra.CreateOrUpdateServiceAccountClientAsync(clientId, sa.Name, body.Jwk); }
+        catch (Exception ex) { return BadRequest(new { error = "hydra_error", detail = ex.Message }); }
+        sa.HydraClientId = clientId;
+        await db.SaveChangesAsync();
+        return Ok(new { client_id = clientId });
+    }
+
+    [HttpDelete("/admin/service-accounts/{id}/keys")]
+    public async Task<IActionResult> RemoveSystemSaKey(Guid id)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var sa = await db.ServiceAccounts.FindAsync(id);
+        if (sa == null) return NotFound();
+        if (sa.HydraClientId != null)
+        {
+            await hydra.DeleteOAuth2ClientAsync(sa.HydraClientId);
+            sa.HydraClientId = null;
+            await db.SaveChangesAsync();
+        }
+        return Ok(new { message = "key_removed" });
+    }
+
     private async Task<UserList> GetOrCreateRootListAsync()
     {
         var list = await db.UserLists.FirstOrDefaultAsync(ul => ul.OrgId == null && ul.Immovable);

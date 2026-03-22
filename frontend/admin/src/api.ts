@@ -217,6 +217,26 @@ export async function listWebAuthnCredentials() {
 export async function deleteWebAuthnCredential(id: string) {
   return apiFetch(`/account/mfa/webauthn/credentials/${id}`, { method: 'DELETE' });
 }
+
+// ── JWT Profile keys ───────────────────────────────────────────────────────
+export async function getServiceAccountKeys(saId: string) {
+  return (await apiFetch(`/org/service-accounts/${saId}/keys`)).json();
+}
+export async function addServiceAccountKey(saId: string, jwk: object) {
+  return (await apiFetch(`/org/service-accounts/${saId}/keys`, { method: 'POST', body: JSON.stringify({ jwk }) })).json();
+}
+export async function removeServiceAccountKey(saId: string) {
+  return (await apiFetch(`/org/service-accounts/${saId}/keys`, { method: 'DELETE' })).json();
+}
+export async function getSystemSaKeys(saId: string) {
+  return (await apiFetch(`/admin/service-accounts/${saId}/keys`)).json();
+}
+export async function addSystemSaKey(saId: string, jwk: object) {
+  return (await apiFetch(`/admin/service-accounts/${saId}/keys`, { method: 'POST', body: JSON.stringify({ jwk }) })).json();
+}
+export async function removeSystemSaKey(saId: string) {
+  return (await apiFetch(`/admin/service-accounts/${saId}/keys`, { method: 'DELETE' })).json();
+}
 export async function getMfaStatus() {
   return (await apiFetch('/account/mfa')).json();
 }

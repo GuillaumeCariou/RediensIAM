@@ -383,7 +383,7 @@ public class OrgController(
         if (sa == null) return NotFound();
         return Ok(new
         {
-            sa.Id, sa.Name, sa.Description, sa.Active, sa.LastUsedAt, sa.CreatedAt,
+            sa.Id, sa.Name, sa.Description, sa.Active, sa.LastUsedAt, sa.CreatedAt, sa.HydraClientId,
             pats = sa.PersonalAccessTokens.Select(p => new { p.Id, p.Name, p.ExpiresAt, p.LastUsedAt, p.CreatedAt })
         });
     }
@@ -441,6 +441,57 @@ public class OrgController(
         db.PersonalAccessTokens.Remove(pat);
         await db.SaveChangesAsync();
         return NoContent();
+    }
+
+    // ── JWT Profile keys ──────────────────────────────────────────────────────
+
+    [HttpGet("/org/service-accounts/{id}/keys")]
+    public async Task<IActionResult> GetServiceAccountKeys(Guid id)
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var sa = await db.ServiceAccounts.Include(sa => sa.UserList)
+            .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == Guid.Parse(claims.OrgId));
+        if (sa == null) return NotFound();
+        if (sa.HydraClientId == null) return Ok(new { client_id = (string?)null, has_key = false });
+        var client = await hydra.GetOAuth2ClientAsync(sa.HydraClientId);
+        if (client is null) return Ok(new { client_id = sa.HydraClientId, has_key = false });
+        var hasJwks = client.Value.TryGetProperty("jwks", out var jwks)
+            && jwks.TryGetProperty("keys", out var keys)
+            && keys.GetArrayLength() > 0;
+        var kid = hasJwks && jwks.TryGetProperty("keys", out var ks) && ks.GetArrayLength() > 0
+            ? ks[0].TryGetProperty("kid", out var k) ? k.GetString() : null : null;
+        return Ok(new { client_id = sa.HydraClientId, has_key = hasJwks, kid });
+    }
+
+    [HttpPost("/org/service-accounts/{id}/keys")]
+    public async Task<IActionResult> AddServiceAccountKey(Guid id, [FromBody] SaKeyRequest body)
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var sa = await db.ServiceAccounts.Include(sa => sa.UserList)
+            .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == Guid.Parse(claims.OrgId));
+        if (sa == null) return NotFound();
+        var clientId = $"sa_{id}";
+        try { await hydra.CreateOrUpdateServiceAccountClientAsync(clientId, sa.Name, body.Jwk); }
+        catch (Exception ex) { return BadRequest(new { error = "hydra_error", detail = ex.Message }); }
+        sa.HydraClientId = clientId;
+        await db.SaveChangesAsync();
+        return Ok(new { client_id = clientId });
+    }
+
+    [HttpDelete("/org/service-accounts/{id}/keys")]
+    public async Task<IActionResult> RemoveServiceAccountKey(Guid id)
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var sa = await db.ServiceAccounts.Include(sa => sa.UserList)
+            .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == Guid.Parse(claims.OrgId));
+        if (sa == null) return NotFound();
+        if (sa.HydraClientId != null)
+        {
+            await hydra.DeleteOAuth2ClientAsync(sa.HydraClientId);
+            sa.HydraClientId = null;
+            await db.SaveChangesAsync();
+        }
+        return Ok(new { message = "key_removed" });
     }
 
     // ── Org-list managers ─────────────────────────────────────────────────────
@@ -549,3 +600,4 @@ public record OrgCleanupRequest(bool RemoveOrphanedRoles = true, bool RemoveInac
 public record OrgGeneratePatRequest(string Name, DateTimeOffset? ExpiresAt);
 public record OrgAssignManagerRequest(Guid UserId, string Role, Guid? ScopeId);
 public record OrgUpdateManagerRequest(string? Role, Guid? ScopeId);
+public record SaKeyRequest(System.Text.Json.JsonElement Jwk);
