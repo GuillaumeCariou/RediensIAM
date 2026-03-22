@@ -62,6 +62,13 @@ builder.Services.AddScoped<PatIntrospectionService>();
 builder.Services.AddScoped<PatGenerationService>();
 builder.Services.AddScoped<RoleAssignmentService>();
 builder.Services.AddHttpContextAccessor();
+
+// ── Notification services ───────────────────────────────────────────────────
+if (!string.IsNullOrEmpty(config["Smtp:Host"]))
+    builder.Services.AddScoped<IEmailService, SmtpEmailService>();
+else
+    builder.Services.AddScoped<IEmailService, StubEmailService>();
+builder.Services.AddScoped<ISmsService, StubSmsService>();
 builder.Services.AddControllers()
     .AddJsonOptions(o =>
     {
@@ -96,7 +103,7 @@ var app = builder.Build();
     {
         try
         {
-            await db.Database.EnsureCreatedAsync();
+            await db.Database.MigrateAsync();
             logger.LogInformation("Database schema ready");
             break;
         }
