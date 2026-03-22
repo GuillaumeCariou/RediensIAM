@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import Shell from './components/layout/Shell';
@@ -40,49 +40,61 @@ function Loading() {
   );
 }
 
+function defaultPath(isSuperAdmin: boolean, isOrgAdmin: boolean) {
+  if (isSuperAdmin) return '/system';
+  if (isOrgAdmin) return '/org';
+  return '/project';
+}
+
 function AppRoutes() {
-  const { ready, authenticated, isSuperAdmin } = useAuth();
+  const { ready, authenticated, isSuperAdmin, isOrgAdmin, isProjectManager } = useAuth();
 
   if (!ready) return <Loading />;
   if (!authenticated) return <Loading />;
 
+  const home = defaultPath(isSuperAdmin, isOrgAdmin);
+
   return (
     <Shell>
       <Routes>
-        {/* Default redirect */}
-        <Route index element={<Navigate to={isSuperAdmin ? '/system' : '/org'} replace />} />
+        <Route index element={<Navigate to={home} replace />} />
 
-        {/* System (super_admin) */}
-        <Route path="system" element={<SystemDashboard />} />
-        <Route path="system/organisations" element={<Organisations />} />
-        <Route path="system/organisations/:id" element={<OrgDetail />} />
-        <Route path="system/organisations/:oid/projects/:pid" element={<SystemProjectDetail />} />
-        <Route path="system/users" element={<SystemUsers />} />
-        <Route path="system/userlists" element={<SystemUserLists />} />
-        <Route path="system/userlists/:id" element={<SystemUserListDetail />} />
-        <Route path="system/service-accounts" element={<SystemServiceAccounts />} />
-        <Route path="system/service-accounts/:id" element={<SystemServiceAccountDetail />} />
-        <Route path="system/hydra-clients" element={<HydraClients />} />
-        <Route path="system/audit-log" element={<AuditLog />} />
-        <Route path="system/metrics" element={<SystemMetrics />} />
+        {/* System — super_admin only */}
+        <Route element={isSuperAdmin ? <Outlet /> : <Navigate to={home} replace />}>
+          <Route path="system" element={<SystemDashboard />} />
+          <Route path="system/organisations" element={<Organisations />} />
+          <Route path="system/organisations/:id" element={<OrgDetail />} />
+          <Route path="system/organisations/:oid/projects/:pid" element={<SystemProjectDetail />} />
+          <Route path="system/users" element={<SystemUsers />} />
+          <Route path="system/userlists" element={<SystemUserLists />} />
+          <Route path="system/userlists/:id" element={<SystemUserListDetail />} />
+          <Route path="system/service-accounts" element={<SystemServiceAccounts />} />
+          <Route path="system/service-accounts/:id" element={<SystemServiceAccountDetail />} />
+          <Route path="system/hydra-clients" element={<HydraClients />} />
+          <Route path="system/audit-log" element={<AuditLog />} />
+          <Route path="system/metrics" element={<SystemMetrics />} />
+        </Route>
 
-        {/* Org (org_admin) */}
-        <Route path="org" element={<OrgDashboard />} />
-        <Route path="org/userlists" element={<UserLists />} />
-        <Route path="org/userlists/:id" element={<OrgUserListDetail />} />
-        <Route path="org/projects" element={<Projects />} />
-        <Route path="org/admins" element={<OrgAdmins />} />
-        <Route path="org/service-accounts" element={<OrgServiceAccounts />} />
-        <Route path="org/audit-log" element={<OrgAuditLog />} />
+        {/* Org — org_admin (and super_admin) */}
+        <Route element={isOrgAdmin ? <Outlet /> : <Navigate to={home} replace />}>
+          <Route path="org" element={<OrgDashboard />} />
+          <Route path="org/userlists" element={<UserLists />} />
+          <Route path="org/userlists/:id" element={<OrgUserListDetail />} />
+          <Route path="org/projects" element={<Projects />} />
+          <Route path="org/admins" element={<OrgAdmins />} />
+          <Route path="org/service-accounts" element={<OrgServiceAccounts />} />
+          <Route path="org/audit-log" element={<OrgAuditLog />} />
+        </Route>
 
-        {/* Project (project_manager) */}
-        <Route path="project" element={<ProjectDashboard />} />
-        <Route path="project/users" element={<ProjectUsers />} />
-        <Route path="project/roles" element={<ProjectRoles />} />
-        <Route path="project/theme" element={<LoginTheme />} />
+        {/* Project — project_manager (and above) */}
+        <Route element={isProjectManager ? <Outlet /> : <Navigate to={home} replace />}>
+          <Route path="project" element={<ProjectDashboard />} />
+          <Route path="project/users" element={<ProjectUsers />} />
+          <Route path="project/roles" element={<ProjectRoles />} />
+          <Route path="project/theme" element={<LoginTheme />} />
+        </Route>
 
-        {/* Fallback */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to={home} replace />} />
       </Routes>
     </Shell>
   );

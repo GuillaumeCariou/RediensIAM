@@ -7,12 +7,13 @@ interface AuthState {
   roles: string[];
   isSuperAdmin: boolean;
   isOrgAdmin: boolean;
+  isProjectManager: boolean;
   logout: () => void;
 }
 
 const AuthContext = createContext<AuthState>({
   ready: false, authenticated: false, roles: [],
-  isSuperAdmin: false, isOrgAdmin: false, logout: () => {},
+  isSuperAdmin: false, isOrgAdmin: false, isProjectManager: false, logout: () => {},
 });
 
 function parseRoles(token: string | null): string[] {
@@ -67,6 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ready, authenticated, roles,
       isSuperAdmin: roles.includes('super_admin'),
       isOrgAdmin: roles.includes('org_admin') || roles.includes('super_admin'),
+      isProjectManager: roles.some(r => r === 'project_manager' || r.startsWith('project_manager:')) || roles.includes('org_admin') || roles.includes('super_admin'),
       logout: handleLogout,
     }}>
       {children}
