@@ -773,8 +773,7 @@ public class AuthController(
         var options  = AssertionOptions.FromJson(json);
         var response = JsonSerializer.Deserialize<AuthenticatorAssertionRawResponse>(body.GetRawText())!;
 
-        var credId = response.Id;
-        var cred   = await db.WebAuthnCredentials.FirstOrDefaultAsync(c => c.CredentialId == credId);
+        var cred = await db.WebAuthnCredentials.FirstOrDefaultAsync(c => c.CredentialId == response.RawId);
         if (cred == null) return Unauthorized(new { error = "unknown_credential" });
 
         var uid = Guid.Parse(userId);
