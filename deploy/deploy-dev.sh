@@ -3,29 +3,49 @@ set -euo pipefail
 
 # ── Args ───────────────────────────────────────────────────────────────────────
 DEV=false
+PROD=false
 UPGRADE=false
 for arg in "$@"; do
   case "$arg" in
     --dev)     DEV=true ;;
+    --prod)    PROD=true ;;
     --upgrade) UPGRADE=true ;;
     *) echo "Unknown argument: $arg"; exit 1 ;;
   esac
 done
 
+if [ "${DEV}" = "true" ] && [ "${PROD}" = "true" ]; then
+  echo "ERROR: --dev and --prod are mutually exclusive"; exit 1
+fi
+
 # ── Config ─────────────────────────────────────────────────────────────────────
 NAMESPACE=default
 REGISTRY="localhost:5000"
-IMAGE="${REGISTRY}/rediensiam:dev"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CHART="${SCRIPT_DIR}/rediensiam"
 
-echo "════════════════════════════════════════════════"
-echo " RediensIAM — Dev Deployment"
-echo " Registry:  ${REGISTRY}"
-echo " Namespace: ${NAMESPACE}"
-echo " Dev mode:  ${DEV} | Upgrade: ${UPGRADE}"
-echo "════════════════════════════════════════════════"
+if [ "${PROD}" = "true" ]; then
+  IMAGE="${REGISTRY}/rediensiam:prod"
+  PROD_DOMAIN="authentication.rediens.net"
+  PROD_URL="https://${PROD_DOMAIN}"
+  SECRETS_FILE="${CHART}/values.prod.secret.yaml"
+  HOMELAB_TRAEFIK="${HOME}/Desktop/Workspace/homelab/proxy/conf.d/authentication-routing.yml"
+  echo "════════════════════════════════════════════════"
+  echo " RediensIAM — Prod Deployment"
+  echo " Domain:    ${PROD_DOMAIN}"
+  echo " Registry:  ${REGISTRY}"
+  echo " Namespace: ${NAMESPACE}"
+  echo "════════════════════════════════════════════════"
+else
+  IMAGE="${REGISTRY}/rediensiam:dev"
+  echo "════════════════════════════════════════════════"
+  echo " RediensIAM — Dev Deployment"
+  echo " Registry:  ${REGISTRY}"
+  echo " Namespace: ${NAMESPACE}"
+  echo " Dev mode:  ${DEV} | Upgrade: ${UPGRADE}"
+  echo "════════════════════════════════════════════════"
+fi
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 wait_api() {
@@ -65,6 +85,48 @@ fi
 curl -fs http://${REGISTRY}/v2/ >/dev/null || { echo "  ERROR: registry not accessible"; exit 1; }
 echo "  Ready at ${REGISTRY}"
 
+# ── 1b. Generate prod secrets (if prod and file missing) ───────────────────────
+if [ "${PROD}" = "true" ] && [ ! -f "${SECRETS_FILE}" ]; then
+  echo ""
+  echo "──── [1b/5] Generating prod secrets ─────────────"
+  DB_PASS=$(openssl rand -hex 20)
+  HYDRA_SECRET=$(openssl rand -hex 32)
+  TOTP_KEY=$(openssl rand -base64 32)
+  ARGON_PEPPER=$(openssl rand -hex 32)
+  BOOTSTRAP_PASS=$(openssl rand -base64 16 | tr -d '/+=' | head -c 20)
+
+  cat > "${SECRETS_FILE}" <<EOF
+env:
+  IAM_BOOTSTRAP_EMAIL: "admin@rediens.net"
+  IAM_BOOTSTRAP_PASSWORD: "${BOOTSTRAP_PASS}"
+
+secrets:
+  databaseUrl: "Host=rediensiam-postgres;Database=rediensiam;Username=iam;Password=${DB_PASS}"
+  cacheUrl: "rediensiam-dragonfly:6379,abortConnect=false"
+  totpEncryptionKey: "${TOTP_KEY}"
+  argon2Pepper: "${ARGON_PEPPER}"
+
+postgres:
+  password: ${DB_PASS}
+
+hydra:
+  hydra:
+    config:
+      dsn: "postgres://iam:${DB_PASS}@rediensiam-postgres:5432/hydra?sslmode=disable"
+      secrets:
+        system:
+          - "${HYDRA_SECRET}"
+
+keto:
+  keto:
+    config:
+      dsn: "postgres://iam:${DB_PASS}@rediensiam-postgres:5432/keto?sslmode=disable"
+EOF
+  echo "  Secrets written to ${SECRETS_FILE}"
+  echo "  Bootstrap password: ${BOOTSTRAP_PASS}"
+  echo "  (move this file somewhere safe before committing)"
+fi
+
 # ── 2. Build ───────────────────────────────────────────────────────────────────
 echo ""
 echo "──── [2/5] Build ────────────────────────────────"
@@ -93,22 +155,48 @@ echo ""
 echo "──── [4/5] Deploy ───────────────────────────────"
 wait_api
 
-DEV_FLAGS=""
-[ "${DEV}" = "true" ] && DEV_FLAGS="--set hydra.hydra.dev=true --set hydra.hydra.dangerousForceHttp=true --set env.ASPNETCORE_ENVIRONMENT=Development"
-
 kubectl delete job -n "${NAMESPACE}" -l "app.kubernetes.io/instance=rediensiam" 2>/dev/null || true
 
-helm_deploy rediensiam "${CHART}" \
-  -f "${CHART}/values.secret.yaml" \
-  --set image.repository="${REGISTRY}/rediensiam" \
-  --set image.tag=dev \
-  --set image.pullPolicy=Always \
-  ${DEV_FLAGS} \
-  --wait --timeout 10m
+if [ "${PROD}" = "true" ]; then
+  helm_deploy rediensiam "${CHART}" \
+    -f "${SECRETS_FILE}" \
+    --set image.repository="${REGISTRY}/rediensiam" \
+    --set image.tag=prod \
+    --set image.pullPolicy=Always \
+    --set appUrl="${PROD_URL}" \
+    --set ingress.host="${PROD_DOMAIN}" \
+    --set "env.App__PublicUrl=${PROD_URL}" \
+    --set "env.App__Domain=${PROD_DOMAIN}" \
+    --set "hydra.hydra.config.urls.self.issuer=${PROD_URL}" \
+    --set "hydra.hydra.config.urls.login=${PROD_URL}/login" \
+    --set "hydra.hydra.config.urls.consent=${PROD_URL}/auth/consent" \
+    --set "hydra.hydra.config.urls.logout=${PROD_URL}/auth/logout" \
+    --set "hydra.hydra.config.urls.post_logout_redirect=${PROD_URL}/admin/" \
+    --set "hydra.ingress.public.hosts[0].host=${PROD_DOMAIN}" \
+    --wait --timeout 10m
+else
+  DEV_FLAGS=""
+  [ "${DEV}" = "true" ] && DEV_FLAGS="--set hydra.hydra.dev=true --set hydra.hydra.dangerousForceHttp=true --set env.ASPNETCORE_ENVIRONMENT=Development"
+
+  helm_deploy rediensiam "${CHART}" \
+    -f "${CHART}/values.secret.yaml" \
+    --set image.repository="${REGISTRY}/rediensiam" \
+    --set image.tag=dev \
+    --set image.pullPolicy=Always \
+    ${DEV_FLAGS} \
+    --wait --timeout 10m
+fi
 
 # ── 5. Bootstrap Hydra admin client ───────────────────────────────────────────
 echo ""
 echo "──── [5/5] Bootstrap ────────────────────────────"
+
+if [ "${PROD}" = "true" ]; then
+  REDIRECT_URI="${PROD_URL}/admin/callback"
+else
+  REDIRECT_URI="http://localhost/admin/callback"
+fi
+
 kubectl exec -n "${NAMESPACE}" deployment/rediensiam-hydra -- \
   hydra delete oauth2-client --endpoint "http://localhost:4445" client_admin_system 2>/dev/null || true
 
@@ -122,9 +210,46 @@ kubectl exec -n "${NAMESPACE}" deployment/rediensiam-hydra -- \
     --response-type code \
     --scope openid \
     --scope offline \
-    --redirect-uri "http://localhost/admin/callback" \
+    --redirect-uri "${REDIRECT_URI}" \
     --token-endpoint-auth-method none \
-  && echo "  client_admin_system created"
+  && echo "  client_admin_system created (redirect: ${REDIRECT_URI})"
+
+# ── 5b. Update external Traefik routing (prod only) ────────────────────────────
+if [ "${PROD}" = "true" ]; then
+  echo ""
+  echo "──── [5b/5] Updating external Traefik routing ───"
+  NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null | awk '{print $1}')
+  NODE_IP="${NODE_IP:-$(hostname -I | awk '{print $1}')}"
+
+  cat > "${HOMELAB_TRAEFIK}" <<EOF
+http:
+  routers:
+    rediensiam-router:
+      rule: "Host(\`${PROD_DOMAIN}\`)"
+      priority: 10
+      entryPoints:
+        - websecure
+      tls: true
+      service: rediensiam-service
+      middlewares:
+        - rediensiam-headers
+
+  services:
+    rediensiam-service:
+      loadBalancer:
+        servers:
+          - url: "http://${NODE_IP}:80"
+
+  middlewares:
+    rediensiam-headers:
+      headers:
+        customRequestHeaders:
+          X-Forwarded-Proto: "https"
+          X-Forwarded-Host: "${PROD_DOMAIN}"
+EOF
+  echo "  Traefik routing updated → http://${NODE_IP}:80"
+  echo "  Reload Traefik to apply (e.g. systemctl reload traefik)"
+fi
 
 # ── Summary ────────────────────────────────────────────────────────────────────
 echo ""
@@ -134,9 +259,16 @@ echo ""
 echo " Pods:"
 kubectl get pods -n "${NAMESPACE}" --no-headers | awk '{printf "   %-40s %s\n", $1, $3}'
 echo ""
-NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null | awk '{print $1}')
-NODE_IP="${NODE_IP:-$(hostname -I | awk '{print $1}')}"
 echo " Access:"
-echo "   Login  →  http://localhost/login"
-echo "   Admin  →  http://localhost/admin/"
+if [ "${PROD}" = "true" ]; then
+  echo "   Login  →  ${PROD_URL}/login"
+  echo "   Admin  →  ${PROD_URL}/admin/"
+  echo ""
+  echo " Remember:"
+  echo "   - Reload Traefik on the proxy host"
+  echo "   - Keep ${SECRETS_FILE} safe (not committed)"
+else
+  echo "   Login  →  http://localhost/login"
+  echo "   Admin  →  http://localhost/admin/"
+fi
 echo "════════════════════════════════════════════════"

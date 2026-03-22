@@ -21,6 +21,7 @@ deploy/rediensiam/charts/
 *.pfx
 *.key
 deploy/rediensiam/values.secret.yaml
+deploy/rediensiam/values.prod.secret.yaml
 
 # ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
