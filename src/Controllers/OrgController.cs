@@ -5,6 +5,7 @@ using RediensIAM.Entities;
 using RediensIAM.Exceptions;
 using RediensIAM.Middleware;
 using RediensIAM.Services;
+using RediensIAM.Models;
 
 namespace RediensIAM.Controllers;
 
@@ -15,24 +16,18 @@ public class OrgController(
     KetoService keto,
     PasswordService passwords,
     AuditLogService audit,
-    RoleAssignmentService roleService) : ControllerBase
+    RoleAssignmentService roleService,
+    PatGenerationService patGen) : ControllerBase
 {
     private TokenClaims Claims => HttpContext.GetClaims()!;
-    private Guid OrgId => Guid.Parse(Claims.OrgId);
+    private Guid OrgId => Guid.TryParse(Claims.OrgId, out var g) ? g : Guid.Empty;
 
     private async Task RequireOrgAdminAsync()
     {
         var level = await roleService.GetActorManagementLevelForOrgAsync(ActorId, OrgId);
         if (level > Services.ManagementLevel.OrgAdmin) throw new ForbiddenException("org_admin required");
     }
-    private Guid ActorId
-    {
-        get
-        {
-            var id = Claims.UserId.Contains(':') ? Claims.UserId.Split(':')[1] : Claims.UserId;
-            return Guid.Parse(id);
-        }
-    }
+    private Guid ActorId => Claims.ParsedUserId;
 
     // ── Projects ──────────────────────────────────────────────────────────────
 
@@ -121,13 +116,14 @@ public class OrgController(
     public async Task<IActionResult> DeleteProject(Guid id)
     {
         if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var actorId = Guid.Parse(claims.UserId.Contains(':') ? claims.UserId.Split(':')[1] : claims.UserId);
+        var actorId = claims.ParsedUserId;
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == Guid.Parse(claims.OrgId));
         if (project == null) return NotFound();
 
         if (project.HydraClientId != null)
         {
-            try { await hydra.DeleteOAuth2ClientAsync(project.HydraClientId); } catch { }
+            try { await hydra.DeleteOAuth2ClientAsync(project.HydraClientId); }
+            catch (Exception ex) { /* best-effort — log would need ILogger injected */ _ = ex; }
         }
         await keto.DeleteAllProjectTuplesAsync(id.ToString());
         db.Projects.Remove(project);
@@ -271,7 +267,7 @@ public class OrgController(
     public async Task<IActionResult> RemoveUser(Guid id, Guid uid)
     {
         if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var actorId = Guid.Parse(claims.UserId.Contains(':') ? claims.UserId.Split(':')[1] : claims.UserId);
+        var actorId = claims.ParsedUserId;
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == uid && u.UserListId == id
             && u.UserList.OrgId == Guid.Parse(claims.OrgId));
         if (user == null) return NotFound();
@@ -280,6 +276,91 @@ public class OrgController(
         db.Users.Remove(user);
         await db.SaveChangesAsync();
         await audit.RecordAsync(Guid.Parse(claims.OrgId), null, actorId, "user.removed", "user", uid.ToString());
+        return NoContent();
+    }
+
+    // ── Service Accounts ──────────────────────────────────────────────────────
+
+    [HttpGet("/org/service-accounts")]
+    public async Task<IActionResult> ListServiceAccounts()
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var orgId = Guid.Parse(claims.OrgId);
+        var sas = await db.ServiceAccounts
+            .Where(sa => sa.UserList.OrgId == orgId)
+            .Select(sa => new { sa.Id, sa.Name, sa.Description, sa.Active, sa.LastUsedAt, sa.CreatedAt })
+            .ToListAsync();
+        return Ok(sas);
+    }
+
+    [HttpPost("/org/service-accounts")]
+    public async Task<IActionResult> CreateServiceAccount([FromBody] OrgCreateSaRequest body)
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var ul = await db.UserLists.FirstOrDefaultAsync(ul => ul.Id == body.UserListId && ul.OrgId == Guid.Parse(claims.OrgId));
+        if (ul == null) return BadRequest(new { error = "userlist_not_in_org" });
+        var sa = new ServiceAccount
+        {
+            UserListId = body.UserListId, Name = body.Name, Description = body.Description,
+            Active = true, CreatedBy = claims.ParsedUserId, CreatedAt = DateTimeOffset.UtcNow
+        };
+        db.ServiceAccounts.Add(sa);
+        await db.SaveChangesAsync();
+        return Created($"/org/service-accounts/{sa.Id}", new { sa.Id, sa.Name });
+    }
+
+    [HttpDelete("/org/service-accounts/{id}")]
+    public async Task<IActionResult> DeleteServiceAccount(Guid id)
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var sa = await db.ServiceAccounts
+            .Include(sa => sa.UserList)
+            .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == Guid.Parse(claims.OrgId));
+        if (sa == null) return NotFound();
+        db.ServiceAccounts.Remove(sa);
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+
+    [HttpGet("/org/service-accounts/{id}/pat")]
+    public async Task<IActionResult> ListPats(Guid id)
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var sa = await db.ServiceAccounts
+            .Include(sa => sa.UserList)
+            .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == Guid.Parse(claims.OrgId));
+        if (sa == null) return NotFound();
+        var pats = await db.PersonalAccessTokens
+            .Where(p => p.ServiceAccountId == id)
+            .Select(p => new { p.Id, p.Name, p.ExpiresAt, p.LastUsedAt, p.CreatedAt })
+            .ToListAsync();
+        return Ok(pats);
+    }
+
+    [HttpPost("/org/service-accounts/{id}/pat")]
+    public async Task<IActionResult> GeneratePat(Guid id, [FromBody] OrgGeneratePatRequest body)
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var sa = await db.ServiceAccounts
+            .Include(sa => sa.UserList)
+            .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == Guid.Parse(claims.OrgId));
+        if (sa == null) return NotFound();
+        var (raw, pat) = await patGen.GenerateAsync(id, body.Name, body.ExpiresAt, claims.ParsedUserId);
+        return Ok(new { pat.Id, pat.Name, token = raw, pat.ExpiresAt, message = "store_this_token_shown_once" });
+    }
+
+    [HttpDelete("/org/service-accounts/{id}/pat/{patId}")]
+    public async Task<IActionResult> RevokePat(Guid id, Guid patId)
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var sa = await db.ServiceAccounts
+            .Include(sa => sa.UserList)
+            .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == Guid.Parse(claims.OrgId));
+        if (sa == null) return NotFound();
+        var pat = await db.PersonalAccessTokens.FirstOrDefaultAsync(p => p.Id == patId && p.ServiceAccountId == id);
+        if (pat == null) return NotFound();
+        db.PersonalAccessTokens.Remove(pat);
+        await db.SaveChangesAsync();
         return NoContent();
     }
 
@@ -307,3 +388,5 @@ public record AssignUserListRequest(Guid UserListId);
 public record CreateUserListRequest(string Name);
 public record CreateUserRequest(string Email, string Password, string? Username);
 public record UpdateUserRequest(string? DisplayName, bool? Active);
+public record OrgCreateSaRequest(string Name, string? Description, Guid UserListId);
+public record OrgGeneratePatRequest(string Name, DateTimeOffset? ExpiresAt);

@@ -32,8 +32,7 @@ builder.Services.AddStackExchangeRedisCache(o =>
     o.InstanceName = config["Cache:InstanceName"] ?? "rediensiam:";
 });
 
-// ── Session (for MFA state) ────────────────────────────────────────────────
-builder.Services.AddDistributedMemoryCache();
+// ── Session (for MFA state) — backed by Redis so it survives pod restarts ──
 builder.Services.AddSession(o =>
 {
     o.IdleTimeout = TimeSpan.FromMinutes(15);
@@ -183,11 +182,13 @@ app.UseWhen(
     ctx => protectedPrefixes.Any(p => ctx.Request.Path.StartsWithSegments(p)),
     branch => branch.UseMiddleware<GatewayAuthMiddleware>());
 
-// Validate admin API Bearer tokens — only when Authorization header is present (browser SPA navigations pass through)
+// Validate admin API Bearer tokens.
+// GET without Authorization is allowed through (browser SPA navigations, controllers still check Claims).
+// All mutating verbs (POST/PATCH/DELETE/PUT) always require a valid Bearer token.
 app.UseWhen(
     ctx => ctx.Request.Path.StartsWithSegments("/admin")
         && !ctx.Request.Path.Equals("/admin/config")
-        && ctx.Request.Headers.ContainsKey("Authorization"),
+        && (ctx.Request.Headers.ContainsKey("Authorization") || ctx.Request.Method != HttpMethods.Get),
     branch => branch.UseMiddleware<GatewayAuthMiddleware>());
 
 // Block admin/internal on public port

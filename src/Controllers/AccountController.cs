@@ -20,7 +20,7 @@ public class AccountController(
     public async Task<IActionResult> GetMe()
     {
         if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var userId = Guid.Parse(claims.UserId.Contains(':') ? claims.UserId.Split(':')[1] : claims.UserId);
+        var userId = claims.ParsedUserId;
         var user = await db.Users.FindAsync(userId);
         if (user == null) return NotFound();
         return Ok(new
@@ -38,7 +38,7 @@ public class AccountController(
     public async Task<IActionResult> UpdateMe([FromBody] UpdateMeRequest body)
     {
         if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var userId = Guid.Parse(claims.UserId.Contains(':') ? claims.UserId.Split(':')[1] : claims.UserId);
+        var userId = claims.ParsedUserId;
         var user = await db.Users.FindAsync(userId);
         if (user == null) return NotFound();
         if (body.DisplayName != null) user.DisplayName = body.DisplayName;
@@ -51,7 +51,7 @@ public class AccountController(
     public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest body)
     {
         if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var userId = Guid.Parse(claims.UserId.Contains(':') ? claims.UserId.Split(':')[1] : claims.UserId);
+        var userId = claims.ParsedUserId;
         var user = await db.Users.FindAsync(userId);
         if (user == null) return NotFound();
         if (!passwords.Verify(body.CurrentPassword, user.PasswordHash))
@@ -67,7 +67,7 @@ public class AccountController(
     public async Task<IActionResult> SetupTotp()
     {
         if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var userId = Guid.Parse(claims.UserId.Contains(':') ? claims.UserId.Split(':')[1] : claims.UserId);
+        var userId = claims.ParsedUserId;
         var user = await db.Users.FindAsync(userId);
         if (user == null) return NotFound();
 
@@ -85,7 +85,7 @@ public class AccountController(
     public async Task<IActionResult> ConfirmTotp([FromBody] TotpConfirmRequest body)
     {
         if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var userId = Guid.Parse(claims.UserId.Contains(':') ? claims.UserId.Split(':')[1] : claims.UserId);
+        var userId = claims.ParsedUserId;
         var encryptedSecret = HttpContext.Session.GetString("totp_setup_secret");
         if (encryptedSecret == null) return BadRequest(new { error = "no_setup_session" });
 
@@ -121,7 +121,7 @@ public class AccountController(
     public async Task<IActionResult> RegenerateBackupCodes()
     {
         if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var userId = Guid.Parse(claims.UserId.Contains(':') ? claims.UserId.Split(':')[1] : claims.UserId);
+        var userId = claims.ParsedUserId;
 
         var codes = Enumerable.Range(0, 8).Select(_ =>
         {
@@ -142,7 +142,7 @@ public class AccountController(
     public async Task<IActionResult> GetMfaStatus()
     {
         if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var userId = Guid.Parse(claims.UserId.Contains(':') ? claims.UserId.Split(':')[1] : claims.UserId);
+        var userId = claims.ParsedUserId;
         var user = await db.Users.FindAsync(userId);
         if (user == null) return NotFound();
         var backupCount = await db.BackupCodes.CountAsync(c => c.UserId == userId && c.UsedAt == null);

@@ -19,7 +19,7 @@ public class PatIntrospectionService(
     public async Task<IntrospectionResponse?> IntrospectAsync(string token)
     {
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
-        var cacheKey = $"pat:{hash[..16]}";
+        var cacheKey = $"pat:{hash[..32]}";
 
         var cached = await _cache.StringGetAsync(cacheKey);
         if (!cached.IsNull)
@@ -75,6 +75,6 @@ public class PatIntrospectionService(
 
     public async Task InvalidateAsync(string tokenHash)
     {
-        await _cache.KeyDeleteAsync($"pat:{tokenHash[..16]}");
+        await _cache.KeyDeleteAsync($"pat:{tokenHash[..32]}");
     }
 }

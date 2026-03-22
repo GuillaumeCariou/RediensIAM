@@ -7,6 +7,16 @@ public record TokenClaims
     public required string ProjectId { get; init; }
     public required List<string> Roles { get; init; }
     public bool IsServiceAccount { get; init; }
+
+    // Strips the "orgId:userId" compound format used in Hydra subjects
+    public Guid ParsedUserId
+    {
+        get
+        {
+            var raw = UserId.Contains(':') ? UserId.Split(':')[1] : UserId;
+            return Guid.TryParse(raw, out var g) ? g : Guid.Empty;
+        }
+    }
 }
 
 public record IntrospectionResponse(

@@ -34,7 +34,6 @@ public class RoleAssignmentService(RediensIamDbContext db, KetoService keto, Aud
     public async Task AssignProjectRoleAsync(Guid actorId, Guid targetUserId, Guid projectId, Guid roleId)
     {
         var project = await db.Projects
-            .Include(p => p.AssignedUserList).ThenInclude(ul => ul!.Users)
             .FirstOrDefaultAsync(p => p.Id == projectId)
             ?? throw new NotFoundException("Project not found");
 
@@ -60,7 +59,8 @@ public class RoleAssignmentService(RediensIamDbContext db, KetoService keto, Aud
             }
         }
 
-        var userInList = project.AssignedUserList?.Users.Any(u => u.Id == targetUserId) ?? false;
+        var userInList = project.AssignedUserListId.HasValue
+            && await db.Users.AnyAsync(u => u.Id == targetUserId && u.UserListId == project.AssignedUserListId);
         if (!userInList)
             throw new BadRequestException("User is not in this project's assigned UserList");
 

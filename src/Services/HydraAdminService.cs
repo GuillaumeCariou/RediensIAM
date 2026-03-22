@@ -40,8 +40,9 @@ public class HydraAdminService(IHttpClientFactory http, IConfiguration config)
 {
     private readonly string _adminUrl = config["Hydra:AdminUrl"] ?? "http://hydra:4445";
     private readonly JsonSerializerOptions _json = new() { PropertyNameCaseInsensitive = true };
+    private readonly HttpClient _client = http.CreateClient("hydra-admin");
 
-    private HttpClient Client => http.CreateClient("hydra-admin");
+    private HttpClient Client => _client;
 
     public async Task<HydraLoginRequest> GetLoginRequestAsync(string challenge)
     {

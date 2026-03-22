@@ -13,6 +13,9 @@ interface Theme {
   has_custom_template?: boolean;
   require_role?: boolean;
   allow_self_registration?: boolean;
+  email_verification_enabled?: boolean;
+  sms_verification_enabled?: boolean;
+  is_admin_login?: boolean;
 }
 
 export default function Login() {
@@ -98,8 +101,10 @@ export default function Login() {
       </form>
 
       <div className="links">
-        <a href={`/password-reset?project_id=${loginTheme?.project_id ?? ''}`} className="btn-ghost">Forgot password?</a>
-        {loginTheme?.allow_self_registration && (
+        {!loginTheme?.is_admin_login && (loginTheme?.email_verification_enabled || loginTheme?.sms_verification_enabled) && (
+          <a href={`/password-reset?project_id=${loginTheme?.project_id ?? ''}`} className="btn-ghost">Forgot password?</a>
+        )}
+        {!loginTheme?.is_admin_login && loginTheme?.allow_self_registration && (
           <a href={`/register?login_challenge=${challenge}`} className="btn-ghost">Create account</a>
         )}
       </div>

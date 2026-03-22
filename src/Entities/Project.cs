@@ -15,6 +15,8 @@ public class Project
     public bool RequireRoleToLogin { get; set; }
     public bool AllowSelfRegistration { get; set; }
     public string[] AllowedEmailDomains { get; set; } = [];
+    public bool EmailVerificationEnabled { get; set; }
+    public bool SmsVerificationEnabled { get; set; }
     public bool Active { get; set; } = true;
     public Guid? CreatedBy { get; set; }
     public DateTimeOffset CreatedAt { get; set; }

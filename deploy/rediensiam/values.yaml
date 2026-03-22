@@ -25,19 +25,13 @@ ingress:
 
 env:
   IAM_ADMIN_PATH: "/admin"
-  IAM_BOOTSTRAP_EMAIL: "admin@local"
-  IAM_BOOTSTRAP_PASSWORD: "Admin1234!"
   Hydra__AdminUrl: "http://rediensiam-hydra-admin:4445"
   Hydra__PublicUrl: "http://rediensiam-hydra-public:4444"
   Keto__ReadUrl: "http://rediensiam-keto-read:4466"
   Keto__WriteUrl: "http://rediensiam-keto-write:4467"
   App__PublicUrl: "http://localhost"
 
-secrets:
-  databaseUrl: "Host=rediensiam-postgres;Database=rediensiam;Username=iam;Password=changeme"
-  cacheUrl: "rediensiam-dragonfly:6379,abortConnect=false"
-  totpEncryptionKey: "CHANGE_ME_32_BYTE_KEY_BASE64_ENC"
-  argon2Pepper: "CHANGE_ME_PEPPER"
+secrets: {}  # override via values.secret.yaml
 
 resources:
   requests:
@@ -50,7 +44,7 @@ resources:
 # ── PostgreSQL ────────────────────────────────────────────────────────────────
 postgres:
   image: postgres:16-alpine
-  password: changeme
+  password: ""  # override via values.secret.yaml
   storage: 2Gi
 
 # ── Dragonfly ─────────────────────────────────────────────────────────────────
@@ -61,7 +55,7 @@ dragonfly:
 hydra:
   hydra:
     config:
-      dsn: "postgres://iam:changeme@rediensiam-postgres:5432/hydra?sslmode=disable"
+      dsn: ""  # override via values.secret.yaml
       urls:
         self:
           issuer: "http://localhost"
@@ -72,8 +66,7 @@ hydra:
       strategies:
         access_token: jwt
       secrets:
-        system:
-          - "CHANGE_ME_HYDRA_SYSTEM_SECRET_32CHARS"
+        system: []  # override via values.secret.yaml
       log:
         level: info
         format: json
@@ -116,7 +109,7 @@ hydra:
 keto:
   keto:
     config:
-      dsn: "postgres://iam:changeme@rediensiam-postgres:5432/keto?sslmode=disable"
+      dsn: ""  # override via values.secret.yaml
       namespaces:
         - id: 0
           name: System

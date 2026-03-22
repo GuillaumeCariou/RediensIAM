@@ -58,7 +58,7 @@ public class ProjectController(
     public async Task<IActionResult> AssignRole(Guid id, [FromBody] AssignRoleRequest body)
     {
         if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var actorId = Guid.Parse(claims.UserId.Contains(':') ? claims.UserId.Split(':')[1] : claims.UserId);
+        var actorId = claims.ParsedUserId;
         try
         {
             await roleService.AssignProjectRoleAsync(actorId, id, Guid.Parse(claims.ProjectId), body.RoleId);
@@ -73,7 +73,7 @@ public class ProjectController(
     public async Task<IActionResult> RemoveRole(Guid id, Guid roleId)
     {
         if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var actorId = Guid.Parse(claims.UserId.Contains(':') ? claims.UserId.Split(':')[1] : claims.UserId);
+        var actorId = claims.ParsedUserId;
         try
         {
             await roleService.RemoveProjectRoleAsync(actorId, id, Guid.Parse(claims.ProjectId), roleId);
@@ -100,7 +100,7 @@ public class ProjectController(
     public async Task<IActionResult> CreateRole([FromBody] CreateRoleRequest body)
     {
         if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var actorId = Guid.Parse(claims.UserId.Contains(':') ? claims.UserId.Split(':')[1] : claims.UserId);
+        var actorId = claims.ParsedUserId;
         var role = new Role
         {
             ProjectId = Guid.Parse(claims.ProjectId), Name = body.Name,
@@ -153,7 +153,7 @@ public class ProjectController(
     public async Task<IActionResult> CreateServiceAccount([FromBody] CreateServiceAccountRequest body)
     {
         if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var actorId = Guid.Parse(claims.UserId.Contains(':') ? claims.UserId.Split(':')[1] : claims.UserId);
+        var actorId = claims.ParsedUserId;
         var project = await db.Projects.FindAsync(Guid.Parse(claims.ProjectId));
         if (project?.AssignedUserListId == null) return BadRequest(new { error = "project_not_ready" });
         var sa = new ServiceAccount
@@ -170,7 +170,7 @@ public class ProjectController(
     public async Task<IActionResult> GeneratePat(Guid id, [FromBody] GeneratePatRequest body)
     {
         if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var actorId = Guid.Parse(claims.UserId.Contains(':') ? claims.UserId.Split(':')[1] : claims.UserId);
+        var actorId = claims.ParsedUserId;
         var sa = await db.ServiceAccounts.FindAsync(id);
         if (sa == null) return NotFound();
         var (raw, pat) = await patGen.GenerateAsync(id, body.Name, body.ExpiresAt, actorId);
@@ -180,6 +180,10 @@ public class ProjectController(
     [HttpGet("/project/service-accounts/{id}/pat")]
     public async Task<IActionResult> ListPats(Guid id)
     {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var projectId = Guid.Parse(claims.ProjectId);
+        var sa = await db.ServiceAccounts.FindAsync(id);
+        if (sa == null) return NotFound();
         var pats = await db.PersonalAccessTokens
             .Where(p => p.ServiceAccountId == id)
             .Select(p => new { p.Id, p.Name, p.ExpiresAt, p.LastUsedAt, p.CreatedAt }).ToListAsync();
@@ -189,6 +193,9 @@ public class ProjectController(
     [HttpDelete("/project/service-accounts/{id}/pat/{patId}")]
     public async Task<IActionResult> RevokePat(Guid id, Guid patId)
     {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var sa = await db.ServiceAccounts.FindAsync(id);
+        if (sa == null) return NotFound();
         var pat = await db.PersonalAccessTokens.FirstOrDefaultAsync(p => p.Id == patId && p.ServiceAccountId == id);
         if (pat == null) return NotFound();
         db.PersonalAccessTokens.Remove(pat);
@@ -221,6 +228,7 @@ public class ProjectController(
             .Select(u => u.Id).ToHashSetAsync();
 
         var orphaned = await db.UserProjectRoles
+            .Include(r => r.Role)
             .Where(r => r.ProjectId == projectId && !activeUserIds.Contains(r.UserId))
             .ToListAsync();
 
@@ -228,7 +236,7 @@ public class ProjectController(
         {
             db.UserProjectRoles.RemoveRange(orphaned);
             foreach (var r in orphaned)
-                await keto.DeleteRelationTupleAsync("Projects", projectId.ToString(), $"role:*", $"user:{r.UserId}");
+                await keto.DeleteRelationTupleAsync("Projects", projectId.ToString(), $"role:{r.Role.Name}", $"user:{r.UserId}");
             await db.SaveChangesAsync();
         }
         return Ok(new { orphaned_roles_removed = orphaned.Count, dry_run = body.DryRun });

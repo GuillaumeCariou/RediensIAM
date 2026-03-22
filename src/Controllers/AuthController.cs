@@ -18,7 +18,10 @@ public class AuthController(
     AuditLogService audit,
     TotpEncryptionService totpEncryption,
     KetoService keto,
-    IConfiguration config) : ControllerBase
+    IEmailService emailService,
+    ISmsService smsService,
+    IConfiguration config,
+    ILogger<AuthController> logger) : ControllerBase
 {
     private string Ip => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
@@ -50,10 +53,16 @@ public class AuthController(
                 theme = project.LoginTheme,
                 has_custom_template = project.LoginTemplate != null,
                 require_role = project.RequireRoleToLogin,
-                allow_self_registration = project.AllowSelfRegistration
+                allow_self_registration = project.AllowSelfRegistration,
+                email_verification_enabled = project.EmailVerificationEnabled,
+                sms_verification_enabled = project.SmsVerificationEnabled
             });
         }
-        catch { return BadRequest(new { error = "invalid_challenge" }); }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "GetLogin failed for challenge {Challenge}", login_challenge);
+            return BadRequest(new { error = "invalid_challenge" });
+        }
     }
 
     [HttpGet("/auth/login/theme")]
@@ -75,7 +84,11 @@ public class AuthController(
                 project.Name
             });
         }
-        catch { return BadRequest(); }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "GetTheme failed for challenge {Challenge}", login_challenge);
+            return BadRequest();
+        }
     }
 
     [HttpPost("/auth/login")]
@@ -86,7 +99,11 @@ public class AuthController(
 
         HydraLoginRequest req;
         try { req = await hydra.GetLoginRequestAsync(body.LoginChallenge); }
-        catch { return BadRequest(new { error = "invalid_challenge" }); }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Login: invalid challenge {Challenge}", body.LoginChallenge);
+            return BadRequest(new { error = "invalid_challenge" });
+        }
 
         if (req.Client?.ClientId == "client_admin_system")
             return await AdminLogin(body, req);
@@ -216,6 +233,7 @@ public class AuthController(
             ["user_id"] = user.Id.ToString()
         };
         var redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, context);
+        await audit.RecordAsync(project!.OrgId, project.Id, user.Id, "user.login.mfa");
         return Ok(new { redirect_to = redirectUrl });
     }
 
@@ -246,7 +264,26 @@ public class AuthController(
                 return Redirect(rejectUrl);
             }
 
-            var adminSession = new { access_token = new { user_id = userIdStr, roles = adminRoles } };
+            // Resolve the org and project scopes so the token carries them
+            var orgRole = await db.OrgRoles
+                .Where(r => r.UserId == userId && r.Role == "org_admin")
+                .OrderBy(r => r.GrantedAt)
+                .FirstOrDefaultAsync();
+            var projectRole = await db.OrgRoles
+                .Where(r => r.UserId == userId && r.Role == "project_manager")
+                .OrderBy(r => r.GrantedAt)
+                .FirstOrDefaultAsync();
+
+            var adminSession = new
+            {
+                access_token = new
+                {
+                    user_id = userIdStr,
+                    roles = adminRoles,
+                    org_id = orgRole?.OrgId.ToString() ?? "",
+                    project_id = projectRole?.ScopeId?.ToString() ?? ""
+                }
+            };
             var adminRedirect = await hydra.AcceptConsentAsync(consent_challenge, adminSession, req.RequestedScope);
             return Redirect(adminRedirect);
         }
@@ -293,7 +330,11 @@ public class AuthController(
             await hydra.GetLogoutRequestAsync(logout_challenge);
             return Ok(new { logout_challenge });
         }
-        catch { return BadRequest(); }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "GetLogout: invalid challenge {Challenge}", logout_challenge);
+            return BadRequest();
+        }
     }
 
     [HttpPost("/auth/logout")]
@@ -306,43 +347,128 @@ public class AuthController(
     [HttpPost("/auth/register")]
     public async Task<IActionResult> Register([FromBody] RegisterRequest body)
     {
+        HydraLoginRequest req;
+        try { req = await hydra.GetLoginRequestAsync(body.LoginChallenge); }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Register: invalid challenge {Challenge}", body.LoginChallenge);
+            return BadRequest(new { error = "invalid_challenge" });
+        }
+
+        var projectId = ExtractProjectId(req);
+        if (projectId == null) return BadRequest(new { error = "missing_project_id" });
+
         var project = await db.Projects
             .Include(p => p.AssignedUserList)
-            .FirstOrDefaultAsync(p => p.Id == body.ProjectId && p.Active);
+            .FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId) && p.Active);
 
         if (project == null) return NotFound(new { error = "project_not_found" });
         if (!project.AllowSelfRegistration) return StatusCode(403, new { error = "registration_not_allowed" });
         if (project.AssignedUserListId == null) return BadRequest(new { error = "project_not_ready" });
 
+        var email = body.Email.ToLowerInvariant();
+
         if (project.AllowedEmailDomains.Length > 0)
         {
-            var domain = body.Email.Split('@').LastOrDefault() ?? "";
+            var domain = email.Split('@').LastOrDefault() ?? "";
             if (!project.AllowedEmailDomains.Contains(domain))
                 return StatusCode(403, new { error = "domain_not_allowed" });
         }
 
-        var existing = await db.Users.AnyAsync(u =>
-            u.UserListId == project.AssignedUserListId && u.Email == body.Email.ToLowerInvariant());
-        if (existing) return Conflict(new { error = "email_already_exists" });
+        if (await db.Users.AnyAsync(u => u.UserListId == project.AssignedUserListId && u.Email == email))
+            return Conflict(new { error = "email_already_exists" });
+
+        var verificationEnabled = project.EmailVerificationEnabled || project.SmsVerificationEnabled;
+
+        if (!verificationEnabled)
+        {
+            var user = BuildUser(project.AssignedUserListId!.Value, email, body.Username, body.Password);
+            db.Users.Add(user);
+            await db.SaveChangesAsync();
+            await keto.WriteRelationTupleAsync("UserLists", project.AssignedUserListId!.Value.ToString(), "member", $"user:{user.Id}");
+            await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.registered");
+
+            var subject = $"{project.OrgId}:{user.Id}";
+            var ctx = new Dictionary<string, object>
+            {
+                ["org_id"] = project.OrgId.ToString(),
+                ["project_id"] = project.Id.ToString(),
+                ["user_id"] = user.Id.ToString()
+            };
+            var redirectUrl = await hydra.AcceptLoginAsync(body.LoginChallenge, subject, ctx);
+            return Ok(new { redirect_to = redirectUrl });
+        }
+
+        var sessionId = Guid.NewGuid().ToString("N");
+        var code = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
+        var pending = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            email,
+            username = body.Username ?? email.Split('@')[0],
+            password_hash = passwords.Hash(body.Password),
+            project_id = projectId,
+            user_list_id = project.AssignedUserListId!.Value.ToString(),
+            org_id = project.OrgId.ToString(),
+            login_challenge = body.LoginChallenge
+        });
+
+        await otp.StorePendingAsync("reg", sessionId, pending);
+        await otp.StoreSessionOtpAsync("reg", sessionId, code);
+
+        if (project.EmailVerificationEnabled)
+            await emailService.SendOtpAsync(email, code, "registration");
+        else if (project.SmsVerificationEnabled && body.Phone != null)
+            await smsService.SendOtpAsync(body.Phone, code, "registration");
+
+        return Ok(new { requires_verification = true, session_id = sessionId });
+    }
+
+    [HttpPost("/auth/register/verify")]
+    public async Task<IActionResult> VerifyRegistration([FromBody] VerifyOtpRequest body)
+    {
+        if (!await otp.VerifySessionOtpAsync("reg", body.SessionId, body.Code))
+            return BadRequest(new { error = "invalid_code" });
+
+        var pendingJson = await otp.GetAndDeletePendingAsync("reg", body.SessionId);
+        if (pendingJson == null) return BadRequest(new { error = "session_expired" });
+
+        using var doc = System.Text.Json.JsonDocument.Parse(pendingJson);
+        var root = doc.RootElement;
+
+        var email = root.GetProperty("email").GetString()!;
+        var username = root.GetProperty("username").GetString()!;
+        var passwordHash = root.GetProperty("password_hash").GetString()!;
+        var userListId = Guid.Parse(root.GetProperty("user_list_id").GetString()!);
+        var orgId = Guid.Parse(root.GetProperty("org_id").GetString()!);
+        var projId = Guid.Parse(root.GetProperty("project_id").GetString()!);
+        var loginChallenge = root.GetProperty("login_challenge").GetString()!;
+
+        if (await db.Users.AnyAsync(u => u.UserListId == userListId && u.Email == email))
+            return Conflict(new { error = "email_already_exists" });
 
         var discriminator = Random.Shared.Next(1000, 9999).ToString();
         var user = new User
         {
-            UserListId = project.AssignedUserListId!.Value,
-            Username = body.Username ?? body.Email.Split('@')[0],
-            Discriminator = discriminator,
-            Email = body.Email.ToLowerInvariant(),
-            PasswordHash = passwords.Hash(body.Password),
-            Active = true,
-            CreatedAt = DateTimeOffset.UtcNow,
-            UpdatedAt = DateTimeOffset.UtcNow
+            UserListId = userListId, Username = username,
+            Discriminator = discriminator, Email = email,
+            PasswordHash = passwordHash,
+            EmailVerified = true, EmailVerifiedAt = DateTimeOffset.UtcNow,
+            Active = true, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
         };
-
         db.Users.Add(user);
         await db.SaveChangesAsync();
-        await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.registered");
+        await keto.WriteRelationTupleAsync("UserLists", userListId.ToString(), "member", $"user:{user.Id}");
+        await audit.RecordAsync(orgId, projId, user.Id, "user.registered");
 
-        return Created($"/account/me", new { user_id = user.Id, username = $"{user.Username}#{user.Discriminator}" });
+        var subject = $"{orgId}:{user.Id}";
+        var ctx = new Dictionary<string, object>
+        {
+            ["org_id"] = orgId.ToString(),
+            ["project_id"] = projId.ToString(),
+            ["user_id"] = user.Id.ToString()
+        };
+        var redirectUrl = await hydra.AcceptLoginAsync(loginChallenge, subject, ctx);
+        return Ok(new { redirect_to = redirectUrl });
     }
 
     [HttpGet("/auth/verify-email")]
@@ -365,30 +491,53 @@ public class AuthController(
     [HttpPost("/auth/password-reset/request")]
     public async Task<IActionResult> RequestPasswordReset([FromBody] PasswordResetRequestBody body)
     {
-        // Return 200 regardless to prevent email enumeration
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == body.ProjectId && p.Active);
-        if (project?.AssignedUserListId == null)
-            return Ok(new { message = "if_email_exists_reset_sent" });
+        if (project?.AssignedUserListId == null || (!project.EmailVerificationEnabled && !project.SmsVerificationEnabled))
+            return BadRequest(new { error = "verification_not_configured" });
 
         var user = await db.Users.FirstOrDefaultAsync(u =>
             u.UserListId == project.AssignedUserListId && u.Email == body.Email.ToLowerInvariant());
 
         if (user != null)
         {
-            var raw = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw)));
-            db.EmailTokens.Add(new EmailToken
-            {
-                UserId = user.Id,
-                Kind = "reset_password",
-                TokenHash = hash,
-                ExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
-                CreatedAt = DateTimeOffset.UtcNow
-            });
-            await db.SaveChangesAsync();
+            var sessionId = Guid.NewGuid().ToString("N");
+            var code = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
+            await otp.StorePendingAsync("reset", sessionId, user.Id.ToString());
+            await otp.StoreSessionOtpAsync("reset", sessionId, code);
+
+            if (project.EmailVerificationEnabled)
+                await emailService.SendOtpAsync(user.Email, code, "password_reset");
+            else if (project.SmsVerificationEnabled)
+                await smsService.SendOtpAsync(body.Phone ?? user.Email, code, "password_reset");
+
+            return Ok(new { session_id = sessionId });
         }
 
-        return Ok(new { message = "if_email_exists_reset_sent" });
+        // Return 200 without session_id to prevent email enumeration
+        return Ok(new { });
+    }
+
+    [HttpPost("/auth/password-reset/verify")]
+    public async Task<IActionResult> VerifyPasswordReset([FromBody] VerifyOtpRequest body)
+    {
+        if (!await otp.VerifySessionOtpAsync("reset", body.SessionId, body.Code))
+            return Unauthorized(new { error = "invalid_code" });
+
+        var userIdStr = await otp.GetAndDeletePendingAsync("reset", body.SessionId);
+        if (userIdStr == null) return BadRequest(new { error = "session_expired" });
+
+        var raw = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        var hash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw)));
+        db.EmailTokens.Add(new EmailToken
+        {
+            UserId = Guid.Parse(userIdStr),
+            Kind = "reset_password",
+            TokenHash = hash,
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+        await db.SaveChangesAsync();
+        return Ok(new { reset_token = raw });
     }
 
     [HttpPost("/auth/password-reset/confirm")]
@@ -450,6 +599,16 @@ public class AuthController(
         return Ok(new { redirect_to = redirectUrl });
     }
 
+    private User BuildUser(Guid userListId, string email, string? username, string password) => new()
+    {
+        UserListId = userListId,
+        Username = username ?? email.Split('@')[0],
+        Discriminator = Random.Shared.Next(1000, 9999).ToString(),
+        Email = email,
+        PasswordHash = passwords.Hash(password),
+        Active = true, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+    };
+
     private static string? ExtractProjectId(HydraLoginRequest req)
     {
         var extra = req.OidcContext?.Extra;
@@ -467,6 +626,7 @@ public class AuthController(
 public record LoginRequest(string LoginChallenge, string? Email, string? Username, string Password);
 public record TotpVerifyRequest(string Code);
 public record LogoutRequest(string LogoutChallenge);
-public record RegisterRequest(Guid ProjectId, string Email, string Password, string? Username);
-public record PasswordResetRequestBody(Guid ProjectId, string Email);
+public record RegisterRequest(string LoginChallenge, string Email, string Password, string? Username, string? Phone);
+public record VerifyOtpRequest(string SessionId, string Code);
+public record PasswordResetRequestBody(Guid ProjectId, string Email, string? Phone);
 public record PasswordResetConfirmBody(string Token, string NewPassword);

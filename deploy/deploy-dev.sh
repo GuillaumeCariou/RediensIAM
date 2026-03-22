@@ -99,6 +99,7 @@ DEV_FLAGS=""
 kubectl delete job -n "${NAMESPACE}" -l "app.kubernetes.io/instance=rediensiam" 2>/dev/null || true
 
 helm_deploy rediensiam "${CHART}" \
+  -f "${CHART}/values.secret.yaml" \
   --set image.repository="${REGISTRY}/rediensiam" \
   --set image.tag=dev \
   --set image.pullPolicy=Always \

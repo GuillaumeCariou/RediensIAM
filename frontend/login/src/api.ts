@@ -37,11 +37,46 @@ export async function verifyTotp(code: string) {
   return r.json();
 }
 
+export async function registerUser(body: {
+  login_challenge: string;
+  email: string;
+  password: string;
+  username?: string;
+  phone?: string;
+}) {
+  const r = await fetch(`${BASE}/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    credentials: 'include',
+  });
+  return r.json();
+}
+
+export async function verifyRegistrationOtp(sessionId: string, code: string) {
+  const r = await fetch(`${BASE}/auth/register/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId, code }),
+    credentials: 'include',
+  });
+  return r.json();
+}
+
 export async function requestPasswordReset(projectId: string, email: string) {
   const r = await fetch(`${BASE}/auth/password-reset/request`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ project_id: projectId, email }),
+  });
+  return r.json();
+}
+
+export async function verifyPasswordResetOtp(sessionId: string, code: string) {
+  const r = await fetch(`${BASE}/auth/password-reset/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId, code }),
   });
   return r.json();
 }

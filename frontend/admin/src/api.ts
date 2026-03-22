@@ -93,10 +93,10 @@ export async function deleteProject(id: string) {
   return apiFetch(`/org/projects/${id}`, { method: 'DELETE' });
 }
 export async function assignUserList(projectId: string, userListId: string) {
-  return (await apiFetch(`/org/projects/${projectId}/userlist`, { method: 'PUT', body: JSON.stringify({ user_list_id: userListId }) })).json();
+  return (await apiFetch(`/org/projects/${projectId}/assign-userlist`, { method: 'POST', body: JSON.stringify({ user_list_id: userListId }) })).json();
 }
 export async function unassignUserList(projectId: string) {
-  return apiFetch(`/org/projects/${projectId}/userlist`, { method: 'DELETE' });
+  return apiFetch(`/org/projects/${projectId}/assign-userlist`, { method: 'DELETE' });
 }
 
 // ── Project users & roles ─────────────────────────────────────────
@@ -126,7 +126,7 @@ export async function listServiceAccounts() {
   return (await apiFetch('/admin/service-accounts')).json();
 }
 export async function listOrgServiceAccounts(orgId: string) {
-  return (await apiFetch(`/org/service-accounts?org_id=${orgId}`)).json();
+  return (await apiFetch(`/admin/organisations/${orgId}/service-accounts`)).json();
 }
 export async function createServiceAccount(body: { user_list_id: string; name: string; description?: string }) {
   return (await apiFetch('/org/service-accounts', { method: 'POST', body: JSON.stringify(body) })).json();
@@ -169,13 +169,13 @@ export async function deleteHydraClient(id: string) {
 
 // ── Org admin roles ───────────────────────────────────────────────
 export async function listOrgAdmins(orgId: string) {
-  return (await apiFetch(`/org/admins?org_id=${orgId}`)).json();
+  return (await apiFetch(`/admin/organisations/${orgId}/admins`)).json();
 }
 export async function assignOrgAdmin(orgId: string, userId: string, role: string, scopeId?: string) {
-  return (await apiFetch(`/org/admins`, { method: 'POST', body: JSON.stringify({ org_id: orgId, user_id: userId, role, scope_id: scopeId }) })).json();
+  return (await apiFetch(`/admin/organisations/${orgId}/admins`, { method: 'POST', body: JSON.stringify({ user_id: userId, role, scope_id: scopeId }) })).json();
 }
 export async function removeOrgAdmin(orgId: string, roleId: string) {
-  return apiFetch(`/org/admins/${roleId}?org_id=${orgId}`, { method: 'DELETE' });
+  return apiFetch(`/admin/organisations/${orgId}/admins/${roleId}`, { method: 'DELETE' });
 }
 
 // ── Admin-scoped org admin management ────────────────────────────

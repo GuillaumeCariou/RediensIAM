@@ -15,7 +15,8 @@ public class AdminController(
     PasswordService passwords,
     AuditLogService audit,
     PatGenerationService patGen,
-    IConfiguration config) : ControllerBase
+    IConfiguration config,
+    ILogger<AdminController> logger) : ControllerBase
 {
     [HttpGet("/admin/config")]
     public IActionResult GetConfig()
@@ -482,6 +483,10 @@ public class AdminController(
     public async Task<IActionResult> AssignOrgAdmin(Guid id, [FromBody] AssignOrgAdminRequest body)
     {
         if (!IsSuperAdmin) return StatusCode(403);
+        var existing = await db.OrgRoles.FirstOrDefaultAsync(r =>
+            r.OrgId == id && r.UserId == body.UserId && r.Role == body.Role && r.ScopeId == body.ScopeId);
+        if (existing != null)
+            return Ok(new { existing.Id });
         var role = new OrgRole
         {
             OrgId = id, UserId = body.UserId, Role = body.Role,
@@ -564,7 +569,7 @@ public class AdminController(
             project.HydraClientId = $"client_{project.Id}";
             await db.SaveChangesAsync();
         }
-        catch { }
+        catch (Exception ex) { logger.LogWarning(ex, "Hydra client creation failed for project {ProjectId}", project.Id); }
         await keto.WriteRelationTupleAsync("Projects", project.Id.ToString(), "org", $"Organisations:{id}");
         await audit.RecordAsync(id, project.Id, actorId, "project.created", "project", project.Id.ToString());
         return Created($"/admin/projects/{project.Id}", new { project.Id, project.Name, project.Slug });
@@ -578,7 +583,8 @@ public class AdminController(
         if (project == null) return NotFound();
         if (!string.IsNullOrEmpty(project.HydraClientId))
         {
-            try { await hydra.DeleteOAuth2ClientAsync(project.HydraClientId); } catch { /* best-effort */ }
+            try { await hydra.DeleteOAuth2ClientAsync(project.HydraClientId); }
+            catch (Exception ex) { logger.LogWarning(ex, "Hydra client deletion failed for {ClientId}", project.HydraClientId); }
         }
         db.Projects.Remove(project);
         await db.SaveChangesAsync();
@@ -687,11 +693,7 @@ public class AdminController(
     [AllowAnonymousAttribute]
     public IActionResult Health() => Ok(new { status = "healthy" });
 
-    private Guid GetActorId()
-    {
-        var id = Claims?.UserId ?? "";
-        return Guid.TryParse(id.Contains(':') ? id.Split(':')[1] : id, out var g) ? g : Guid.Empty;
-    }
+    private Guid GetActorId() => Claims?.ParsedUserId ?? Guid.Empty;
 }
 
 public record CreateOrgRequest(string Name, string Slug);

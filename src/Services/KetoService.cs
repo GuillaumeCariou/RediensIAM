@@ -42,7 +42,7 @@ public class KetoService(IHttpClientFactory http, IConfiguration config)
 
     public async Task DeleteAllProjectTuplesAsync(string projectId)
     {
-        var url = $"{_writeUrl}/admin/relation-tuples?namespace=projects&object={projectId}";
+        var url = $"{_writeUrl}/admin/relation-tuples?namespace=Projects&object={projectId}";
         await WriteClient.DeleteAsync(url);
     }
 

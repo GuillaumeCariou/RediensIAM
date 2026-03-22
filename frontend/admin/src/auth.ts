@@ -21,7 +21,18 @@ async function getManager(): Promise<UserManager> {
     response_type: 'code',
     userStore: new WebStorageStateStore({ store: sessionStorage }),
   });
+  // Restore access token from stored session (survives page reload)
+  try {
+    const stored = await mgr.getUser();
+    if (stored && !stored.expired) {
+      accessToken = stored.access_token ?? null;
+    }
+  } catch { /* ignore — fresh login will be triggered */ }
   return mgr;
+}
+
+export async function restoreSession(): Promise<void> {
+  await getManager();
 }
 
 export async function startLogin() {
