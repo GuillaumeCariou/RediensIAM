@@ -189,7 +189,7 @@ export default function MfaChallenge() {
             Back to {initialMfaType === 'sms' ? 'SMS code' : initialMfaType === 'webauthn' ? 'passkey' : 'authenticator app'}
           </button>
         )}
-        {initialMfaType === 'webauthn' && mode !== 'webauthn' && (
+        {initialMfaType === 'webauthn' && (
           <button className="link" type="button" onClick={() => switchMode('webauthn')}>Use passkey instead</button>
         )}
       </div>
