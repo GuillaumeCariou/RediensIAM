@@ -66,6 +66,9 @@ export async function addUserToList(listId: string, body: { email: string; usern
 export async function removeUserFromList(listId: string, userId: string) {
   return apiFetch(`/org/userlists/${listId}/users/${userId}`, { method: 'DELETE' });
 }
+export async function cleanupUserList(listId: string, body: { remove_orphaned_roles?: boolean; remove_inactive_users?: boolean; inactive_threshold_days?: number; dry_run?: boolean }) {
+  return (await apiFetch(`/org/userlists/${listId}/cleanup`, { method: 'POST', body: JSON.stringify(body) })).json();
+}
 export async function removeSystemUserFromList(listId: string, userId: string) {
   return apiFetch(`/admin/userlists/${listId}/users/${userId}`, { method: 'DELETE' });
 }
@@ -109,6 +112,9 @@ export async function assignRole(projectId: string, userId: string, roleId: stri
 export async function removeRole(projectId: string, userId: string, roleId: string) {
   return apiFetch(`/project/users/${userId}/roles/${roleId}?project_id=${projectId}`, { method: 'DELETE' });
 }
+export async function forceLogoutProjectUser(projectId: string, userId: string) {
+  return apiFetch(`/project/users/${userId}/sessions?project_id=${projectId}`, { method: 'DELETE' });
+}
 
 // ── Role definitions ──────────────────────────────────────────────
 export async function listRoles(projectId: string) {
@@ -119,6 +125,31 @@ export async function createRole(body: { project_id: string; name: string; descr
 }
 export async function deleteRole(projectId: string, roleId: string) {
   return apiFetch(`/project/roles/${roleId}?project_id=${projectId}`, { method: 'DELETE' });
+}
+
+// ── Org service account detail ────────────────────────────────────
+export async function getOrgServiceAccount(id: string) {
+  return (await apiFetch(`/org/service-accounts/${id}`)).json();
+}
+
+// ── Project service accounts ──────────────────────────────────────
+export async function listProjectServiceAccounts(projectId: string) {
+  return (await apiFetch(`/project/service-accounts?project_id=${projectId}`)).json();
+}
+export async function createProjectServiceAccount(projectId: string, body: { name: string; description?: string }) {
+  return (await apiFetch(`/project/service-accounts?project_id=${projectId}`, { method: 'POST', body: JSON.stringify(body) })).json();
+}
+export async function generateProjectPat(projectId: string, saId: string, body: { name: string; expires_at?: string }) {
+  return (await apiFetch(`/project/service-accounts/${saId}/pat?project_id=${projectId}`, { method: 'POST', body: JSON.stringify(body) })).json();
+}
+export async function listProjectPats(projectId: string, saId: string) {
+  return (await apiFetch(`/project/service-accounts/${saId}/pat?project_id=${projectId}`)).json();
+}
+export async function revokeProjectPat(projectId: string, saId: string, patId: string) {
+  return apiFetch(`/project/service-accounts/${saId}/pat/${patId}?project_id=${projectId}`, { method: 'DELETE' });
+}
+export async function deleteProjectServiceAccount(projectId: string, id: string) {
+  return apiFetch(`/project/service-accounts/${id}?project_id=${projectId}`, { method: 'DELETE' });
 }
 
 // ── Service Accounts ──────────────────────────────────────────────
@@ -145,6 +176,15 @@ export async function revokePat(saId: string, patId: string) {
 }
 
 // ── Account (self) ────────────────────────────────────────────────
+export async function getSessions() {
+  return (await apiFetch('/account/sessions')).json();
+}
+export async function revokeSession(clientId: string) {
+  return apiFetch(`/account/sessions/${encodeURIComponent(clientId)}`, { method: 'DELETE' });
+}
+export async function revokeAllSessions() {
+  return apiFetch('/account/sessions', { method: 'DELETE' });
+}
 export async function getMe() {
   return (await apiFetch('/account/me')).json();
 }
@@ -153,6 +193,15 @@ export async function updateMe(body: { display_name?: string }) {
 }
 export async function changePassword(body: { current_password: string; new_password: string }) {
   return (await apiFetch('/account/change-password', { method: 'POST', body: JSON.stringify(body) })).json();
+}
+export async function setupPhone(phone: string) {
+  return (await apiFetch('/account/phone/setup', { method: 'POST', body: JSON.stringify({ phone }) })).json();
+}
+export async function verifyPhone(code: string) {
+  return (await apiFetch('/account/phone/verify', { method: 'POST', body: JSON.stringify({ code }) })).json();
+}
+export async function removePhone() {
+  return apiFetch('/account/phone', { method: 'DELETE' });
 }
 export async function getMfaStatus() {
   return (await apiFetch('/account/mfa')).json();
@@ -188,6 +237,20 @@ export async function listHydraClients() {
 }
 export async function deleteHydraClient(id: string) {
   return apiFetch(`/admin/hydra/clients/${id}`, { method: 'DELETE' });
+}
+
+// ── Org-list manager (org-scoped) ─────────────────────────────────
+export async function listOrgListManagers() {
+  return (await apiFetch('/org/org-list/users')).json();
+}
+export async function assignOrgListManager(body: { user_id: string; role: string; scope_id?: string }) {
+  return (await apiFetch('/org/org-list/users', { method: 'POST', body: JSON.stringify(body) })).json();
+}
+export async function updateOrgListManager(id: string, body: { role?: string; scope_id?: string }) {
+  return (await apiFetch(`/org/org-list/users/${id}`, { method: 'PATCH', body: JSON.stringify(body) })).json();
+}
+export async function removeOrgListManager(id: string) {
+  return apiFetch(`/org/org-list/users/${id}`, { method: 'DELETE' });
 }
 
 // ── Org admin roles ───────────────────────────────────────────────

@@ -59,7 +59,12 @@ export default function Login() {
         setError('Invalid email or password.');
         return;
       }
-      if (res.requires_mfa) { navigate(`/mfa?login_challenge=${challenge}`); return; }
+      if (res.requires_mfa) {
+        sessionStorage.setItem('mfa_type', res.mfa_type ?? 'totp');
+        if (res.phone_hint) sessionStorage.setItem('mfa_phone_hint', res.phone_hint);
+        navigate(`/mfa?login_challenge=${challenge}`);
+        return;
+      }
       if (res.redirect_to) { window.location.href = res.redirect_to; }
     } catch {
       setError('Something went wrong. Please try again.');

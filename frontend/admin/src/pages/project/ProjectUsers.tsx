@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useProjectContext } from '@/hooks/useOrgContext';
-import { UserPlus, Trash2, CheckCircle, XCircle } from 'lucide-react';
+import { UserPlus, Trash2, CheckCircle, XCircle, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { listProjectUsers, listRoles, assignRole, removeRole } from '@/api';
+import { listProjectUsers, listRoles, assignRole, removeRole, forceLogoutProjectUser } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
 
@@ -62,6 +62,10 @@ export default function ProjectUsers() {
     setUsers(prev => prev.map(u =>
       u.id === userId ? { ...u, roles: u.roles.filter(r => r.id !== roleId) } : u
     ));
+  };
+
+  const handleForceLogout = async (userId: string) => {
+    await forceLogoutProjectUser(projectId, userId);
   };
 
   const availableRoles = (user: ProjectUser) =>
@@ -125,14 +129,24 @@ export default function ProjectUsers() {
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">{fmtDate(user.last_login_at)}</TableCell>
                       <TableCell>
-                        {availableRoles(user).length > 0 && (
+                        <div className="flex items-center gap-1">
+                          {availableRoles(user).length > 0 && (
+                            <Button
+                              size="sm" variant="outline"
+                              onClick={() => { setAssignOpen(user); setSelectedRole(''); }}
+                            >
+                              <UserPlus className="h-3 w-3" />Add Role
+                            </Button>
+                          )}
                           <Button
-                            size="sm" variant="outline"
-                            onClick={() => { setAssignOpen(user); setSelectedRole(''); }}
+                            size="sm" variant="ghost"
+                            className="text-destructive hover:text-destructive"
+                            title="Force logout all sessions"
+                            onClick={() => handleForceLogout(user.id)}
                           >
-                            <UserPlus className="h-3 w-3" />Add Role
+                            <LogOut className="h-3 w-3" />
                           </Button>
-                        )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))

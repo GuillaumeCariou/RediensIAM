@@ -134,4 +134,37 @@ public class HydraAdminService(IHttpClientFactory http, IConfiguration config)
         if (clientId != null) url += $"&client={Uri.EscapeDataString(clientId)}";
         await Client.DeleteAsync(url);
     }
+
+    public async Task<List<HydraConsentSession>> ListConsentSessionsAsync(string subject)
+    {
+        var resp = await Client.GetAsync($"{_adminUrl}/admin/oauth2/auth/sessions/consent?subject={Uri.EscapeDataString(subject)}");
+        if (!resp.IsSuccessStatusCode) return [];
+        return await resp.Content.ReadFromJsonAsync<List<HydraConsentSession>>(_json) ?? [];
+    }
+
+    public async Task RevokeConsentSessionAsync(string subject, string clientId)
+    {
+        await Client.DeleteAsync(
+            $"{_adminUrl}/admin/oauth2/auth/sessions/consent?subject={Uri.EscapeDataString(subject)}&client={Uri.EscapeDataString(clientId)}");
+    }
+
+    public async Task RevokeAllConsentSessionsAsync(string subject)
+    {
+        await Client.DeleteAsync(
+            $"{_adminUrl}/admin/oauth2/auth/sessions/consent?subject={Uri.EscapeDataString(subject)}");
+    }
+}
+
+public class HydraConsentSession
+{
+    [JsonPropertyName("consent_request")] public HydraConsentSessionRequest? ConsentRequest { get; set; }
+    [JsonPropertyName("granted_at")]      public DateTimeOffset? GrantedAt { get; set; }
+    [JsonPropertyName("expires_at")]      public DateTimeOffset? ExpiresAt { get; set; }
+}
+
+public class HydraConsentSessionRequest
+{
+    [JsonPropertyName("client")]       public HydraClient? Client       { get; set; }
+    [JsonPropertyName("requested_at")] public DateTimeOffset? RequestedAt { get; set; }
+    [JsonPropertyName("subject")]      public string Subject { get; set; } = "";
 }

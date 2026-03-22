@@ -212,6 +212,68 @@ public class OrgController(
         return NoContent();
     }
 
+    [HttpPost("/org/userlists/{id}/cleanup")]
+    public async Task<IActionResult> CleanupUserList(Guid id, [FromBody] OrgCleanupRequest body)
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var orgId = Guid.Parse(claims.OrgId);
+        if (!await db.UserLists.AnyAsync(ul => ul.Id == id && ul.OrgId == orgId)) return NotFound();
+
+        var projectIds = await db.Projects
+            .Where(p => p.AssignedUserListId == id)
+            .Select(p => p.Id).ToListAsync();
+
+        var activeUserIds = await db.Users
+            .Where(u => u.UserListId == id && u.Active)
+            .Select(u => u.Id).ToHashSetAsync();
+
+        // Orphaned roles: UserProjectRole rows for users no longer in this list or inactive
+        var allUserIds = await db.Users
+            .Where(u => u.UserListId == id)
+            .Select(u => u.Id).ToHashSetAsync();
+
+        var orphanedRoles = await db.UserProjectRoles
+            .Include(r => r.Role)
+            .Where(r => projectIds.Contains(r.ProjectId) && !allUserIds.Contains(r.UserId))
+            .ToListAsync();
+
+        // Inactive users: haven't logged in for threshold days
+        var inactiveUsers = new List<Entities.User>();
+        if (body.RemoveInactiveUsers)
+        {
+            var cutoff = DateTimeOffset.UtcNow.AddDays(-body.InactiveThresholdDays);
+            inactiveUsers = await db.Users
+                .Where(u => u.UserListId == id && (u.LastLoginAt == null || u.LastLoginAt < cutoff))
+                .ToListAsync();
+        }
+
+        if (!body.DryRun)
+        {
+            if (body.RemoveOrphanedRoles)
+            {
+                db.UserProjectRoles.RemoveRange(orphanedRoles);
+                foreach (var r in orphanedRoles)
+                    await keto.DeleteRelationTupleAsync("Projects", r.ProjectId.ToString(), $"role:{r.Role.Name}", $"user:{r.UserId}");
+            }
+            if (body.RemoveInactiveUsers)
+            {
+                foreach (var u in inactiveUsers)
+                    await keto.DeleteRelationTupleAsync("UserLists", id.ToString(), "member", $"user:{u.Id}");
+                db.Users.RemoveRange(inactiveUsers);
+            }
+            await db.SaveChangesAsync();
+        }
+
+        return Ok(new
+        {
+            dry_run = body.DryRun,
+            orphaned_roles_found = orphanedRoles.Count,
+            orphaned_roles_removed = body.DryRun ? 0 : (body.RemoveOrphanedRoles ? orphanedRoles.Count : 0),
+            inactive_users_found = inactiveUsers.Count,
+            inactive_users_removed = body.DryRun ? 0 : (body.RemoveInactiveUsers ? inactiveUsers.Count : 0),
+        });
+    }
+
     [HttpGet("/org/userlists/{id}/users")]
     public async Task<IActionResult> ListUsersInList(Guid id)
     {
@@ -309,6 +371,23 @@ public class OrgController(
         return Created($"/org/service-accounts/{sa.Id}", new { sa.Id, sa.Name });
     }
 
+    [HttpGet("/org/service-accounts/{id}")]
+    public async Task<IActionResult> GetServiceAccount(Guid id)
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var orgId = Guid.Parse(claims.OrgId);
+        var sa = await db.ServiceAccounts
+            .Include(sa => sa.PersonalAccessTokens)
+            .Include(sa => sa.UserList)
+            .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == orgId);
+        if (sa == null) return NotFound();
+        return Ok(new
+        {
+            sa.Id, sa.Name, sa.Description, sa.Active, sa.LastUsedAt, sa.CreatedAt,
+            pats = sa.PersonalAccessTokens.Select(p => new { p.Id, p.Name, p.ExpiresAt, p.LastUsedAt, p.CreatedAt })
+        });
+    }
+
     [HttpDelete("/org/service-accounts/{id}")]
     public async Task<IActionResult> DeleteServiceAccount(Guid id)
     {
@@ -364,6 +443,83 @@ public class OrgController(
         return NoContent();
     }
 
+    // ── Org-list managers ─────────────────────────────────────────────────────
+
+    [HttpGet("/org/org-list/users")]
+    public async Task<IActionResult> ListOrgListManagers()
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var orgId = Guid.TryParse(claims.OrgId, out var oid) ? oid : Guid.Empty;
+        var roles = await db.OrgRoles
+            .Where(r => r.OrgId == orgId)
+            .Include(r => r.User)
+            .ToListAsync();
+        var projectIds = roles.Where(r => r.ScopeId.HasValue).Select(r => r.ScopeId!.Value).Distinct().ToList();
+        var projects = await db.Projects
+            .Where(p => projectIds.Contains(p.Id))
+            .ToDictionaryAsync(p => p.Id);
+        return Ok(roles.Select(r => new
+        {
+            r.Id, r.OrgId, r.UserId, r.Role, r.ScopeId, r.GrantedAt,
+            user_name = $"{r.User.Username}#{r.User.Discriminator}",
+            user_email = r.User.Email,
+            scope_name = r.ScopeId.HasValue && projects.TryGetValue(r.ScopeId.Value, out var p) ? p.Name : null
+        }));
+    }
+
+    [HttpPost("/org/org-list/users")]
+    public async Task<IActionResult> AssignOrgListManager([FromBody] OrgAssignManagerRequest body)
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var orgId = Guid.TryParse(claims.OrgId, out var oid) ? oid : Guid.Empty;
+        // Cannot grant super_admin via this endpoint
+        if (body.Role == "super_admin") return StatusCode(403, new { error = "cannot_grant_super_admin" });
+        var existing = await db.OrgRoles.FirstOrDefaultAsync(r =>
+            r.OrgId == orgId && r.UserId == body.UserId && r.Role == body.Role && r.ScopeId == body.ScopeId);
+        if (existing != null) return Ok(new { existing.Id });
+        var role = new OrgRole
+        {
+            OrgId = orgId, UserId = body.UserId, Role = body.Role,
+            ScopeId = body.ScopeId, GrantedBy = ActorId, GrantedAt = DateTimeOffset.UtcNow
+        };
+        db.OrgRoles.Add(role);
+        await db.SaveChangesAsync();
+        return Created($"/org/org-list/users/{role.Id}", new { role.Id });
+    }
+
+    [HttpPatch("/org/org-list/users/{id}")]
+    public async Task<IActionResult> UpdateOrgListManager(Guid id, [FromBody] OrgUpdateManagerRequest body)
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var orgId = Guid.TryParse(claims.OrgId, out var oid) ? oid : Guid.Empty;
+        var role = await db.OrgRoles.FirstOrDefaultAsync(r => r.Id == id && r.OrgId == orgId);
+        if (role == null) return NotFound();
+        // Prevent self-demotion
+        if (role.UserId == ActorId) return StatusCode(403, new { error = "cannot_modify_own_role" });
+        if (body.Role != null)
+        {
+            if (body.Role == "super_admin") return StatusCode(403, new { error = "cannot_grant_super_admin" });
+            role.Role = body.Role;
+        }
+        if (body.ScopeId != null) role.ScopeId = body.ScopeId;
+        await db.SaveChangesAsync();
+        return Ok(new { role.Id, role.Role, role.ScopeId });
+    }
+
+    [HttpDelete("/org/org-list/users/{id}")]
+    public async Task<IActionResult> RemoveOrgListManager(Guid id)
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var orgId = Guid.TryParse(claims.OrgId, out var oid) ? oid : Guid.Empty;
+        var role = await db.OrgRoles.FirstOrDefaultAsync(r => r.Id == id && r.OrgId == orgId);
+        if (role == null) return NotFound();
+        // Prevent self-removal
+        if (role.UserId == ActorId) return StatusCode(403, new { error = "cannot_remove_own_role" });
+        db.OrgRoles.Remove(role);
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+
     [HttpGet("/org/audit-log")]
     public async Task<IActionResult> GetAuditLog([FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
@@ -389,4 +545,7 @@ public record CreateUserListRequest(string Name);
 public record CreateUserRequest(string Email, string Password, string? Username);
 public record UpdateUserRequest(string? DisplayName, bool? Active);
 public record OrgCreateSaRequest(string Name, string? Description, Guid UserListId);
+public record OrgCleanupRequest(bool RemoveOrphanedRoles = true, bool RemoveInactiveUsers = false, int InactiveThresholdDays = 90, bool DryRun = true);
 public record OrgGeneratePatRequest(string Name, DateTimeOffset? ExpiresAt);
+public record OrgAssignManagerRequest(Guid UserId, string Role, Guid? ScopeId);
+public record OrgUpdateManagerRequest(string? Role, Guid? ScopeId);

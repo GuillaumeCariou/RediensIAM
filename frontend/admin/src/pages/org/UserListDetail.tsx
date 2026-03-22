@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, UserPlus, Trash2 } from 'lucide-react';
+import { ArrowLeft, UserPlus, Trash2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,7 +9,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getUserList, listUserListMembers, addUserToList, removeUserFromList } from '@/api';
+import { getUserList, listUserListMembers, addUserToList, removeUserFromList, cleanupUserList } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
 
@@ -27,10 +27,16 @@ export default function OrgUserListDetail() {
   const [list, setList] = useState<UserList | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
-  const [addOpen, setAddOpen] = useState(false);
+  const [addOpen, setAddOpen]           = useState(false);
   const [removeTarget, setRemoveTarget] = useState<Member | null>(null);
-  const [form, setForm] = useState({ email: '', username: '', password: '' });
-  const [saving, setSaving] = useState(false);
+  const [form, setForm]                 = useState({ email: '', username: '', password: '' });
+  const [saving, setSaving]             = useState(false);
+  const [cleanupOpen, setCleanupOpen]   = useState(false);
+  const [cleanupDryRun, setCleanupDryRun]       = useState(true);
+  const [cleanupInactive, setCleanupInactive]   = useState(false);
+  const [cleanupDays, setCleanupDays]           = useState(90);
+  const [cleanupRunning, setCleanupRunning]     = useState(false);
+  const [cleanupResult, setCleanupResult]       = useState<{ orphaned_roles_found: number; inactive_users_found: number; orphaned_roles_removed: number; inactive_users_removed: number; dry_run: boolean } | null>(null);
 
   const loadMembers = async () => {
     if (!id) return;
@@ -65,6 +71,22 @@ export default function OrgUserListDetail() {
     setMembers(m => m.filter(u => u.id !== removeTarget.id));
   };
 
+  const handleCleanup = async () => {
+    if (!id) return;
+    setCleanupRunning(true);
+    setCleanupResult(null);
+    try {
+      const res = await cleanupUserList(id, {
+        remove_orphaned_roles: true,
+        remove_inactive_users: cleanupInactive,
+        inactive_threshold_days: cleanupDays,
+        dry_run: cleanupDryRun,
+      });
+      setCleanupResult(res);
+      if (!cleanupDryRun) await loadMembers();
+    } finally { setCleanupRunning(false); }
+  };
+
   return (
     <div>
       <PageHeader
@@ -75,6 +97,7 @@ export default function OrgUserListDetail() {
               ? <Badge variant="secondary">Immovable</Badge>
               : <Badge variant="outline">Movable</Badge>
             )}
+            <Button variant="outline" onClick={() => { setCleanupResult(null); setCleanupOpen(true); }}><Sparkles className="h-4 w-4" />Cleanup</Button>
             <Button onClick={() => setAddOpen(true)}><UserPlus className="h-4 w-4" />Add User</Button>
           </div>
         }
@@ -148,6 +171,40 @@ export default function OrgUserListDetail() {
               <Button type="submit" disabled={saving}>{saving ? 'Adding…' : 'Add User'}</Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={cleanupOpen} onOpenChange={v => { setCleanupOpen(v); if (!v) setCleanupResult(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cleanup User List</DialogTitle>
+            <DialogDescription>Remove orphaned role assignments and optionally purge inactive users.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={cleanupInactive} onChange={e => setCleanupInactive(e.target.checked)} />
+              Remove users inactive for more than
+              <input type="number" min={1} max={3650} value={cleanupDays} onChange={e => setCleanupDays(Number(e.target.value))} className="w-16 border rounded px-2 py-0.5 text-sm" />
+              days
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={cleanupDryRun} onChange={e => setCleanupDryRun(e.target.checked)} />
+              Dry run (preview only, no deletions)
+            </label>
+            {cleanupResult && (
+              <div className="rounded-lg border bg-muted p-3 text-sm space-y-1">
+                {cleanupResult.dry_run && <p className="font-medium text-muted-foreground">Preview (dry run):</p>}
+                <p>Orphaned role assignments: <strong>{cleanupResult.orphaned_roles_found}</strong>{!cleanupResult.dry_run && ` (${cleanupResult.orphaned_roles_removed} removed)`}</p>
+                {cleanupInactive && <p>Inactive users: <strong>{cleanupResult.inactive_users_found}</strong>{!cleanupResult.dry_run && ` (${cleanupResult.inactive_users_removed} removed)`}</p>}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setCleanupOpen(false)}>Close</Button>
+            <Button type="button" disabled={cleanupRunning} onClick={handleCleanup}>
+              {cleanupRunning ? 'Running…' : cleanupDryRun ? 'Preview' : 'Run Cleanup'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

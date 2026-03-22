@@ -12,7 +12,8 @@ public class ProjectController(
     RediensIamDbContext db,
     RoleAssignmentService roleService,
     PatGenerationService patGen,
-    KetoService keto) : ControllerBase
+    KetoService keto,
+    HydraAdminService hydra) : ControllerBase
 {
     private TokenClaims Claims => HttpContext.GetClaims()!;
     private Guid OrgId => Guid.Parse(Claims.OrgId);
@@ -81,6 +82,21 @@ public class ProjectController(
         }
         catch (Exceptions.ForbiddenException ex) { return StatusCode(403, new { error = ex.Message }); }
         catch (Exceptions.NotFoundException ex) { return NotFound(new { error = ex.Message }); }
+    }
+
+    // ── Force logout ──────────────────────────────────────────────────────────
+
+    [HttpDelete("/project/users/{id}/sessions")]
+    public async Task<IActionResult> ForceLogoutUser(Guid id)
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var projectId = Guid.Parse(claims.ProjectId);
+        var project = await db.Projects.FindAsync(projectId);
+        if (project == null) return NotFound();
+        // Subject in Hydra is "{org_id}:{user_id}" for project users
+        var subject = $"{project.OrgId}:{id}";
+        await hydra.RevokeAllConsentSessionsAsync(subject);
+        return Ok(new { message = "sessions_revoked" });
     }
 
     // ── Roles ─────────────────────────────────────────────────────────────────

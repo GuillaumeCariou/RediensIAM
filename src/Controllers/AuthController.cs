@@ -176,6 +176,21 @@ public class AuthController(
             return Ok(new { requires_mfa = true, mfa_type = "totp" });
         }
 
+        if (user.PhoneVerified && !string.IsNullOrEmpty(user.Phone))
+        {
+            HttpContext.Session.SetString("mfa_pending_user", user.Id.ToString());
+            HttpContext.Session.SetString("mfa_pending_challenge", body.LoginChallenge);
+            HttpContext.Session.SetString("mfa_pending_project", projectId);
+            var smsCode = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
+            await otp.StoreSessionOtpAsync("sms_mfa", user.Id.ToString(), smsCode);
+            await smsService.SendOtpAsync(user.Phone, smsCode, "login");
+            // Return masked phone for UI display
+            var masked = user.Phone.Length > 4
+                ? new string('*', user.Phone.Length - 4) + user.Phone[^4..]
+                : "****";
+            return Ok(new { requires_mfa = true, mfa_type = "sms", phone_hint = masked });
+        }
+
         user.FailedLoginCount = 0;
         user.LastLoginAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
@@ -191,6 +206,91 @@ public class AuthController(
 
         var redirectUrl = await hydra.AcceptLoginAsync(body.LoginChallenge, subject, context);
         await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login");
+        return Ok(new { redirect_to = redirectUrl });
+    }
+
+    [HttpPost("/auth/mfa/backup-codes/verify")]
+    public async Task<IActionResult> VerifyBackupCode([FromBody] BackupCodeVerifyRequest body)
+    {
+        var userId    = HttpContext.Session.GetString("mfa_pending_user");
+        var challenge = HttpContext.Session.GetString("mfa_pending_challenge");
+        var projectId = HttpContext.Session.GetString("mfa_pending_project");
+
+        if (userId == null || challenge == null || projectId == null)
+            return BadRequest(new { error = "no_mfa_session" });
+
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(body.Code.ToUpperInvariant())));
+
+        var code = await db.BackupCodes.FirstOrDefaultAsync(c =>
+            c.UserId == Guid.Parse(userId) && c.CodeHash == hash && c.UsedAt == null);
+        if (code == null) return Unauthorized(new { error = "invalid_code" });
+
+        code.UsedAt = DateTimeOffset.UtcNow;
+        var user = await db.Users.FindAsync(Guid.Parse(userId));
+        user!.LastLoginAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+
+        HttpContext.Session.Remove("mfa_pending_user");
+        HttpContext.Session.Remove("mfa_pending_challenge");
+        HttpContext.Session.Remove("mfa_pending_project");
+
+        var project = await db.Projects.FindAsync(Guid.Parse(projectId));
+        var subject = $"{project!.OrgId}:{user.Id}";
+        var context = new Dictionary<string, object>
+        {
+            ["org_id"]     = project.OrgId.ToString(),
+            ["project_id"] = projectId,
+            ["user_id"]    = user.Id.ToString()
+        };
+        var redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, context);
+        await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.backup_code");
+        return Ok(new { redirect_to = redirectUrl });
+    }
+
+    [HttpPost("/auth/mfa/phone/send")]
+    public async Task<IActionResult> SendSmsOtp()
+    {
+        var userId = HttpContext.Session.GetString("mfa_pending_user");
+        if (userId == null) return BadRequest(new { error = "no_mfa_session" });
+        var user = await db.Users.FindAsync(Guid.Parse(userId));
+        if (user == null || !user.PhoneVerified || string.IsNullOrEmpty(user.Phone))
+            return BadRequest(new { error = "phone_not_configured" });
+        var smsCode = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
+        await otp.StoreSessionOtpAsync("sms_mfa", userId, smsCode);
+        await smsService.SendOtpAsync(user.Phone, smsCode, "login");
+        return Ok(new { sent = true });
+    }
+
+    [HttpPost("/auth/mfa/phone/verify")]
+    public async Task<IActionResult> VerifySmsOtp([FromBody] SmsOtpVerifyRequest body)
+    {
+        var userId    = HttpContext.Session.GetString("mfa_pending_user");
+        var challenge = HttpContext.Session.GetString("mfa_pending_challenge");
+        var projectId = HttpContext.Session.GetString("mfa_pending_project");
+        if (userId == null || challenge == null || projectId == null)
+            return BadRequest(new { error = "no_mfa_session" });
+
+        if (!await otp.VerifySessionOtpAsync("sms_mfa", userId, body.Code))
+            return Unauthorized(new { error = "invalid_code" });
+
+        var user = await db.Users.FindAsync(Guid.Parse(userId));
+        if (user == null) return NotFound();
+        user.LastLoginAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+
+        HttpContext.Session.Remove("mfa_pending_user");
+        HttpContext.Session.Remove("mfa_pending_challenge");
+        HttpContext.Session.Remove("mfa_pending_project");
+
+        var project = await db.Projects.FindAsync(Guid.Parse(projectId));
+        var subject = $"{project!.OrgId}:{user.Id}";
+        var context = new Dictionary<string, object>
+        {
+            ["org_id"] = project.OrgId.ToString(), ["project_id"] = projectId, ["user_id"] = user.Id.ToString()
+        };
+        var redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, context);
+        await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.sms");
         return Ok(new { redirect_to = redirectUrl });
     }
 
@@ -623,8 +723,10 @@ public class AuthController(
     }
 }
 
+public record BackupCodeVerifyRequest(string Code);
 public record LoginRequest(string LoginChallenge, string? Email, string? Username, string Password);
 public record TotpVerifyRequest(string Code);
+public record SmsOtpVerifyRequest(string Code);
 public record LogoutRequest(string LogoutChallenge);
 public record RegisterRequest(string LoginChallenge, string Email, string Password, string? Username, string? Phone);
 public record VerifyOtpRequest(string SessionId, string Code);

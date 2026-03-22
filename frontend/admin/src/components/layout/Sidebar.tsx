@@ -40,10 +40,11 @@ const orgNav: NavItem[] = [
 ];
 
 const projectNav: NavItem[] = [
-  { label: 'Overview',    to: '/project',        icon: <LayoutDashboard className="h-4 w-4" />, exact: true },
-  { label: 'Users',       to: '/project/users',  icon: <Users className="h-4 w-4" /> },
-  { label: 'Roles',       to: '/project/roles',  icon: <Shield className="h-4 w-4" /> },
-  { label: 'Login Theme', to: '/project/theme',  icon: <Palette className="h-4 w-4" /> },
+  { label: 'Overview',         to: '/project',                   icon: <LayoutDashboard className="h-4 w-4" />, exact: true },
+  { label: 'Users',            to: '/project/users',             icon: <Users className="h-4 w-4" /> },
+  { label: 'Roles',            to: '/project/roles',             icon: <Shield className="h-4 w-4" /> },
+  { label: 'Service Accounts', to: '/project/service-accounts',  icon: <Bot className="h-4 w-4" /> },
+  { label: 'Login Theme',      to: '/project/theme',             icon: <Palette className="h-4 w-4" /> },
 ];
 
 const themeOptions: { value: Theme; icon: React.ReactNode; label: string }[] = [
@@ -101,10 +102,11 @@ export default function Sidebar() {
   ] : [];
 
   const sysProjNav: NavItem[] = sysProjBase ? [
-    { label: 'Overview',    to: sysProjBase,               icon: <LayoutDashboard className="h-4 w-4" />, exact: true },
-    { label: 'Users',       to: `${sysProjBase}/users`,    icon: <Users           className="h-4 w-4" /> },
-    { label: 'Roles',       to: `${sysProjBase}/roles`,    icon: <Shield          className="h-4 w-4" /> },
-    { label: 'Login Theme', to: `${sysProjBase}/theme`,    icon: <Palette         className="h-4 w-4" /> },
+    { label: 'Overview',         to: sysProjBase,                            icon: <LayoutDashboard className="h-4 w-4" />, exact: true },
+    { label: 'Users',            to: `${sysProjBase}/users`,                 icon: <Users           className="h-4 w-4" /> },
+    { label: 'Roles',            to: `${sysProjBase}/roles`,                 icon: <Shield          className="h-4 w-4" /> },
+    { label: 'Service Accounts', to: `${sysProjBase}/service-accounts`,      icon: <Bot             className="h-4 w-4" /> },
+    { label: 'Login Theme',      to: `${sysProjBase}/theme`,                 icon: <Palette         className="h-4 w-4" /> },
   ] : [];
 
   // ── Which nav lists to render ─────────────────────────────────

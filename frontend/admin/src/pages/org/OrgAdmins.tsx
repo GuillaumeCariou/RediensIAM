@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { listOrgAdmins, assignOrgAdmin, removeOrgAdmin, listProjects } from '@/api';
+import { listOrgAdmins, assignOrgAdmin, removeOrgAdmin, listProjects, listOrgListManagers, assignOrgListManager, removeOrgListManager } from '@/api';
 import { useOrgContext } from '@/hooks/useOrgContext';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
@@ -27,7 +27,7 @@ interface OrgRole {
 interface Project { id: string; name: string; }
 
 export default function OrgAdmins() {
-  const { orgId } = useOrgContext();
+  const { orgId, isSystemCtx } = useOrgContext();
   const [admins, setAdmins] = useState<OrgRole[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,18 +39,25 @@ export default function OrgAdmins() {
   const load = () => {
     if (!orgId) { setLoading(false); return; }
     setLoading(true);
+    const adminsPromise = isSystemCtx
+      ? listOrgAdmins(orgId).then(r => r.admins ?? r ?? [])
+      : listOrgListManagers().then(r => r.admins ?? r ?? []);
     Promise.all([
-      listOrgAdmins(orgId).then(r => setAdmins(r.admins ?? r ?? [])),
+      adminsPromise.then(setAdmins),
       listProjects(orgId).then(r => setProjects(r.projects ?? r ?? [])),
     ]).catch(console.error).finally(() => setLoading(false));
   };
-  useEffect(load, [orgId]);
+  useEffect(load, [orgId, isSystemCtx]);
 
   const handleAssign = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     try {
-      await assignOrgAdmin(orgId, form.user_id, form.role, form.scope_id || undefined);
+      if (isSystemCtx) {
+        await assignOrgAdmin(orgId, form.user_id, form.role, form.scope_id || undefined);
+      } else {
+        await assignOrgListManager({ user_id: form.user_id, role: form.role, scope_id: form.scope_id || undefined });
+      }
       setAssignOpen(false);
       setForm({ user_id: '', role: 'org_admin', scope_id: '' });
       load();
@@ -59,7 +66,11 @@ export default function OrgAdmins() {
 
   const handleRemove = async () => {
     if (!deleteTarget) return;
-    await removeOrgAdmin(orgId, deleteTarget.id);
+    if (isSystemCtx) {
+      await removeOrgAdmin(orgId, deleteTarget.id);
+    } else {
+      await removeOrgListManager(deleteTarget.id);
+    }
     setDeleteTarget(null);
     load();
   };

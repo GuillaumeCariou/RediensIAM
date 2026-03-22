@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { User, Shield, Key, Copy, Check, RefreshCw, Eye, EyeOff } from 'lucide-react';
+import { User, Shield, Key, Copy, Check, RefreshCw, Eye, EyeOff, MonitorSmartphone, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,15 +10,16 @@ import { Alert } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { getMe, updateMe, changePassword, getMfaStatus, setupTotp, confirmTotp, regenerateBackupCodes } from '@/api';
+import { getMe, updateMe, changePassword, getMfaStatus, setupTotp, confirmTotp, regenerateBackupCodes, getSessions, revokeSession, revokeAllSessions, setupPhone, verifyPhone, removePhone } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
+import { fmtDate } from '@/lib/utils';
 
 interface Me {
   id: string; username: string; discriminator: string; email: string;
   display_name: string | null; email_verified: boolean; totp_enabled: boolean;
   last_login_at: string | null; roles: string[]; org_id: string; project_id: string;
 }
-interface MfaStatus { totp_enabled: boolean; backup_codes_remaining: number; }
+interface MfaStatus { totp_enabled: boolean; backup_codes_remaining: number; phone_verified: boolean; }
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -198,6 +199,14 @@ function MfaTab() {
   const [regenOpen, setRegenOpen] = useState(false);
   const [regenCodes, setRegenCodes] = useState<string[]>([]);
 
+  // Phone / SMS MFA setup
+  const [phoneInput, setPhoneInput] = useState('');
+  const [phoneOtp, setPhoneOtp]     = useState('');
+  const [phoneSending, setPhoneSending] = useState(false);
+  const [phoneCodeSent, setPhoneCodeSent] = useState(false);
+  const [phoneError, setPhoneError] = useState('');
+  const [phoneSuccess, setPhoneSuccess] = useState(false);
+
   const load = () => {
     setLoading(true);
     getMfaStatus().then(setStatus).catch(console.error).finally(() => setLoading(false));
@@ -228,6 +237,38 @@ function MfaTab() {
     const res = await regenerateBackupCodes();
     setRegenCodes(res.backup_codes ?? []);
     setRegenOpen(false);
+    load();
+  };
+
+  const handlePhoneSend = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPhoneError('');
+    setPhoneSending(true);
+    try {
+      await setupPhone(phoneInput);
+      setPhoneCodeSent(true);
+    } catch { setPhoneError('Failed to send code.'); }
+    finally { setPhoneSending(false); }
+  };
+
+  const handlePhoneVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPhoneError('');
+    setPhoneSending(true);
+    try {
+      const res = await verifyPhone(phoneOtp);
+      if (res.error) { setPhoneError('Invalid code. Try again.'); return; }
+      setPhoneSuccess(true);
+      setPhoneCodeSent(false);
+      setPhoneInput('');
+      setPhoneOtp('');
+      load();
+    } catch { setPhoneError('Failed to verify code.'); }
+    finally { setPhoneSending(false); }
+  };
+
+  const handleRemovePhone = async () => {
+    await removePhone();
     load();
   };
 
@@ -332,6 +373,60 @@ function MfaTab() {
         </Card>
       )}
 
+      {/* Phone / SMS MFA */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-base">SMS Authentication</CardTitle>
+              <CardDescription>Use your phone number as a second factor at login.</CardDescription>
+            </div>
+            {status?.phone_verified
+              ? <Badge variant="success">Verified</Badge>
+              : <Badge variant="secondary">Not set</Badge>
+            }
+          </div>
+        </CardHeader>
+        <CardContent>
+          {status?.phone_verified ? (
+            <div className="flex items-center gap-3">
+              <p className="text-sm text-muted-foreground">Phone number verified and active.</p>
+              <Button variant="outline" size="sm" onClick={handleRemovePhone}>Remove</Button>
+            </div>
+          ) : !phoneCodeSent ? (
+            <form onSubmit={handlePhoneSend} className="flex gap-2 items-end max-w-sm">
+              <div className="flex-1 space-y-2">
+                <Label>Phone number</Label>
+                <Input
+                  type="tel" placeholder="+1234567890"
+                  value={phoneInput} onChange={e => setPhoneInput(e.target.value)} required
+                />
+              </div>
+              <Button type="submit" disabled={phoneSending}>{phoneSending ? 'Sending…' : 'Send code'}</Button>
+            </form>
+          ) : (
+            <form onSubmit={handlePhoneVerify} className="space-y-3 max-w-sm">
+              <p className="text-sm text-muted-foreground">Enter the 6-digit code sent to {phoneInput}.</p>
+              <div className="flex gap-2 items-center">
+                <Input
+                  value={phoneOtp} onChange={e => setPhoneOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="000000" maxLength={6} className="font-mono w-32 text-center text-lg tracking-widest"
+                  required
+                />
+                <Button type="submit" disabled={phoneSending || phoneOtp.length !== 6}>
+                  {phoneSending ? 'Verifying…' : 'Verify'}
+                </Button>
+                <Button type="button" variant="outline" onClick={() => { setPhoneCodeSent(false); setPhoneOtp(''); }}>
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          )}
+          {phoneError && <p className="text-sm text-destructive mt-2">{phoneError}</p>}
+          {phoneSuccess && <p className="text-sm text-green-600 mt-2">Phone number verified successfully.</p>}
+        </CardContent>
+      </Card>
+
       <AlertDialog open={regenOpen} onOpenChange={setRegenOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -341,6 +436,110 @@ function MfaTab() {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleRegen}>Regenerate</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+// ── Sessions tab ──────────────────────────────────────────────────
+interface Session {
+  client_id: string | null;
+  client_name: string | null;
+  granted_at: string | null;
+  expires_at: string | null;
+}
+
+function SessionsTab() {
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [revoking, setRevoking] = useState<string | null>(null);
+  const [revokeAllOpen, setRevokeAllOpen] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    getSessions().then(setSessions).catch(console.error).finally(() => setLoading(false));
+  };
+  useEffect(load, []);
+
+  const handleRevoke = async (clientId: string) => {
+    setRevoking(clientId);
+    try {
+      await revokeSession(clientId);
+      setSessions(s => s.filter(x => x.client_id !== clientId));
+    } finally { setRevoking(null); }
+  };
+
+  const handleRevokeAll = async () => {
+    await revokeAllSessions();
+    setRevokeAllOpen(false);
+    setSessions([]);
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-base">Active Sessions</CardTitle>
+              <CardDescription>OAuth2 applications you have granted access to.</CardDescription>
+            </div>
+            {sessions.length > 0 && (
+              <Button variant="destructive" size="sm" onClick={() => setRevokeAllOpen(true)}>
+                <LogOut className="h-4 w-4" />Revoke All
+              </Button>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12 rounded-lg" />)}</div>
+          ) : sessions.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">No active sessions.</p>
+          ) : (
+            <div className="space-y-2">
+              {sessions.map(s => (
+                <div key={s.client_id ?? Math.random()} className="flex items-center justify-between rounded-lg border px-4 py-3">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-2">
+                      <MonitorSmartphone className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm font-medium">{s.client_name ?? s.client_id ?? 'Unknown client'}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Granted {fmtDate(s.granted_at)}
+                      {s.expires_at && ` · Expires ${fmtDate(s.expires_at)}`}
+                    </p>
+                  </div>
+                  {s.client_id && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive hover:text-destructive"
+                      disabled={revoking === s.client_id}
+                      onClick={() => handleRevoke(s.client_id!)}
+                    >
+                      <LogOut className="h-4 w-4" />
+                      {revoking === s.client_id ? 'Revoking…' : 'Revoke'}
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <AlertDialog open={revokeAllOpen} onOpenChange={setRevokeAllOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revoke all sessions?</AlertDialogTitle>
+            <AlertDialogDescription>All applications will be signed out. You may be asked to log in again.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleRevokeAll} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Revoke All</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -384,10 +583,12 @@ export default function AccountPage() {
               <TabsTrigger value="profile"><User className="h-4 w-4" />Profile</TabsTrigger>
               <TabsTrigger value="security"><Key className="h-4 w-4" />Security</TabsTrigger>
               <TabsTrigger value="mfa"><Shield className="h-4 w-4" />MFA</TabsTrigger>
+              <TabsTrigger value="sessions"><MonitorSmartphone className="h-4 w-4" />Sessions</TabsTrigger>
             </TabsList>
             <TabsContent value="profile"><ProfileTab me={me} onUpdated={load} /></TabsContent>
             <TabsContent value="security"><SecurityTab /></TabsContent>
             <TabsContent value="mfa"><MfaTab /></TabsContent>
+            <TabsContent value="sessions"><SessionsTab /></TabsContent>
           </Tabs>
         )}
       </div>

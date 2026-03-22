@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using OtpNet;
@@ -12,7 +13,10 @@ public class AccountController(
     RediensIamDbContext db,
     PasswordService passwords,
     TotpEncryptionService totpEncryption,
-    AuditLogService audit) : ControllerBase
+    AuditLogService audit,
+    HydraAdminService hydra,
+    ISmsService smsService,
+    OtpCacheService otpCache) : ControllerBase
 {
     private TokenClaims Claims => HttpContext.GetClaims()!;
 
@@ -138,6 +142,92 @@ public class AccountController(
         return Ok(new { backup_codes = codes.Select(c => c.code).ToList() });
     }
 
+    // ── Sessions ──────────────────────────────────────────────────────────────
+
+    [HttpGet("/account/sessions")]
+    public async Task<IActionResult> GetSessions()
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        // Subject format: "{org_id}:{user_id}" for project users, "{user_id}" for admin users
+        var subject = string.IsNullOrEmpty(claims.OrgId)
+            ? claims.UserId
+            : $"{claims.OrgId}:{claims.ParsedUserId}";
+        var sessions = await hydra.ListConsentSessionsAsync(subject);
+        return Ok(sessions.Select(s => new
+        {
+            client_id   = s.ConsentRequest?.Client?.ClientId,
+            client_name = s.ConsentRequest?.Client?.ClientName,
+            granted_at  = s.GrantedAt,
+            expires_at  = s.ExpiresAt,
+        }));
+    }
+
+    [HttpDelete("/account/sessions")]
+    public async Task<IActionResult> RevokeAllSessions()
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var subject = string.IsNullOrEmpty(claims.OrgId)
+            ? claims.UserId
+            : $"{claims.OrgId}:{claims.ParsedUserId}";
+        await hydra.RevokeAllConsentSessionsAsync(subject);
+        return Ok(new { message = "all_sessions_revoked" });
+    }
+
+    [HttpDelete("/account/sessions/{clientId}")]
+    public async Task<IActionResult> RevokeSession(string clientId)
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var subject = string.IsNullOrEmpty(claims.OrgId)
+            ? claims.UserId
+            : $"{claims.OrgId}:{claims.ParsedUserId}";
+        await hydra.RevokeConsentSessionAsync(subject, clientId);
+        return Ok(new { message = "session_revoked" });
+    }
+
+    // ── Phone / SMS MFA setup ─────────────────────────────────────────────────
+
+    [HttpPost("/account/phone/setup")]
+    public async Task<IActionResult> SetupPhone([FromBody] PhoneSetupRequest body)
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var code = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
+        HttpContext.Session.SetString("phone_setup_number", body.Phone);
+        await otpCache.StoreSessionOtpAsync("phone_setup", claims.UserId, code);
+        await smsService.SendOtpAsync(body.Phone, code, "phone_setup");
+        return Ok(new { sent = true });
+    }
+
+    [HttpPost("/account/phone/verify")]
+    public async Task<IActionResult> VerifyPhone([FromBody] PhoneVerifyRequest body)
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var phone = HttpContext.Session.GetString("phone_setup_number");
+        if (phone == null) return BadRequest(new { error = "no_setup_session" });
+        if (!await otpCache.VerifySessionOtpAsync("phone_setup", claims.UserId, body.Code))
+            return BadRequest(new { error = "invalid_code" });
+        var user = await db.Users.FindAsync(claims.ParsedUserId);
+        if (user == null) return NotFound();
+        user.Phone = phone;
+        user.PhoneVerified = true;
+        user.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        HttpContext.Session.Remove("phone_setup_number");
+        return Ok(new { message = "phone_verified" });
+    }
+
+    [HttpDelete("/account/phone")]
+    public async Task<IActionResult> RemovePhone()
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var user = await db.Users.FindAsync(claims.ParsedUserId);
+        if (user == null) return NotFound();
+        user.Phone = null;
+        user.PhoneVerified = false;
+        user.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        return Ok(new { message = "phone_removed" });
+    }
+
     [HttpGet("/account/mfa")]
     public async Task<IActionResult> GetMfaStatus()
     {
@@ -146,10 +236,12 @@ public class AccountController(
         var user = await db.Users.FindAsync(userId);
         if (user == null) return NotFound();
         var backupCount = await db.BackupCodes.CountAsync(c => c.UserId == userId && c.UsedAt == null);
-        return Ok(new { user.TotpEnabled, user.WebAuthnEnabled, backup_codes_remaining = backupCount });
+        return Ok(new { user.TotpEnabled, user.WebAuthnEnabled, user.PhoneVerified, backup_codes_remaining = backupCount });
     }
 }
 
 public record UpdateMeRequest(string? DisplayName);
 public record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 public record TotpConfirmRequest(string Code);
+public record PhoneSetupRequest(string Phone);
+public record PhoneVerifyRequest(string Code);

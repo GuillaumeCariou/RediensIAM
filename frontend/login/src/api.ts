@@ -37,6 +37,35 @@ export async function verifyTotp(code: string) {
   return r.json();
 }
 
+export async function sendSmsOtp() {
+  const r = await fetch(`${BASE}/auth/mfa/phone/send`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+  });
+  return r.json();
+}
+
+export async function verifySmsOtp(code: string) {
+  const r = await fetch(`${BASE}/auth/mfa/phone/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code }),
+    credentials: 'include',
+  });
+  return r.json();
+}
+
+export async function verifyBackupCode(code: string) {
+  const r = await fetch(`${BASE}/auth/mfa/backup-codes/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code }),
+    credentials: 'include',
+  });
+  return r.json();
+}
+
 export async function registerUser(body: {
   login_challenge: string;
   email: string;

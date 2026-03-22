@@ -27,6 +27,7 @@ import UserLists from './pages/org/UserLists';
 import Projects from './pages/org/Projects';
 import OrgAdmins from './pages/org/OrgAdmins';
 import OrgServiceAccounts from './pages/org/OrgServiceAccounts';
+import OrgServiceAccountDetail from './pages/org/OrgServiceAccountDetail';
 import OrgAuditLog from './pages/org/OrgAuditLog';
 import OrgUserListDetail from './pages/org/UserListDetail';
 
@@ -34,6 +35,7 @@ import OrgUserListDetail from './pages/org/UserListDetail';
 import ProjectDashboard from './pages/project/ProjectDashboard';
 import ProjectUsers from './pages/project/ProjectUsers';
 import ProjectRoles from './pages/project/ProjectRoles';
+import ProjectServiceAccounts from './pages/project/ProjectServiceAccounts';
 import LoginTheme from './pages/project/LoginTheme';
 
 function Loading() {
@@ -76,10 +78,12 @@ function AppRoutes() {
           <Route path="system/organisations/:id/projects" element={<Projects />} />
           <Route path="system/organisations/:id/admins" element={<OrgAdmins />} />
           <Route path="system/organisations/:id/service-accounts" element={<OrgServiceAccounts />} />
+          <Route path="system/organisations/:id/service-accounts/:saId" element={<OrgServiceAccountDetail />} />
           <Route path="system/organisations/:id/audit-log" element={<OrgAuditLog />} />
           <Route path="system/organisations/:oid/projects/:pid" element={<SystemProjectDetail />} />
           <Route path="system/organisations/:oid/projects/:pid/users" element={<ProjectUsers />} />
           <Route path="system/organisations/:oid/projects/:pid/roles" element={<ProjectRoles />} />
+          <Route path="system/organisations/:oid/projects/:pid/service-accounts" element={<ProjectServiceAccounts />} />
           <Route path="system/organisations/:oid/projects/:pid/theme" element={<LoginTheme />} />
           <Route path="system/users" element={<SystemUsers />} />
           <Route path="system/userlists" element={<SystemUserLists />} />
@@ -99,6 +103,7 @@ function AppRoutes() {
           <Route path="org/projects" element={<Projects />} />
           <Route path="org/admins" element={<OrgAdmins />} />
           <Route path="org/service-accounts" element={<OrgServiceAccounts />} />
+          <Route path="org/service-accounts/:saId" element={<OrgServiceAccountDetail />} />
           <Route path="org/audit-log" element={<OrgAuditLog />} />
         </Route>
 
@@ -107,6 +112,7 @@ function AppRoutes() {
           <Route path="project" element={<ProjectDashboard />} />
           <Route path="project/users" element={<ProjectUsers />} />
           <Route path="project/roles" element={<ProjectRoles />} />
+          <Route path="project/service-accounts" element={<ProjectServiceAccounts />} />
           <Route path="project/theme" element={<LoginTheme />} />
         </Route>
 

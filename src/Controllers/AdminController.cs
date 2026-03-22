@@ -180,6 +180,19 @@ public class AdminController(
         return Ok(new { message = "user_disabled" });
     }
 
+    [HttpPost("/admin/users/{id}/enable")]
+    public async Task<IActionResult> EnableUser(Guid id)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var user = await db.Users.FindAsync(id);
+        if (user == null) return NotFound();
+        user.Active = true;
+        user.DisabledAt = null;
+        user.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        return Ok(new { message = "user_enabled" });
+    }
+
     // ── UserLists ─────────────────────────────────────────────────────────────
 
     [HttpGet("/admin/userlists")]
