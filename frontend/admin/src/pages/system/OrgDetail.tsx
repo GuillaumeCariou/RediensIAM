@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useAuth } from '@/context/AuthContext';
 import {
   ArrowLeft, PauseCircle, PlayCircle, Pencil, UserPlus,
   MoreHorizontal, Shield, Trash2, FolderKanban, List, Plus,
@@ -16,7 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
-  getOrg, suspendOrg, unsuspendOrg, updateOrg,
+  getOrg, suspendOrg, unsuspendOrg, updateOrg, deleteOrg,
   listSystemUserListMembers,
   adminListOrgAdmins, adminAssignOrgAdmin,
   addUserToList, removeSystemUserFromList,
@@ -36,8 +37,10 @@ interface Project { id: string; name: string; slug: string; active: boolean; ass
 export default function OrgDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { isSuperAdmin } = useAuth();
 
   const [org, setOrg] = useState<Org | null>(null);
+  const [deleteOrgOpen, setDeleteOrgOpen] = useState(false);
   const [orgListMembers, setOrgListMembers] = useState<Member[]>([]);
   const [orgRoles, setOrgRoles] = useState<OrgRole[]>([]);
   const [serviceAccounts, setServiceAccounts] = useState<ServiceAccount[]>([]);
@@ -107,6 +110,12 @@ export default function OrgDetail() {
     if (org.suspended_at) await unsuspendOrg(org.id);
     else await suspendOrg(org.id);
     load();
+  };
+
+  const handleDeleteOrg = async () => {
+    if (!org) return;
+    await deleteOrg(org.id);
+    navigate('/system/organisations');
   };
 
   const handleRename = async (e: React.FormEvent) => {
@@ -224,12 +233,19 @@ export default function OrgDetail() {
               <Button variant="outline" size="sm" onClick={() => { setRenameVal(org.name); setRenameOpen(true); }}>
                 <Pencil className="h-4 w-4" />Rename
               </Button>
-              <Button variant="outline" size="sm" onClick={handleSuspend}>
-                {org.suspended_at
-                  ? <><PlayCircle className="h-4 w-4" />Unsuspend</>
-                  : <><PauseCircle className="h-4 w-4" />Suspend</>
-                }
-              </Button>
+              {isSuperAdmin && (
+                <Button variant="outline" size="sm" onClick={handleSuspend}>
+                  {org.suspended_at
+                    ? <><PlayCircle className="h-4 w-4" />Unsuspend</>
+                    : <><PauseCircle className="h-4 w-4" />Suspend</>
+                  }
+                </Button>
+              )}
+              {isSuperAdmin && (
+                <Button variant="outline" size="sm" className="text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => setDeleteOrgOpen(true)}>
+                  <Trash2 className="h-4 w-4" />Delete
+                </Button>
+              )}
             </div>
           )}
         </div>
@@ -557,7 +573,7 @@ export default function OrgDetail() {
               <Input
                 value={newProject.slug}
                 onChange={e => setNewProject(p => ({ ...p, slug: e.target.value.toLowerCase().replace(/\s+/g, '-') }))}
-                required placeholder="main-app" pattern="[a-z0-9][a-z0-9-]*"
+                required placeholder="main-app" pattern="[a-z0-9]+(-[a-z0-9]+)*"
               />
               <p className="text-xs text-muted-foreground">Lowercase letters, numbers and hyphens only.</p>
             </div>
@@ -572,6 +588,23 @@ export default function OrgDetail() {
           </form>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={deleteOrgOpen} onOpenChange={setDeleteOrgOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete organisation "{org?.name}"?</AlertDialogTitle>
+            <AlertDialogDescription>
+              All user lists, projects, and service accounts belonging to this organisation will be permanently deleted. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteOrg} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

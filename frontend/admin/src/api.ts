@@ -255,3 +255,6 @@ export async function adminCreateRole(projectId: string, body: { name: string; d
 export async function adminDeleteRole(projectId: string, roleId: string) {
   return apiFetch(`/admin/projects/${projectId}/roles/${roleId}`, { method: 'DELETE' });
 }
+export async function adminDeleteProject(projectId: string) {
+  return apiFetch(`/admin/projects/${projectId}`, { method: 'DELETE' });
+}

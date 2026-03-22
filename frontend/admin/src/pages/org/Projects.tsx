@@ -183,7 +183,7 @@ export default function Projects() {
               <div className="space-y-2"><Label>Name</Label><Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required placeholder="My Dashboard" /></div>
               <div className="space-y-2">
                 <Label>Slug</Label>
-                <Input value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value.toLowerCase().replace(/\s+/g, '-') }))} required placeholder="my-dashboard" pattern="[a-z0-9][a-z0-9-]*" />
+                <Input value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value.toLowerCase().replace(/\s+/g, '-') }))} required placeholder="my-dashboard" pattern="[a-z0-9]+(-[a-z0-9]+)*" />
               </div>
             </div>
             <div className="space-y-2">

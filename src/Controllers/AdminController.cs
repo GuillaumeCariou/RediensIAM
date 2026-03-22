@@ -570,6 +570,22 @@ public class AdminController(
         return Created($"/admin/projects/{project.Id}", new { project.Id, project.Name, project.Slug });
     }
 
+    [HttpDelete("/admin/projects/{id}")]
+    public async Task<IActionResult> AdminDeleteProject(Guid id)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var project = await db.Projects.FindAsync(id);
+        if (project == null) return NotFound();
+        if (!string.IsNullOrEmpty(project.HydraClientId))
+        {
+            try { await hydra.DeleteOAuth2ClientAsync(project.HydraClientId); } catch { /* best-effort */ }
+        }
+        db.Projects.Remove(project);
+        await db.SaveChangesAsync();
+        await audit.RecordAsync(project.OrgId, id, GetActorId(), "project.deleted", "project", id.ToString());
+        return NoContent();
+    }
+
     [HttpGet("/admin/projects/{id}")]
     public async Task<IActionResult> AdminGetProject(Guid id)
     {

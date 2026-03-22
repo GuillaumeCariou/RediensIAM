@@ -15,7 +15,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   adminGetProject, adminUpdateProject, adminAssignUserList, adminUnassignUserList,
-  listUserLists, adminListRoles, adminCreateRole, adminDeleteRole,
+  listUserLists, adminListRoles, adminCreateRole, adminDeleteRole, adminDeleteProject,
 } from '@/api';
 import { fmtDateShort } from '@/lib/utils';
 
@@ -60,6 +60,9 @@ export default function SystemProjectDetail() {
   // delete role
   const [deleteRoleTarget, setDeleteRoleTarget] = useState<Role | null>(null);
 
+  // delete project
+  const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
+
   const load = useCallback(() => {
     if (!oid || !pid) return;
     setLoading(true);
@@ -91,6 +94,12 @@ export default function SystemProjectDetail() {
     await adminUpdateProject(pid, { name: renameVal });
     setRenameOpen(false);
     load();
+  };
+
+  const handleDeleteProject = async () => {
+    if (!pid || !oid) return;
+    await adminDeleteProject(pid);
+    navigate(`/system/organisations/${oid}`);
   };
 
   const handleCreateRole = async (e: React.FormEvent) => {
@@ -139,6 +148,9 @@ export default function SystemProjectDetail() {
               <Badge variant={project.active ? 'success' : 'secondary'}>
                 {project.active ? 'Active' : 'Inactive'}
               </Badge>
+              <Button variant="outline" size="sm" className="text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => setDeleteProjectOpen(true)}>
+                <Trash2 className="h-4 w-4" />Delete
+              </Button>
               <Button variant="outline" size="sm" onClick={() => { setRenameVal(project.name); setRenameOpen(true); }}>
                 <Pencil className="h-4 w-4" />Rename
               </Button>
@@ -303,6 +315,23 @@ export default function SystemProjectDetail() {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleDeleteRole} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={deleteProjectOpen} onOpenChange={setDeleteProjectOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete project "{project?.name}"?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The OAuth2 client for this project will also be deleted. All role assignments will be lost. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteProject} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>
