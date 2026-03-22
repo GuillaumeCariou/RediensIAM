@@ -84,8 +84,8 @@ hydra:
         admin:
           port: 4445
           host: "0.0.0.0"
-    dev: true
-    dangerousForceHttp: true
+    dev: false
+    dangerousForceHttp: false
     automigration:
       enabled: true
       type: initContainer
