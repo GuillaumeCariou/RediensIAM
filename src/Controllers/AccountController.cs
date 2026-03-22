@@ -1,8 +1,12 @@
 using System.Security.Cryptography;
+using System.Text.Json;
+using Fido2NetLib;
+using Fido2NetLib.Objects;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using OtpNet;
 using RediensIAM.Data;
+using RediensIAM.Entities;
 using RediensIAM.Middleware;
 using RediensIAM.Services;
 
@@ -16,7 +20,8 @@ public class AccountController(
     AuditLogService audit,
     HydraAdminService hydra,
     ISmsService smsService,
-    OtpCacheService otpCache) : ControllerBase
+    OtpCacheService otpCache,
+    IFido2 fido2) : ControllerBase
 {
     private TokenClaims Claims => HttpContext.GetClaims()!;
 
@@ -238,6 +243,123 @@ public class AccountController(
         var backupCount = await db.BackupCodes.CountAsync(c => c.UserId == userId && c.UsedAt == null);
         return Ok(new { user.TotpEnabled, user.WebAuthnEnabled, user.PhoneVerified, backup_codes_remaining = backupCount });
     }
+
+    // ── WebAuthn / Passkeys ───────────────────────────────────────────────────
+
+    [HttpPost("/account/mfa/webauthn/register/begin")]
+    public async Task<IActionResult> WebAuthnRegisterBegin()
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var userId = claims.ParsedUserId;
+        var user = await db.Users.FindAsync(userId);
+        if (user == null) return NotFound();
+
+        var fido2User = new Fido2User
+        {
+            Id          = userId.ToByteArray(),
+            Name        = user.Email,
+            DisplayName = user.DisplayName ?? user.Username
+        };
+
+        var existingKeys = await db.WebAuthnCredentials
+            .Where(c => c.UserId == userId)
+            .Select(c => new PublicKeyCredentialDescriptor(c.CredentialId))
+            .ToListAsync();
+
+        var options = fido2.RequestNewCredential(new RequestNewCredentialParams
+        {
+            User                  = fido2User,
+            ExcludeCredentials    = existingKeys,
+            AuthenticatorSelection = AuthenticatorSelection.Default,
+            AttestationPreference  = AttestationConveyancePreference.None
+        });
+
+        HttpContext.Session.SetString("fido2.attestationOptions", options.ToJson());
+        return Ok(options);
+    }
+
+    [HttpPost("/account/mfa/webauthn/register/complete")]
+    public async Task<IActionResult> WebAuthnRegisterComplete([FromBody] WebAuthnCompleteRequest body)
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var userId = claims.ParsedUserId;
+
+        var json = HttpContext.Session.GetString("fido2.attestationOptions");
+        if (json == null) return BadRequest(new { error = "no_registration_session" });
+        HttpContext.Session.Remove("fido2.attestationOptions");
+
+        var options     = CredentialCreateOptions.FromJson(json);
+        var attestation = JsonSerializer.Deserialize<AuthenticatorAttestationRawResponse>(
+            JsonSerializer.Serialize(body.Response))!;
+
+        IsCredentialIdUniqueToUserAsyncDelegate isUnique = async (args, _) =>
+            !await db.WebAuthnCredentials.AnyAsync(c => c.CredentialId == args.CredentialId);
+
+        RegisteredPublicKeyCredential result;
+        try
+        {
+            result = await fido2.MakeNewCredentialAsync(new MakeNewCredentialParams
+            {
+                AttestationResponse              = attestation,
+                OriginalOptions                  = options,
+                IsCredentialIdUniqueToUserCallback = isUnique
+            });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { error = "attestation_failed", detail = ex.Message });
+        }
+
+        db.WebAuthnCredentials.Add(new WebAuthnCredential
+        {
+            Id           = Guid.NewGuid(),
+            UserId       = userId,
+            CredentialId = result.Id,
+            PublicKey    = result.PublicKey,
+            SignCount    = (long)result.SignCount,
+            DeviceName   = body.DeviceName,
+            CreatedAt    = DateTimeOffset.UtcNow
+        });
+
+        var user = await db.Users.FindAsync(userId);
+        if (user != null) { user.WebAuthnEnabled = true; user.UpdatedAt = DateTimeOffset.UtcNow; }
+        await db.SaveChangesAsync();
+
+        return Ok(new { message = "passkey_registered" });
+    }
+
+    [HttpGet("/account/mfa/webauthn/credentials")]
+    public async Task<IActionResult> ListWebAuthnCredentials()
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var userId = claims.ParsedUserId;
+        var creds = await db.WebAuthnCredentials
+            .Where(c => c.UserId == userId)
+            .OrderBy(c => c.CreatedAt)
+            .Select(c => new { c.Id, c.DeviceName, c.CreatedAt, c.LastUsedAt })
+            .ToListAsync();
+        return Ok(creds);
+    }
+
+    [HttpDelete("/account/mfa/webauthn/credentials/{id}")]
+    public async Task<IActionResult> DeleteWebAuthnCredential(Guid id)
+    {
+        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
+        var userId = claims.ParsedUserId;
+        var cred = await db.WebAuthnCredentials.FirstOrDefaultAsync(c => c.Id == id && c.UserId == userId);
+        if (cred == null) return NotFound();
+        db.WebAuthnCredentials.Remove(cred);
+
+        var remaining = await db.WebAuthnCredentials.CountAsync(c => c.UserId == userId && c.Id != id);
+        if (remaining == 0)
+        {
+            var user = await db.Users.FindAsync(userId);
+            if (user != null) { user.WebAuthnEnabled = false; user.UpdatedAt = DateTimeOffset.UtcNow; }
+        }
+
+        await db.SaveChangesAsync();
+        return Ok(new { message = "credential_deleted" });
+    }
 }
 
 public record UpdateMeRequest(string? DisplayName);
@@ -245,3 +367,4 @@ public record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 public record TotpConfirmRequest(string Code);
 public record PhoneSetupRequest(string Phone);
 public record PhoneVerifyRequest(string Code);
+public record WebAuthnCompleteRequest(object Response, string? DeviceName);

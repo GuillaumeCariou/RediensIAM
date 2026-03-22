@@ -15,6 +15,7 @@ public class AdminController(
     PasswordService passwords,
     AuditLogService audit,
     PatGenerationService patGen,
+    ImpersonationService impersonation,
     IConfiguration config,
     ILogger<AdminController> logger) : ControllerBase
 {
@@ -139,9 +140,10 @@ public class AdminController(
         if (!string.IsNullOrEmpty(q))
             query = query.Where(u => u.Email.Contains(q) || u.Username.Contains(q));
         var users = await query
+            .Include(u => u.UserList)
             .OrderBy(u => u.Email)
             .Skip((page - 1) * pageSize).Take(pageSize)
-            .Select(u => new { u.Id, u.Username, u.Discriminator, u.Email, u.Active, u.UserListId, u.LastLoginAt })
+            .Select(u => new { u.Id, u.Username, u.Discriminator, u.Email, u.Active, u.UserListId, u.LastLoginAt, OrgId = u.UserList.OrgId })
             .ToListAsync();
         return Ok(users);
     }
@@ -191,6 +193,52 @@ public class AdminController(
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         return Ok(new { message = "user_enabled" });
+    }
+
+    [HttpPost("/admin/users/{id}/impersonate")]
+    public async Task<IActionResult> ImpersonateUser(Guid id, [FromBody] ImpersonateRequest body)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var actorId = GetActorId();
+        if (actorId == id) return BadRequest(new { error = "cannot_impersonate_self" });
+
+        var user = await db.Users.FindAsync(id);
+        if (user == null) return NotFound();
+
+        var project = await db.Projects.FindAsync(body.ProjectId);
+        if (project == null) return BadRequest(new { error = "project_not_found" });
+
+        // Verify user is in this project's userlist
+        var inList = project.AssignedUserListId.HasValue &&
+            await db.Users.AnyAsync(u => u.Id == id && u.UserListId == project.AssignedUserListId);
+        if (!inList) return BadRequest(new { error = "user_not_in_project" });
+
+        // Collect user's roles in this project
+        var roles = await db.UserProjectRoles
+            .Where(r => r.UserId == id && r.ProjectId == body.ProjectId)
+            .Include(r => r.Role)
+            .Select(r => r.Role.Name)
+            .ToListAsync();
+
+        var claims = new ImpersonationClaims(
+            UserId: $"{project.OrgId}:{id}",
+            OrgId: project.OrgId.ToString(),
+            ProjectId: body.ProjectId.ToString(),
+            Roles: roles,
+            ImpersonatedBy: actorId.ToString());
+
+        var token = await impersonation.CreateAsync(claims);
+        await audit.RecordAsync(project.OrgId, body.ProjectId, actorId,
+            "admin.impersonate", "user", id.ToString());
+
+        return Ok(new
+        {
+            token,
+            expires_in_minutes = 15,
+            user_id = id,
+            project_id = body.ProjectId,
+            warning = "This token grants access as the target user. Handle with extreme care."
+        });
     }
 
     // ── UserLists ─────────────────────────────────────────────────────────────
@@ -552,6 +600,18 @@ public class AdminController(
 
     // ── Projects (admin scope) ────────────────────────────────────────────────
 
+    [HttpGet("/admin/organisations/{id}/projects")]
+    public async Task<IActionResult> AdminListOrgProjects(Guid id)
+    {
+        if (!HasAdminAccess) return StatusCode(403);
+        var projects = await db.Projects
+            .Where(p => p.OrgId == id)
+            .OrderBy(p => p.Name)
+            .Select(p => new { p.Id, p.Name, p.Slug, p.Active })
+            .ToListAsync();
+        return Ok(projects);
+    }
+
     [HttpPost("/admin/organisations/{id}/projects")]
     public async Task<IActionResult> AdminCreateProject(Guid id, [FromBody] AdminCreateProjectRequest body)
     {
@@ -709,6 +769,7 @@ public class AdminController(
     private Guid GetActorId() => Claims?.ParsedUserId ?? Guid.Empty;
 }
 
+public record ImpersonateRequest(Guid ProjectId);
 public record CreateOrgRequest(string Name, string Slug);
 public record UpdateOrgRequest(string? Name);
 public record AdminCreateUserRequest(string Email, string Password, string? Username);

@@ -1,4 +1,7 @@
 using System.Security.Cryptography;
+using System.Text.Json;
+using Fido2NetLib;
+using Fido2NetLib.Objects;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using OtpNet;
@@ -20,6 +23,7 @@ public class AuthController(
     KetoService keto,
     IEmailService emailService,
     ISmsService smsService,
+    IFido2 fido2,
     IConfiguration config,
     ILogger<AuthController> logger) : ControllerBase
 {
@@ -184,11 +188,18 @@ public class AuthController(
             var smsCode = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
             await otp.StoreSessionOtpAsync("sms_mfa", user.Id.ToString(), smsCode);
             await smsService.SendOtpAsync(user.Phone, smsCode, "login");
-            // Return masked phone for UI display
             var masked = user.Phone.Length > 4
                 ? new string('*', user.Phone.Length - 4) + user.Phone[^4..]
                 : "****";
             return Ok(new { requires_mfa = true, mfa_type = "sms", phone_hint = masked });
+        }
+
+        if (user.WebAuthnEnabled)
+        {
+            HttpContext.Session.SetString("mfa_pending_user", user.Id.ToString());
+            HttpContext.Session.SetString("mfa_pending_challenge", body.LoginChallenge);
+            HttpContext.Session.SetString("mfa_pending_project", projectId);
+            return Ok(new { requires_mfa = true, mfa_type = "webauthn" });
         }
 
         user.FailedLoginCount = 0;
@@ -720,6 +731,94 @@ public class AuthController(
         var start = idx + "project_id=".Length;
         var end = url.IndexOf('&', start);
         return end < 0 ? url[start..] : url[start..end];
+    }
+
+    // ── WebAuthn assertion ────────────────────────────────────────────────────
+
+    [HttpGet("/auth/mfa/webauthn/options")]
+    public async Task<IActionResult> WebAuthnOptions()
+    {
+        var userId = HttpContext.Session.GetString("mfa_pending_user");
+        if (userId == null) return BadRequest(new { error = "no_mfa_session" });
+
+        var uid = Guid.Parse(userId);
+        var allowedCreds = await db.WebAuthnCredentials
+            .Where(c => c.UserId == uid)
+            .Select(c => new PublicKeyCredentialDescriptor(c.CredentialId))
+            .ToListAsync();
+
+        var options = fido2.GetAssertionOptions(new GetAssertionOptionsParams
+        {
+            AllowedCredentials = allowedCreds,
+            UserVerification   = UserVerificationRequirement.Preferred
+        });
+
+        HttpContext.Session.SetString("fido2.assertionOptions", options.ToJson());
+        return Ok(options);
+    }
+
+    [HttpPost("/auth/mfa/webauthn/verify")]
+    public async Task<IActionResult> WebAuthnVerify([FromBody] JsonElement body)
+    {
+        var userId    = HttpContext.Session.GetString("mfa_pending_user");
+        var challenge = HttpContext.Session.GetString("mfa_pending_challenge");
+        var projectId = HttpContext.Session.GetString("mfa_pending_project");
+        if (userId == null || challenge == null || projectId == null)
+            return BadRequest(new { error = "no_mfa_session" });
+
+        var json = HttpContext.Session.GetString("fido2.assertionOptions");
+        if (json == null) return BadRequest(new { error = "no_assertion_options" });
+        HttpContext.Session.Remove("fido2.assertionOptions");
+
+        var options  = AssertionOptions.FromJson(json);
+        var response = JsonSerializer.Deserialize<AuthenticatorAssertionRawResponse>(body.GetRawText())!;
+
+        var credId = response.Id;
+        var cred   = await db.WebAuthnCredentials.FirstOrDefaultAsync(c => c.CredentialId == credId);
+        if (cred == null) return Unauthorized(new { error = "unknown_credential" });
+
+        var uid = Guid.Parse(userId);
+        IsUserHandleOwnerOfCredentialIdAsync isOwner = async (args, _) =>
+            await db.WebAuthnCredentials.AnyAsync(c => c.CredentialId == args.CredentialId && c.UserId == uid);
+
+        VerifyAssertionResult result;
+        try
+        {
+            result = await fido2.MakeAssertionAsync(new MakeAssertionParams
+            {
+                AssertionResponse                   = response,
+                OriginalOptions                     = options,
+                StoredPublicKey                     = cred.PublicKey,
+                StoredSignatureCounter              = (uint)cred.SignCount,
+                IsUserHandleOwnerOfCredentialIdCallback = isOwner
+            });
+        }
+        catch (Exception ex)
+        {
+            return Unauthorized(new { error = "assertion_failed", detail = ex.Message });
+        }
+
+        cred.SignCount  = (long)result.SignCount;
+        cred.LastUsedAt = DateTimeOffset.UtcNow;
+
+        var user = await db.Users.FindAsync(uid);
+        if (user == null) return NotFound();
+        user.LastLoginAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+
+        HttpContext.Session.Remove("mfa_pending_user");
+        HttpContext.Session.Remove("mfa_pending_challenge");
+        HttpContext.Session.Remove("mfa_pending_project");
+
+        var project = await db.Projects.FindAsync(Guid.Parse(projectId));
+        var subject  = $"{project!.OrgId}:{user.Id}";
+        var ctx = new Dictionary<string, object>
+        {
+            ["org_id"] = project.OrgId.ToString(), ["project_id"] = projectId, ["user_id"] = user.Id.ToString()
+        };
+        var redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, ctx);
+        await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.webauthn");
+        return Ok(new { redirect_to = redirectUrl });
     }
 }
 

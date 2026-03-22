@@ -60,7 +60,17 @@ builder.Services.AddScoped<AuditLogService>();
 builder.Services.AddScoped<PatIntrospectionService>();
 builder.Services.AddScoped<PatGenerationService>();
 builder.Services.AddScoped<RoleAssignmentService>();
+builder.Services.AddScoped<ImpersonationService>();
 builder.Services.AddHttpContextAccessor();
+
+// ── WebAuthn / Passkeys ────────────────────────────────────────────────────
+builder.Services.AddFido2(opts =>
+{
+    opts.ServerDomain = config["App:Domain"]!;
+    opts.ServerName   = "RediensIAM";
+    opts.Origins      = new HashSet<string> { config["App:PublicUrl"]! };
+    opts.TimestampDriftTolerance = 300_000;
+});
 
 // ── Notification services ───────────────────────────────────────────────────
 if (!string.IsNullOrEmpty(config["Smtp:Host"]))

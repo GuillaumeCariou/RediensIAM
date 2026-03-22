@@ -203,6 +203,20 @@ export async function verifyPhone(code: string) {
 export async function removePhone() {
   return apiFetch('/account/phone', { method: 'DELETE' });
 }
+
+// ── WebAuthn / Passkeys ────────────────────────────────────────────────────
+export async function beginWebAuthnRegistration() {
+  return (await apiFetch('/account/mfa/webauthn/register/begin', { method: 'POST' })).json();
+}
+export async function completeWebAuthnRegistration(body: object) {
+  return (await apiFetch('/account/mfa/webauthn/register/complete', { method: 'POST', body: JSON.stringify(body) })).json();
+}
+export async function listWebAuthnCredentials() {
+  return (await apiFetch('/account/mfa/webauthn/credentials')).json();
+}
+export async function deleteWebAuthnCredential(id: string) {
+  return apiFetch(`/account/mfa/webauthn/credentials/${id}`, { method: 'DELETE' });
+}
 export async function getMfaStatus() {
   return (await apiFetch('/account/mfa')).json();
 }
@@ -284,8 +298,14 @@ export async function adminListOrgServiceAccounts(orgId: string) {
 export async function adminCreateUserList(body: { name: string; org_id: string }) {
   return (await apiFetch('/admin/userlists', { method: 'POST', body: JSON.stringify(body) })).json();
 }
+export async function listAdminOrgProjects(orgId: string) {
+  return (await apiFetch(`/admin/organisations/${orgId}/projects`)).json();
+}
 export async function adminCreateProject(orgId: string, body: { name: string; slug: string; redirect_uris?: string[]; require_role_to_login?: boolean }) {
   return (await apiFetch(`/admin/organisations/${orgId}/projects`, { method: 'POST', body: JSON.stringify(body) })).json();
+}
+export async function impersonateUser(userId: string, projectId: string) {
+  return (await apiFetch(`/admin/users/${userId}/impersonate`, { method: 'POST', body: JSON.stringify({ project_id: projectId }) })).json();
 }
 
 // ── Admin-scoped project operations ──────────────────────────────

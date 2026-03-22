@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { User, Shield, Key, Copy, Check, RefreshCw, Eye, EyeOff, MonitorSmartphone, LogOut } from 'lucide-react';
+import { User, Shield, Key, Copy, Check, RefreshCw, Eye, EyeOff, MonitorSmartphone, LogOut, Fingerprint, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,7 +10,7 @@ import { Alert } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { getMe, updateMe, changePassword, getMfaStatus, setupTotp, confirmTotp, regenerateBackupCodes, getSessions, revokeSession, revokeAllSessions, setupPhone, verifyPhone, removePhone } from '@/api';
+import { getMe, updateMe, changePassword, getMfaStatus, setupTotp, confirmTotp, regenerateBackupCodes, getSessions, revokeSession, revokeAllSessions, setupPhone, verifyPhone, removePhone, beginWebAuthnRegistration, completeWebAuthnRegistration, listWebAuthnCredentials, deleteWebAuthnCredential } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
 
@@ -181,6 +181,142 @@ function SecurityTab() {
       </CardContent>
     </Card>
   );
+}
+
+// ── Passkeys card ─────────────────────────────────────────────────
+interface Passkey { id: string; device_name: string | null; created_at: string; last_used_at: string | null; }
+
+function PasskeysCard() {
+  const [creds, setCreds] = useState<Passkey[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [registering, setRegistering] = useState(false);
+  const [deviceName, setDeviceName] = useState('');
+  const [error, setError] = useState('');
+
+  const load = () => {
+    setLoading(true);
+    listWebAuthnCredentials().then(setCreds).catch(console.error).finally(() => setLoading(false));
+  };
+  useEffect(load, []);
+
+  const handleRegister = async () => {
+    setError('');
+    setRegistering(true);
+    try {
+      const options = await beginWebAuthnRegistration();
+      options.challenge = base64urlToBuffer(options.challenge);
+      options.user.id   = base64urlToBuffer(options.user.id);
+      if (options.excludeCredentials) {
+        options.excludeCredentials = options.excludeCredentials.map((c: { id: string }) => ({
+          ...c, id: base64urlToBuffer(c.id)
+        }));
+      }
+
+      const cred = await navigator.credentials.create({ publicKey: options }) as PublicKeyCredential;
+      if (!cred) { setError('No credential created.'); return; }
+
+      const resp = cred.response as AuthenticatorAttestationResponse;
+      const body = {
+        response: {
+          id:       cred.id,
+          rawId:    bufferToBase64url(cred.rawId),
+          type:     cred.type,
+          response: {
+            attestationObject: bufferToBase64url(resp.attestationObject),
+            clientDataJSON:    bufferToBase64url(resp.clientDataJSON),
+          }
+        },
+        device_name: deviceName || null,
+      };
+
+      const res = await completeWebAuthnRegistration(body);
+      if (res.error) { setError('Registration failed: ' + res.error); return; }
+      setDeviceName('');
+      load();
+    } catch (e: unknown) {
+      if (e instanceof Error && e.name === 'NotAllowedError') {
+        setError('Passkey prompt was cancelled.');
+      } else {
+        setError('Passkey registration failed.');
+      }
+    } finally {
+      setRegistering(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    await deleteWebAuthnCredential(id);
+    load();
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="text-base">Passkeys</CardTitle>
+            <CardDescription>Sign in with your device fingerprint, face, or security key.</CardDescription>
+          </div>
+          <Badge variant={creds.length > 0 ? 'success' : 'secondary'}>
+            {creds.length > 0 ? `${creds.length} registered` : 'None'}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {loading ? (
+          <Skeleton className="h-16 w-full" />
+        ) : creds.length > 0 ? (
+          <div className="space-y-2">
+            {creds.map(c => (
+              <div key={c.id} className="flex items-center justify-between rounded-lg border px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <Fingerprint className="h-4 w-4 text-muted-foreground" />
+                  <div>
+                    <p className="text-sm font-medium">{c.device_name ?? 'Unnamed passkey'}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Added {fmtDate(c.created_at)}
+                      {c.last_used_at && ` · Last used ${fmtDate(c.last_used_at)}`}
+                    </p>
+                  </div>
+                </div>
+                <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => handleDelete(c.id)}>
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="flex gap-2 items-center">
+          <Input
+            placeholder="Passkey name (optional)"
+            value={deviceName}
+            onChange={e => setDeviceName(e.target.value)}
+            className="max-w-xs"
+          />
+          <Button onClick={handleRegister} disabled={registering}>
+            <Fingerprint className="h-4 w-4" />
+            {registering ? 'Waiting…' : 'Add passkey'}
+          </Button>
+        </div>
+
+        {error && <p className="text-sm text-destructive">{error}</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
+function base64urlToBuffer(b64: string): ArrayBuffer {
+  const bin = atob(b64.replace(/-/g, '+').replace(/_/g, '/'));
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return buf.buffer;
+}
+function bufferToBase64url(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let str = '';
+  for (const b of bytes) str += String.fromCharCode(b);
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
 // ── MFA tab ───────────────────────────────────────────────────────
@@ -372,6 +508,9 @@ function MfaTab() {
           )}
         </Card>
       )}
+
+      {/* Passkeys */}
+      <PasskeysCard />
 
       {/* Phone / SMS MFA */}
       <Card>

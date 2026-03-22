@@ -56,6 +56,21 @@ export async function verifySmsOtp(code: string) {
   return r.json();
 }
 
+export async function getWebAuthnOptions() {
+  const r = await fetch(`${BASE}/auth/mfa/webauthn/options`, { credentials: 'include' });
+  return r.json();
+}
+
+export async function verifyWebAuthn(assertionResponse: object) {
+  const r = await fetch(`${BASE}/auth/mfa/webauthn/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(assertionResponse),
+    credentials: 'include',
+  });
+  return r.json();
+}
+
 export async function verifyBackupCode(code: string) {
   const r = await fetch(`${BASE}/auth/mfa/backup-codes/verify`, {
     method: 'POST',

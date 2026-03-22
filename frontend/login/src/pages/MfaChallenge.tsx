@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import { verifyTotp, verifyBackupCode, verifySmsOtp, sendSmsOtp } from '../api';
+import { useState, useEffect } from 'react';
+import { verifyTotp, verifyBackupCode, verifySmsOtp, sendSmsOtp, getWebAuthnOptions, verifyWebAuthn } from '../api';
 
-type MfaMode = 'totp' | 'backup' | 'sms';
+type MfaMode = 'totp' | 'backup' | 'sms' | 'webauthn';
 
 export default function MfaChallenge() {
   const initialMfaType = (sessionStorage.getItem('mfa_type') ?? 'totp') as MfaMode;
@@ -12,6 +12,59 @@ export default function MfaChallenge() {
   const [error, setError]     = useState('');
   const [loading, setLoading] = useState(false);
   const [resent, setResent]   = useState(false);
+
+  useEffect(() => {
+    if (mode === 'webauthn') handleWebAuthn();
+  }, [mode]);
+
+  async function handleWebAuthn() {
+    setLoading(true);
+    setError('');
+    try {
+      const options = await getWebAuthnOptions();
+      if (options.error) { setError('Failed to get passkey options.'); return; }
+
+      // Decode base64url challenge and allowCredentials
+      options.challenge = base64urlToBuffer(options.challenge);
+      if (options.allowCredentials) {
+        options.allowCredentials = options.allowCredentials.map((c: { id: string }) => ({
+          ...c, id: base64urlToBuffer(c.id)
+        }));
+      }
+
+      const assertion = await navigator.credentials.get({ publicKey: options }) as PublicKeyCredential;
+      if (!assertion) { setError('No credential returned.'); return; }
+
+      const response = assertion.response as AuthenticatorAssertionResponse;
+      const body = {
+        id:    assertion.id,
+        rawId: bufferToBase64url(assertion.rawId),
+        type:  assertion.type,
+        response: {
+          authenticatorData: bufferToBase64url(response.authenticatorData),
+          clientDataJSON:    bufferToBase64url(response.clientDataJSON),
+          signature:         bufferToBase64url(response.signature),
+          userHandle:        response.userHandle ? bufferToBase64url(response.userHandle) : null,
+        }
+      };
+
+      const res = await verifyWebAuthn(body);
+      if (res.error) { setError('Passkey verification failed. Try again.'); return; }
+      if (res.redirect_to) {
+        sessionStorage.removeItem('mfa_type');
+        sessionStorage.removeItem('mfa_phone_hint');
+        window.location.href = res.redirect_to;
+      }
+    } catch (e: unknown) {
+      if (e instanceof Error && e.name === 'NotAllowedError') {
+        setError('Passkey prompt was cancelled or timed out.');
+      } else {
+        setError('Something went wrong. Try a different method.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -52,6 +105,23 @@ export default function MfaChallenge() {
     setCode('');
     setError('');
     setResent(false);
+  }
+
+  // ── WebAuthn mode ────────────────────────────────────────────────
+  if (mode === 'webauthn') {
+    return (
+      <div className="card">
+        <h1 className="card-title">Passkey sign-in</h1>
+        <p className="card-subtitle">Use your device passkey or security key to continue.</p>
+        {error && <div className="alert alert-error">{error}</div>}
+        <button className="btn" type="button" disabled={loading} onClick={handleWebAuthn}>
+          {loading ? 'Waiting for passkey…' : 'Use passkey'}
+        </button>
+        <div className="mt-4 text-center" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          <button className="link" type="button" onClick={() => switchMode('backup')}>Use a backup code instead</button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -116,10 +186,28 @@ export default function MfaChallenge() {
         )}
         {mode === 'backup' && initialMfaType !== 'backup' && (
           <button className="link" type="button" onClick={() => switchMode(initialMfaType)}>
-            Back to {initialMfaType === 'sms' ? 'SMS code' : 'authenticator app'}
+            Back to {initialMfaType === 'sms' ? 'SMS code' : initialMfaType === 'webauthn' ? 'passkey' : 'authenticator app'}
           </button>
+        )}
+        {initialMfaType === 'webauthn' && mode !== 'webauthn' && (
+          <button className="link" type="button" onClick={() => switchMode('webauthn')}>Use passkey instead</button>
         )}
       </div>
     </div>
   );
+}
+
+// ── WebAuthn buffer helpers ──────────────────────────────────────────────────
+function base64urlToBuffer(b64: string): ArrayBuffer {
+  const bin = atob(b64.replace(/-/g, '+').replace(/_/g, '/'));
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return buf.buffer;
+}
+
+function bufferToBase64url(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let str = '';
+  for (const b of bytes) str += String.fromCharCode(b);
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }

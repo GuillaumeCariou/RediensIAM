@@ -9,6 +9,7 @@ public class GatewayAuthMiddleware(
     HydraJwksCache jwksCache)
 {
     private const string PatPrefix = "rediens_pat_";
+    private const string ImpersonationPrefix = "rediens_imp_";
 
     public async Task InvokeAsync(HttpContext ctx)
     {
@@ -22,7 +23,15 @@ public class GatewayAuthMiddleware(
         var token = header["Bearer ".Length..].Trim();
         TokenClaims? claims;
 
-        if (token.StartsWith(PatPrefix, StringComparison.Ordinal))
+        if (token.StartsWith(ImpersonationPrefix, StringComparison.Ordinal))
+        {
+            var impService = ctx.RequestServices.GetRequiredService<ImpersonationService>();
+            var imp = await impService.ResolveAsync(token);
+            claims = imp is not null
+                ? new TokenClaims { UserId = imp.UserId, OrgId = imp.OrgId, ProjectId = imp.ProjectId, Roles = imp.Roles, IsImpersonation = true }
+                : null;
+        }
+        else if (token.StartsWith(PatPrefix, StringComparison.Ordinal))
         {
             var patService = ctx.RequestServices.GetRequiredService<PatIntrospectionService>();
             var result = await patService.IntrospectAsync(token);
