@@ -19,13 +19,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 interface SA { id: string; name: string; description: string | null; active: boolean; last_used_at: string | null; created_at: string; }
 interface UserList { id: string; name: string; }
 
-  return (
-    <Button variant="ghost" size="icon" onClick={copy} className="h-6 w-6">
-      {copied ? <Check className="h-3 w-3 text-green-600" /> : <Copy className="h-3 w-3" />}
-    </Button>
-  );
-}
-
 export default function OrgServiceAccounts() {
   const { orgId, orgBase } = useOrgContext();
   const navigate = useNavigate();
