@@ -7,6 +7,7 @@ const themeIcons: Record<ColorTheme, string> = { light: '☀', dark: '☾', syst
 const themeOrder: ColorTheme[] = ['system', 'light', 'dark'];
 
 interface Theme {
+  project_id?: string;
   LoginTheme?: Record<string, string>;
   project_name?: string;
   has_custom_template?: boolean;
@@ -97,7 +98,7 @@ export default function Login() {
       </form>
 
       <div className="links">
-        <a href={`/password-reset`} className="btn-ghost">Forgot password?</a>
+        <a href={`/password-reset?project_id=${loginTheme?.project_id ?? ''}`} className="btn-ghost">Forgot password?</a>
         {loginTheme?.allow_self_registration && (
           <a href={`/register?login_challenge=${challenge}`} className="btn-ghost">Create account</a>
         )}

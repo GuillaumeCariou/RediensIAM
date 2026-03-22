@@ -182,8 +182,25 @@ public class AdminController(
         if (org_id.HasValue)
             query = query.Where(ul => ul.OrgId == org_id);
         var lists = await query
-            .Select(ul => new { ul.Id, ul.Name, ul.OrgId, ul.Immovable, ul.CreatedAt }).ToListAsync();
+            .Select(ul => new {
+                ul.Id, ul.Name, ul.OrgId, ul.Immovable, ul.CreatedAt,
+                OrgName = ul.Organisation != null ? ul.Organisation.Name : null
+            }).ToListAsync();
         return Ok(lists);
+    }
+
+    [HttpGet("/admin/userlists/{id}")]
+    public async Task<IActionResult> GetUserList(Guid id)
+    {
+        if (!HasAdminAccess) return StatusCode(403);
+        var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(ul => ul.Id == id);
+        if (ul == null) return NotFound();
+        return Ok(new
+        {
+            ul.Id, ul.Name, ul.OrgId, ul.Immovable, ul.CreatedAt,
+            org_name = ul.Organisation?.Name,
+            user_count = await db.Users.CountAsync(u => u.UserListId == id)
+        });
     }
 
     [HttpGet("/admin/userlists/{id}/users")]
@@ -254,6 +271,10 @@ public class AdminController(
         var logs = await db.AuditLogs
             .OrderByDescending(l => l.CreatedAt)
             .Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(l => new {
+                l.Id, l.Action, l.OrgId, l.ProjectId, l.ActorId,
+                l.TargetType, l.TargetId, l.IpAddress, l.CreatedAt
+            })
             .ToListAsync();
         return Ok(logs);
     }

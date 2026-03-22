@@ -292,6 +292,10 @@ public class OrgController(
             .Where(l => l.OrgId == orgId)
             .OrderByDescending(l => l.CreatedAt)
             .Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(l => new {
+                l.Id, l.Action, l.OrgId, l.ProjectId, l.ActorId,
+                l.TargetType, l.TargetId, l.IpAddress, l.CreatedAt
+            })
             .ToListAsync();
         return Ok(logs);
     }

@@ -54,6 +54,9 @@ export async function deleteUserList(id: string) {
 export async function listUserListMembers(id: string) {
   return (await apiFetch(`/org/userlists/${id}/users`)).json();
 }
+export async function getSystemUserList(id: string) {
+  return (await apiFetch(`/admin/userlists/${id}`)).json();
+}
 export async function listSystemUserListMembers(id: string) {
   return (await apiFetch(`/admin/userlists/${id}/users`)).json();
 }

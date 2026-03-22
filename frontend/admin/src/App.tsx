@@ -12,6 +12,7 @@ import SystemMetrics from './pages/system/Metrics';
 import HydraClients from './pages/system/HydraClients';
 import SystemUserLists from './pages/system/SystemUserLists';
 import SystemServiceAccounts from './pages/system/SystemServiceAccounts';
+import SystemUserListDetail from './pages/system/UserListDetail';
 
 // Org pages
 import OrgDashboard from './pages/org/OrgDashboard';
@@ -20,6 +21,7 @@ import Projects from './pages/org/Projects';
 import OrgAdmins from './pages/org/OrgAdmins';
 import OrgServiceAccounts from './pages/org/OrgServiceAccounts';
 import OrgAuditLog from './pages/org/OrgAuditLog';
+import OrgUserListDetail from './pages/org/UserListDetail';
 
 // Project pages
 import ProjectDashboard from './pages/project/ProjectDashboard';
@@ -52,6 +54,7 @@ function AppRoutes() {
         <Route path="system/organisations" element={<Organisations />} />
         <Route path="system/users" element={<SystemUsers />} />
         <Route path="system/userlists" element={<SystemUserLists />} />
+        <Route path="system/userlists/:id" element={<SystemUserListDetail />} />
         <Route path="system/service-accounts" element={<SystemServiceAccounts />} />
         <Route path="system/hydra-clients" element={<HydraClients />} />
         <Route path="system/audit-log" element={<AuditLog />} />
@@ -60,6 +63,7 @@ function AppRoutes() {
         {/* Org (org_admin) */}
         <Route path="org" element={<OrgDashboard />} />
         <Route path="org/userlists" element={<UserLists />} />
+        <Route path="org/userlists/:id" element={<OrgUserListDetail />} />
         <Route path="org/projects" element={<Projects />} />
         <Route path="org/admins" element={<OrgAdmins />} />
         <Route path="org/service-accounts" element={<OrgServiceAccounts />} />

@@ -5,6 +5,7 @@ import { requestPasswordReset, confirmPasswordReset } from '../api';
 export default function PasswordReset() {
   const [params] = useSearchParams();
   const token = params.get('token');
+  const projectId = params.get('project_id') ?? '';
   const [value, setValue] = useState('');
   const [confirm, setConfirm] = useState('');
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
@@ -14,7 +15,7 @@ export default function PasswordReset() {
     e.preventDefault();
     setLoading(true);
     try {
-      await requestPasswordReset(value);
+      await requestPasswordReset(projectId, value);
       setStatus('success');
     } catch { setStatus('error'); }
     finally { setLoading(false); }

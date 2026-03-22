@@ -37,11 +37,11 @@ export async function verifyTotp(code: string) {
   return r.json();
 }
 
-export async function requestPasswordReset(email: string) {
+export async function requestPasswordReset(projectId: string, email: string) {
   const r = await fetch(`${BASE}/auth/password-reset/request`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ project_id: projectId, email }),
   });
   return r.json();
 }

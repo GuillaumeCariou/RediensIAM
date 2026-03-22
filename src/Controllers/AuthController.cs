@@ -366,8 +366,14 @@ public class AuthController(
     public async Task<IActionResult> RequestPasswordReset([FromBody] PasswordResetRequestBody body)
     {
         // Return 200 regardless to prevent email enumeration
-        var users = await db.Users.Where(u => u.Email == body.Email.ToLowerInvariant()).ToListAsync();
-        foreach (var user in users)
+        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == body.ProjectId && p.Active);
+        if (project?.AssignedUserListId == null)
+            return Ok(new { message = "if_email_exists_reset_sent" });
+
+        var user = await db.Users.FirstOrDefaultAsync(u =>
+            u.UserListId == project.AssignedUserListId && u.Email == body.Email.ToLowerInvariant());
+
+        if (user != null)
         {
             var raw = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
             var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw)));
@@ -379,8 +385,9 @@ public class AuthController(
                 ExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
                 CreatedAt = DateTimeOffset.UtcNow
             });
+            await db.SaveChangesAsync();
         }
-        await db.SaveChangesAsync();
+
         return Ok(new { message = "if_email_exists_reset_sent" });
     }
 
@@ -461,5 +468,5 @@ public record LoginRequest(string LoginChallenge, string? Email, string? Usernam
 public record TotpVerifyRequest(string Code);
 public record LogoutRequest(string LogoutChallenge);
 public record RegisterRequest(Guid ProjectId, string Email, string Password, string? Username);
-public record PasswordResetRequestBody(string Email);
+public record PasswordResetRequestBody(Guid ProjectId, string Email);
 public record PasswordResetConfirmBody(string Token, string NewPassword);
