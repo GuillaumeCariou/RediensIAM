@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { FolderKanban, List, Shield, ArrowRight } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getOrg, listProjects, listUserLists } from '@/api';
+import { useOrgContext } from '@/hooks/useOrgContext';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDateShort } from '@/lib/utils';
 
@@ -17,8 +18,7 @@ interface Project { id: string; name: string; slug: string; active: boolean; }
 interface UserList { id: string; name: string; immovable: boolean; user_count: number; }
 
 export default function OrgDashboard() {
-  const [params] = useSearchParams();
-  const orgId = params.get('org_id') ?? '';
+  const { orgId, orgBase, projectUrl } = useOrgContext();
   const [org, setOrg] = useState<Org | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [lists, setLists] = useState<UserList[]>([]);
@@ -71,7 +71,7 @@ export default function OrgDashboard() {
                 <CardContent>
                   <p className="text-2xl font-bold">{projects.length}</p>
                   <Button variant="ghost" size="sm" className="mt-2 -ml-2 text-xs" asChild>
-                    <Link to={`/org/projects?org_id=${orgId}`}>Manage <ArrowRight className="h-3 w-3" /></Link>
+                    <Link to={`${orgBase}/projects`}>Manage <ArrowRight className="h-3 w-3" /></Link>
                   </Button>
                 </CardContent>
               </Card>
@@ -80,7 +80,7 @@ export default function OrgDashboard() {
                 <CardContent>
                   <p className="text-2xl font-bold">{lists.length}</p>
                   <Button variant="ghost" size="sm" className="mt-2 -ml-2 text-xs" asChild>
-                    <Link to={`/org/userlists?org_id=${orgId}`}>Manage <ArrowRight className="h-3 w-3" /></Link>
+                    <Link to={`${orgBase}/userlists`}>Manage <ArrowRight className="h-3 w-3" /></Link>
                   </Button>
                 </CardContent>
               </Card>
@@ -108,7 +108,7 @@ export default function OrgDashboard() {
                         <div className="flex items-center gap-2">
                           {p.active ? <Badge variant="success">Active</Badge> : <Badge variant="secondary">Inactive</Badge>}
                           <Button variant="ghost" size="sm" asChild>
-                            <Link to={`/project?project_id=${p.id}&org_id=${orgId}`}>Open <ArrowRight className="h-3 w-3" /></Link>
+                            <Link to={projectUrl(p.id)}>Open <ArrowRight className="h-3 w-3" /></Link>
                           </Button>
                         </div>
                       </div>

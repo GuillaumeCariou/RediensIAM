@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Plus, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -9,14 +9,14 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { listUserLists, createUserList } from '@/api';
+import { useOrgContext } from '@/hooks/useOrgContext';
 import PageHeader from '@/components/layout/PageHeader';
 
 interface UserList { id: string; name: string; immovable: boolean; user_count: number; created_at: string; }
 
 export default function UserLists() {
-  const [params] = useSearchParams();
   const navigate = useNavigate();
-  const orgId = params.get('org_id') ?? '';
+  const { orgId, userListBase } = useOrgContext();
   const [lists, setLists] = useState<UserList[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
@@ -78,7 +78,7 @@ export default function UserLists() {
                     <TableRow
                       key={list.id}
                       className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => navigate(`/org/userlists/${list.id}`)}
+                      onClick={() => navigate(`${userListBase}/${list.id}`)}
                     >
                       <TableCell className="font-medium">{list.name}</TableCell>
                       <TableCell>

@@ -65,6 +65,8 @@ export default function Sidebar() {
   const urlOrgId      = sysOrgMatch?.[1]  ?? '';
   const urlProjectId  = sysProjMatch?.[2] ?? '';
   const urlOrgForProj = sysProjMatch?.[1] ?? '';
+  const sysOrgBase    = urlOrgId      ? `/system/organisations/${urlOrgId}`                              : '';
+  const sysProjBase   = urlProjectId  ? `/system/organisations/${urlOrgForProj}/projects/${urlProjectId}` : '';
 
   const onProjectPath = pathname.startsWith('/project');
 
@@ -87,12 +89,20 @@ export default function Sidebar() {
   // ── Contextual nav for super_admin ────────────────────────────
   // Super_admin can't use /org/* or /project/* (no orgId/projectId in token).
   // We build system-level links for the selected org / project instead.
-  const sysOrgNav: NavItem[] = urlOrgId ? [
-    { label: 'Org Overview', to: `/system/organisations/${urlOrgId}`, icon: <LayoutDashboard className="h-4 w-4" />, exact: true },
+  const sysOrgNav: NavItem[] = sysOrgBase ? [
+    { label: 'Overview',         to: sysOrgBase,                              icon: <LayoutDashboard className="h-4 w-4" />, exact: true },
+    { label: 'User Lists',       to: `${sysOrgBase}/userlists`,               icon: <List          className="h-4 w-4" /> },
+    { label: 'Projects',         to: `${sysOrgBase}/projects`,                icon: <FolderKanban  className="h-4 w-4" /> },
+    { label: 'Admins',           to: `${sysOrgBase}/admins`,                  icon: <Shield        className="h-4 w-4" /> },
+    { label: 'Service Accounts', to: `${sysOrgBase}/service-accounts`,        icon: <Bot           className="h-4 w-4" /> },
+    { label: 'Audit Log',        to: `${sysOrgBase}/audit-log`,               icon: <ScrollText    className="h-4 w-4" /> },
   ] : [];
 
-  const sysProjNav: NavItem[] = urlProjectId ? [
-    { label: 'Project Details', to: `/system/organisations/${urlOrgForProj}/projects/${urlProjectId}`, icon: <LayoutDashboard className="h-4 w-4" />, exact: true },
+  const sysProjNav: NavItem[] = sysProjBase ? [
+    { label: 'Overview',    to: sysProjBase,               icon: <LayoutDashboard className="h-4 w-4" />, exact: true },
+    { label: 'Users',       to: `${sysProjBase}/users`,    icon: <Users           className="h-4 w-4" /> },
+    { label: 'Roles',       to: `${sysProjBase}/roles`,    icon: <Shield          className="h-4 w-4" /> },
+    { label: 'Login Theme', to: `${sysProjBase}/theme`,    icon: <Palette         className="h-4 w-4" /> },
   ] : [];
 
   // ── Which nav lists to render ─────────────────────────────────

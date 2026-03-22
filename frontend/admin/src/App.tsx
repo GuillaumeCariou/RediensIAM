@@ -64,7 +64,15 @@ function AppRoutes() {
           <Route path="system" element={<SystemDashboard />} />
           <Route path="system/organisations" element={<Organisations />} />
           <Route path="system/organisations/:id" element={<OrgDetail />} />
+          <Route path="system/organisations/:id/userlists" element={<UserLists />} />
+          <Route path="system/organisations/:id/projects" element={<Projects />} />
+          <Route path="system/organisations/:id/admins" element={<OrgAdmins />} />
+          <Route path="system/organisations/:id/service-accounts" element={<OrgServiceAccounts />} />
+          <Route path="system/organisations/:id/audit-log" element={<OrgAuditLog />} />
           <Route path="system/organisations/:oid/projects/:pid" element={<SystemProjectDetail />} />
+          <Route path="system/organisations/:oid/projects/:pid/users" element={<ProjectUsers />} />
+          <Route path="system/organisations/:oid/projects/:pid/roles" element={<ProjectRoles />} />
+          <Route path="system/organisations/:oid/projects/:pid/theme" element={<LoginTheme />} />
           <Route path="system/users" element={<SystemUsers />} />
           <Route path="system/userlists" element={<SystemUserLists />} />
           <Route path="system/userlists/:id" element={<SystemUserListDetail />} />

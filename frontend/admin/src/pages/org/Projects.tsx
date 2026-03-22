@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Plus, MoreHorizontal, Trash2, ArrowRight, CheckCircle, XCircle, Link2, Link2Off } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { Skeleton } from '@/components/ui/skeleton';
 import { listProjects, createProject, deleteProject, listUserLists, assignUserList, unassignUserList } from '@/api';
+import { useOrgContext } from '@/hooks/useOrgContext';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDateShort } from '@/lib/utils';
 
@@ -24,8 +25,7 @@ interface Project {
 interface UserList { id: string; name: string; }
 
 export default function Projects() {
-  const [params] = useSearchParams();
-  const orgId = params.get('org_id') ?? '';
+  const { orgId, projectUrl } = useOrgContext();
   const [projects, setProjects] = useState<Project[]>([]);
   const [userLists, setUserLists] = useState<UserList[]>([]);
   const [loading, setLoading] = useState(true);
@@ -147,7 +147,7 @@ export default function Projects() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent>
                             <DropdownMenuItem asChild>
-                              <Link to={`/project?project_id=${p.id}&org_id=${orgId}`}>
+                              <Link to={projectUrl(p.id)}>
                                 <ArrowRight className="h-4 w-4" />Open Project
                               </Link>
                             </DropdownMenuItem>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useProjectContext } from '@/hooks/useOrgContext';
 import { Plus, Trash2, Shield } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,8 +17,7 @@ interface Role {
 }
 
 export default function ProjectRoles() {
-  const [params] = useSearchParams();
-  const projectId = params.get('project_id') ?? '';
+  const { projectId } = useProjectContext();
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);

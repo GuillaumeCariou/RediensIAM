@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { Link } from 'react-router-dom';
+import { useProjectContext } from '@/hooks/useOrgContext';
 import { Users, Shield, ArrowRight, Palette } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -16,9 +17,7 @@ interface Project {
 }
 
 export default function ProjectDashboard() {
-  const [params] = useSearchParams();
-  const projectId = params.get('project_id') ?? '';
-  const orgId = params.get('org_id') ?? '';
+  const { projectId, projectBase } = useProjectContext();
   const [project, setProject] = useState<Project | null>(null);
   const [userCount, setUserCount] = useState<number | null>(null);
   const [roleCount, setRoleCount] = useState<number | null>(null);
@@ -67,7 +66,7 @@ export default function ProjectDashboard() {
                 <CardContent>
                   <p className="text-2xl font-bold">{userCount ?? '—'}</p>
                   <Button variant="ghost" size="sm" className="mt-2 -ml-2 text-xs" asChild>
-                    <Link to={`/project/users?project_id=${projectId}&org_id=${orgId}`}>Manage <ArrowRight className="h-3 w-3" /></Link>
+                    <Link to={`${projectBase}/users`}>Manage <ArrowRight className="h-3 w-3" /></Link>
                   </Button>
                 </CardContent>
               </Card>
@@ -76,7 +75,7 @@ export default function ProjectDashboard() {
                 <CardContent>
                   <p className="text-2xl font-bold">{roleCount ?? '—'}</p>
                   <Button variant="ghost" size="sm" className="mt-2 -ml-2 text-xs" asChild>
-                    <Link to={`/project/roles?project_id=${projectId}&org_id=${orgId}`}>Manage <ArrowRight className="h-3 w-3" /></Link>
+                    <Link to={`${projectBase}/roles`}>Manage <ArrowRight className="h-3 w-3" /></Link>
                   </Button>
                 </CardContent>
               </Card>
@@ -85,7 +84,7 @@ export default function ProjectDashboard() {
                 <CardContent>
                   <p className="text-sm text-muted-foreground">{project?.login_theme ? 'Customized' : 'Default'}</p>
                   <Button variant="ghost" size="sm" className="mt-2 -ml-2 text-xs" asChild>
-                    <Link to={`/project/theme?project_id=${projectId}&org_id=${orgId}`}>Edit Theme <ArrowRight className="h-3 w-3" /></Link>
+                    <Link to={`${projectBase}/theme`}>Edit Theme <ArrowRight className="h-3 w-3" /></Link>
                   </Button>
                 </CardContent>
               </Card>

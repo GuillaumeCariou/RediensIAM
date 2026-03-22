@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import { Plus, Trash2, Bot, Key, MoreHorizontal, Copy, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,6 +10,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { listOrgServiceAccounts, createServiceAccount, deleteServiceAccount, generatePat, listPats, revokePat, listUserLists } from '@/api';
+import { useOrgContext } from '@/hooks/useOrgContext';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -30,8 +30,7 @@ function CopyButton({ text }: { text: string }) {
 }
 
 export default function OrgServiceAccounts() {
-  const [params] = useSearchParams();
-  const orgId = params.get('org_id') ?? '';
+  const { orgId } = useOrgContext();
   const [accounts, setAccounts] = useState<SA[]>([]);
   const [userLists, setUserLists] = useState<UserList[]>([]);
   const [loading, setLoading] = useState(true);

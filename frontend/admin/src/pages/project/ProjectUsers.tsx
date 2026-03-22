@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useProjectContext } from '@/hooks/useOrgContext';
 import { UserPlus, Trash2, CheckCircle, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -21,8 +21,7 @@ interface ProjectUser {
 interface Role { id: string; name: string; }
 
 export default function ProjectUsers() {
-  const [params] = useSearchParams();
-  const projectId = params.get('project_id') ?? '';
+  const { projectId } = useProjectContext();
   const [users, setUsers] = useState<ProjectUser[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);

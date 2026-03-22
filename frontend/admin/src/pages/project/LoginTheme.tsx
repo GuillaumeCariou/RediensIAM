@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useProjectContext } from '@/hooks/useOrgContext';
 import { Save, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,8 +20,7 @@ interface Theme {
 }
 
 export default function LoginTheme() {
-  const [params] = useSearchParams();
-  const projectId = params.get('project_id') ?? '';
+  const { projectId } = useProjectContext();
   const [theme, setTheme] = useState<Theme>({
     primary_color: '#1a56db',
     background_color: '#f9fafb',
