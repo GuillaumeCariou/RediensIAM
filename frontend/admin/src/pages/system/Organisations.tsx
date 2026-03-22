@@ -175,7 +175,7 @@ export default function Organisations() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="slug">Slug</Label>
-              <Input id="slug" value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value.toLowerCase().replace(/\s+/g, '-') }))} required placeholder="acme-corp" pattern="[a-z0-9-]+" />
+              <Input id="slug" value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value.toLowerCase().replace(/\s+/g, '-') }))} required placeholder="acme-corp" pattern="[a-z0-9][a-z0-9-]*" />
               <p className="text-xs text-muted-foreground">Lowercase letters, numbers and hyphens only.</p>
             </div>
             <DialogFooter>

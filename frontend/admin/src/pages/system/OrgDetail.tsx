@@ -557,7 +557,7 @@ export default function OrgDetail() {
               <Input
                 value={newProject.slug}
                 onChange={e => setNewProject(p => ({ ...p, slug: e.target.value.toLowerCase().replace(/\s+/g, '-') }))}
-                required placeholder="main-app" pattern="[a-z0-9-]+"
+                required placeholder="main-app" pattern="[a-z0-9][a-z0-9-]*"
               />
               <p className="text-xs text-muted-foreground">Lowercase letters, numbers and hyphens only.</p>
             </div>
