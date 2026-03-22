@@ -17,11 +17,12 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   getOrg, suspendOrg, unsuspendOrg, updateOrg,
-  listSystemUserListMembers, listOrgAdmins, assignOrgAdmin,
+  listSystemUserListMembers,
+  adminListOrgAdmins, adminAssignOrgAdmin,
   addUserToList, removeSystemUserFromList,
-  listOrgServiceAccounts,
-  listUserLists, createUserList,
-  listProjects, createProject,
+  adminListOrgServiceAccounts,
+  listUserLists, adminCreateUserList,
+  listProjects, adminCreateProject,
 } from '@/api';
 import { fmtDateShort } from '@/lib/utils';
 
@@ -81,8 +82,8 @@ export default function OrgDetail() {
         setOrg(o);
         return Promise.all([
           listSystemUserListMembers(o.org_list_id).then(r => setOrgListMembers(r ?? [])),
-          listOrgAdmins(id).then(r => setOrgRoles(r.admins ?? r ?? [])),
-          listOrgServiceAccounts(id).then(r => setServiceAccounts(r.service_accounts ?? r ?? [])),
+          adminListOrgAdmins(id).then(r => setOrgRoles(r ?? [])),
+          adminListOrgServiceAccounts(id).then(r => setServiceAccounts(r ?? [])),
           listUserLists(id).then(r => {
             const all: UserList[] = r.user_lists ?? r ?? [];
             setUserLists(all.filter(l => !l.immovable));
@@ -136,7 +137,7 @@ export default function OrgDetail() {
     if (!assignRoleTarget || !id) return;
     setAssignRoleSaving(true);
     try {
-      await assignOrgAdmin(id, assignRoleTarget.id, assignRoleForm.role, assignRoleForm.scope_id || undefined);
+      await adminAssignOrgAdmin(id, assignRoleTarget.id, assignRoleForm.role, assignRoleForm.scope_id || undefined);
       setAssignRoleTarget(null);
       setAssignRoleForm({ role: 'org_admin', scope_id: '' });
       load();
@@ -155,7 +156,7 @@ export default function OrgDetail() {
     if (!id) return;
     setCreateListSaving(true);
     try {
-      await createUserList({ name: newListName, org_id: id });
+      await adminCreateUserList({ name: newListName, org_id: id });
       setCreateListOpen(false);
       setNewListName('');
       load();
@@ -168,8 +169,7 @@ export default function OrgDetail() {
     setCreateProjectSaving(true);
     setCreateProjectError('');
     try {
-      await createProject({
-        org_id: id,
+      await adminCreateProject(id, {
         name: newProject.name,
         slug: newProject.slug,
         redirect_uris: newProject.redirect_uri ? [newProject.redirect_uri] : [],

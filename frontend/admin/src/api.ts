@@ -177,3 +177,52 @@ export async function assignOrgAdmin(orgId: string, userId: string, role: string
 export async function removeOrgAdmin(orgId: string, roleId: string) {
   return apiFetch(`/org/admins/${roleId}?org_id=${orgId}`, { method: 'DELETE' });
 }
+
+// ── Admin-scoped org admin management ────────────────────────────
+export async function adminListOrgAdmins(orgId: string) {
+  return (await apiFetch(`/admin/organisations/${orgId}/admins`)).json();
+}
+export async function adminAssignOrgAdmin(orgId: string, userId: string, role: string, scopeId?: string) {
+  return (await apiFetch(`/admin/organisations/${orgId}/admins`, { method: 'POST', body: JSON.stringify({ user_id: userId, role, scope_id: scopeId }) })).json();
+}
+export async function adminRemoveOrgAdmin(orgId: string, roleId: string) {
+  return apiFetch(`/admin/organisations/${orgId}/admins/${roleId}`, { method: 'DELETE' });
+}
+
+// ── Admin-scoped org service accounts ────────────────────────────
+export async function adminListOrgServiceAccounts(orgId: string) {
+  return (await apiFetch(`/admin/organisations/${orgId}/service-accounts`)).json();
+}
+
+// ── Admin-scoped user list & project creation ─────────────────────
+export async function adminCreateUserList(body: { name: string; org_id: string }) {
+  return (await apiFetch('/admin/userlists', { method: 'POST', body: JSON.stringify(body) })).json();
+}
+export async function adminCreateProject(orgId: string, body: { name: string; slug: string; redirect_uris?: string[]; require_role_to_login?: boolean }) {
+  return (await apiFetch(`/admin/organisations/${orgId}/projects`, { method: 'POST', body: JSON.stringify(body) })).json();
+}
+
+// ── Admin-scoped project operations ──────────────────────────────
+export async function adminGetProject(id: string) {
+  return (await apiFetch(`/admin/projects/${id}`)).json();
+}
+export async function adminUpdateProject(id: string, body: { name?: string; require_role_to_login?: boolean; allow_self_registration?: boolean; email_verification_enabled?: boolean; sms_verification_enabled?: boolean }) {
+  return (await apiFetch(`/admin/projects/${id}`, { method: 'PATCH', body: JSON.stringify(body) })).json();
+}
+export async function adminAssignUserList(projectId: string, userListId: string) {
+  return (await apiFetch(`/admin/projects/${projectId}/assign-userlist`, { method: 'POST', body: JSON.stringify({ user_list_id: userListId }) })).json();
+}
+export async function adminUnassignUserList(projectId: string) {
+  return apiFetch(`/admin/projects/${projectId}/assign-userlist`, { method: 'DELETE' });
+}
+
+// ── Admin-scoped role management ──────────────────────────────────
+export async function adminListRoles(projectId: string) {
+  return (await apiFetch(`/admin/projects/${projectId}/roles`)).json();
+}
+export async function adminCreateRole(projectId: string, body: { name: string; description?: string; rank?: number }) {
+  return (await apiFetch(`/admin/projects/${projectId}/roles`, { method: 'POST', body: JSON.stringify(body) })).json();
+}
+export async function adminDeleteRole(projectId: string, roleId: string) {
+  return apiFetch(`/admin/projects/${projectId}/roles/${roleId}`, { method: 'DELETE' });
+}

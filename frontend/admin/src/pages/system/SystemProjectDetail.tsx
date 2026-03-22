@@ -14,8 +14,8 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  getProject, updateProject, assignUserList, unassignUserList,
-  listUserLists, listRoles, createRole, deleteRole,
+  adminGetProject, adminUpdateProject, adminAssignUserList, adminUnassignUserList,
+  listUserLists, adminListRoles, adminCreateRole, adminDeleteRole,
 } from '@/api';
 import { fmtDateShort } from '@/lib/utils';
 
@@ -64,9 +64,9 @@ export default function SystemProjectDetail() {
     if (!oid || !pid) return;
     setLoading(true);
     Promise.all([
-      getProject(pid).then(setProject),
+      adminGetProject(pid).then(setProject),
       listUserLists(oid).then(r => setUserLists(r.user_lists ?? r ?? [])),
-      listRoles(pid).then(r => setRoles(r.roles ?? r ?? [])),
+      adminListRoles(pid).then(r => setRoles(r ?? [])),
     ]).catch(console.error).finally(() => setLoading(false));
   }, [oid, pid]);
 
@@ -74,21 +74,21 @@ export default function SystemProjectDetail() {
 
   const handleToggle = async (field: string, value: boolean) => {
     if (!pid) return;
-    await updateProject(pid, { [field]: value });
+    await adminUpdateProject(pid, { [field]: value });
     setProject(p => p ? { ...p, [field]: value } : p);
   };
 
   const handleAssignList = async (ulId: string) => {
     if (!pid) return;
-    if (ulId === '__none__') await unassignUserList(pid);
-    else await assignUserList(pid, ulId);
-    getProject(pid).then(setProject);
+    if (ulId === '__none__') await adminUnassignUserList(pid);
+    else await adminAssignUserList(pid, ulId);
+    adminGetProject(pid).then(setProject);
   };
 
   const handleRename = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pid) return;
-    await updateProject(pid, { name: renameVal });
+    await adminUpdateProject(pid, { name: renameVal });
     setRenameOpen(false);
     load();
   };
@@ -98,18 +98,18 @@ export default function SystemProjectDetail() {
     if (!pid) return;
     setCreateRoleSaving(true);
     try {
-      await createRole({ project_id: pid, name: newRole.name, description: newRole.description || undefined });
+      await adminCreateRole(pid, { name: newRole.name, description: newRole.description || undefined });
       setCreateRoleOpen(false);
       setNewRole({ name: '', description: '' });
-      listRoles(pid).then(r => setRoles(r.roles ?? r ?? []));
+      adminListRoles(pid).then(r => setRoles(r ?? []));
     } finally { setCreateRoleSaving(false); }
   };
 
   const handleDeleteRole = async () => {
     if (!deleteRoleTarget || !pid) return;
-    await deleteRole(pid, deleteRoleTarget.id);
+    await adminDeleteRole(pid, deleteRoleTarget.id);
     setDeleteRoleTarget(null);
-    listRoles(pid).then(r => setRoles(r.roles ?? r ?? []));
+    adminListRoles(pid).then(r => setRoles(r ?? []));
   };
 
   const movableLists = userLists.filter(ul => !ul.immovable);

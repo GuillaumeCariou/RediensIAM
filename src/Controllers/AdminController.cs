@@ -79,7 +79,13 @@ public class AdminController(
     public async Task<IActionResult> GetOrg(Guid id)
     {
         if (!HasAdminAccess) return StatusCode(403);
-        var org = await db.Organisations.Include(o => o.OrgList).FirstOrDefaultAsync(o => o.Id == id);
+        var org = await db.Organisations
+            .Where(o => o.Id == id)
+            .Select(o => new {
+                o.Id, o.Name, o.Slug, o.Active, o.SuspendedAt, o.CreatedAt, o.UpdatedAt,
+                o.OrgListId, o.CreatedBy
+            })
+            .FirstOrDefaultAsync();
         if (org == null) return NotFound();
         return Ok(org);
     }
@@ -305,6 +311,218 @@ public class AdminController(
         return NoContent();
     }
 
+    // ── Org Admins ────────────────────────────────────────────────────────────
+
+    [HttpGet("/admin/organisations/{id}/admins")]
+    public async Task<IActionResult> ListOrgAdmins(Guid id)
+    {
+        if (!HasAdminAccess) return StatusCode(403);
+        var roles = await db.OrgRoles
+            .Where(r => r.OrgId == id)
+            .Include(r => r.User)
+            .ToListAsync();
+        var projectIds = roles.Where(r => r.ScopeId.HasValue).Select(r => r.ScopeId!.Value).Distinct().ToList();
+        var projects = await db.Projects
+            .Where(p => projectIds.Contains(p.Id))
+            .ToDictionaryAsync(p => p.Id);
+        return Ok(roles.Select(r => new
+        {
+            r.Id, r.OrgId, r.UserId, r.Role, r.ScopeId, r.GrantedAt,
+            user_name = $"{r.User.Username}#{r.User.Discriminator}",
+            user_email = r.User.Email,
+            scope_name = r.ScopeId.HasValue && projects.TryGetValue(r.ScopeId.Value, out var p) ? p.Name : null
+        }));
+    }
+
+    [HttpPost("/admin/organisations/{id}/admins")]
+    public async Task<IActionResult> AssignOrgAdmin(Guid id, [FromBody] AssignOrgAdminRequest body)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var role = new OrgRole
+        {
+            OrgId = id, UserId = body.UserId, Role = body.Role,
+            ScopeId = body.ScopeId, GrantedBy = GetActorId(), GrantedAt = DateTimeOffset.UtcNow
+        };
+        db.OrgRoles.Add(role);
+        await db.SaveChangesAsync();
+        return Created($"/admin/organisations/{id}/admins/{role.Id}", new { role.Id });
+    }
+
+    [HttpDelete("/admin/organisations/{id}/admins/{roleId}")]
+    public async Task<IActionResult> RemoveOrgAdmin(Guid id, Guid roleId)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var role = await db.OrgRoles.FirstOrDefaultAsync(r => r.Id == roleId && r.OrgId == id);
+        if (role == null) return NotFound();
+        db.OrgRoles.Remove(role);
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+
+    // ── Org Service Accounts ──────────────────────────────────────────────────
+
+    [HttpGet("/admin/organisations/{id}/service-accounts")]
+    public async Task<IActionResult> ListOrgServiceAccounts(Guid id)
+    {
+        if (!HasAdminAccess) return StatusCode(403);
+        var sas = await db.ServiceAccounts
+            .Where(sa => sa.UserList.OrgId == id)
+            .Select(sa => new { sa.Id, sa.Name, sa.Description, sa.Active, sa.LastUsedAt })
+            .ToListAsync();
+        return Ok(sas);
+    }
+
+    // ── UserList creation (admin scope) ───────────────────────────────────────
+
+    [HttpPost("/admin/userlists")]
+    public async Task<IActionResult> AdminCreateUserList([FromBody] AdminCreateUserListRequest body)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var ul = new UserList
+        {
+            Name = body.Name, OrgId = body.OrgId, Immovable = false,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        db.UserLists.Add(ul);
+        await db.SaveChangesAsync();
+        return Created($"/admin/userlists/{ul.Id}", new { ul.Id, ul.Name });
+    }
+
+    // ── Projects (admin scope) ────────────────────────────────────────────────
+
+    [HttpPost("/admin/organisations/{id}/projects")]
+    public async Task<IActionResult> AdminCreateProject(Guid id, [FromBody] AdminCreateProjectRequest body)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var actorId = GetActorId();
+        var project = new Project
+        {
+            OrgId = id, Name = body.Name, Slug = body.Slug,
+            RequireRoleToLogin = body.RequireRoleToLogin,
+            Active = true, CreatedBy = actorId,
+            CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+        };
+        db.Projects.Add(project);
+        await db.SaveChangesAsync();
+        try
+        {
+            await hydra.CreateOAuth2ClientAsync(new
+            {
+                client_id = $"client_{project.Id}",
+                client_name = $"Project: {project.Name}",
+                redirect_uris = body.RedirectUris ?? [],
+                grant_types = new[] { "authorization_code", "refresh_token" },
+                response_types = new[] { "code" },
+                scope = "openid profile offline_access",
+                token_endpoint_auth_method = "none",
+                metadata = new { project_id = project.Id.ToString(), org_id = id.ToString() }
+            });
+            project.HydraClientId = $"client_{project.Id}";
+            await db.SaveChangesAsync();
+        }
+        catch { }
+        await keto.WriteRelationTupleAsync("Projects", project.Id.ToString(), "org", $"Organisations:{id}");
+        await audit.RecordAsync(id, project.Id, actorId, "project.created", "project", project.Id.ToString());
+        return Created($"/admin/projects/{project.Id}", new { project.Id, project.Name, project.Slug });
+    }
+
+    [HttpGet("/admin/projects/{id}")]
+    public async Task<IActionResult> AdminGetProject(Guid id)
+    {
+        if (!HasAdminAccess) return StatusCode(403);
+        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id);
+        if (project == null) return NotFound();
+        return Ok(new
+        {
+            project.Id, project.Name, project.Slug, project.OrgId, project.Active,
+            project.HydraClientId, project.AssignedUserListId,
+            project.RequireRoleToLogin, project.AllowSelfRegistration,
+            project.EmailVerificationEnabled, project.SmsVerificationEnabled,
+            project.CreatedAt, project.UpdatedAt
+        });
+    }
+
+    [HttpPatch("/admin/projects/{id}")]
+    public async Task<IActionResult> AdminUpdateProject(Guid id, [FromBody] AdminUpdateProjectRequest body)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var project = await db.Projects.FindAsync(id);
+        if (project == null) return NotFound();
+        if (body.Name != null) project.Name = body.Name;
+        if (body.RequireRoleToLogin.HasValue) project.RequireRoleToLogin = body.RequireRoleToLogin.Value;
+        if (body.AllowSelfRegistration.HasValue) project.AllowSelfRegistration = body.AllowSelfRegistration.Value;
+        if (body.EmailVerificationEnabled.HasValue) project.EmailVerificationEnabled = body.EmailVerificationEnabled.Value;
+        if (body.SmsVerificationEnabled.HasValue) project.SmsVerificationEnabled = body.SmsVerificationEnabled.Value;
+        project.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        return Ok(new { project.Id, project.Name });
+    }
+
+    [HttpPost("/admin/projects/{id}/assign-userlist")]
+    public async Task<IActionResult> AdminAssignUserList(Guid id, [FromBody] AdminAssignUserListRequest body)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var project = await db.Projects.FindAsync(id);
+        if (project == null) return NotFound();
+        var list = await db.UserLists.FirstOrDefaultAsync(ul => ul.Id == body.UserListId && ul.OrgId == project.OrgId);
+        if (list == null) return BadRequest(new { error = "userlist_not_in_org" });
+        project.AssignedUserListId = body.UserListId;
+        project.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        return Ok(new { project.Id, project.AssignedUserListId });
+    }
+
+    [HttpDelete("/admin/projects/{id}/assign-userlist")]
+    public async Task<IActionResult> AdminUnassignUserList(Guid id)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var project = await db.Projects.FindAsync(id);
+        if (project == null) return NotFound();
+        project.AssignedUserListId = null;
+        project.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        return Ok(new { project.Id, message = "userlist_unassigned" });
+    }
+
+    // ── Roles (admin scope) ───────────────────────────────────────────────────
+
+    [HttpGet("/admin/projects/{id}/roles")]
+    public async Task<IActionResult> AdminListRoles(Guid id)
+    {
+        if (!HasAdminAccess) return StatusCode(403);
+        var roles = await db.Roles
+            .Where(r => r.ProjectId == id)
+            .Select(r => new { r.Id, r.Name, r.Description, r.Rank })
+            .ToListAsync();
+        return Ok(roles);
+    }
+
+    [HttpPost("/admin/projects/{id}/roles")]
+    public async Task<IActionResult> AdminCreateRole(Guid id, [FromBody] AdminCreateRoleRequest body)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        if (!await db.Projects.AnyAsync(p => p.Id == id)) return NotFound();
+        var role = new Role
+        {
+            ProjectId = id, Name = body.Name, Description = body.Description,
+            Rank = body.Rank ?? 100, CreatedBy = GetActorId(), CreatedAt = DateTimeOffset.UtcNow
+        };
+        db.Roles.Add(role);
+        await db.SaveChangesAsync();
+        return Created($"/admin/projects/{id}/roles/{role.Id}", new { role.Id, role.Name, role.Rank });
+    }
+
+    [HttpDelete("/admin/projects/{id}/roles/{rid}")]
+    public async Task<IActionResult> AdminDeleteRole(Guid id, Guid rid)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == rid && r.ProjectId == id);
+        if (role == null) return NotFound();
+        db.Roles.Remove(role);
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+
     [HttpGet("/health")]
     [AllowAnonymousAttribute]
     public IActionResult Health() => Ok(new { status = "healthy" });
@@ -319,3 +537,9 @@ public class AdminController(
 public record CreateOrgRequest(string Name, string Slug);
 public record UpdateOrgRequest(string? Name);
 public record AdminCreateUserRequest(string Email, string Password, string? Username);
+public record AssignOrgAdminRequest(Guid UserId, string Role, Guid? ScopeId);
+public record AdminCreateUserListRequest(string Name, Guid OrgId);
+public record AdminCreateProjectRequest(string Name, string Slug, bool RequireRoleToLogin, string[]? RedirectUris);
+public record AdminUpdateProjectRequest(string? Name, bool? RequireRoleToLogin, bool? AllowSelfRegistration, bool? EmailVerificationEnabled, bool? SmsVerificationEnabled);
+public record AdminAssignUserListRequest(Guid UserListId);
+public record AdminCreateRoleRequest(string Name, string? Description, int? Rank);
