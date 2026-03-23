@@ -11,7 +11,8 @@ namespace RediensIAM.Services;
 public class PatIntrospectionService(
     RediensIamDbContext db,
     IConnectionMultiplexer redis,
-    IConfiguration config)
+    IConfiguration config,
+    IServiceScopeFactory scopeFactory)
 {
     private readonly IDatabase _cache = redis.GetDatabase();
     private readonly TimeSpan _ttl = TimeSpan.FromMinutes(config.GetValue<int>("Cache:PatTtlMinutes", 5));
@@ -33,9 +34,23 @@ public class PatIntrospectionService(
         if (pat == null || !pat.ServiceAccount.Active) return null;
         if (pat.ExpiresAt.HasValue && pat.ExpiresAt < DateTimeOffset.UtcNow) return null;
 
-        pat.LastUsedAt = DateTimeOffset.UtcNow;
-        pat.ServiceAccount.LastUsedAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync();
+        // Fire-and-forget: update LastUsedAt without blocking the auth path
+        var patId = pat.Id;
+        var saId = pat.ServiceAccount.Id;
+        var now = DateTimeOffset.UtcNow;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var scope = scopeFactory.CreateScope();
+                var bgDb = scope.ServiceProvider.GetRequiredService<RediensIamDbContext>();
+                await bgDb.PersonalAccessTokens.Where(p => p.Id == patId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(p => p.LastUsedAt, now));
+                await bgDb.ServiceAccounts.Where(sa => sa.Id == saId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(sa => sa.LastUsedAt, now));
+            }
+            catch { /* non-critical */ }
+        });
 
         // Resolve context from the SA's UserList → Org
         var userList = await db.UserLists
@@ -59,12 +74,13 @@ public class PatIntrospectionService(
         }
         else
         {
-            var roles = pat.ServiceAccount.ProjectRoles.Select(r => r.Role).ToList();
+            var projectRoles = pat.ServiceAccount.ProjectRoles.ToList();
+            var roles = projectRoles.Select(r => r.Role).ToList();
             result = new IntrospectionResponse(
                 Active: true,
                 Sub: $"sa:{pat.ServiceAccount.Id}",
                 OrgId: userList.OrgId.ToString()!,
-                ProjectId: pat.ServiceAccount.ProjectRoles.FirstOrDefault()?.ProjectId.ToString() ?? "",
+                ProjectId: projectRoles.Count == 1 ? projectRoles[0].ProjectId.ToString() : "",
                 Roles: roles,
                 IsServiceAccount: true);
         }

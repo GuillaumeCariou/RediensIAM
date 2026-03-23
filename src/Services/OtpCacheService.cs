@@ -9,8 +9,8 @@ public class OtpCacheService(IConnectionMultiplexer redis, IConfiguration config
 {
     private readonly IDatabase _db = redis.GetDatabase();
     private readonly int _ttlSeconds = config.GetValue<int>("Security:OtpTtlSeconds", 300);
-    private readonly int _maxSmsPerWindow = 3;
-    private readonly int _smsWindowMinutes = 10;
+    private readonly int _maxSmsPerWindow = config.GetValue<int>("Security:MaxSmsPerWindow", 3);
+    private readonly int _smsWindowMinutes = config.GetValue<int>("Security:SmsWindowMinutes", 10);
 
     public async Task StoreOtpAsync(string prefix, Guid userId, string code)
     {
@@ -79,9 +79,13 @@ public class OtpCacheService(IConnectionMultiplexer redis, IConfiguration config
 
     public async Task StoreTotpUsedAsync(Guid userId, string code)
     {
-        await _db.StringSetAsync($"otp:totp_used:{userId}:{code}", "1", TimeSpan.FromSeconds(90));
+        var keyCode = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code)))[..16];
+        await _db.StringSetAsync($"otp:totp_used:{userId}:{keyCode}", "1", TimeSpan.FromSeconds(90));
     }
 
     public async Task<bool> IsTotpUsedAsync(Guid userId, string code)
-        => await _db.KeyExistsAsync($"otp:totp_used:{userId}:{code}");
+    {
+        var keyCode = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code)))[..16];
+        return await _db.KeyExistsAsync($"otp:totp_used:{userId}:{keyCode}");
+    }
 }

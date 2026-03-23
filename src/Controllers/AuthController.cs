@@ -493,7 +493,7 @@ public class AuthController(
 
         if (!verificationEnabled)
         {
-            var user = BuildUser(project.AssignedUserListId!.Value, email, body.Username, body.Password);
+            var user = await BuildUserAsync(project.AssignedUserListId!.Value, email, body.Username, body.Password);
             db.Users.Add(user);
             await db.SaveChangesAsync();
             await keto.WriteRelationTupleAsync("UserLists", project.AssignedUserListId!.Value.ToString(), "member", $"user:{user.Id}");
@@ -557,7 +557,9 @@ public class AuthController(
         if (await db.Users.AnyAsync(u => u.UserListId == userListId && u.Email == email))
             return Conflict(new { error = "email_already_exists" });
 
-        var discriminator = Random.Shared.Next(1000, 9999).ToString();
+        string discriminator;
+        do { discriminator = Random.Shared.Next(1000, 9999).ToString(); }
+        while (await db.Users.AnyAsync(u => u.UserListId == userListId && u.Username == username && u.Discriminator == discriminator));
         var user = new User
         {
             UserListId = userListId, Username = username,
@@ -710,15 +712,22 @@ public class AuthController(
         return Ok(new { redirect_to = redirectUrl });
     }
 
-    private User BuildUser(Guid userListId, string email, string? username, string password) => new()
+    private async Task<User> BuildUserAsync(Guid userListId, string email, string? username, string password)
     {
-        UserListId = userListId,
-        Username = username ?? email.Split('@')[0],
-        Discriminator = Random.Shared.Next(1000, 9999).ToString(),
-        Email = email,
-        PasswordHash = passwords.Hash(password),
-        Active = true, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
-    };
+        var uname = username ?? email.Split('@')[0];
+        string discriminator;
+        do { discriminator = Random.Shared.Next(1000, 9999).ToString(); }
+        while (await db.Users.AnyAsync(u => u.UserListId == userListId && u.Username == uname && u.Discriminator == discriminator));
+        return new User
+        {
+            UserListId = userListId,
+            Username = uname,
+            Discriminator = discriminator,
+            Email = email,
+            PasswordHash = passwords.Hash(password),
+            Active = true, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+        };
+    }
 
     private static string? ExtractProjectId(HydraLoginRequest req)
     {

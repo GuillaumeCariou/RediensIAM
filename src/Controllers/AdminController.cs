@@ -119,12 +119,58 @@ public class AdminController(
         return Ok(new { message = "org_suspended" });
     }
 
+    [HttpPost("/admin/organisations/{id}/unsuspend")]
+    public async Task<IActionResult> UnsuspendOrg(Guid id)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var org = await db.Organisations.FindAsync(id);
+        if (org == null) return NotFound();
+        org.Active = true;
+        org.SuspendedAt = null;
+        org.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        await audit.RecordAsync(id, null, GetActorId(), "org.unsuspended", "organisation", id.ToString());
+        return Ok(new { message = "org_unsuspended" });
+    }
+
     [HttpDelete("/admin/organisations/{id}")]
     public async Task<IActionResult> DeleteOrg(Guid id)
     {
         if (!IsSuperAdmin) return StatusCode(403);
         var org = await db.Organisations.FindAsync(id);
         if (org == null) return NotFound();
+
+        // 1. Clean up projects: revoke Hydra clients, delete Keto tuples
+        var projects = await db.Projects.Where(p => p.OrgId == id).ToListAsync();
+        foreach (var p in projects)
+        {
+            if (p.HydraClientId != null)
+            {
+                try { await hydra.DeleteOAuth2ClientAsync(p.HydraClientId); }
+                catch (Exception ex) { logger.LogWarning(ex, "Failed to delete Hydra client {ClientId} during org {OrgId} deletion", p.HydraClientId, id); }
+            }
+            await keto.DeleteAllProjectTuplesAsync(p.Id.ToString());
+        }
+        db.Projects.RemoveRange(projects);
+
+        // 2. Clean up org roles
+        var orgRoles = await db.OrgRoles.Where(r => r.OrgId == id).ToListAsync();
+        db.OrgRoles.RemoveRange(orgRoles);
+
+        // 3. Clean up user lists: remove users and their Keto member tuples
+        var lists = await db.UserLists.Where(ul => ul.OrgId == id).ToListAsync();
+        foreach (var list in lists)
+        {
+            var users = await db.Users.Where(u => u.UserListId == list.Id).ToListAsync();
+            foreach (var u in users)
+                await keto.DeleteRelationTupleAsync("UserLists", list.Id.ToString(), "member", $"user:{u.Id}");
+            db.Users.RemoveRange(users);
+        }
+        db.UserLists.RemoveRange(lists);
+
+        // 4. Delete org Keto tuple
+        await keto.DeleteRelationTupleAsync("Organisations", id.ToString(), "org", "System:rediensiam");
+
         db.Organisations.Remove(org);
         await db.SaveChangesAsync();
         return NoContent();
@@ -302,10 +348,13 @@ public class AdminController(
         if (!IsSuperAdmin) return StatusCode(403);
         var ul = await db.UserLists.FindAsync(id);
         if (ul == null) return NotFound();
-        var discriminator = Random.Shared.Next(1000, 9999).ToString();
+        var username = body.Username ?? body.Email.Split('@')[0];
+        string discriminator;
+        do { discriminator = Random.Shared.Next(1000, 9999).ToString(); }
+        while (await db.Users.AnyAsync(u => u.UserListId == id && u.Username == username && u.Discriminator == discriminator));
         var user = new User
         {
-            UserListId = id, Username = body.Username ?? body.Email.Split('@')[0],
+            UserListId = id, Username = username,
             Discriminator = discriminator, Email = body.Email.ToLowerInvariant(),
             PasswordHash = passwords.Hash(body.Password),
             Active = true, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow

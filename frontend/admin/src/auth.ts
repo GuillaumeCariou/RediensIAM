@@ -60,8 +60,18 @@ export async function logout() {
   m.signoutRedirect();
 }
 
+export class ApiError extends Error {
+  readonly status: number;
+  readonly body: unknown;
+  constructor(status: number, body: unknown) {
+    super(`API error ${status}`);
+    this.status = status;
+    this.body = body;
+  }
+}
+
 export async function apiFetch(path: string, opts: RequestInit = {}) {
-  return fetch(path, {
+  const res = await fetch(path, {
     ...opts,
     headers: {
       'Content-Type': 'application/json',
@@ -69,4 +79,10 @@ export async function apiFetch(path: string, opts: RequestInit = {}) {
       ...opts.headers,
     },
   });
+  if (!res.ok) {
+    let body: unknown;
+    try { body = await res.json(); } catch { body = null; }
+    throw new ApiError(res.status, body);
+  }
+  return res;
 }

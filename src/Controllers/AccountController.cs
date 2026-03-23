@@ -113,7 +113,7 @@ public class AccountController(
 
         var backupCodes = Enumerable.Range(0, 8).Select(_ =>
         {
-            var code = Guid.NewGuid().ToString("N")[..8].ToUpper();
+            var code = Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToUpper();
             return (code, hash: Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(code))));
         }).ToList();
 
@@ -134,7 +134,7 @@ public class AccountController(
 
         var codes = Enumerable.Range(0, 8).Select(_ =>
         {
-            var code = Guid.NewGuid().ToString("N")[..8].ToUpper();
+            var code = Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToUpper();
             return (code, hash: Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(code))));
         }).ToList();
 

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using StackExchange.Redis;
 using RediensIAM.Data;
@@ -21,11 +22,15 @@ builder.Services.AddDbContext<RediensIamDbContext>(options =>
 
 // ── Redis / Dragonfly ──────────────────────────────────────────────────────
 var redisConn = config["Cache:ConnectionString"] ?? "localhost:6379,abortConnect=false";
-builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
+builder.Services.Configure<ForwardedHeadersOptions>(o =>
 {
-    try { return ConnectionMultiplexer.Connect(redisConn); }
-    catch { return ConnectionMultiplexer.Connect("localhost:6379,abortConnect=false"); }
+    o.ForwardedHeaders = ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedFor;
+    o.KnownIPNetworks.Clear();
+    o.KnownProxies.Clear();
 });
+
+builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
+    ConnectionMultiplexer.Connect(redisConn));
 builder.Services.AddStackExchangeRedisCache(o =>
 {
     o.Configuration = redisConn;
@@ -39,6 +44,7 @@ builder.Services.AddSession(o =>
     o.Cookie.HttpOnly = true;
     o.Cookie.IsEssential = true;
     o.Cookie.SameSite = SameSiteMode.Strict;
+    o.Cookie.SecurePolicy = CookieSecurePolicy.Always;
 });
 
 // ── HTTP Clients ───────────────────────────────────────────────────────────
@@ -66,9 +72,14 @@ builder.Services.AddHttpContextAccessor();
 // ── WebAuthn / Passkeys ────────────────────────────────────────────────────
 builder.Services.AddFido2(opts =>
 {
-    opts.ServerDomain = config["App:Domain"]!;
+    opts.ServerDomain = config["App:Domain"]
+        ?? throw new InvalidOperationException("App:Domain configuration is required");
     opts.ServerName   = "RediensIAM";
-    opts.Origins      = new HashSet<string> { config["App:PublicUrl"]! };
+    opts.Origins      = new HashSet<string>
+    {
+        config["App:PublicUrl"]
+            ?? throw new InvalidOperationException("App:PublicUrl configuration is required")
+    };
     opts.TimestampDriftTolerance = 300_000;
 });
 
@@ -179,6 +190,8 @@ if (!string.IsNullOrEmpty(bootstrapEmail) && !string.IsNullOrEmpty(bootstrapPass
 }
 
 // ── Middleware pipeline ────────────────────────────────────────────────────
+app.UseMiddleware<AppExceptionMiddleware>();
+app.UseForwardedHeaders();
 app.UseSession();
 app.UseCors("AdminSpa");
 app.UseDefaultFiles();

@@ -13,7 +13,7 @@ public class KetoService(IHttpClientFactory http, IConfiguration config)
 
     public async Task<bool> CheckAsync(string namespaceName, string objectId, string relation, string subjectId)
     {
-        var url = $"{_readUrl}/relation-tuples/check?namespace={namespaceName}&object={objectId}&relation={relation}&subject_id={Uri.EscapeDataString(subjectId)}";
+        var url = $"{_readUrl}/relation-tuples/check?namespace={Uri.EscapeDataString(namespaceName)}&object={Uri.EscapeDataString(objectId)}&relation={Uri.EscapeDataString(relation)}&subject_id={Uri.EscapeDataString(subjectId)}";
         var resp = await ReadClient.GetAsync(url);
         if (!resp.IsSuccessStatusCode) return false;
         var result = await resp.Content.ReadFromJsonAsync<JsonElement>(_json);
@@ -36,19 +36,19 @@ public class KetoService(IHttpClientFactory http, IConfiguration config)
 
     public async Task DeleteRelationTupleAsync(string namespaceName, string objectId, string relation, string subjectId)
     {
-        var url = $"{_writeUrl}/admin/relation-tuples?namespace={namespaceName}&object={objectId}&relation={relation}&subject_id={Uri.EscapeDataString(subjectId)}";
+        var url = $"{_writeUrl}/admin/relation-tuples?namespace={Uri.EscapeDataString(namespaceName)}&object={Uri.EscapeDataString(objectId)}&relation={Uri.EscapeDataString(relation)}&subject_id={Uri.EscapeDataString(subjectId)}";
         await WriteClient.DeleteAsync(url);
     }
 
     public async Task DeleteAllProjectTuplesAsync(string projectId)
     {
-        var url = $"{_writeUrl}/admin/relation-tuples?namespace=Projects&object={projectId}";
+        var url = $"{_writeUrl}/admin/relation-tuples?namespace={Uri.EscapeDataString("Projects")}&object={Uri.EscapeDataString(projectId)}";
         await WriteClient.DeleteAsync(url);
     }
 
     public async Task<bool> HasAnyRelationAsync(string namespaceName, string relation, string subjectId)
     {
-        var url = $"{_readUrl}/relation-tuples?namespace={namespaceName}&relation={relation}&subject_id={Uri.EscapeDataString(subjectId)}&page_size=1";
+        var url = $"{_readUrl}/relation-tuples?namespace={Uri.EscapeDataString(namespaceName)}&relation={Uri.EscapeDataString(relation)}&subject_id={Uri.EscapeDataString(subjectId)}&page_size=1";
         var resp = await ReadClient.GetAsync(url);
         if (!resp.IsSuccessStatusCode) return false;
         var result = await resp.Content.ReadFromJsonAsync<JsonElement>(_json);

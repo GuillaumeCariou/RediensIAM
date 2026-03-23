@@ -179,6 +179,12 @@ if [ "${PROD}" = "true" ]; then
     --set "hydra.hydra.config.urls.logout=${PROD_URL}/auth/logout" \
     --set "hydra.hydra.config.urls.post_logout_redirect=${PROD_URL}/admin/" \
     --set "hydra.ingress.public.hosts[0].host=${PROD_DOMAIN}" \
+    --set "hydra.ingress.public.hosts[0].paths[0].path=/oauth2" \
+    --set "hydra.ingress.public.hosts[0].paths[0].pathType=Prefix" \
+    --set "hydra.ingress.public.hosts[0].paths[1].path=/.well-known" \
+    --set "hydra.ingress.public.hosts[0].paths[1].pathType=Prefix" \
+    --set "hydra.ingress.public.hosts[0].paths[2].path=/userinfo" \
+    --set "hydra.ingress.public.hosts[0].paths[2].pathType=Prefix" \
     --wait --timeout 10m
 else
   DEV_FLAGS=""
