@@ -30,7 +30,6 @@ if [ "${PROD}" = "true" ]; then
   PROD_DOMAIN="authentication.rediens.net"
   PROD_URL="https://${PROD_DOMAIN}"
   SECRETS_FILE="${CHART}/values.prod.secret.yaml"
-  HOMELAB_TRAEFIK="${HOME}/Desktop/Workspace/homelab/proxy/conf.d/authentication-routing.yml"
   echo "════════════════════════════════════════════════"
   echo " RediensIAM — Prod Deployment"
   echo " Domain:    ${PROD_DOMAIN}"
@@ -226,42 +225,6 @@ kubectl exec -n "${NAMESPACE}" deployment/rediensiam-hydra -- \
     --token-endpoint-auth-method none \
   && echo "  client_admin_system created (redirect: ${REDIRECT_URI})"
 
-# ── 5b. Update external Traefik routing (prod only) ────────────────────────────
-if [ "${PROD}" = "true" ]; then
-  echo ""
-  echo "──── [5b/5] Updating external Traefik routing ───"
-  NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null | awk '{print $1}')
-  NODE_IP="${NODE_IP:-$(hostname -I | awk '{print $1}')}"
-
-  cat > "${HOMELAB_TRAEFIK}" <<EOF
-http:
-  routers:
-    rediensiam-router:
-      rule: "Host(\`${PROD_DOMAIN}\`)"
-      priority: 10
-      entryPoints:
-        - websecure
-      tls: true
-      service: rediensiam-service
-      middlewares:
-        - rediensiam-headers
-
-  services:
-    rediensiam-service:
-      loadBalancer:
-        servers:
-          - url: "http://${NODE_IP}:80"
-
-  middlewares:
-    rediensiam-headers:
-      headers:
-        customRequestHeaders:
-          X-Forwarded-Proto: "https"
-          X-Forwarded-Host: "${PROD_DOMAIN}"
-EOF
-  echo "  Traefik routing updated → http://${NODE_IP}:80"
-  echo "  Reload Traefik to apply (e.g. systemctl reload traefik)"
-fi
 
 # ── Summary ────────────────────────────────────────────────────────────────────
 echo ""
@@ -277,7 +240,7 @@ if [ "${PROD}" = "true" ]; then
   echo "   Admin  →  ${PROD_URL}/admin/"
   echo ""
   echo " Remember:"
-  echo "   - Reload Traefik on the proxy host"
+  echo "   - Update Traefik routing on the proxy host to point ${PROD_DOMAIN} → k3s node :80"
   echo "   - Keep ${SECRETS_FILE} safe (not committed)"
 else
   echo "   Login  →  http://localhost/login"
