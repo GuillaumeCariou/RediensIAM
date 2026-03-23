@@ -13,6 +13,7 @@ public class ServiceAccountConfiguration : IEntityTypeConfiguration<ServiceAccou
         builder.HasKey(x => x.Id);
         builder.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
         builder.Property(x => x.Name).IsRequired().HasMaxLength(200);
+        builder.Property(x => x.IsSystem).HasDefaultValue(false);
         builder.Property(x => x.Active).HasDefaultValue(true);
         builder.Property(x => x.CreatedAt).HasDefaultValueSql("now()");
         builder.HasIndex(x => new { x.UserListId, x.Name }).IsUnique();

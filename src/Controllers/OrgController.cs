@@ -20,29 +20,28 @@ public class OrgController(
     PatGenerationService patGen,
     ILogger<OrgController> logger) : ControllerBase
 {
-    private TokenClaims Claims => HttpContext.GetClaims()!;
+    private TokenClaims Claims => HttpContext.GetClaims() ?? throw new UnauthorizedException("Not authenticated");
     private Guid OrgId => Guid.TryParse(Claims.OrgId, out var g) ? g : Guid.Empty;
+    private Guid ActorId => Claims.ParsedUserId;
 
     private async Task RequireOrgAdminAsync()
     {
         var level = await roleService.GetActorManagementLevelForOrgAsync(ActorId, OrgId);
         if (level > Services.ManagementLevel.OrgAdmin) throw new ForbiddenException("org_admin required");
     }
-    private Guid ActorId => Claims.ParsedUserId;
 
     // ── Projects ──────────────────────────────────────────────────────────────
 
     [HttpGet("/org/projects")]
     public async Task<IActionResult> ListProjects([FromQuery] Guid? org_id)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         Guid orgId;
-        if (Guid.TryParse(claims.OrgId, out var claimsOrgId))
+        if (Guid.TryParse(Claims.OrgId, out var claimsOrgId))
             orgId = claimsOrgId;
-        else if (org_id.HasValue && claims.Roles.Contains("super_admin"))
+        else if (org_id.HasValue && Claims.Roles.Contains("super_admin"))
             orgId = org_id.Value;
         else
-            return Forbid();
+            throw new ForbiddenException("No org context");
         var projects = await db.Projects
             .Where(p => p.OrgId == orgId)
             .Select(p => new { p.Id, p.Name, p.Slug, p.Active, p.AssignedUserListId, p.RequireRoleToLogin })
@@ -53,15 +52,12 @@ public class OrgController(
     [HttpPost("/org/projects")]
     public async Task<IActionResult> CreateProject([FromBody] CreateProjectRequest body)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var orgId = OrgId;
-        var actorId = claims.ParsedUserId;
-
         var project = new Project
         {
             OrgId = orgId, Name = body.Name, Slug = body.Slug,
             RequireRoleToLogin = body.RequireRoleToLogin,
-            Active = true, CreatedBy = actorId,
+            Active = true, CreatedBy = ActorId,
             CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
         };
         db.Projects.Add(project);
@@ -86,14 +82,13 @@ public class OrgController(
 
         await keto.WriteRelationTupleAsync("Projects", project.Id.ToString(), "org", $"Organisations:{orgId}");
         await db.SaveChangesAsync();
-        await audit.RecordAsync(orgId, project.Id, actorId, "project.created", "project", project.Id.ToString());
+        await audit.RecordAsync(orgId, project.Id, ActorId, "project.created", "project", project.Id.ToString());
         return Created($"/org/projects/{project.Id}", new { project.Id, project.Name, project.Slug });
     }
 
     [HttpGet("/org/projects/{id}")]
     public async Task<IActionResult> GetProject(Guid id)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
         if (project == null) return NotFound();
         return Ok(project);
@@ -102,7 +97,6 @@ public class OrgController(
     [HttpPatch("/org/projects/{id}")]
     public async Task<IActionResult> UpdateProject(Guid id, [FromBody] UpdateProjectRequest body)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
         if (project == null) return NotFound();
         if (body.Name != null) project.Name = body.Name;
@@ -116,8 +110,6 @@ public class OrgController(
     [HttpDelete("/org/projects/{id}")]
     public async Task<IActionResult> DeleteProject(Guid id)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var actorId = claims.ParsedUserId;
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
         if (project == null) return NotFound();
 
@@ -129,14 +121,13 @@ public class OrgController(
         await keto.DeleteAllProjectTuplesAsync(id.ToString());
         db.Projects.Remove(project);
         await db.SaveChangesAsync();
-        await audit.RecordAsync(project.OrgId, id, actorId, "project.deleted", "project", id.ToString());
+        await audit.RecordAsync(project.OrgId, id, ActorId, "project.deleted", "project", id.ToString());
         return NoContent();
     }
 
     [HttpPost("/org/projects/{id}/assign-userlist")]
     public async Task<IActionResult> AssignUserList(Guid id, [FromBody] AssignUserListRequest body)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var orgId = OrgId;
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == orgId);
         if (project == null) return NotFound();
@@ -151,7 +142,6 @@ public class OrgController(
     [HttpDelete("/org/projects/{id}/assign-userlist")]
     public async Task<IActionResult> UnassignUserList(Guid id)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
         if (project == null) return NotFound();
         project.AssignedUserListId = null;
@@ -165,7 +155,6 @@ public class OrgController(
     [HttpGet("/org/userlists")]
     public async Task<IActionResult> ListUserLists()
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var lists = await db.UserLists
             .Where(ul => ul.OrgId == OrgId && !ul.Immovable)
             .Select(ul => new { ul.Id, ul.Name, ul.OrgId, ul.Immovable, ul.CreatedAt })
@@ -176,7 +165,6 @@ public class OrgController(
     [HttpPost("/org/userlists")]
     public async Task<IActionResult> CreateUserList([FromBody] CreateUserListRequest body)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var ul = new UserList
         {
             Name = body.Name, OrgId = OrgId, Immovable = false,
@@ -190,7 +178,6 @@ public class OrgController(
     [HttpGet("/org/userlists/{id}")]
     public async Task<IActionResult> GetUserList(Guid id)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var ul = await db.UserLists.Include(ul => ul.Users)
             .FirstOrDefaultAsync(ul => ul.Id == id && ul.OrgId == OrgId);
         if (ul == null) return NotFound();
@@ -202,7 +189,6 @@ public class OrgController(
     [HttpDelete("/org/userlists/{id}")]
     public async Task<IActionResult> DeleteUserList(Guid id)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var ul = await db.UserLists.FirstOrDefaultAsync(ul => ul.Id == id && ul.OrgId == OrgId);
         if (ul == null) return NotFound();
         if (ul.Immovable) return BadRequest(new { error = "cannot_delete_immovable" });
@@ -216,7 +202,6 @@ public class OrgController(
     [HttpPost("/org/userlists/{id}/cleanup")]
     public async Task<IActionResult> CleanupUserList(Guid id, [FromBody] OrgCleanupRequest body)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var orgId = OrgId;
         if (!await db.UserLists.AnyAsync(ul => ul.Id == id && ul.OrgId == orgId)) return NotFound();
 
@@ -224,11 +209,6 @@ public class OrgController(
             .Where(p => p.AssignedUserListId == id)
             .Select(p => p.Id).ToListAsync();
 
-        var activeUserIds = await db.Users
-            .Where(u => u.UserListId == id && u.Active)
-            .Select(u => u.Id).ToHashSetAsync();
-
-        // Orphaned roles: UserProjectRole rows for users no longer in this list or inactive
         var allUserIds = await db.Users
             .Where(u => u.UserListId == id)
             .Select(u => u.Id).ToHashSetAsync();
@@ -238,7 +218,6 @@ public class OrgController(
             .Where(r => projectIds.Contains(r.ProjectId) && !allUserIds.Contains(r.UserId))
             .ToListAsync();
 
-        // Inactive users: haven't logged in for threshold days
         var inactiveUsers = new List<Entities.User>();
         if (body.RemoveInactiveUsers)
         {
@@ -278,9 +257,7 @@ public class OrgController(
     [HttpGet("/org/userlists/{id}/users")]
     public async Task<IActionResult> ListUsersInList(Guid id)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var ul = await db.UserLists.AnyAsync(ul => ul.Id == id && ul.OrgId == OrgId);
-        if (!ul) return NotFound();
+        if (!await db.UserLists.AnyAsync(ul => ul.Id == id && ul.OrgId == OrgId)) return NotFound();
         var users = await db.Users
             .Where(u => u.UserListId == id)
             .Select(u => new { u.Id, u.Username, u.Discriminator, u.Email, u.DisplayName, u.Active, u.LastLoginAt })
@@ -291,7 +268,6 @@ public class OrgController(
     [HttpPost("/org/userlists/{id}/users")]
     public async Task<IActionResult> AddUserToList(Guid id, [FromBody] CreateUserRequest body)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var ul = await db.UserLists.FirstOrDefaultAsync(ul => ul.Id == id && ul.OrgId == OrgId);
         if (ul == null) return NotFound();
 
@@ -319,7 +295,6 @@ public class OrgController(
     [HttpPatch("/org/userlists/{id}/users/{uid}")]
     public async Task<IActionResult> UpdateUser(Guid id, Guid uid, [FromBody] UpdateUserRequest body)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == uid && u.UserListId == id
             && u.UserList.OrgId == OrgId);
         if (user == null) return NotFound();
@@ -333,8 +308,6 @@ public class OrgController(
     [HttpDelete("/org/userlists/{id}/users/{uid}")]
     public async Task<IActionResult> RemoveUser(Guid id, Guid uid)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var actorId = claims.ParsedUserId;
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == uid && u.UserListId == id
             && u.UserList.OrgId == OrgId);
         if (user == null) return NotFound();
@@ -342,7 +315,7 @@ public class OrgController(
         await keto.DeleteRelationTupleAsync("UserLists", id.ToString(), "member", $"user:{uid}");
         db.Users.Remove(user);
         await db.SaveChangesAsync();
-        await audit.RecordAsync(OrgId, null, actorId, "user.removed", "user", uid.ToString());
+        await audit.RecordAsync(OrgId, null, ActorId, "user.removed", "user", uid.ToString());
         return NoContent();
     }
 
@@ -351,7 +324,6 @@ public class OrgController(
     [HttpGet("/org/service-accounts")]
     public async Task<IActionResult> ListServiceAccounts()
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var orgId = OrgId;
         var sas = await db.ServiceAccounts
             .Where(sa => sa.UserList.OrgId == orgId)
@@ -363,13 +335,12 @@ public class OrgController(
     [HttpPost("/org/service-accounts")]
     public async Task<IActionResult> CreateServiceAccount([FromBody] OrgCreateSaRequest body)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var ul = await db.UserLists.FirstOrDefaultAsync(ul => ul.Id == body.UserListId && ul.OrgId == OrgId);
         if (ul == null) return BadRequest(new { error = "userlist_not_in_org" });
         var sa = new ServiceAccount
         {
             UserListId = body.UserListId, Name = body.Name, Description = body.Description,
-            Active = true, CreatedBy = claims.ParsedUserId, CreatedAt = DateTimeOffset.UtcNow
+            Active = true, CreatedBy = ActorId, CreatedAt = DateTimeOffset.UtcNow
         };
         db.ServiceAccounts.Add(sa);
         await db.SaveChangesAsync();
@@ -379,7 +350,6 @@ public class OrgController(
     [HttpGet("/org/service-accounts/{id}")]
     public async Task<IActionResult> GetServiceAccount(Guid id)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var orgId = OrgId;
         var sa = await db.ServiceAccounts
             .Include(sa => sa.PersonalAccessTokens)
@@ -396,7 +366,6 @@ public class OrgController(
     [HttpDelete("/org/service-accounts/{id}")]
     public async Task<IActionResult> DeleteServiceAccount(Guid id)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var sa = await db.ServiceAccounts
             .Include(sa => sa.UserList)
             .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == OrgId);
@@ -409,7 +378,6 @@ public class OrgController(
     [HttpGet("/org/service-accounts/{id}/pat")]
     public async Task<IActionResult> ListPats(Guid id)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var sa = await db.ServiceAccounts
             .Include(sa => sa.UserList)
             .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == OrgId);
@@ -424,19 +392,17 @@ public class OrgController(
     [HttpPost("/org/service-accounts/{id}/pat")]
     public async Task<IActionResult> GeneratePat(Guid id, [FromBody] OrgGeneratePatRequest body)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var sa = await db.ServiceAccounts
             .Include(sa => sa.UserList)
             .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == OrgId);
         if (sa == null) return NotFound();
-        var (raw, pat) = await patGen.GenerateAsync(id, body.Name, body.ExpiresAt, claims.ParsedUserId);
+        var (raw, pat) = await patGen.GenerateAsync(id, body.Name, body.ExpiresAt, ActorId);
         return Ok(new { pat.Id, pat.Name, token = raw, pat.ExpiresAt, message = "store_this_token_shown_once" });
     }
 
     [HttpDelete("/org/service-accounts/{id}/pat/{patId}")]
     public async Task<IActionResult> RevokePat(Guid id, Guid patId)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var sa = await db.ServiceAccounts
             .Include(sa => sa.UserList)
             .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == OrgId);
@@ -453,7 +419,6 @@ public class OrgController(
     [HttpGet("/org/service-accounts/{id}/keys")]
     public async Task<IActionResult> GetServiceAccountKeys(Guid id)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList)
             .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == OrgId);
         if (sa == null) return NotFound();
@@ -471,7 +436,6 @@ public class OrgController(
     [HttpPost("/org/service-accounts/{id}/keys")]
     public async Task<IActionResult> AddServiceAccountKey(Guid id, [FromBody] SaKeyRequest body)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList)
             .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == OrgId);
         if (sa == null) return NotFound();
@@ -486,7 +450,6 @@ public class OrgController(
     [HttpDelete("/org/service-accounts/{id}/keys")]
     public async Task<IActionResult> RemoveServiceAccountKey(Guid id)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList)
             .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == OrgId);
         if (sa == null) return NotFound();
@@ -504,7 +467,6 @@ public class OrgController(
     [HttpGet("/org/org-list/users")]
     public async Task<IActionResult> ListOrgListManagers()
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var orgId = OrgId;
         var roles = await db.OrgRoles
             .Where(r => r.OrgId == orgId)
@@ -526,9 +488,7 @@ public class OrgController(
     [HttpPost("/org/org-list/users")]
     public async Task<IActionResult> AssignOrgListManager([FromBody] OrgAssignManagerRequest body)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var orgId = OrgId;
-        // Cannot grant super_admin via this endpoint
         if (body.Role == "super_admin") return StatusCode(403, new { error = "cannot_grant_super_admin" });
         var existing = await db.OrgRoles.FirstOrDefaultAsync(r =>
             r.OrgId == orgId && r.UserId == body.UserId && r.Role == body.Role && r.ScopeId == body.ScopeId);
@@ -546,11 +506,9 @@ public class OrgController(
     [HttpPatch("/org/org-list/users/{id}")]
     public async Task<IActionResult> UpdateOrgListManager(Guid id, [FromBody] OrgUpdateManagerRequest body)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var orgId = OrgId;
         var role = await db.OrgRoles.FirstOrDefaultAsync(r => r.Id == id && r.OrgId == orgId);
         if (role == null) return NotFound();
-        // Prevent self-demotion
         if (role.UserId == ActorId) return StatusCode(403, new { error = "cannot_modify_own_role" });
         if (body.Role != null)
         {
@@ -565,11 +523,9 @@ public class OrgController(
     [HttpDelete("/org/org-list/users/{id}")]
     public async Task<IActionResult> RemoveOrgListManager(Guid id)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var orgId = OrgId;
         var role = await db.OrgRoles.FirstOrDefaultAsync(r => r.Id == id && r.OrgId == orgId);
         if (role == null) return NotFound();
-        // Prevent self-removal
         if (role.UserId == ActorId) return StatusCode(403, new { error = "cannot_remove_own_role" });
         db.OrgRoles.Remove(role);
         await db.SaveChangesAsync();
@@ -579,7 +535,6 @@ public class OrgController(
     [HttpGet("/org/audit-log")]
     public async Task<IActionResult> GetAuditLog([FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var orgId = OrgId;
         var logs = await db.AuditLogs
             .Where(l => l.OrgId == orgId)

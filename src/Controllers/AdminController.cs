@@ -375,7 +375,7 @@ public class AdminController(
     {
         if (!HasAdminAccess) return StatusCode(403);
         var sas = await db.ServiceAccounts
-            .Where(sa => sa.UserList.OrgId == null)
+            .Where(sa => sa.IsSystem)
             .Select(sa => new { sa.Id, sa.Name, sa.Description, sa.Active, sa.LastUsedAt, sa.CreatedAt }).ToListAsync();
         return Ok(sas);
     }
@@ -390,6 +390,7 @@ public class AdminController(
             UserListId = rootList.Id,
             Name = body.Name,
             Description = body.Description,
+            IsSystem = true,
             Active = true,
             CreatedBy = GetActorId(),
             CreatedAt = DateTimeOffset.UtcNow
@@ -407,7 +408,7 @@ public class AdminController(
         var sa = await db.ServiceAccounts
             .Include(sa => sa.PersonalAccessTokens)
             .Include(sa => sa.OrgRoles)
-            .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == null);
+            .FirstOrDefaultAsync(sa => sa.Id == id && sa.IsSystem);
         if (sa == null) return NotFound();
         return Ok(new
         {
@@ -423,7 +424,7 @@ public class AdminController(
         if (!IsSuperAdmin) return StatusCode(403);
         var sa = await db.ServiceAccounts
             .Include(sa => sa.UserList)
-            .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == null);
+            .FirstOrDefaultAsync(sa => sa.Id == id && sa.IsSystem);
         if (sa == null) return NotFound();
         db.ServiceAccounts.Remove(sa);
         await db.SaveChangesAsync();
@@ -437,7 +438,7 @@ public class AdminController(
         if (!IsSuperAdmin) return StatusCode(403);
         var sa = await db.ServiceAccounts
             .Include(sa => sa.UserList)
-            .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == null);
+            .FirstOrDefaultAsync(sa => sa.Id == id && sa.IsSystem);
         if (sa == null) return NotFound();
         var (raw, pat) = await patGen.GenerateAsync(id, body.Name, body.ExpiresAt, GetActorId());
         return Created($"/admin/service-accounts/{id}/pat/{pat.Id}", new
@@ -486,7 +487,7 @@ public class AdminController(
         if (!IsSuperAdmin) return StatusCode(403);
         var sa = await db.ServiceAccounts
             .Include(sa => sa.UserList)
-            .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == null);
+            .FirstOrDefaultAsync(sa => sa.Id == id && sa.IsSystem);
         if (sa == null) return NotFound();
         var existing = await db.ServiceAccountOrgRoles.FirstOrDefaultAsync(r => r.ServiceAccountId == id && r.Role == body.Role);
         if (existing != null) return Ok(new { existing.Id, existing.Role, existing.GrantedAt });

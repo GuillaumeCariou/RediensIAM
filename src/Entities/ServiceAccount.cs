@@ -7,6 +7,7 @@ public class ServiceAccount
     public string Name { get; set; } = string.Empty;
     public string? Description { get; set; }
     public string? HydraClientId { get; set; }
+    public bool IsSystem { get; set; } = false;
     public bool Active { get; set; } = true;
     public DateTimeOffset? LastUsedAt { get; set; }
     public Guid? CreatedBy { get; set; }

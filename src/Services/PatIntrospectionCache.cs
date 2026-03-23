@@ -57,7 +57,7 @@ public class PatIntrospectionService(
             .FirstOrDefaultAsync(ul => ul.Id == pat.ServiceAccount.UserListId);
 
         IntrospectionResponse result;
-        if (userList?.OrgId == null)
+        if (pat.ServiceAccount.IsSystem)
         {
             // System SA — get roles from ServiceAccountOrgRole
             var sysRoles = await db.ServiceAccountOrgRoles
@@ -79,7 +79,7 @@ public class PatIntrospectionService(
             result = new IntrospectionResponse(
                 Active: true,
                 Sub: $"sa:{pat.ServiceAccount.Id}",
-                OrgId: userList.OrgId.ToString()!,
+                OrgId: userList?.OrgId.ToString() ?? "",
                 ProjectId: projectRoles.Count == 1 ? projectRoles[0].ProjectId.ToString() : "",
                 Roles: roles,
                 IsServiceAccount: true);
