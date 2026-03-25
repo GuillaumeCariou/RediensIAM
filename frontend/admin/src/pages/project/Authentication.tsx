@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { getProjectInfo, updateProject, adminUpdateProject, listRoles } from '@/api';
+import { getProjectInfo, updateProject, listRoles } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 
 interface Provider {
@@ -267,8 +267,7 @@ function AuthPreview({ theme, dark, mode, allowSelfReg, emailVerif, smsVerif }: 
 interface Role { id: string; name: string; rank: number; }
 
 export default function Authentication() {
-  const { projectId, isSystemCtx } = useProjectContext();
-  const patchProject = isSystemCtx ? adminUpdateProject : updateProject;
+  const { projectId } = useProjectContext();
   const [theme, setTheme] = useState<Theme>(DEFAULT_THEME);
   const [customFont, setCustomFont] = useState('');
   const [loading, setLoading] = useState(true);
@@ -322,7 +321,7 @@ export default function Authentication() {
       };
       if (defaultRoleId) body.default_role_id = defaultRoleId;
       else body.clear_default_role = true;
-      await patchProject(projectId, body);
+      await updateProject(projectId, body);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } finally { setSaving(false); }

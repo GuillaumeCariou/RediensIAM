@@ -9,7 +9,7 @@ import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { getProjectInfo, updateProject, adminUpdateProject, deleteProject } from '@/api';
+import { getProjectInfo, updateProject, deleteProject } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 
 interface Project {
@@ -18,8 +18,7 @@ interface Project {
 }
 
 export default function ProjectSettings() {
-  const { projectId, isSystemCtx } = useProjectContext();
-  const patchProject = isSystemCtx ? adminUpdateProject : updateProject;
+  const { projectId } = useProjectContext();
   const navigate = useNavigate();
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
@@ -45,7 +44,7 @@ export default function ProjectSettings() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await patchProject(projectId, { name, active, require_role_to_login: requireRole });
+      await updateProject(projectId, { name, active, require_role_to_login: requireRole });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } finally { setSaving(false); }

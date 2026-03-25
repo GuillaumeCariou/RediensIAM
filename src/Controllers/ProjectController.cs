@@ -53,6 +53,32 @@ public class ProjectController(
         });
     }
 
+    [HttpPatch("/project/info")]
+    public async Task<IActionResult> UpdateInfo([FromBody] UpdateProjectInfoRequest body)
+    {
+        var project = await db.Projects.FindAsync(ProjectId);
+        if (project == null) return NotFound();
+        if (body.Name != null)                    project.Name                    = body.Name;
+        if (body.Active.HasValue)                 project.Active                  = body.Active.Value;
+        if (body.RequireRoleToLogin.HasValue)      project.RequireRoleToLogin      = body.RequireRoleToLogin.Value;
+        if (body.AllowSelfRegistration.HasValue)   project.AllowSelfRegistration   = body.AllowSelfRegistration.Value;
+        if (body.EmailVerificationEnabled.HasValue) project.EmailVerificationEnabled = body.EmailVerificationEnabled.Value;
+        if (body.SmsVerificationEnabled.HasValue)  project.SmsVerificationEnabled  = body.SmsVerificationEnabled.Value;
+        if (body.AllowedEmailDomains != null)      project.AllowedEmailDomains     = body.AllowedEmailDomains;
+        if (body.ClearDefaultRole == true)
+            project.DefaultRoleId = null;
+        else if (body.DefaultRoleId.HasValue)
+        {
+            var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == body.DefaultRoleId && r.ProjectId == ProjectId);
+            if (role == null) return BadRequest(new { error = "invalid_default_role" });
+            project.DefaultRoleId = body.DefaultRoleId;
+        }
+        if (body.LoginTheme != null) project.LoginTheme = body.LoginTheme.Value;
+        project.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        return Ok(new { project.Id, project.Name });
+    }
+
     // ── Users ─────────────────────────────────────────────────────────────────
 
     [HttpGet("/project/users")]
@@ -300,6 +326,9 @@ public class ProjectController(
     }
 }
 
+public record UpdateProjectInfoRequest(string? Name, bool? Active, bool? RequireRoleToLogin, bool? AllowSelfRegistration,
+    bool? EmailVerificationEnabled, bool? SmsVerificationEnabled, string[]? AllowedEmailDomains,
+    Guid? DefaultRoleId, bool? ClearDefaultRole, System.Text.Json.JsonElement? LoginTheme);
 public record CreateProjectUserRequest(string Email, string? Username, string Password);
 public record AssignRoleRequest(Guid RoleId);
 public record CreateRoleRequest(string Name, string? Description, int Rank = 100);

@@ -10,7 +10,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { listRoles, createRole, deleteRole, getProjectInfo, updateProject, adminUpdateProject } from '@/api';
+import { listRoles, createRole, deleteRole, getProjectInfo, updateProject } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
 
@@ -19,8 +19,7 @@ interface Role {
 }
 
 export default function ProjectRoles() {
-  const { projectId, isSystemCtx } = useProjectContext();
-  const patchProject = isSystemCtx ? adminUpdateProject : updateProject;
+  const { projectId } = useProjectContext();
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
@@ -44,10 +43,10 @@ export default function ProjectRoles() {
     setSavingDefault(true);
     try {
       if (value === '__none__') {
-        await patchProject(projectId, { clear_default_role: true });
+        await updateProject(projectId, { clear_default_role: true });
         setDefaultRoleId(null);
       } else {
-        await patchProject(projectId, { default_role_id: value });
+        await updateProject(projectId, { default_role_id: value });
         setDefaultRoleId(value);
       }
     } finally { setSavingDefault(false); }

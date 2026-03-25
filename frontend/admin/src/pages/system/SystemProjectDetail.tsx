@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import {
-  adminGetProject, adminGetProjectStats, adminUpdateProject, adminDeleteProject,
+  adminGetProject, adminGetProjectStats, updateProject, adminDeleteProject,
 } from '@/api';
 import { fmtDateShort } from '@/lib/utils';
 
@@ -51,7 +51,7 @@ export default function SystemProjectDetail() {
   const handleRename = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pid) return;
-    await adminUpdateProject(pid, { name: renameVal });
+    await updateProject(pid, { name: renameVal });
     setRenameOpen(false);
     load();
   };
