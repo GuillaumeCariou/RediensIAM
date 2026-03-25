@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   adminGetProject, adminUpdateProject, adminAssignUserList, adminUnassignUserList,
   listUserLists, adminListRoles, adminCreateRole, adminDeleteRole, adminDeleteProject,
+  getHydraClient,
 } from '@/api';
 import { fmtDateShort } from '@/lib/utils';
 
@@ -31,6 +32,7 @@ interface Project {
 }
 interface UserList { id: string; name: string; immovable: boolean; }
 interface Role { id: string; name: string; description: string | null; }
+interface HydraClientInfo { client_id: string; client_name: string; grant_types: string[]; redirect_uris: string[]; scope: string; }
 
 const SETTINGS: { field: keyof Project; label: string; desc: string }[] = [
   { field: 'require_role_to_login',       label: 'Require role to login',    desc: 'Block users with no assigned role from authenticating' },
@@ -46,6 +48,7 @@ export default function SystemProjectDetail() {
   const [project, setProject] = useState<Project | null>(null);
   const [userLists, setUserLists] = useState<UserList[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
+  const [hydraClient, setHydraClient] = useState<HydraClientInfo | null>(null);
   const [loading, setLoading] = useState(true);
 
   // rename
@@ -67,7 +70,9 @@ export default function SystemProjectDetail() {
     if (!oid || !pid) return;
     setLoading(true);
     Promise.all([
-      adminGetProject(pid).then(setProject),
+      adminGetProject(pid).then(p => { setProject(p); return p; }).then(p => {
+        if (p?.hydra_client_id) getHydraClient(p.hydra_client_id).then(setHydraClient).catch(() => {});
+      }),
       listUserLists(oid).then(r => setUserLists(r.user_lists ?? r ?? [])),
       adminListRoles(pid).then(r => setRoles(r ?? [])),
     ]).catch(console.error).finally(() => setLoading(false));
@@ -203,6 +208,36 @@ export default function SystemProjectDetail() {
               ))
           }
         </div>
+      </div>
+
+      {/* ── OAuth2 Client ─────────────────────────────────────────────── */}
+      <div className="rounded-xl border bg-card p-6 space-y-3">
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">OAuth2 Client</h2>
+        {loading
+          ? <Skeleton className="h-20 w-full" />
+          : project?.hydra_client_id
+          ? <div className="space-y-2 text-sm">
+              <div className="flex gap-2 items-center">
+                <span className="text-muted-foreground w-28 shrink-0">Client ID</span>
+                <code className="font-mono text-xs bg-muted px-2 py-0.5 rounded">{project.hydra_client_id}</code>
+              </div>
+              {hydraClient && <>
+                <div className="flex gap-2 items-start">
+                  <span className="text-muted-foreground w-28 shrink-0">Grant Types</span>
+                  <div className="flex gap-1 flex-wrap">{hydraClient.grant_types?.map(g => <Badge key={g} variant="secondary" className="text-xs">{g}</Badge>)}</div>
+                </div>
+                <div className="flex gap-2 items-start">
+                  <span className="text-muted-foreground w-28 shrink-0">Redirect URIs</span>
+                  <div className="space-y-0.5">{hydraClient.redirect_uris?.map((u, i) => <p key={i} className="font-mono text-xs text-muted-foreground">{u}</p>)}</div>
+                </div>
+                <div className="flex gap-2 items-center">
+                  <span className="text-muted-foreground w-28 shrink-0">Scope</span>
+                  <span className="font-mono text-xs text-muted-foreground">{hydraClient.scope}</span>
+                </div>
+              </>}
+            </div>
+          : <p className="text-sm text-amber-500">No OAuth2 client registered for this project.</p>
+        }
       </div>
 
       {/* ── Roles ─────────────────────────────────────────────────────── */}

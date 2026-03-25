@@ -116,10 +116,18 @@ public class HydraAdminService(IHttpClientFactory http, AppConfig appConfig)
         return result.GetProperty("redirect_to").GetString()!;
     }
 
-    public async Task CreateOAuth2ClientAsync(object client)
+    public async Task<JsonElement> ListOAuth2ClientsAsync()
+    {
+        var resp = await Client.GetAsync($"{_adminUrl}/admin/clients?page_size=500");
+        resp.EnsureSuccessStatusCode();
+        return await resp.Content.ReadFromJsonAsync<JsonElement>(_json);
+    }
+
+    public async Task<JsonElement> CreateOAuth2ClientAsync(object client)
     {
         var resp = await Client.PostAsJsonAsync($"{_adminUrl}/admin/clients", client);
         resp.EnsureSuccessStatusCode();
+        return await resp.Content.ReadFromJsonAsync<JsonElement>(_json);
     }
 
     public async Task DeleteOAuth2ClientAsync(string clientId)

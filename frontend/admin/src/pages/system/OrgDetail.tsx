@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { ApiError } from '@/auth';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import {
@@ -186,8 +187,9 @@ export default function OrgDetail() {
       setCreateProjectOpen(false);
       setNewProject({ name: '', slug: '', redirect_uri: '' });
       load();
-    } catch {
-      setCreateProjectError('Failed to create project.');
+    } catch (err) {
+      const body = err instanceof ApiError ? (err.body as Record<string, string> | null) : null;
+      setCreateProjectError(body?.detail ?? body?.error ?? 'Failed to create project.');
     } finally { setCreateProjectSaving(false); }
   };
 

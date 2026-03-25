@@ -641,7 +641,13 @@ public class SystemAdminController(
             project.HydraClientId = $"client_{project.Id}";
             await db.SaveChangesAsync();
         }
-        catch (Exception ex) { logger.LogWarning(ex, "Hydra client creation failed for project {ProjectId}", project.Id); }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Hydra client creation failed for project {ProjectId} — rolling back", project.Id);
+            db.Projects.Remove(project);
+            await db.SaveChangesAsync();
+            return StatusCode(502, new { error = "hydra_unavailable", detail = ex.Message });
+        }
         await keto.WriteRelationTupleAsync(Roles.KetoProjectsNamespace, project.Id.ToString(), "org", $"{Roles.KetoOrgsNamespace}:{id}");
         await audit.RecordAsync(id, project.Id, actorId, "project.created", "project", project.Id.ToString());
         return Created($"/admin/projects/{project.Id}", new { project.Id, project.Name, project.Slug });
@@ -791,8 +797,32 @@ public class SystemAdminController(
     public async Task<IActionResult> ListHydraClients()
     {
         if (!IsSuperAdmin) return StatusCode(403);
-        var clients = await db.Projects.Select(p => new { p.HydraClientId, p.Name, p.OrgId }).ToListAsync();
+        var clients = await hydra.ListOAuth2ClientsAsync();
         return Ok(clients);
+    }
+
+    [HttpPost("/admin/hydra/clients")]
+    public async Task<IActionResult> CreateHydraClient([FromBody] CreateHydraClientRequest body)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var client = await hydra.CreateOAuth2ClientAsync(new
+        {
+            client_name = body.ClientName,
+            grant_types = body.GrantTypes,
+            redirect_uris = body.RedirectUris,
+            scope = body.Scope ?? "openid profile offline_access",
+            token_endpoint_auth_method = body.GrantTypes.Contains("client_credentials") ? "private_key_jwt" : "none",
+        });
+        return Ok(client);
+    }
+
+    [HttpGet("/admin/hydra/clients/{id}")]
+    public async Task<IActionResult> GetHydraClient(string id)
+    {
+        if (!IsSuperAdmin) return StatusCode(403);
+        var client = await hydra.GetOAuth2ClientAsync(id);
+        if (client == null) return NotFound();
+        return Ok(client);
     }
 
     [HttpDelete("/admin/hydra/clients/{id}")]
@@ -832,3 +862,4 @@ public record AdminUpdateUserRequest(string? Email, string? Username, string? Di
 public record AdminCreateRoleRequest(string Name, string? Description, int? Rank);
 public record GeneratePatRequest(string Name, DateTimeOffset? ExpiresAt);
 public record SaKeyRequest(System.Text.Json.JsonElement Jwk);
+public record CreateHydraClientRequest(string ClientName, string[] GrantTypes, string[] RedirectUris, string? Scope);

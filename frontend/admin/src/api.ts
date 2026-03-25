@@ -278,6 +278,12 @@ export async function getMetrics() {
 export async function listHydraClients() {
   return (await apiFetch('/admin/hydra/clients')).json();
 }
+export async function getHydraClient(id: string) {
+  return (await apiFetch(`/admin/hydra/clients/${encodeURIComponent(id)}`)).json();
+}
+export async function createHydraClient(body: { client_name: string; grant_types: string[]; redirect_uris: string[]; scope?: string }) {
+  return (await apiFetch('/admin/hydra/clients', { method: 'POST', body: JSON.stringify(body) })).json();
+}
 export async function deleteHydraClient(id: string) {
   return apiFetch(`/admin/hydra/clients/${id}`, { method: 'DELETE' });
 }

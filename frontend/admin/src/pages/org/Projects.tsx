@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { Skeleton } from '@/components/ui/skeleton';
 import { listProjects, createProject, deleteProject, listUserLists, assignUserList, unassignUserList } from '@/api';
+import { ApiError } from '@/auth';
 import { useOrgContext } from '@/hooks/useOrgContext';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDateShort } from '@/lib/utils';
@@ -35,6 +36,7 @@ export default function Projects() {
   const [selectedList, setSelectedList] = useState('');
   const [form, setForm] = useState({ name: '', slug: '', redirect_uris: '', require_role_to_login: false });
   const [saving, setSaving] = useState(false);
+  const [createError, setCreateError] = useState('');
 
   const load = () => {
     if (!orgId) { setLoading(false); return; }
@@ -49,6 +51,7 @@ export default function Projects() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
+    setCreateError('');
     try {
       await createProject({
         org_id: orgId,
@@ -60,6 +63,9 @@ export default function Projects() {
       setCreateOpen(false);
       setForm({ name: '', slug: '', redirect_uris: '', require_role_to_login: false });
       load();
+    } catch (err) {
+      const body = err instanceof ApiError ? (err.body as Record<string, string> | null) : null;
+      setCreateError(body?.detail ?? body?.error ?? 'Failed to create project.');
     } finally { setSaving(false); }
   };
 
@@ -179,6 +185,7 @@ export default function Projects() {
         <DialogContent className="max-w-xl">
           <DialogHeader><DialogTitle>Create Project</DialogTitle><DialogDescription>A new OAuth2 client will be automatically registered in Hydra.</DialogDescription></DialogHeader>
           <form onSubmit={handleCreate} className="space-y-4">
+            {createError && <p className="text-sm text-destructive">{createError}</p>}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2"><Label>Name</Label><Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required placeholder="My Dashboard" /></div>
               <div className="space-y-2">

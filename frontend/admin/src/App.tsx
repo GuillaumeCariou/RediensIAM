@@ -12,7 +12,6 @@ import Organisations from './pages/system/Organisations';
 import SystemUsers from './pages/system/Users';
 import AuditLog from './pages/system/AuditLog';
 import SystemMetrics from './pages/system/Metrics';
-import HydraClients from './pages/system/HydraClients';
 import SystemUserLists from './pages/system/SystemUserLists';
 import SystemServiceAccounts from './pages/system/SystemServiceAccounts';
 import SystemUserListDetail from './pages/system/UserListDetail';
@@ -90,7 +89,6 @@ function AppRoutes() {
           <Route path="system/userlists/:id" element={<SystemUserListDetail />} />
           <Route path="system/service-accounts" element={<SystemServiceAccounts />} />
           <Route path="system/service-accounts/:id" element={<SystemServiceAccountDetail />} />
-          <Route path="system/hydra-clients" element={<HydraClients />} />
           <Route path="system/audit-log" element={<AuditLog />} />
           <Route path="system/metrics" element={<SystemMetrics />} />
         </Route>

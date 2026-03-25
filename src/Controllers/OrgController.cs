@@ -73,7 +73,13 @@ public class OrgController(
             });
             project.HydraClientId = $"client_{project.Id}";
         }
-        catch (Exception ex) { logger.LogWarning(ex, "Hydra client creation failed for project {ProjectId}", project.Id); }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Hydra client creation failed for project {ProjectId} — rolling back", project.Id);
+            db.Projects.Remove(project);
+            await db.SaveChangesAsync();
+            return StatusCode(502, new { error = "hydra_unavailable", detail = ex.Message });
+        }
 
         await keto.WriteRelationTupleAsync(Roles.KetoProjectsNamespace, project.Id.ToString(), "org", $"{Roles.KetoOrgsNamespace}:{orgId}");
         await db.SaveChangesAsync();
