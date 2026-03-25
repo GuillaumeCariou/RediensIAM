@@ -56,7 +56,7 @@ export default function ProjectRoles() {
     e.preventDefault();
     setSaving(true);
     try {
-      await createRole({ project_id: projectId, name: form.name, description: form.description || undefined, rank: parseInt(form.rank) });
+      await createRole(projectId, { name: form.name, description: form.description || undefined, rank: parseInt(form.rank) });
       setCreateOpen(false);
       setForm({ name: '', description: '', rank: '100' });
       load();

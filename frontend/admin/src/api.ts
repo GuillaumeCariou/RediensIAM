@@ -141,8 +141,8 @@ export async function forceLogoutProjectUser(projectId: string, userId: string) 
 export async function listRoles(projectId: string) {
   return (await apiFetch(`/project/roles?project_id=${projectId}`)).json();
 }
-export async function createRole(body: { project_id: string; name: string; description?: string; rank?: number }) {
-  return (await apiFetch('/project/roles', { method: 'POST', body: JSON.stringify(body) })).json();
+export async function createRole(projectId: string, body: { name: string; description?: string; rank?: number }) {
+  return (await apiFetch(`/project/roles?project_id=${projectId}`, { method: 'POST', body: JSON.stringify(body) })).json();
 }
 export async function deleteRole(projectId: string, roleId: string) {
   return apiFetch(`/project/roles/${roleId}?project_id=${projectId}`, { method: 'DELETE' });
