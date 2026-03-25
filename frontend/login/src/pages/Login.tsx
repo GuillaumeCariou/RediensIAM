@@ -6,9 +6,29 @@ import { useTheme, type Theme as ColorTheme } from '../useTheme';
 const themeIcons: Record<ColorTheme, string> = { light: '☀', dark: '☾', system: '⊙' };
 const themeOrder: ColorTheme[] = ['system', 'light', 'dark'];
 
+interface Provider {
+  type: 'google' | 'github' | 'gitlab' | 'oidc';
+  label: string;
+  client_id: string;
+  issuer_url?: string;
+  enabled: boolean;
+}
+
+interface LoginThemeConfig {
+  primary_color?: string;
+  background_color?: string;
+  surface_color?: string;
+  text_color?: string;
+  border_radius?: string;
+  font_family?: string;
+  logo_url?: string;
+  custom_css?: string;
+  providers?: Provider[];
+}
+
 interface Theme {
   project_id?: string;
-  LoginTheme?: Record<string, string>;
+  theme?: LoginThemeConfig;
   project_name?: string;
   has_custom_template?: boolean;
   require_role?: boolean;
@@ -17,6 +37,12 @@ interface Theme {
   sms_verification_enabled?: boolean;
   is_admin_login?: boolean;
 }
+
+const PROVIDER_ICONS: Record<string, string> = {
+  google: 'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
+  github: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"%3E%3Cpath d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/%3E%3C/svg%3E',
+  gitlab: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"%3E%3Cpath fill="%23FC6D26" d="m23.955 13.587-1.342-4.135-2.664-8.189a.455.455 0 0 0-.867 0L16.418 9.45H7.582L4.918 1.263a.455.455 0 0 0-.867 0L1.386 9.45.044 13.587a.924.924 0 0 0 .331 1.023L12 23.054l11.625-8.443a.92.92 0 0 0 .33-1.024"/%3E%3C/svg%3E',
+};
 
 export default function Login() {
   const [params] = useSearchParams();
@@ -36,10 +62,14 @@ export default function Login() {
   }, [challenge]);
 
   useEffect(() => {
-    const t = loginTheme?.LoginTheme ?? {};
-    if (t.primary_color) document.documentElement.style.setProperty('--primary', t.primary_color);
-    if (t.background_color) document.documentElement.style.setProperty('--background', t.background_color);
-    if (t.font_family) document.documentElement.style.setProperty('--font-family', t.font_family);
+    const t = loginTheme?.theme ?? {};
+    const set = (v: string, val?: string) => { if (val) document.documentElement.style.setProperty(v, val); };
+    set('--primary', t.primary_color);
+    set('--background', t.background_color);
+    set('--surface', t.surface_color);
+    set('--text', t.text_color);
+    set('--font-family', t.font_family);
+    if (t.border_radius) document.documentElement.style.setProperty('--radius', `${t.border_radius}px`);
     if (t.custom_css) {
       const style = document.createElement('style');
       style.textContent = t.custom_css;
@@ -88,13 +118,36 @@ export default function Login() {
       {themeIcons[colorTheme]}
     </button>
     <div className="card">
-      {loginTheme?.LoginTheme?.logo_url && (
-        <div className="card-logo"><img src={loginTheme.LoginTheme.logo_url} alt="Logo" /></div>
+      {loginTheme?.theme?.logo_url && (
+        <div className="card-logo"><img src={loginTheme.theme?.logo_url} alt="Logo" /></div>
       )}
       <h1 className="card-title">{loginTheme?.project_name ?? 'Sign in'}</h1>
       <p className="card-subtitle">Enter your credentials to continue</p>
 
       {error && <div className="alert alert-error">{error}</div>}
+
+      {(() => {
+        const providers = (loginTheme?.theme?.providers ?? []).filter(p => p.enabled);
+        if (!providers.length) return null;
+        return (
+          <div style={{ marginBottom: '1rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {providers.map(p => (
+                <button key={p.type} type="button" disabled
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', width: '100%', padding: '0.625rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--surface)', color: 'var(--text)', fontSize: '0.875rem', fontWeight: 500, cursor: 'not-allowed', opacity: 0.7 }}>
+                  {PROVIDER_ICONS[p.type] && <img src={PROVIDER_ICONS[p.type]} alt={p.type} style={{ height: '1rem', width: '1rem' }} />}
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '1rem 0' }}>
+              <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>or</span>
+              <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+            </div>
+          </div>
+        );
+      })()}
 
       <form onSubmit={handleSubmit}>
         <div className="form-group">
