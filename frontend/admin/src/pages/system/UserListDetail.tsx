@@ -237,7 +237,7 @@ export default function SystemUserListDetail() {
                 </div>
                 <div className="space-y-2">
                   <Label>New password</Label>
-                  <Input type="password" value={editForm.new_password} onChange={e => setEditForm(f => ({ ...f, new_password: e.target.value }))} placeholder="Leave blank to keep current" minLength={8} />
+                  <Input type="password" autoComplete="new-password" value={editForm.new_password} onChange={e => setEditForm(f => ({ ...f, new_password: e.target.value }))} placeholder="Leave blank to keep current" minLength={8} />
                 </div>
                 <div className="flex flex-col gap-3 pt-1">
                   <div className="flex items-center justify-between">
@@ -272,7 +272,7 @@ export default function SystemUserListDetail() {
           <form onSubmit={handleAdd} className="space-y-4">
             <div className="space-y-2"><Label>Email</Label><Input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} required autoFocus /></div>
             <div className="space-y-2"><Label>Username</Label><Input value={form.username} onChange={e => setForm(f => ({ ...f, username: e.target.value }))} required /></div>
-            <div className="space-y-2"><Label>Password</Label><Input type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} required minLength={8} /></div>
+            <div className="space-y-2"><Label>Password</Label><Input type="password" autoComplete="new-password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} required minLength={8} /></div>
             <div className="flex items-center justify-between">
               <Label>Email verified</Label>
               <Switch checked={form.email_verified} onCheckedChange={v => setForm(f => ({ ...f, email_verified: v }))} />

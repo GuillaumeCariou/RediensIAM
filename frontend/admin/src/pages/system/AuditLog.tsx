@@ -48,7 +48,7 @@ export default function AuditLog() {
     setLoading(true);
     getAuditLog({ limit: PAGE_SIZE, offset: off })
       .then(res => {
-        const rows = res.entries ?? res ?? [];
+        const rows = Array.isArray(res) ? res : (res?.entries ?? []);
         setEntries(rows);
         setHasMore(rows.length === PAGE_SIZE);
       })

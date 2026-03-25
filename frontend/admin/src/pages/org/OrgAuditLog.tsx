@@ -26,7 +26,7 @@ export default function OrgAuditLog() {
   const load = (off: number) => {
     setLoading(true);
     getAuditLog({ org_id: orgId, limit: PAGE_SIZE, offset: off })
-      .then(res => { const rows = res.entries ?? res ?? []; setEntries(rows); setHasMore(rows.length === PAGE_SIZE); })
+      .then(res => { const rows = Array.isArray(res) ? res : (res?.entries ?? []); setEntries(rows); setHasMore(rows.length === PAGE_SIZE); })
       .catch(console.error).finally(() => setLoading(false));
   };
   useEffect(() => { load(0); }, [orgId]);

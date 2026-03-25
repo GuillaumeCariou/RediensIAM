@@ -23,7 +23,7 @@ export default function Login() {
   const navigate = useNavigate();
   const challenge = params.get('login_challenge') ?? '';
   const [loginTheme, setLoginTheme] = useState<Theme | null>(null);
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -52,7 +52,12 @@ export default function Login() {
     setLoading(true);
     setError('');
     try {
-      const res = await submitLogin({ login_challenge: challenge, email, password });
+      const isEmail = loginTheme?.is_admin_login || identifier.includes('@');
+      const res = await submitLogin({
+        login_challenge: challenge,
+        ...(isEmail ? { email: identifier } : { username: identifier }),
+        password,
+      });
       if (res.error) {
         if (res.error === 'no_role') { setError('You do not have permission to access this application.'); return; }
         if (res.error === 'account_locked') { setError(`Account locked until ${new Date(res.locked_until).toLocaleTimeString()}`); return; }
@@ -93,8 +98,17 @@ export default function Login() {
 
       <form onSubmit={handleSubmit}>
         <div className="form-group">
-          <label htmlFor="email">Email</label>
-          <input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} required autoFocus placeholder="you@example.com" />
+          <label htmlFor="identifier">{loginTheme?.is_admin_login ? 'Email' : 'Email or username'}</label>
+          <input
+            id="identifier"
+            type={loginTheme?.is_admin_login ? 'email' : 'text'}
+            value={identifier}
+            onChange={e => setIdentifier(e.target.value)}
+            required
+            autoFocus
+            autoComplete="username"
+            placeholder={loginTheme?.is_admin_login ? 'you@example.com' : 'you@example.com or username#1234'}
+          />
         </div>
         <div className="form-group">
           <label htmlFor="password">Password</label>

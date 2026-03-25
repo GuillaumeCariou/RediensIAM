@@ -471,14 +471,14 @@ public class OrgController(
     }
 
     [HttpGet("/org/audit-log")]
-    public async Task<IActionResult> GetAuditLog([FromQuery] int page = 1, [FromQuery] int pageSize = 50)
+    public async Task<IActionResult> GetAuditLog([FromQuery] int limit = 50, [FromQuery] int offset = 0)
     {
         var orgId = OrgId;
         var logs = await db.AuditLogs
             .Where(l => l.OrgId == orgId)
             .OrderByDescending(l => l.CreatedAt)
-            .Skip((page - 1) * pageSize).Take(pageSize)
-            .Select(l => new { l.Id, l.Action, l.OrgId, l.ProjectId, l.ActorId, l.TargetType, l.TargetId, l.IpAddress, l.CreatedAt })
+            .Skip(offset).Take(limit)
+            .Select(l => new { l.Id, l.Action, l.OrgId, l.ProjectId, l.ActorId, l.TargetType, l.TargetId, l.IpAddress, l.CreatedAt, l.Metadata })
             .ToListAsync();
         return Ok(logs);
     }

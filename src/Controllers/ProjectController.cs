@@ -192,12 +192,13 @@ public class ProjectController(
     // ── Audit log + cleanup ───────────────────────────────────────────────────
 
     [HttpGet("/project/audit-log")]
-    public async Task<IActionResult> GetAuditLog([FromQuery] int page = 1, [FromQuery] int pageSize = 50)
+    public async Task<IActionResult> GetAuditLog([FromQuery] int limit = 50, [FromQuery] int offset = 0)
     {
         var logs = await db.AuditLogs
             .Where(l => l.ProjectId == ProjectId)
             .OrderByDescending(l => l.CreatedAt)
-            .Skip((page - 1) * pageSize).Take(pageSize)
+            .Skip(offset).Take(limit)
+            .Select(l => new { l.Id, l.Action, l.OrgId, l.ProjectId, l.ActorId, l.TargetType, l.TargetId, l.IpAddress, l.CreatedAt, l.Metadata })
             .ToListAsync();
         return Ok(logs);
     }

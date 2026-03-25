@@ -79,6 +79,12 @@ export async function apiFetch(path: string, opts: RequestInit = {}) {
       ...opts.headers,
     },
   });
+  if (res.status === 401) {
+    accessToken = null;
+    const m = await getManager();
+    await m.signinRedirect();
+    throw new ApiError(401, null);
+  }
   if (!res.ok) {
     let body: unknown;
     try { body = await res.json(); } catch { body = null; }
