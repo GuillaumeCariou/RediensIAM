@@ -69,13 +69,21 @@ public class RoleAssignmentService(RediensIamDbContext db, KetoService keto, Aud
             r.UserId == targetUserId && r.ProjectId == projectId && r.RoleId == roleId);
         if (existing != null) return;
 
-        db.UserProjectRoles.Add(new UserProjectRole
-        {
-            UserId = targetUserId, ProjectId = projectId, RoleId = roleId,
-            GrantedBy = actorId, GrantedAt = DateTimeOffset.UtcNow
-        });
-        await db.SaveChangesAsync();
         await keto.WriteRelationTupleAsync(Roles.KetoProjectsNamespace, projectId.ToString(), $"role:{targetRole.Name}", $"user:{targetUserId}");
+        try
+        {
+            db.UserProjectRoles.Add(new UserProjectRole
+            {
+                UserId = targetUserId, ProjectId = projectId, RoleId = roleId,
+                GrantedBy = actorId, GrantedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        catch
+        {
+            await keto.DeleteRelationTupleAsync(Roles.KetoProjectsNamespace, projectId.ToString(), $"role:{targetRole.Name}", $"user:{targetUserId}");
+            throw;
+        }
         await audit.RecordAsync(project.OrgId, projectId, actorId, "role.assigned",
             "user", targetUserId.ToString(), new() { ["role_name"] = targetRole.Name });
     }
@@ -91,9 +99,9 @@ public class RoleAssignmentService(RediensIamDbContext db, KetoService keto, Aud
             .FirstOrDefaultAsync(r => r.UserId == targetUserId && r.ProjectId == projectId && r.RoleId == roleId)
             ?? throw new NotFoundException("Role assignment not found");
 
+        await keto.DeleteRelationTupleAsync(Roles.KetoProjectsNamespace, projectId.ToString(), $"role:{assignment.Role.Name}", $"user:{targetUserId}");
         db.UserProjectRoles.Remove(assignment);
         await db.SaveChangesAsync();
-        await keto.DeleteRelationTupleAsync(Roles.KetoProjectsNamespace, projectId.ToString(), $"role:{assignment.Role.Name}", $"user:{targetUserId}");
         await audit.RecordAsync(project.OrgId, projectId, actorId, "role.removed", "user", targetUserId.ToString());
     }
 
@@ -135,16 +143,23 @@ public class RoleAssignmentService(RediensIamDbContext db, KetoService keto, Aud
             return;
         }
 
-        db.OrgRoles.Add(new OrgRole
-        {
-            OrgId = orgId, UserId = targetUserId, Role = role,
-            ScopeId = scopeId, DisplayName = displayName,
-            GrantedBy = actorId, GrantedAt = DateTimeOffset.UtcNow
-        });
-        await db.SaveChangesAsync();
-
         var ketoSubject = scopeId.HasValue ? $"user:{targetUserId}|project:{scopeId}" : $"user:{targetUserId}";
         await keto.WriteRelationTupleAsync(Roles.KetoOrgsNamespace, orgId.ToString(), role, ketoSubject);
+        try
+        {
+            db.OrgRoles.Add(new OrgRole
+            {
+                OrgId = orgId, UserId = targetUserId, Role = role,
+                ScopeId = scopeId, DisplayName = displayName,
+                GrantedBy = actorId, GrantedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        catch
+        {
+            await keto.DeleteRelationTupleAsync(Roles.KetoOrgsNamespace, orgId.ToString(), role, ketoSubject);
+            throw;
+        }
         await audit.RecordAsync(orgId, null, actorId, "role.management.assigned",
             "user", targetUserId.ToString(), new() { ["role"] = role });
     }
@@ -171,11 +186,10 @@ public class RoleAssignmentService(RediensIamDbContext db, KetoService keto, Aud
         if (targetRank < actorLevel)
             throw new ForbiddenException($"Cannot remove '{role.Role}': insufficient management level");
 
-        db.OrgRoles.Remove(role);
-        await db.SaveChangesAsync();
-
         var ketoSubject = role.ScopeId.HasValue ? $"user:{role.UserId}|project:{role.ScopeId}" : $"user:{role.UserId}";
         await keto.DeleteRelationTupleAsync(Roles.KetoOrgsNamespace, orgId.ToString(), role.Role, ketoSubject);
+        db.OrgRoles.Remove(role);
+        await db.SaveChangesAsync();
         await audit.RecordAsync(orgId, null, actorId, "role.management.removed",
             "user", role.UserId.ToString(), new() { ["role"] = role.Role });
     }
@@ -188,12 +202,20 @@ public class RoleAssignmentService(RediensIamDbContext db, KetoService keto, Aud
         var already = await db.UserProjectRoles.AnyAsync(r =>
             r.UserId == user.Id && r.ProjectId == project.Id && r.RoleId == role.Id);
         if (already) return;
-        db.UserProjectRoles.Add(new UserProjectRole
-        {
-            UserId = user.Id, ProjectId = project.Id, RoleId = role.Id,
-            GrantedBy = user.Id, GrantedAt = DateTimeOffset.UtcNow
-        });
-        await db.SaveChangesAsync();
         await keto.WriteRelationTupleAsync(Roles.KetoProjectsNamespace, project.Id.ToString(), $"role:{role.Name}", $"user:{user.Id}");
+        try
+        {
+            db.UserProjectRoles.Add(new UserProjectRole
+            {
+                UserId = user.Id, ProjectId = project.Id, RoleId = role.Id,
+                GrantedBy = user.Id, GrantedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        catch
+        {
+            await keto.DeleteRelationTupleAsync(Roles.KetoProjectsNamespace, project.Id.ToString(), $"role:{role.Name}", $"user:{user.Id}");
+            throw;
+        }
     }
 }
