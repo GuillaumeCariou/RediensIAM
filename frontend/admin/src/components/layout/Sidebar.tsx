@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Building2, Users, List, FolderKanban,
@@ -86,7 +86,7 @@ export default function Sidebar() {
     ? urlProjectId !== ''
     : isOrgAdmin ? onProjectPath : isProjectManager;
 
-  // ── Accordion open state (auto-open based on current path) ────
+  // ── Accordion open state ──────────────────────────────────────
   const [systemOpen,  setSystemOpen]  = useState(pathname.startsWith('/system'));
   const [orgOpen,     setOrgOpen]     = useState(
     isSuperAdmin ? urlOrgId !== '' : pathname.startsWith('/org')
@@ -95,11 +95,28 @@ export default function Sidebar() {
     isSuperAdmin ? urlProjectId !== '' : pathname.startsWith('/project')
   );
 
+  // Determine which top-level section the current path belongs to
+  const activeSection =
+    (isSuperAdmin ? urlProjectId !== '' : pathname.startsWith('/project')) ? 'project' :
+    (isSuperAdmin ? urlOrgId !== ''     : pathname.startsWith('/org'))     ? 'org'     :
+    pathname.startsWith('/system')                                          ? 'system'  : null;
+
+  // On section transition: collapse the previous section, expand the new one.
+  // Manual toggling in between is preserved (effect only fires when section changes).
+  const prevSectionRef = useRef(activeSection);
   useEffect(() => {
-    if (pathname.startsWith('/system')) setSystemOpen(true);
-    if (isSuperAdmin ? urlOrgId !== ''     : pathname.startsWith('/org'))     setOrgOpen(true);
-    if (isSuperAdmin ? urlProjectId !== '' : pathname.startsWith('/project')) setProjectOpen(true);
-  }, [pathname, isSuperAdmin, urlOrgId, urlProjectId]);
+    const prev = prevSectionRef.current;
+    if (prev === activeSection) return;
+    prevSectionRef.current = activeSection;
+
+    if (prev === 'system')  setSystemOpen(false);
+    if (prev === 'org')     setOrgOpen(false);
+    if (prev === 'project') setProjectOpen(false);
+
+    if (activeSection === 'system')  setSystemOpen(true);
+    if (activeSection === 'org')     setOrgOpen(true);
+    if (activeSection === 'project') setProjectOpen(true);
+  }, [activeSection]);
 
   // ── Contextual nav for super_admin ────────────────────────────
   const sysOrgNav: NavItem[] = sysOrgBase ? [
