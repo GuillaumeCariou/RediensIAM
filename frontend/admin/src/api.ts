@@ -283,20 +283,6 @@ export async function getMetrics() {
   return (await apiFetch('/admin/metrics')).json();
 }
 
-// ── Hydra clients ─────────────────────────────────────────────────
-export async function listHydraClients() {
-  return (await apiFetch('/admin/hydra/clients')).json();
-}
-export async function getHydraClient(id: string) {
-  return (await apiFetch(`/admin/hydra/clients/${encodeURIComponent(id)}`)).json();
-}
-export async function createHydraClient(body: { client_name: string; grant_types: string[]; redirect_uris: string[]; scope?: string }) {
-  return (await apiFetch('/admin/hydra/clients', { method: 'POST', body: JSON.stringify(body) })).json();
-}
-export async function deleteHydraClient(id: string) {
-  return apiFetch(`/admin/hydra/clients/${id}`, { method: 'DELETE' });
-}
-
 // ── Org-list manager (org-scoped) ─────────────────────────────────
 export async function listOrgListManagers() {
   return (await apiFetch('/org/org-list/users')).json();
