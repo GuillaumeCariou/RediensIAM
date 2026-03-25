@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Building2, Users, List, FolderKanban,
@@ -79,11 +80,26 @@ export default function Sidebar() {
   const onProjectPath = pathname.startsWith('/project');
 
   // ── Visibility rules ──────────────────────────────────────────
-  const showSystem = isSuperAdmin;
-  const showOrg    = isSuperAdmin ? urlOrgId !== ''     : isOrgAdmin;
+  const showSystem  = isSuperAdmin;
+  const showOrg     = isSuperAdmin ? urlOrgId !== ''    : isOrgAdmin;
   const showProject = isSuperAdmin
     ? urlProjectId !== ''
     : isOrgAdmin ? onProjectPath : isProjectManager;
+
+  // ── Accordion open state (auto-open based on current path) ────
+  const [systemOpen,  setSystemOpen]  = useState(pathname.startsWith('/system'));
+  const [orgOpen,     setOrgOpen]     = useState(
+    isSuperAdmin ? urlOrgId !== '' : pathname.startsWith('/org')
+  );
+  const [projectOpen, setProjectOpen] = useState(
+    isSuperAdmin ? urlProjectId !== '' : pathname.startsWith('/project')
+  );
+
+  useEffect(() => {
+    if (pathname.startsWith('/system')) setSystemOpen(true);
+    if (isSuperAdmin ? urlOrgId !== ''     : pathname.startsWith('/org'))     setOrgOpen(true);
+    if (isSuperAdmin ? urlProjectId !== '' : pathname.startsWith('/project')) setProjectOpen(true);
+  }, [pathname, isSuperAdmin, urlOrgId, urlProjectId]);
 
   // ── Contextual nav for super_admin ────────────────────────────
   const sysOrgNav: NavItem[] = sysOrgBase ? [
@@ -131,10 +147,39 @@ export default function Sidebar() {
     );
   };
 
-  const SectionLabel = ({ label }: { label: string }) => (
-    <p className="px-3 mb-1 text-xs font-semibold text-sidebar-foreground/40 uppercase tracking-wider">
-      {label}
-    </p>
+  const AccordionSection = ({
+    label, icon, open, onToggle, children, highlight,
+  }: {
+    label: string;
+    icon: React.ReactNode;
+    open: boolean;
+    onToggle: () => void;
+    children: React.ReactNode;
+    highlight?: boolean;
+  }) => (
+    <div className={cn(
+      'rounded-lg overflow-hidden',
+      highlight && 'border border-primary/20 bg-primary/5',
+    )}>
+      <button
+        onClick={onToggle}
+        className={cn(
+          'flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wider transition-colors',
+          highlight
+            ? 'text-primary/80 hover:text-primary'
+            : 'text-sidebar-foreground/40 hover:text-sidebar-foreground/70',
+        )}
+      >
+        {icon}
+        <span className="flex-1 text-left">{label}</span>
+        <ChevronDown className={cn('h-3 w-3 transition-transform duration-200', open && 'rotate-180')} />
+      </button>
+      {open && (
+        <nav className="space-y-0.5 px-1 pb-1">
+          {children}
+        </nav>
+      )}
+    </div>
   );
 
   const currentTheme = themeOptions.find(o => o.value === theme) ?? themeOptions[0];
@@ -179,41 +224,45 @@ export default function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <div className="flex flex-1 flex-col overflow-y-auto p-3 gap-4">
+      <div className="flex flex-1 flex-col overflow-y-auto p-3 gap-2">
 
         {showSystem && (
-          <div className="rounded-lg border border-primary/20 bg-primary/5 p-2">
-            <div className="flex items-center gap-1.5 px-1 mb-1.5">
-              <Shield className="h-3 w-3 text-primary" />
-              <p className="text-xs font-semibold text-primary/80 uppercase tracking-wider">System</p>
-            </div>
-            <nav className="space-y-0.5">
-              {systemNav.map(item => <NavLink key={item.to} item={item} />)}
-            </nav>
-          </div>
+          <AccordionSection
+            label="System"
+            icon={<Shield className="h-3 w-3" />}
+            open={systemOpen}
+            onToggle={() => setSystemOpen(o => !o)}
+            highlight
+          >
+            {systemNav.map(item => <NavLink key={item.to} item={item} />)}
+          </AccordionSection>
         )}
 
         {showOrg && activeOrgNav.length > 0 && (
-          <div>
-            <SectionLabel label="Organisation" />
-            <nav className="space-y-0.5">
-              {activeOrgNav.map(item => <NavLink key={item.to} item={item} />)}
-            </nav>
-          </div>
+          <AccordionSection
+            label="Organisation"
+            icon={<Building2 className="h-3 w-3" />}
+            open={orgOpen}
+            onToggle={() => setOrgOpen(o => !o)}
+          >
+            {activeOrgNav.map(item => <NavLink key={item.to} item={item} />)}
+          </AccordionSection>
         )}
 
         {showProject && activeProjectNav.length > 0 && (
-          <div>
-            <SectionLabel label="Project" />
-            <nav className="space-y-0.5">
-              {activeProjectNav.map(item => <NavLink key={item.to} item={item} />)}
-            </nav>
-          </div>
+          <AccordionSection
+            label="Project"
+            icon={<FolderKanban className="h-3 w-3" />}
+            open={projectOpen}
+            onToggle={() => setProjectOpen(o => !o)}
+          >
+            {activeProjectNav.map(item => <NavLink key={item.to} item={item} />)}
+          </AccordionSection>
         )}
 
       </div>
 
-      {/* Compact footer showing current theme — purely decorative, actions are in the user menu */}
+      {/* Compact footer */}
       <div className="border-t border-sidebar-border px-4 py-2 flex items-center gap-2 text-xs text-sidebar-foreground/40">
         {currentTheme.icon}
         <span>{currentTheme.label} theme</span>
