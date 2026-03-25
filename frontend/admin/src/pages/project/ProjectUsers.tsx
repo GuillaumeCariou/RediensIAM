@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { useProjectContext } from '@/hooks/useOrgContext';
 import { useAuth } from '@/context/AuthContext';
-import { UserPlus, Trash2, CheckCircle, XCircle, LogOut, Plus, List } from 'lucide-react';
+import { UserPlus, Trash2, CheckCircle, XCircle, LogOut, Plus, List, ArrowUpRight, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -56,6 +56,10 @@ export default function ProjectUsers() {
   const [createError, setCreateError] = useState('');
 
   const orgId = oid ?? tokenOrgId;
+
+  // URL to the full userlist management page (only for org/super admins)
+  const userListUrl = (listId: string) =>
+    isSystemCtx ? `/system/userlists/${listId}` : `/org/userlists/${listId}`;
 
   const load = () => {
     if (!projectId) { setLoading(false); return; }
@@ -147,9 +151,17 @@ export default function ProjectUsers() {
         title="Project Users"
         description="Users and their role assignments in this project"
         action={
-          <Button onClick={() => { setCreateOpen(true); setCreateError(''); }}>
-            <Plus className="h-4 w-4" />New User
-          </Button>
+          isOrgAdmin && assignedListId ? (
+            <Button asChild>
+              <Link to={userListUrl(assignedListId)}>
+                <List className="h-4 w-4" />Manage User List <ArrowUpRight className="h-3 w-3" />
+              </Link>
+            </Button>
+          ) : !isOrgAdmin ? (
+            <Button onClick={() => { setCreateOpen(true); setCreateError(''); }}>
+              <Plus className="h-4 w-4" />New User
+            </Button>
+          ) : null
         }
       />
       <div className="p-6 space-y-4">
@@ -165,17 +177,26 @@ export default function ProjectUsers() {
               <Skeleton className="h-10 w-72" />
             ) : isOrgAdmin ? (
               <div className="space-y-2">
-                <Select value={assignedListId ?? '__none__'} onValueChange={handleAssignList}>
-                  <SelectTrigger className="w-72 bg-background">
-                    <SelectValue placeholder="— No user list assigned —" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">— None —</SelectItem>
-                    {movableLists.map(ul => (
-                      <SelectItem key={ul.id} value={ul.id}>{ul.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="flex items-center gap-2">
+                  <Select value={assignedListId ?? '__none__'} onValueChange={handleAssignList}>
+                    <SelectTrigger className="w-72 bg-background">
+                      <SelectValue placeholder="— No user list assigned —" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">— None —</SelectItem>
+                      {movableLists.map(ul => (
+                        <SelectItem key={ul.id} value={ul.id}>{ul.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {assignedListId && (
+                    <Button variant="outline" size="sm" asChild>
+                      <Link to={userListUrl(assignedListId)}>
+                        <ArrowUpRight className="h-4 w-4" />Open
+                      </Link>
+                    </Button>
+                  )}
+                </div>
                 {!assignedListId && (
                   <p className="text-xs text-amber-500">No user list assigned — users cannot log in to this project.</p>
                 )}
@@ -261,6 +282,13 @@ export default function ProjectUsers() {
                       <TableCell className="text-sm text-muted-foreground">{fmtDate(user.last_login_at)}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
+                          {isOrgAdmin && assignedListId && (
+                            <Button size="sm" variant="ghost" title="Edit user in user list" asChild>
+                              <Link to={userListUrl(assignedListId)}>
+                                <Pencil className="h-3 w-3" />
+                              </Link>
+                            </Button>
+                          )}
                           {availableRoles(user).length > 0 && (
                             <Button
                               size="sm" variant="outline"
