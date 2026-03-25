@@ -1,13 +1,14 @@
 using System.Security.Cryptography;
 using System.Text;
+using RediensIAM.Config;
 using RediensIAM.Data;
 using RediensIAM.Entities;
 
 namespace RediensIAM.Services;
 
-public class PatGenerationService(RediensIamDbContext db, IConfiguration config)
+public class PatGenerationService(RediensIamDbContext db, AppConfig appConfig)
 {
-    private readonly string _prefix = config["Security:PatPrefix"] ?? "rediens_pat_";
+    private readonly string _prefix = appConfig.PatPrefix;
 
     public async Task<(string RawToken, PersonalAccessToken Pat)> GenerateAsync(
         Guid serviceAccountId, string name, DateTimeOffset? expiresAt, Guid? createdBy)

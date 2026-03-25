@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using StackExchange.Redis;
+using RediensIAM.Config;
 using RediensIAM.Data;
 using RediensIAM.Models;
 using Microsoft.EntityFrameworkCore;
@@ -11,11 +12,11 @@ namespace RediensIAM.Services;
 public class PatIntrospectionService(
     RediensIamDbContext db,
     IConnectionMultiplexer redis,
-    IConfiguration config,
+    AppConfig appConfig,
     IServiceScopeFactory scopeFactory)
 {
     private readonly IDatabase _cache = redis.GetDatabase();
-    private readonly TimeSpan _ttl = TimeSpan.FromMinutes(config.GetValue<int>("Cache:PatTtlMinutes", 5));
+    private readonly TimeSpan _ttl = TimeSpan.FromMinutes(appConfig.PatCacheTtlMinutes);
 
     public async Task<IntrospectionResponse?> IntrospectAsync(string token)
     {

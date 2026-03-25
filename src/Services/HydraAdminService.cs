@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using RediensIAM.Config;
 
 namespace RediensIAM.Services;
 
@@ -36,9 +37,9 @@ public class HydraClient
     [JsonPropertyName("metadata")] public Dictionary<string, object>? Metadata { get; set; }
 }
 
-public class HydraAdminService(IHttpClientFactory http, IConfiguration config)
+public class HydraAdminService(IHttpClientFactory http, AppConfig appConfig)
 {
-    private readonly string _adminUrl = config["Hydra:AdminUrl"] ?? "http://hydra:4445";
+    private readonly string _adminUrl = appConfig.HydraAdminUrl;
     private readonly JsonSerializerOptions _json = new() { PropertyNameCaseInsensitive = true };
     private readonly HttpClient _client = http.CreateClient("hydra-admin");
 

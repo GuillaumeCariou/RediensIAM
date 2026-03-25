@@ -1,13 +1,14 @@
 using System.Security.Cryptography;
 using Konscious.Security.Cryptography;
+using RediensIAM.Config;
 
 namespace RediensIAM.Services;
 
-public class PasswordService(IConfiguration config)
+public class PasswordService(AppConfig appConfig)
 {
-    private readonly int _timeCost = config.GetValue<int>("Security:ArgonTimeCost", 3);
-    private readonly int _memoryCost = config.GetValue<int>("Security:ArgonMemoryCost", 65536);
-    private readonly int _parallelism = config.GetValue<int>("Security:ArgonParallelism", 4);
+    private readonly int _timeCost = appConfig.ArgonTimeCost;
+    private readonly int _memoryCost = appConfig.ArgonMemoryCost;
+    private readonly int _parallelism = appConfig.ArgonParallelism;
 
     public string Hash(string password)
     {

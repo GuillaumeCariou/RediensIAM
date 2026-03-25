@@ -1,11 +1,12 @@
 using System.Text.Json;
+using RediensIAM.Config;
 
 namespace RediensIAM.Services;
 
-public class KetoService(IHttpClientFactory http, IConfiguration config)
+public class KetoService(IHttpClientFactory http, AppConfig appConfig)
 {
-    private readonly string _readUrl = config["Keto:ReadUrl"] ?? "http://keto-read:4466";
-    private readonly string _writeUrl = config["Keto:WriteUrl"] ?? "http://keto-write:4467";
+    private readonly string _readUrl = appConfig.KetoReadUrl;
+    private readonly string _writeUrl = appConfig.KetoWriteUrl;
     private readonly JsonSerializerOptions _json = new() { PropertyNameCaseInsensitive = true };
 
     private HttpClient ReadClient => http.CreateClient("keto-read");

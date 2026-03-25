@@ -1,14 +1,15 @@
 import { useEffect, useState, useCallback } from 'react';
-import { UserCog, UserPlus, Trash2 } from 'lucide-react';
+import { UserCog, UserPlus, Trash2, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
-import { listUserLists, listSystemUserListMembers, addUserToList, removeSystemUserFromList } from '@/api';
+import { listUserLists, listSystemUserListMembers, addUserToList, removeSystemUserFromList, adminGetUser, adminUpdateUser } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
 
@@ -24,11 +25,18 @@ export default function SystemAdmins() {
   const [error, setError]               = useState('');
 
   const [addOpen, setAddOpen]           = useState(false);
-  const [form, setForm]                 = useState({ email: '', username: '', password: '' });
+  const [form, setForm]                 = useState({ email: '', username: '', password: '', email_verified: false });
   const [saving, setSaving]             = useState(false);
   const [addError, setAddError]         = useState('');
 
   const [removeTarget, setRemoveTarget] = useState<Member | null>(null);
+
+  const [editTarget, setEditTarget]     = useState<Member | null>(null);
+  const [editUser, setEditUser]         = useState<{ is_system_admin: boolean; roles: { role: string; org_id: string | null; scope_id: string | null }[] } | null>(null);
+  const [editForm, setEditForm]         = useState({ email: '', username: '', display_name: '', phone: '', active: true, email_verified: false, clear_lock: false, new_password: '' });
+  const [editLoading, setEditLoading]   = useState(false);
+  const [editSaving, setEditSaving]     = useState(false);
+  const [editError, setEditError]       = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -56,7 +64,7 @@ export default function SystemAdmins() {
     try {
       await addUserToList(systemListId, form);
       setAddOpen(false);
-      setForm({ email: '', username: '', password: '' });
+      setForm({ email: '', username: '', password: '', email_verified: false });
       await load();
     } catch { setAddError('Failed to add admin. The email or username may already exist.'); }
     finally { setSaving(false); }
@@ -67,6 +75,50 @@ export default function SystemAdmins() {
     await removeSystemUserFromList(systemListId, removeTarget.id);
     setRemoveTarget(null);
     await load();
+  };
+
+  const openEdit = async (m: Member) => {
+    setEditTarget(m);
+    setEditUser(null);
+    setEditError('');
+    setEditLoading(true);
+    try {
+      const u = await adminGetUser(m.id);
+      setEditUser({ is_system_admin: u.is_system_admin, roles: u.roles ?? [] });
+      setEditForm({
+        email: u.email ?? '',
+        username: u.username ?? '',
+        display_name: u.display_name ?? '',
+        phone: u.phone ?? '',
+        active: u.active ?? true,
+        email_verified: u.email_verified ?? false,
+        clear_lock: false,
+        new_password: '',
+      });
+    } catch { setEditError('Failed to load user details.'); }
+    finally { setEditLoading(false); }
+  };
+
+  const handleEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editTarget) return;
+    setEditSaving(true);
+    setEditError('');
+    try {
+      await adminUpdateUser(editTarget.id, {
+        email: editForm.email,
+        username: editForm.username,
+        display_name: editForm.display_name,
+        phone: editForm.phone,
+        active: editForm.active,
+        email_verified: editForm.email_verified,
+        clear_lock: editForm.clear_lock,
+        new_password: editForm.new_password || undefined,
+      });
+      setEditTarget(null);
+      await load();
+    } catch { setEditError('Failed to save changes.'); }
+    finally { setEditSaving(false); }
   };
 
   return (
@@ -90,7 +142,7 @@ export default function SystemAdmins() {
                 <TableHead>Email</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Last login</TableHead>
-                <TableHead className="w-12"></TableHead>
+                <TableHead className="w-24"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -125,13 +177,18 @@ export default function SystemAdmins() {
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">{fmtDate(m.last_login_at)}</TableCell>
                       <TableCell>
-                        <Button
-                          variant="ghost" size="icon"
-                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                          onClick={() => setRemoveTarget(m)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        <div className="flex items-center justify-end gap-1">
+                          <Button variant="ghost" size="icon" onClick={() => openEdit(m)}>
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost" size="icon"
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                            onClick={() => setRemoveTarget(m)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))
@@ -164,11 +221,86 @@ export default function SystemAdmins() {
               <Label>Initial password</Label>
               <Input type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} required minLength={8} placeholder="Min. 8 characters" />
             </div>
+            <div className="flex items-center justify-between">
+              <Label>Email verified</Label>
+              <Switch checked={form.email_verified} onCheckedChange={v => setForm(f => ({ ...f, email_verified: v }))} />
+            </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
               <Button type="submit" disabled={saving}>{saving ? 'Adding…' : 'Add Admin'}</Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit user dialog */}
+      <Dialog open={!!editTarget} onOpenChange={v => { if (!v) setEditTarget(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit {editTarget?.username}#{editTarget?.discriminator}</DialogTitle>
+            <DialogDescription>Update this account's information. Leave password blank to keep it unchanged.</DialogDescription>
+          </DialogHeader>
+          {editLoading
+            ? <div className="space-y-3 py-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
+            : (
+              <form onSubmit={handleEdit} className="space-y-4">
+                {editError && <p className="text-sm text-destructive">{editError}</p>}
+                {editUser && (
+                  <div className="flex flex-wrap gap-1">
+                    {editUser.is_system_admin && <Badge variant="secondary">super_admin</Badge>}
+                    {editUser.roles.map((r, i) => (
+                      <Badge key={i} variant="outline">{r.role}{r.scope_id ? ` (project)` : ''}</Badge>
+                    ))}
+                    {!editUser.is_system_admin && editUser.roles.length === 0 && (
+                      <span className="text-xs text-muted-foreground">No roles assigned</span>
+                    )}
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Email</Label>
+                    <Input type="email" value={editForm.email} onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))} required />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Username</Label>
+                    <Input value={editForm.username} onChange={e => setEditForm(f => ({ ...f, username: e.target.value }))} required />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Display name</Label>
+                    <Input value={editForm.display_name} onChange={e => setEditForm(f => ({ ...f, display_name: e.target.value }))} placeholder="Optional" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Phone</Label>
+                    <Input value={editForm.phone} onChange={e => setEditForm(f => ({ ...f, phone: e.target.value }))} placeholder="Optional" />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>New password</Label>
+                  <Input type="password" value={editForm.new_password} onChange={e => setEditForm(f => ({ ...f, new_password: e.target.value }))} placeholder="Leave blank to keep current" minLength={8} />
+                </div>
+                <div className="flex flex-col gap-3 pt-1">
+                  <div className="flex items-center justify-between">
+                    <Label>Active</Label>
+                    <Switch checked={editForm.active} onCheckedChange={v => setEditForm(f => ({ ...f, active: v }))} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <Label>Email verified</Label>
+                    <Switch checked={editForm.email_verified} onCheckedChange={v => setEditForm(f => ({ ...f, email_verified: v }))} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <Label>Clear account lock</Label>
+                    <Switch checked={editForm.clear_lock} onCheckedChange={v => setEditForm(f => ({ ...f, clear_lock: v }))} />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setEditTarget(null)}>Cancel</Button>
+                  <Button type="submit" disabled={editSaving}>{editSaving ? 'Saving…' : 'Save changes'}</Button>
+                </DialogFooter>
+              </form>
+            )
+          }
         </DialogContent>
       </Dialog>
 

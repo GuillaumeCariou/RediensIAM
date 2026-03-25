@@ -1,11 +1,11 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using RediensIAM.Config;
 using RediensIAM.Data;
 using RediensIAM.Entities;
 using RediensIAM.Exceptions;
 using RediensIAM.Middleware;
 using RediensIAM.Services;
-using RediensIAM.Models;
 
 namespace RediensIAM.Controllers;
 
@@ -18,17 +18,12 @@ public class OrgController(
     AuditLogService audit,
     RoleAssignmentService roleService,
     PatGenerationService patGen,
+    ServiceAccountService saService,
     ILogger<OrgController> logger) : ControllerBase
 {
     private TokenClaims Claims => HttpContext.GetClaims() ?? throw new UnauthorizedException("Not authenticated");
-    private Guid OrgId => Guid.TryParse(Claims.OrgId, out var g) ? g : Guid.Empty;
+    private Guid OrgId   => Guid.TryParse(Claims.OrgId, out var g) ? g : Guid.Empty;
     private Guid ActorId => Claims.ParsedUserId;
-
-    private async Task RequireOrgAdminAsync()
-    {
-        var level = await roleService.GetActorManagementLevelForOrgAsync(ActorId, OrgId);
-        if (level > Services.ManagementLevel.OrgAdmin) throw new ForbiddenException("org_admin required");
-    }
 
     // ── Projects ──────────────────────────────────────────────────────────────
 
@@ -38,7 +33,7 @@ public class OrgController(
         Guid orgId;
         if (Guid.TryParse(Claims.OrgId, out var claimsOrgId))
             orgId = claimsOrgId;
-        else if (org_id.HasValue && Claims.Roles.Contains("super_admin"))
+        else if (org_id.HasValue && Claims.Roles.Contains(Roles.SuperAdmin))
             orgId = org_id.Value;
         else
             throw new ForbiddenException("No org context");
@@ -80,7 +75,7 @@ public class OrgController(
         }
         catch (Exception ex) { logger.LogWarning(ex, "Hydra client creation failed for project {ProjectId}", project.Id); }
 
-        await keto.WriteRelationTupleAsync("Projects", project.Id.ToString(), "org", $"Organisations:{orgId}");
+        await keto.WriteRelationTupleAsync(Roles.KetoProjectsNamespace, project.Id.ToString(), "org", $"{Roles.KetoOrgsNamespace}:{orgId}");
         await db.SaveChangesAsync();
         await audit.RecordAsync(orgId, project.Id, ActorId, "project.created", "project", project.Id.ToString());
         return Created($"/org/projects/{project.Id}", new { project.Id, project.Name, project.Slug });
@@ -112,7 +107,6 @@ public class OrgController(
     {
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
         if (project == null) return NotFound();
-
         if (project.HydraClientId != null)
         {
             try { await hydra.DeleteOAuth2ClientAsync(project.HydraClientId); }
@@ -121,7 +115,7 @@ public class OrgController(
         await keto.DeleteAllProjectTuplesAsync(id.ToString());
         db.Projects.Remove(project);
         await db.SaveChangesAsync();
-        await audit.RecordAsync(project.OrgId, id, ActorId, "project.deleted", "project", id.ToString());
+        await audit.RecordAsync(OrgId, id, ActorId, "project.deleted", "project", id.ToString());
         return NoContent();
     }
 
@@ -165,11 +159,7 @@ public class OrgController(
     [HttpPost("/org/userlists")]
     public async Task<IActionResult> CreateUserList([FromBody] CreateUserListRequest body)
     {
-        var ul = new UserList
-        {
-            Name = body.Name, OrgId = OrgId, Immovable = false,
-            CreatedAt = DateTimeOffset.UtcNow
-        };
+        var ul = new UserList { Name = body.Name, OrgId = OrgId, Immovable = false, CreatedAt = DateTimeOffset.UtcNow };
         db.UserLists.Add(ul);
         await db.SaveChangesAsync();
         return Created($"/org/userlists/{ul.Id}", new { ul.Id, ul.Name });
@@ -192,8 +182,8 @@ public class OrgController(
         var ul = await db.UserLists.FirstOrDefaultAsync(ul => ul.Id == id && ul.OrgId == OrgId);
         if (ul == null) return NotFound();
         if (ul.Immovable) return BadRequest(new { error = "cannot_delete_immovable" });
-        var isAssigned = await db.Projects.AnyAsync(p => p.AssignedUserListId == id);
-        if (isAssigned) return BadRequest(new { error = "userlist_is_assigned_to_project" });
+        if (await db.Projects.AnyAsync(p => p.AssignedUserListId == id))
+            return BadRequest(new { error = "userlist_is_assigned_to_project" });
         db.UserLists.Remove(ul);
         await db.SaveChangesAsync();
         return NoContent();
@@ -205,18 +195,10 @@ public class OrgController(
         var orgId = OrgId;
         if (!await db.UserLists.AnyAsync(ul => ul.Id == id && ul.OrgId == orgId)) return NotFound();
 
-        var projectIds = await db.Projects
-            .Where(p => p.AssignedUserListId == id)
-            .Select(p => p.Id).ToListAsync();
-
-        var allUserIds = await db.Users
-            .Where(u => u.UserListId == id)
-            .Select(u => u.Id).ToHashSetAsync();
-
-        var orphanedRoles = await db.UserProjectRoles
-            .Include(r => r.Role)
-            .Where(r => projectIds.Contains(r.ProjectId) && !allUserIds.Contains(r.UserId))
-            .ToListAsync();
+        var projectIds = await db.Projects.Where(p => p.AssignedUserListId == id).Select(p => p.Id).ToListAsync();
+        var allUserIds = await db.Users.Where(u => u.UserListId == id).Select(u => u.Id).ToHashSetAsync();
+        var orphanedRoles = await db.UserProjectRoles.Include(r => r.Role)
+            .Where(r => projectIds.Contains(r.ProjectId) && !allUserIds.Contains(r.UserId)).ToListAsync();
 
         var inactiveUsers = new List<Entities.User>();
         if (body.RemoveInactiveUsers)
@@ -233,12 +215,12 @@ public class OrgController(
             {
                 db.UserProjectRoles.RemoveRange(orphanedRoles);
                 foreach (var r in orphanedRoles)
-                    await keto.DeleteRelationTupleAsync("Projects", r.ProjectId.ToString(), $"role:{r.Role.Name}", $"user:{r.UserId}");
+                    await keto.DeleteRelationTupleAsync(Roles.KetoProjectsNamespace, r.ProjectId.ToString(), $"role:{r.Role.Name}", $"user:{r.UserId}");
             }
             if (body.RemoveInactiveUsers)
             {
                 foreach (var u in inactiveUsers)
-                    await keto.DeleteRelationTupleAsync("UserLists", id.ToString(), "member", $"user:{u.Id}");
+                    await keto.DeleteRelationTupleAsync(Roles.KetoUserListsNamespace, id.ToString(), "member", $"user:{u.Id}");
                 db.Users.RemoveRange(inactiveUsers);
             }
             await db.SaveChangesAsync();
@@ -285,7 +267,7 @@ public class OrgController(
         };
         db.Users.Add(user);
         await db.SaveChangesAsync();
-        await keto.WriteRelationTupleAsync("UserLists", id.ToString(), "member", $"user:{user.Id}");
+        await keto.WriteRelationTupleAsync(Roles.KetoUserListsNamespace, id.ToString(), "member", $"user:{user.Id}");
         return Created($"/org/userlists/{id}/users/{user.Id}", new
         {
             user.Id, username = $"{user.Username}#{user.Discriminator}", user.Email
@@ -295,8 +277,7 @@ public class OrgController(
     [HttpPatch("/org/userlists/{id}/users/{uid}")]
     public async Task<IActionResult> UpdateUser(Guid id, Guid uid, [FromBody] UpdateUserRequest body)
     {
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == uid && u.UserListId == id
-            && u.UserList.OrgId == OrgId);
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == uid && u.UserListId == id && u.UserList.OrgId == OrgId);
         if (user == null) return NotFound();
         if (body.DisplayName != null) user.DisplayName = body.DisplayName;
         if (body.Active.HasValue) { user.Active = body.Active.Value; if (!body.Active.Value) user.DisabledAt = DateTimeOffset.UtcNow; }
@@ -308,11 +289,9 @@ public class OrgController(
     [HttpDelete("/org/userlists/{id}/users/{uid}")]
     public async Task<IActionResult> RemoveUser(Guid id, Guid uid)
     {
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == uid && u.UserListId == id
-            && u.UserList.OrgId == OrgId);
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == uid && u.UserListId == id && u.UserList.OrgId == OrgId);
         if (user == null) return NotFound();
-
-        await keto.DeleteRelationTupleAsync("UserLists", id.ToString(), "member", $"user:{uid}");
+        await keto.DeleteRelationTupleAsync(Roles.KetoUserListsNamespace, id.ToString(), "member", $"user:{uid}");
         db.Users.Remove(user);
         await db.SaveChangesAsync();
         await audit.RecordAsync(OrgId, null, ActorId, "user.removed", "user", uid.ToString());
@@ -366,8 +345,7 @@ public class OrgController(
     [HttpDelete("/org/service-accounts/{id}")]
     public async Task<IActionResult> DeleteServiceAccount(Guid id)
     {
-        var sa = await db.ServiceAccounts
-            .Include(sa => sa.UserList)
+        var sa = await db.ServiceAccounts.Include(sa => sa.UserList)
             .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == OrgId);
         if (sa == null) return NotFound();
         db.ServiceAccounts.Remove(sa);
@@ -378,22 +356,14 @@ public class OrgController(
     [HttpGet("/org/service-accounts/{id}/pat")]
     public async Task<IActionResult> ListPats(Guid id)
     {
-        var sa = await db.ServiceAccounts
-            .Include(sa => sa.UserList)
-            .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == OrgId);
-        if (sa == null) return NotFound();
-        var pats = await db.PersonalAccessTokens
-            .Where(p => p.ServiceAccountId == id)
-            .Select(p => new { p.Id, p.Name, p.ExpiresAt, p.LastUsedAt, p.CreatedAt })
-            .ToListAsync();
-        return Ok(pats);
+        if (!await db.ServiceAccounts.AnyAsync(sa => sa.Id == id && sa.UserList.OrgId == OrgId)) return NotFound();
+        return Ok(await saService.ListPatsAsync(id));
     }
 
     [HttpPost("/org/service-accounts/{id}/pat")]
     public async Task<IActionResult> GeneratePat(Guid id, [FromBody] OrgGeneratePatRequest body)
     {
-        var sa = await db.ServiceAccounts
-            .Include(sa => sa.UserList)
+        var sa = await db.ServiceAccounts.Include(sa => sa.UserList)
             .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == OrgId);
         if (sa == null) return NotFound();
         var (raw, pat) = await patGen.GenerateAsync(id, body.Name, body.ExpiresAt, ActorId);
@@ -403,18 +373,10 @@ public class OrgController(
     [HttpDelete("/org/service-accounts/{id}/pat/{patId}")]
     public async Task<IActionResult> RevokePat(Guid id, Guid patId)
     {
-        var sa = await db.ServiceAccounts
-            .Include(sa => sa.UserList)
-            .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == OrgId);
-        if (sa == null) return NotFound();
-        var pat = await db.PersonalAccessTokens.FirstOrDefaultAsync(p => p.Id == patId && p.ServiceAccountId == id);
-        if (pat == null) return NotFound();
-        db.PersonalAccessTokens.Remove(pat);
-        await db.SaveChangesAsync();
-        return NoContent();
+        if (!await db.ServiceAccounts.AnyAsync(sa => sa.Id == id && sa.UserList.OrgId == OrgId)) return NotFound();
+        try { await saService.RevokePat(patId, id); return NoContent(); }
+        catch (KeyNotFoundException) { return NotFound(); }
     }
-
-    // ── JWT Profile keys ──────────────────────────────────────────────────────
 
     [HttpGet("/org/service-accounts/{id}/keys")]
     public async Task<IActionResult> GetServiceAccountKeys(Guid id)
@@ -422,15 +384,7 @@ public class OrgController(
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList)
             .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == OrgId);
         if (sa == null) return NotFound();
-        if (sa.HydraClientId == null) return Ok(new { client_id = (string?)null, has_key = false });
-        var client = await hydra.GetOAuth2ClientAsync(sa.HydraClientId);
-        if (client is null) return Ok(new { client_id = sa.HydraClientId, has_key = false });
-        var hasJwks = client.Value.TryGetProperty("jwks", out var jwks)
-            && jwks.TryGetProperty("keys", out var keys)
-            && keys.GetArrayLength() > 0;
-        var kid = hasJwks && jwks.TryGetProperty("keys", out var ks) && ks.GetArrayLength() > 0
-            ? ks[0].TryGetProperty("kid", out var k) ? k.GetString() : null : null;
-        return Ok(new { client_id = sa.HydraClientId, has_key = hasJwks, kid });
+        return Ok(await saService.GetKeysAsync(sa, hydra));
     }
 
     [HttpPost("/org/service-accounts/{id}/keys")]
@@ -439,12 +393,8 @@ public class OrgController(
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList)
             .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == OrgId);
         if (sa == null) return NotFound();
-        var clientId = $"sa_{id}";
-        try { await hydra.CreateOrUpdateServiceAccountClientAsync(clientId, sa.Name, body.Jwk); }
+        try { var clientId = await saService.AddKeyAsync(sa, body.Jwk, hydra); return Ok(new { client_id = clientId }); }
         catch (Exception ex) { return BadRequest(new { error = "hydra_error", detail = ex.Message }); }
-        sa.HydraClientId = clientId;
-        await db.SaveChangesAsync();
-        return Ok(new { client_id = clientId });
     }
 
     [HttpDelete("/org/service-accounts/{id}/keys")]
@@ -453,33 +403,25 @@ public class OrgController(
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList)
             .FirstOrDefaultAsync(sa => sa.Id == id && sa.UserList.OrgId == OrgId);
         if (sa == null) return NotFound();
-        if (sa.HydraClientId != null)
-        {
-            await hydra.DeleteOAuth2ClientAsync(sa.HydraClientId);
-            sa.HydraClientId = null;
-            await db.SaveChangesAsync();
-        }
+        await saService.RemoveKeyAsync(sa, hydra);
         return Ok(new { message = "key_removed" });
     }
 
     // ── Org-list managers ─────────────────────────────────────────────────────
+    // These endpoints let an org admin manage who has management roles within their org.
+    // Keto tuples are written/deleted via RoleAssignmentService to keep auth in sync.
 
     [HttpGet("/org/org-list/users")]
     public async Task<IActionResult> ListOrgListManagers()
     {
         var orgId = OrgId;
-        var roles = await db.OrgRoles
-            .Where(r => r.OrgId == orgId)
-            .Include(r => r.User)
-            .ToListAsync();
+        var roles = await db.OrgRoles.Where(r => r.OrgId == orgId).Include(r => r.User).ToListAsync();
         var projectIds = roles.Where(r => r.ScopeId.HasValue).Select(r => r.ScopeId!.Value).Distinct().ToList();
-        var projects = await db.Projects
-            .Where(p => projectIds.Contains(p.Id))
-            .ToDictionaryAsync(p => p.Id);
+        var projects = await db.Projects.Where(p => projectIds.Contains(p.Id)).ToDictionaryAsync(p => p.Id);
         return Ok(roles.Select(r => new
         {
             r.Id, r.OrgId, r.UserId, r.Role, r.ScopeId, r.GrantedAt,
-            user_name = $"{r.User.Username}#{r.User.Discriminator}",
+            user_name  = $"{r.User.Username}#{r.User.Discriminator}",
             user_email = r.User.Email,
             scope_name = r.ScopeId.HasValue && projects.TryGetValue(r.ScopeId.Value, out var p) ? p.Name : null
         }));
@@ -488,19 +430,10 @@ public class OrgController(
     [HttpPost("/org/org-list/users")]
     public async Task<IActionResult> AssignOrgListManager([FromBody] OrgAssignManagerRequest body)
     {
-        var orgId = OrgId;
-        if (body.Role == "super_admin") return StatusCode(403, new { error = "cannot_grant_super_admin" });
-        var existing = await db.OrgRoles.FirstOrDefaultAsync(r =>
-            r.OrgId == orgId && r.UserId == body.UserId && r.Role == body.Role && r.ScopeId == body.ScopeId);
-        if (existing != null) return Ok(new { existing.Id });
-        var role = new OrgRole
-        {
-            OrgId = orgId, UserId = body.UserId, Role = body.Role,
-            ScopeId = body.ScopeId, GrantedBy = ActorId, GrantedAt = DateTimeOffset.UtcNow
-        };
-        db.OrgRoles.Add(role);
-        await db.SaveChangesAsync();
-        return Created($"/org/org-list/users/{role.Id}", new { role.Id });
+        if (body.Role == Roles.SuperAdmin) return StatusCode(403, new { error = "cannot_grant_super_admin" });
+        // Delegates to RoleAssignmentService which handles actor level check, DB write, and Keto tuple write
+        await roleService.AssignManagementRoleAsync(ActorId, body.UserId, OrgId, body.Role, body.ScopeId);
+        return Ok(new { message = "role_assigned" });
     }
 
     [HttpPatch("/org/org-list/users/{id}")]
@@ -510,25 +443,30 @@ public class OrgController(
         var role = await db.OrgRoles.FirstOrDefaultAsync(r => r.Id == id && r.OrgId == orgId);
         if (role == null) return NotFound();
         if (role.UserId == ActorId) return StatusCode(403, new { error = "cannot_modify_own_role" });
-        if (body.Role != null)
-        {
-            if (body.Role == "super_admin") return StatusCode(403, new { error = "cannot_grant_super_admin" });
-            role.Role = body.Role;
-        }
+
+        if (body.Role != null && body.Role == Roles.SuperAdmin)
+            return StatusCode(403, new { error = "cannot_grant_super_admin" });
+
+        // Delete old Keto tuple before updating
+        var oldSubject = role.ScopeId.HasValue ? $"user:{role.UserId}|project:{role.ScopeId}" : $"user:{role.UserId}";
+        await keto.DeleteRelationTupleAsync(Roles.KetoOrgsNamespace, orgId.ToString(), role.Role, oldSubject);
+
+        if (body.Role != null) role.Role = body.Role;
         if (body.ScopeId != null) role.ScopeId = body.ScopeId;
         await db.SaveChangesAsync();
+
+        // Write new Keto tuple
+        var newSubject = role.ScopeId.HasValue ? $"user:{role.UserId}|project:{role.ScopeId}" : $"user:{role.UserId}";
+        await keto.WriteRelationTupleAsync(Roles.KetoOrgsNamespace, orgId.ToString(), role.Role, newSubject);
+
         return Ok(new { role.Id, role.Role, role.ScopeId });
     }
 
     [HttpDelete("/org/org-list/users/{id}")]
     public async Task<IActionResult> RemoveOrgListManager(Guid id)
     {
-        var orgId = OrgId;
-        var role = await db.OrgRoles.FirstOrDefaultAsync(r => r.Id == id && r.OrgId == orgId);
-        if (role == null) return NotFound();
-        if (role.UserId == ActorId) return StatusCode(403, new { error = "cannot_remove_own_role" });
-        db.OrgRoles.Remove(role);
-        await db.SaveChangesAsync();
+        // Delegates to RoleAssignmentService which handles actor level check, DB delete, and Keto tuple delete
+        await roleService.RemoveManagementRoleAsync(ActorId, id, OrgId);
         return NoContent();
     }
 
@@ -540,10 +478,7 @@ public class OrgController(
             .Where(l => l.OrgId == orgId)
             .OrderByDescending(l => l.CreatedAt)
             .Skip((page - 1) * pageSize).Take(pageSize)
-            .Select(l => new {
-                l.Id, l.Action, l.OrgId, l.ProjectId, l.ActorId,
-                l.TargetType, l.TargetId, l.IpAddress, l.CreatedAt
-            })
+            .Select(l => new { l.Id, l.Action, l.OrgId, l.ProjectId, l.ActorId, l.TargetType, l.TargetId, l.IpAddress, l.CreatedAt })
             .ToListAsync();
         return Ok(logs);
     }
@@ -560,4 +495,3 @@ public record OrgCleanupRequest(bool RemoveOrphanedRoles = true, bool RemoveInac
 public record OrgGeneratePatRequest(string Name, DateTimeOffset? ExpiresAt);
 public record OrgAssignManagerRequest(Guid UserId, string Role, Guid? ScopeId);
 public record OrgUpdateManagerRequest(string? Role, Guid? ScopeId);
-public record SaKeyRequest(System.Text.Json.JsonElement Jwk);

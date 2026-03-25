@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using RediensIAM.Config;
 using RediensIAM.Data;
 using RediensIAM.Entities;
 using RediensIAM.Exceptions;
@@ -11,22 +12,22 @@ public class RoleAssignmentService(RediensIamDbContext db, KetoService keto, Aud
 {
     public async Task<ManagementLevel> GetActorManagementLevelForProjectAsync(Guid actorId, Guid projectId, Guid orgId)
     {
-        if (await keto.CheckAsync("System", "rediensiam", "super_admin", $"user:{actorId}"))
+        if (await keto.CheckAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{actorId}"))
             return ManagementLevel.SuperAdmin;
-        if (await keto.CheckAsync("Organisations", orgId.ToString(), "org_admin", $"user:{actorId}"))
+        if (await keto.CheckAsync(Roles.KetoOrgsNamespace, orgId.ToString(), Roles.KetoOrgAdminRelation, $"user:{actorId}"))
             return ManagementLevel.OrgAdmin;
-        if (await keto.CheckAsync("Projects", projectId.ToString(), "manager", $"user:{actorId}"))
+        if (await keto.CheckAsync(Roles.KetoProjectsNamespace, projectId.ToString(), Roles.KetoManagerRelation, $"user:{actorId}"))
             return ManagementLevel.ProjectManager;
         return ManagementLevel.None;
     }
 
     public async Task<ManagementLevel> GetActorManagementLevelForOrgAsync(Guid actorId, Guid orgId)
     {
-        if (await keto.CheckAsync("System", "rediensiam", "super_admin", $"user:{actorId}"))
+        if (await keto.CheckAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{actorId}"))
             return ManagementLevel.SuperAdmin;
-        if (await keto.CheckAsync("Organisations", orgId.ToString(), "org_admin", $"user:{actorId}"))
+        if (await keto.CheckAsync(Roles.KetoOrgsNamespace, orgId.ToString(), Roles.KetoOrgAdminRelation, $"user:{actorId}"))
             return ManagementLevel.OrgAdmin;
-        var pmRole = await db.OrgRoles.AnyAsync(r => r.OrgId == orgId && r.UserId == actorId && r.Role == "project_manager");
+        var pmRole = await db.OrgRoles.AnyAsync(r => r.OrgId == orgId && r.UserId == actorId && r.Role == Roles.ProjectManager);
         if (pmRole) return ManagementLevel.ProjectManager;
         return ManagementLevel.None;
     }
@@ -74,7 +75,7 @@ public class RoleAssignmentService(RediensIamDbContext db, KetoService keto, Aud
             GrantedBy = actorId, GrantedAt = DateTimeOffset.UtcNow
         });
         await db.SaveChangesAsync();
-        await keto.WriteRelationTupleAsync("Projects", projectId.ToString(), $"role:{targetRole.Name}", $"user:{targetUserId}");
+        await keto.WriteRelationTupleAsync(Roles.KetoProjectsNamespace, projectId.ToString(), $"role:{targetRole.Name}", $"user:{targetUserId}");
         await audit.RecordAsync(project.OrgId, projectId, actorId, "role.assigned",
             "user", targetUserId.ToString(), new() { ["role_name"] = targetRole.Name });
     }
@@ -92,7 +93,7 @@ public class RoleAssignmentService(RediensIamDbContext db, KetoService keto, Aud
 
         db.UserProjectRoles.Remove(assignment);
         await db.SaveChangesAsync();
-        await keto.DeleteRelationTupleAsync("Projects", projectId.ToString(), $"role:{assignment.Role.Name}", $"user:{targetUserId}");
+        await keto.DeleteRelationTupleAsync(Roles.KetoProjectsNamespace, projectId.ToString(), $"role:{assignment.Role.Name}", $"user:{targetUserId}");
         await audit.RecordAsync(project.OrgId, projectId, actorId, "role.removed", "user", targetUserId.ToString());
     }
 
@@ -105,9 +106,9 @@ public class RoleAssignmentService(RediensIamDbContext db, KetoService keto, Aud
 
         var targetRank = role switch
         {
-            "super_admin" => ManagementLevel.SuperAdmin,
-            "org_admin" => ManagementLevel.OrgAdmin,
-            "project_manager" => ManagementLevel.ProjectManager,
+            Roles.SuperAdmin     => ManagementLevel.SuperAdmin,
+            Roles.OrgAdmin       => ManagementLevel.OrgAdmin,
+            Roles.ProjectManager => ManagementLevel.ProjectManager,
             _ => throw new BadRequestException($"Unknown management role: {role}")
         };
 
@@ -116,10 +117,10 @@ public class RoleAssignmentService(RediensIamDbContext db, KetoService keto, Aud
 
         if (actorLevel == ManagementLevel.ProjectManager)
         {
-            if (role != "project_manager" || scopeId == null)
+            if (role != Roles.ProjectManager || scopeId == null)
                 throw new ForbiddenException("project_manager can only assign project_manager roles");
             var actorScope = await db.OrgRoles.FirstOrDefaultAsync(r =>
-                r.OrgId == orgId && r.UserId == actorId && r.Role == "project_manager");
+                r.OrgId == orgId && r.UserId == actorId && r.Role == Roles.ProjectManager);
             if (actorScope?.ScopeId != scopeId)
                 throw new ForbiddenException("Cannot assign project_manager for a project outside your scope");
         }
@@ -143,8 +144,39 @@ public class RoleAssignmentService(RediensIamDbContext db, KetoService keto, Aud
         await db.SaveChangesAsync();
 
         var ketoSubject = scopeId.HasValue ? $"user:{targetUserId}|project:{scopeId}" : $"user:{targetUserId}";
-        await keto.WriteRelationTupleAsync("Organisations", orgId.ToString(), role, ketoSubject);
+        await keto.WriteRelationTupleAsync(Roles.KetoOrgsNamespace, orgId.ToString(), role, ketoSubject);
         await audit.RecordAsync(orgId, null, actorId, "role.management.assigned",
             "user", targetUserId.ToString(), new() { ["role"] = role });
+    }
+
+    public async Task RemoveManagementRoleAsync(Guid actorId, Guid orgRoleId, Guid orgId)
+    {
+        var actorLevel = await GetActorManagementLevelForOrgAsync(actorId, orgId);
+        if (actorLevel == ManagementLevel.None)
+            throw new ForbiddenException("No management rights over this organisation");
+
+        if (actorId == (await db.OrgRoles.FindAsync(orgRoleId))?.UserId)
+            throw new ForbiddenException("Cannot remove your own management role");
+
+        var role = await db.OrgRoles.FirstOrDefaultAsync(r => r.Id == orgRoleId && r.OrgId == orgId)
+            ?? throw new NotFoundException("Role assignment not found");
+
+        var targetRank = role.Role switch
+        {
+            Roles.SuperAdmin     => ManagementLevel.SuperAdmin,
+            Roles.OrgAdmin       => ManagementLevel.OrgAdmin,
+            Roles.ProjectManager => ManagementLevel.ProjectManager,
+            _ => ManagementLevel.None
+        };
+        if (targetRank < actorLevel)
+            throw new ForbiddenException($"Cannot remove '{role.Role}': insufficient management level");
+
+        db.OrgRoles.Remove(role);
+        await db.SaveChangesAsync();
+
+        var ketoSubject = role.ScopeId.HasValue ? $"user:{role.UserId}|project:{role.ScopeId}" : $"user:{role.UserId}";
+        await keto.DeleteRelationTupleAsync(Roles.KetoOrgsNamespace, orgId.ToString(), role.Role, ketoSubject);
+        await audit.RecordAsync(orgId, null, actorId, "role.management.removed",
+            "user", role.UserId.ToString(), new() { ["role"] = role.Role });
     }
 }

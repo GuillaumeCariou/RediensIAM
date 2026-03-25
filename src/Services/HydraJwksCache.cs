@@ -1,4 +1,5 @@
 using System.Text.Json;
+using RediensIAM.Config;
 using RediensIAM.Models;
 
 namespace RediensIAM.Services;
@@ -6,9 +7,9 @@ namespace RediensIAM.Services;
 // Validates tokens via Hydra's admin introspection endpoint (port 4445).
 // This avoids fetching JWKS from the public port (4444) which may not be
 // reachable pod-to-pod depending on network configuration.
-public class HydraJwksCache(IHttpClientFactory http, IConfiguration config)
+public class HydraJwksCache(IHttpClientFactory http, AppConfig appConfig)
 {
-    private readonly string _introspectUrl = config["Hydra:AdminUrl"] + "/admin/oauth2/introspect";
+    private readonly string _introspectUrl = appConfig.HydraAdminUrl + "/admin/oauth2/introspect";
 
     private static readonly JsonSerializerOptions _json = new() { PropertyNameCaseInsensitive = true };
 

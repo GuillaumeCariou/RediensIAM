@@ -36,6 +36,15 @@ export async function enableUser(id: string) {
 export async function forceLogoutUser(id: string) {
   return (await apiFetch(`/admin/users/${id}/force-logout`, { method: 'POST' })).json();
 }
+export async function adminGetUser(id: string) {
+  return (await apiFetch(`/admin/users/${id}`)).json();
+}
+export async function adminUpdateUser(id: string, body: {
+  email?: string; username?: string; display_name?: string; phone?: string;
+  active?: boolean; email_verified?: boolean; clear_lock?: boolean; new_password?: string;
+}) {
+  return (await apiFetch(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(body) })).json();
+}
 
 // ── UserLists ─────────────────────────────────────────────────────
 export async function listUserLists(orgId?: string) {
@@ -60,7 +69,7 @@ export async function getSystemUserList(id: string) {
 export async function listSystemUserListMembers(id: string) {
   return (await apiFetch(`/admin/userlists/${id}/users`)).json();
 }
-export async function addUserToList(listId: string, body: { email: string; username: string; password: string }) {
+export async function addUserToList(listId: string, body: { email: string; username: string; password: string; email_verified?: boolean }) {
   return (await apiFetch(`/admin/userlists/${listId}/users`, { method: 'POST', body: JSON.stringify(body) })).json();
 }
 export async function removeUserFromList(listId: string, userId: string) {

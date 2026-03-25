@@ -30,6 +30,7 @@ env:
   Keto__ReadUrl: "http://rediensiam-keto-read:4466"
   Keto__WriteUrl: "http://rediensiam-keto-write:4467"
   App__PublicUrl: "http://localhost"
+  App__Domain: "localhost"
 
 secrets: {}  # override via values.secret.yaml
 

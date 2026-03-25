@@ -23,32 +23,29 @@ public class AccountController(
     OtpCacheService otpCache,
     IFido2 fido2) : ControllerBase
 {
+    // /account/* routes are protected by GatewayAuthMiddleware — Claims is always non-null here.
     private TokenClaims Claims => HttpContext.GetClaims()!;
 
     [HttpGet("/account/me")]
     public async Task<IActionResult> GetMe()
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var userId = claims.ParsedUserId;
-        var user = await db.Users.FindAsync(userId);
+        var user = await db.Users.FindAsync(Claims.ParsedUserId);
         if (user == null) return NotFound();
         return Ok(new
         {
             user.Id, user.Username, user.Discriminator, user.Email,
             user.DisplayName, user.EmailVerified, user.TotpEnabled,
             user.WebAuthnEnabled, user.LastLoginAt,
-            roles = claims.Roles,
-            project_id = claims.ProjectId,
-            org_id = claims.OrgId
+            roles      = Claims.Roles,
+            project_id = Claims.ProjectId,
+            org_id     = Claims.OrgId
         });
     }
 
     [HttpPatch("/account/me")]
     public async Task<IActionResult> UpdateMe([FromBody] UpdateMeRequest body)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var userId = claims.ParsedUserId;
-        var user = await db.Users.FindAsync(userId);
+        var user = await db.Users.FindAsync(Claims.ParsedUserId);
         if (user == null) return NotFound();
         if (body.DisplayName != null) user.DisplayName = body.DisplayName;
         user.UpdatedAt = DateTimeOffset.UtcNow;
@@ -59,8 +56,7 @@ public class AccountController(
     [HttpPost("/account/change-password")]
     public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest body)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var userId = claims.ParsedUserId;
+        var userId = Claims.ParsedUserId;
         var user = await db.Users.FindAsync(userId);
         if (user == null) return NotFound();
         if (!passwords.Verify(body.CurrentPassword, user.PasswordHash))
@@ -68,22 +64,18 @@ public class AccountController(
         user.PasswordHash = passwords.Hash(body.NewPassword);
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
-        await audit.RecordAsync(Guid.TryParse(claims.OrgId, out var oid) ? oid : null, null, userId, "user.password_changed");
+        await audit.RecordAsync(Guid.TryParse(Claims.OrgId, out var oid) ? oid : null, null, userId, "user.password_changed");
         return Ok(new { message = "password_changed" });
     }
 
     [HttpPost("/account/mfa/totp/setup")]
     public async Task<IActionResult> SetupTotp()
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var userId = claims.ParsedUserId;
-        var user = await db.Users.FindAsync(userId);
+        var user = await db.Users.FindAsync(Claims.ParsedUserId);
         if (user == null) return NotFound();
-
         var secret = KeyGeneration.GenerateRandomKey(20);
         var encrypted = totpEncryption.Encrypt(secret);
         HttpContext.Session.SetString("totp_setup_secret", encrypted);
-
         var base32 = Base32Encoding.ToString(secret);
         var issuer = "RediensIAM";
         var otpAuthUrl = $"otpauth://totp/{Uri.EscapeDataString(issuer)}:{Uri.EscapeDataString(user.Email)}?secret={base32}&issuer={Uri.EscapeDataString(issuer)}";
@@ -93,16 +85,13 @@ public class AccountController(
     [HttpPost("/account/mfa/totp/confirm")]
     public async Task<IActionResult> ConfirmTotp([FromBody] TotpConfirmRequest body)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var userId = claims.ParsedUserId;
+        var userId = Claims.ParsedUserId;
         var encryptedSecret = HttpContext.Session.GetString("totp_setup_secret");
         if (encryptedSecret == null) return BadRequest(new { error = "no_setup_session" });
-
         var secret = totpEncryption.Decrypt(encryptedSecret);
         var totp = new Totp(secret);
         if (!totp.VerifyTotp(body.Code, out _, new VerificationWindow(1, 1)))
             return BadRequest(new { error = "invalid_code" });
-
         var user = await db.Users.FindAsync(userId);
         if (user == null) return NotFound();
         user.TotpSecret = encryptedSecret;
@@ -110,15 +99,13 @@ public class AccountController(
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         HttpContext.Session.Remove("totp_setup_secret");
-
         var backupCodes = Enumerable.Range(0, 8).Select(_ =>
         {
             var code = Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToUpper();
-            return (code, hash: Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(code))));
+            return (code, hash: Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(code))));
         }).ToList();
-
         db.BackupCodes.RemoveRange(db.BackupCodes.Where(c => c.UserId == userId));
-        db.BackupCodes.AddRange(backupCodes.Select(c => new Entities.BackupCode
+        db.BackupCodes.AddRange(backupCodes.Select(c => new BackupCode
         {
             UserId = userId, CodeHash = c.hash, CreatedAt = DateTimeOffset.UtcNow
         }));
@@ -129,17 +116,14 @@ public class AccountController(
     [HttpPost("/account/mfa/backup-codes/generate")]
     public async Task<IActionResult> RegenerateBackupCodes()
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var userId = claims.ParsedUserId;
-
+        var userId = Claims.ParsedUserId;
         var codes = Enumerable.Range(0, 8).Select(_ =>
         {
             var code = Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToUpper();
-            return (code, hash: Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(code))));
+            return (code, hash: Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(code))));
         }).ToList();
-
         db.BackupCodes.RemoveRange(db.BackupCodes.Where(c => c.UserId == userId));
-        db.BackupCodes.AddRange(codes.Select(c => new Entities.BackupCode
+        db.BackupCodes.AddRange(codes.Select(c => new BackupCode
         {
             UserId = userId, CodeHash = c.hash, CreatedAt = DateTimeOffset.UtcNow
         }));
@@ -152,11 +136,7 @@ public class AccountController(
     [HttpGet("/account/sessions")]
     public async Task<IActionResult> GetSessions()
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        // Subject format: "{org_id}:{user_id}" for project users, "{user_id}" for admin users
-        var subject = string.IsNullOrEmpty(claims.OrgId)
-            ? claims.UserId
-            : $"{claims.OrgId}:{claims.ParsedUserId}";
+        var subject = string.IsNullOrEmpty(Claims.OrgId) ? Claims.UserId : $"{Claims.OrgId}:{Claims.ParsedUserId}";
         var sessions = await hydra.ListConsentSessionsAsync(subject);
         return Ok(sessions.Select(s => new
         {
@@ -170,10 +150,7 @@ public class AccountController(
     [HttpDelete("/account/sessions")]
     public async Task<IActionResult> RevokeAllSessions()
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var subject = string.IsNullOrEmpty(claims.OrgId)
-            ? claims.UserId
-            : $"{claims.OrgId}:{claims.ParsedUserId}";
+        var subject = string.IsNullOrEmpty(Claims.OrgId) ? Claims.UserId : $"{Claims.OrgId}:{Claims.ParsedUserId}";
         await hydra.RevokeAllConsentSessionsAsync(subject);
         return Ok(new { message = "all_sessions_revoked" });
     }
@@ -181,10 +158,7 @@ public class AccountController(
     [HttpDelete("/account/sessions/{clientId}")]
     public async Task<IActionResult> RevokeSession(string clientId)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var subject = string.IsNullOrEmpty(claims.OrgId)
-            ? claims.UserId
-            : $"{claims.OrgId}:{claims.ParsedUserId}";
+        var subject = string.IsNullOrEmpty(Claims.OrgId) ? Claims.UserId : $"{Claims.OrgId}:{Claims.ParsedUserId}";
         await hydra.RevokeConsentSessionAsync(subject, clientId);
         return Ok(new { message = "session_revoked" });
     }
@@ -194,10 +168,9 @@ public class AccountController(
     [HttpPost("/account/phone/setup")]
     public async Task<IActionResult> SetupPhone([FromBody] PhoneSetupRequest body)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var code = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
         HttpContext.Session.SetString("phone_setup_number", body.Phone);
-        await otpCache.StoreSessionOtpAsync("phone_setup", claims.UserId, code);
+        await otpCache.StoreSessionOtpAsync("phone_setup", Claims.UserId, code);
         await smsService.SendOtpAsync(body.Phone, code, "phone_setup");
         return Ok(new { sent = true });
     }
@@ -205,12 +178,11 @@ public class AccountController(
     [HttpPost("/account/phone/verify")]
     public async Task<IActionResult> VerifyPhone([FromBody] PhoneVerifyRequest body)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
         var phone = HttpContext.Session.GetString("phone_setup_number");
         if (phone == null) return BadRequest(new { error = "no_setup_session" });
-        if (!await otpCache.VerifySessionOtpAsync("phone_setup", claims.UserId, body.Code))
+        if (!await otpCache.VerifySessionOtpAsync("phone_setup", Claims.UserId, body.Code))
             return BadRequest(new { error = "invalid_code" });
-        var user = await db.Users.FindAsync(claims.ParsedUserId);
+        var user = await db.Users.FindAsync(Claims.ParsedUserId);
         if (user == null) return NotFound();
         user.Phone = phone;
         user.PhoneVerified = true;
@@ -223,8 +195,7 @@ public class AccountController(
     [HttpDelete("/account/phone")]
     public async Task<IActionResult> RemovePhone()
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var user = await db.Users.FindAsync(claims.ParsedUserId);
+        var user = await db.Users.FindAsync(Claims.ParsedUserId);
         if (user == null) return NotFound();
         user.Phone = null;
         user.PhoneVerified = false;
@@ -236,8 +207,7 @@ public class AccountController(
     [HttpGet("/account/mfa")]
     public async Task<IActionResult> GetMfaStatus()
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var userId = claims.ParsedUserId;
+        var userId = Claims.ParsedUserId;
         var user = await db.Users.FindAsync(userId);
         if (user == null) return NotFound();
         var backupCount = await db.BackupCodes.CountAsync(c => c.UserId == userId && c.UsedAt == null);
@@ -249,31 +219,26 @@ public class AccountController(
     [HttpPost("/account/mfa/webauthn/register/begin")]
     public async Task<IActionResult> WebAuthnRegisterBegin()
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var userId = claims.ParsedUserId;
+        var userId = Claims.ParsedUserId;
         var user = await db.Users.FindAsync(userId);
         if (user == null) return NotFound();
-
         var fido2User = new Fido2User
         {
             Id          = userId.ToByteArray(),
             Name        = user.Email,
             DisplayName = user.DisplayName ?? user.Username
         };
-
         var existingKeys = await db.WebAuthnCredentials
             .Where(c => c.UserId == userId)
             .Select(c => new PublicKeyCredentialDescriptor(c.CredentialId))
             .ToListAsync();
-
         var options = fido2.RequestNewCredential(new RequestNewCredentialParams
         {
-            User                  = fido2User,
-            ExcludeCredentials    = existingKeys,
+            User                   = fido2User,
+            ExcludeCredentials     = existingKeys,
             AuthenticatorSelection = AuthenticatorSelection.Default,
             AttestationPreference  = AttestationConveyancePreference.None
         });
-
         HttpContext.Session.SetString("fido2.attestationOptions", options.ToJson());
         return Ok(options);
     }
@@ -281,35 +246,26 @@ public class AccountController(
     [HttpPost("/account/mfa/webauthn/register/complete")]
     public async Task<IActionResult> WebAuthnRegisterComplete([FromBody] WebAuthnCompleteRequest body)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var userId = claims.ParsedUserId;
-
+        var userId = Claims.ParsedUserId;
         var json = HttpContext.Session.GetString("fido2.attestationOptions");
         if (json == null) return BadRequest(new { error = "no_registration_session" });
         HttpContext.Session.Remove("fido2.attestationOptions");
-
         var options     = CredentialCreateOptions.FromJson(json);
         var attestation = JsonSerializer.Deserialize<AuthenticatorAttestationRawResponse>(
             JsonSerializer.Serialize(body.Response))!;
-
         IsCredentialIdUniqueToUserAsyncDelegate isUnique = async (args, _) =>
             !await db.WebAuthnCredentials.AnyAsync(c => c.CredentialId == args.CredentialId);
-
         RegisteredPublicKeyCredential result;
         try
         {
             result = await fido2.MakeNewCredentialAsync(new MakeNewCredentialParams
             {
-                AttestationResponse              = attestation,
-                OriginalOptions                  = options,
+                AttestationResponse               = attestation,
+                OriginalOptions                   = options,
                 IsCredentialIdUniqueToUserCallback = isUnique
             });
         }
-        catch (Exception ex)
-        {
-            return BadRequest(new { error = "attestation_failed", detail = ex.Message });
-        }
-
+        catch (Exception ex) { return BadRequest(new { error = "attestation_failed", detail = ex.Message }); }
         db.WebAuthnCredentials.Add(new WebAuthnCredential
         {
             Id           = Guid.NewGuid(),
@@ -320,19 +276,16 @@ public class AccountController(
             DeviceName   = body.DeviceName,
             CreatedAt    = DateTimeOffset.UtcNow
         });
-
         var user = await db.Users.FindAsync(userId);
         if (user != null) { user.WebAuthnEnabled = true; user.UpdatedAt = DateTimeOffset.UtcNow; }
         await db.SaveChangesAsync();
-
         return Ok(new { message = "passkey_registered" });
     }
 
     [HttpGet("/account/mfa/webauthn/credentials")]
     public async Task<IActionResult> ListWebAuthnCredentials()
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var userId = claims.ParsedUserId;
+        var userId = Claims.ParsedUserId;
         var creds = await db.WebAuthnCredentials
             .Where(c => c.UserId == userId)
             .OrderBy(c => c.CreatedAt)
@@ -344,19 +297,16 @@ public class AccountController(
     [HttpDelete("/account/mfa/webauthn/credentials/{id}")]
     public async Task<IActionResult> DeleteWebAuthnCredential(Guid id)
     {
-        if (HttpContext.GetClaims() is not { } claims) return Unauthorized();
-        var userId = claims.ParsedUserId;
+        var userId = Claims.ParsedUserId;
         var cred = await db.WebAuthnCredentials.FirstOrDefaultAsync(c => c.Id == id && c.UserId == userId);
         if (cred == null) return NotFound();
         db.WebAuthnCredentials.Remove(cred);
-
         var remaining = await db.WebAuthnCredentials.CountAsync(c => c.UserId == userId && c.Id != id);
         if (remaining == 0)
         {
             var user = await db.Users.FindAsync(userId);
             if (user != null) { user.WebAuthnEnabled = false; user.UpdatedAt = DateTimeOffset.UtcNow; }
         }
-
         await db.SaveChangesAsync();
         return Ok(new { message = "credential_deleted" });
     }

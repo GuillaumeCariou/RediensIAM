@@ -5,6 +5,7 @@ using Fido2NetLib.Objects;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using OtpNet;
+using RediensIAM.Config;
 using RediensIAM.Data;
 using RediensIAM.Entities;
 using RediensIAM.Services;
@@ -24,7 +25,7 @@ public class AuthController(
     IEmailService emailService,
     ISmsService smsService,
     IFido2 fido2,
-    IConfiguration config,
+    AppConfig appConfig,
     ILogger<AuthController> logger) : ControllerBase
 {
     private string Ip => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
@@ -155,8 +156,8 @@ public class AuthController(
         if (!passwords.Verify(body.Password, user.PasswordHash))
         {
             user.FailedLoginCount++;
-            if (user.FailedLoginCount >= config.GetValue<int>("Security:MaxLoginAttempts", 5))
-                user.LockedUntil = DateTimeOffset.UtcNow.AddMinutes(config.GetValue<int>("Security:LockoutMinutes", 15));
+            if (user.FailedLoginCount >= appConfig.MaxLoginAttempts)
+                user.LockedUntil = DateTimeOffset.UtcNow.AddMinutes(appConfig.LockoutMinutes);
             await db.SaveChangesAsync();
             await rateLimiter.RecordFailureAsync(Ip, user.Id);
             return Unauthorized(new { error = "invalid_credentials" });
@@ -362,12 +363,12 @@ public class AuthController(
         if (req.Client?.ClientId == "client_admin_system")
         {
             var adminRoles = new List<string>();
-            if (await keto.CheckAsync("System", "rediensiam", "super_admin", $"user:{userId}"))
-                adminRoles.Add("super_admin");
-            if (await keto.HasAnyRelationAsync("Organisations", "org_admin", $"user:{userId}"))
-                adminRoles.Add("org_admin");
-            if (await keto.HasAnyRelationAsync("Projects", "manager", $"user:{userId}"))
-                adminRoles.Add("project_manager");
+            if (await keto.CheckAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{userId}"))
+                adminRoles.Add(Roles.SuperAdmin);
+            if (await keto.HasAnyRelationAsync(Roles.KetoOrgsNamespace, Roles.KetoOrgAdminRelation, $"user:{userId}"))
+                adminRoles.Add(Roles.OrgAdmin);
+            if (await keto.HasAnyRelationAsync(Roles.KetoProjectsNamespace, Roles.KetoManagerRelation, $"user:{userId}"))
+                adminRoles.Add(Roles.ProjectManager);
 
             if (adminRoles.Count == 0)
             {
@@ -377,11 +378,11 @@ public class AuthController(
 
             // Resolve the org and project scopes so the token carries them
             var orgRole = await db.OrgRoles
-                .Where(r => r.UserId == userId && r.Role == "org_admin")
+                .Where(r => r.UserId == userId && r.Role == Roles.OrgAdmin)
                 .OrderBy(r => r.GrantedAt)
                 .FirstOrDefaultAsync();
             var projectRole = await db.OrgRoles
-                .Where(r => r.UserId == userId && r.Role == "project_manager")
+                .Where(r => r.UserId == userId && r.Role == Roles.ProjectManager)
                 .OrderBy(r => r.GrantedAt)
                 .FirstOrDefaultAsync();
 
@@ -675,7 +676,14 @@ public class AuthController(
     {
         if (body.Email == null) return BadRequest(new { error = "email_required" });
 
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Email == body.Email.ToLowerInvariant());
+        // Admin console users must belong to the system user list (OrgId == null, Immovable).
+        var user = await db.Users
+            .Include(u => u.UserList)
+            .FirstOrDefaultAsync(u =>
+                u.Email == body.Email.ToLowerInvariant() &&
+                u.UserList.OrgId == null &&
+                u.UserList.Immovable);
+
         if (user == null || !user.Active)
         {
             await rateLimiter.RecordFailureAsync(Ip, null);
@@ -688,16 +696,16 @@ public class AuthController(
         if (!passwords.Verify(body.Password, user.PasswordHash))
         {
             user.FailedLoginCount++;
-            if (user.FailedLoginCount >= config.GetValue<int>("Security:MaxLoginAttempts", 5))
-                user.LockedUntil = DateTimeOffset.UtcNow.AddMinutes(config.GetValue<int>("Security:LockoutMinutes", 15));
+            if (user.FailedLoginCount >= appConfig.MaxLoginAttempts)
+                user.LockedUntil = DateTimeOffset.UtcNow.AddMinutes(appConfig.LockoutMinutes);
             await db.SaveChangesAsync();
             await rateLimiter.RecordFailureAsync(Ip, user.Id);
             return Unauthorized(new { error = "invalid_credentials" });
         }
 
-        var hasSuperAdmin = await keto.CheckAsync("System", "rediensiam", "super_admin", $"user:{user.Id}");
-        var hasOrgAdmin = !hasSuperAdmin && await keto.HasAnyRelationAsync("Organisations", "org_admin", $"user:{user.Id}");
-        var hasProjManager = !hasSuperAdmin && !hasOrgAdmin && await keto.HasAnyRelationAsync("Projects", "manager", $"user:{user.Id}");
+        var hasSuperAdmin = await keto.CheckAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{user.Id}");
+        var hasOrgAdmin = !hasSuperAdmin && await keto.HasAnyRelationAsync(Roles.KetoOrgsNamespace, Roles.KetoOrgAdminRelation, $"user:{user.Id}");
+        var hasProjManager = !hasSuperAdmin && !hasOrgAdmin && await keto.HasAnyRelationAsync(Roles.KetoProjectsNamespace, Roles.KetoManagerRelation, $"user:{user.Id}");
 
         if (!hasSuperAdmin && !hasOrgAdmin && !hasProjManager)
             return Unauthorized(new { error = "insufficient_role" });

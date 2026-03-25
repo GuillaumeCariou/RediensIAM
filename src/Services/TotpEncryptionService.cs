@@ -1,11 +1,11 @@
 using System.Security.Cryptography;
+using RediensIAM.Config;
 
 namespace RediensIAM.Services;
 
-public class TotpEncryptionService(IConfiguration config)
+public class TotpEncryptionService(AppConfig appConfig)
 {
-    private readonly byte[] _key = Convert.FromHexString(
-        config["Security:TotpSecretEncryptionKey"] ?? throw new InvalidOperationException("TotpSecretEncryptionKey is required"));
+    private readonly byte[] _key = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
 
     public string Encrypt(byte[] plaintext)
     {

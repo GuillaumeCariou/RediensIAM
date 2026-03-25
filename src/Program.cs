@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using StackExchange.Redis;
+using RediensIAM.Config;
 using RediensIAM.Data;
 using RediensIAM.Entities;
 using RediensIAM.Middleware;
@@ -8,20 +9,16 @@ using RediensIAM.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ── Configuration ──────────────────────────────────────────────────────────
-var config = builder.Configuration;
-var publicPort = config.GetValue<int>("IAM_PUBLIC_PORT", 5000);
-var adminPort = config.GetValue<int>("IAM_ADMIN_PORT", 5001);
-var adminPath = config["IAM_ADMIN_PATH"] ?? "/admin";
+// ── AppConfig (single source of truth for all env/config keys) ────────────
+builder.Services.AddSingleton<AppConfig>();
+var appConfig = new AppConfig(builder.Configuration);
 
 // ── Database ───────────────────────────────────────────────────────────────
 builder.Services.AddDbContext<RediensIamDbContext>(options =>
-    options.UseNpgsql(
-        config.GetConnectionString("Default") ?? "Host=localhost;Database=rediensiam;Username=iam;Password=changeme"),
+    options.UseNpgsql(appConfig.ConnectionString),
     ServiceLifetime.Scoped);
 
 // ── Redis / Dragonfly ──────────────────────────────────────────────────────
-var redisConn = config["Cache:ConnectionString"] ?? "localhost:6379,abortConnect=false";
 builder.Services.Configure<ForwardedHeadersOptions>(o =>
 {
     o.ForwardedHeaders = ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedFor;
@@ -30,11 +27,11 @@ builder.Services.Configure<ForwardedHeadersOptions>(o =>
 });
 
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
-    ConnectionMultiplexer.Connect(redisConn));
+    ConnectionMultiplexer.Connect(appConfig.CacheConnectionString));
 builder.Services.AddStackExchangeRedisCache(o =>
 {
-    o.Configuration = redisConn;
-    o.InstanceName = config["Cache:InstanceName"] ?? "rediensiam:";
+    o.Configuration  = appConfig.CacheConnectionString;
+    o.InstanceName   = appConfig.CacheInstanceName;
 });
 
 // ── Session (for MFA state) — backed by Redis so it survives pod restarts ──
@@ -67,24 +64,20 @@ builder.Services.AddScoped<PatIntrospectionService>();
 builder.Services.AddScoped<PatGenerationService>();
 builder.Services.AddScoped<RoleAssignmentService>();
 builder.Services.AddScoped<ImpersonationService>();
+builder.Services.AddScoped<ServiceAccountService>();
 builder.Services.AddHttpContextAccessor();
 
 // ── WebAuthn / Passkeys ────────────────────────────────────────────────────
 builder.Services.AddFido2(opts =>
 {
-    opts.ServerDomain = config["App:Domain"]
-        ?? throw new InvalidOperationException("App:Domain configuration is required");
-    opts.ServerName   = "RediensIAM";
-    opts.Origins      = new HashSet<string>
-    {
-        config["App:PublicUrl"]
-            ?? throw new InvalidOperationException("App:PublicUrl configuration is required")
-    };
+    opts.ServerDomain            = appConfig.Domain;
+    opts.ServerName              = "RediensIAM";
+    opts.Origins                 = new HashSet<string> { appConfig.PublicUrl };
     opts.TimestampDriftTolerance = 300_000;
 });
 
 // ── Notification services ───────────────────────────────────────────────────
-if (!string.IsNullOrEmpty(config["Smtp:Host"]))
+if (!string.IsNullOrEmpty(appConfig.SmtpHost))
     builder.Services.AddScoped<IEmailService, SmtpEmailService>();
 else
     builder.Services.AddScoped<IEmailService, StubEmailService>();
@@ -101,15 +94,15 @@ builder.Services.AddHealthChecks();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AdminSpa", policy => policy
-        .WithOrigins(config["App:AdminSpaOrigin"] ?? "http://localhost:5001")
+        .WithOrigins(appConfig.AdminSpaOrigin)
         .AllowAnyHeader().AllowAnyMethod().AllowCredentials());
 });
 
 // ── Dual-port via Kestrel ──────────────────────────────────────────────────
 builder.WebHost.ConfigureKestrel(kestrel =>
 {
-    kestrel.ListenAnyIP(publicPort);
-    kestrel.ListenAnyIP(adminPort);
+    kestrel.ListenAnyIP(appConfig.PublicPort);
+    kestrel.ListenAnyIP(appConfig.AdminPort);
 });
 
 var app = builder.Build();
@@ -117,7 +110,7 @@ var app = builder.Build();
 // ── Ensure DB schema exists ─────────────────────────────────────────────────
 {
     using var scope = app.Services.CreateScope();
-    var db = scope.ServiceProvider.GetRequiredService<RediensIamDbContext>();
+    var db     = scope.ServiceProvider.GetRequiredService<RediensIamDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
     for (var attempt = 1; attempt <= 12; attempt++)
     {
@@ -140,9 +133,7 @@ var app = builder.Build();
 }
 
 // ── Bootstrap super admin ──────────────────────────────────────────────────
-var bootstrapEmail = config["IAM_BOOTSTRAP_EMAIL"];
-var bootstrapPassword = config["IAM_BOOTSTRAP_PASSWORD"];
-if (!string.IsNullOrEmpty(bootstrapEmail) && !string.IsNullOrEmpty(bootstrapPassword))
+if (!string.IsNullOrEmpty(appConfig.BootstrapEmail) && !string.IsNullOrEmpty(appConfig.BootstrapPassword))
 {
     var blog = app.Services.GetRequiredService<ILogger<Program>>();
     for (var attempt = 1; attempt <= 12; attempt++)
@@ -150,10 +141,10 @@ if (!string.IsNullOrEmpty(bootstrapEmail) && !string.IsNullOrEmpty(bootstrapPass
         try
         {
             using var bscope = app.Services.CreateScope();
-            var bdb = bscope.ServiceProvider.GetRequiredService<RediensIamDbContext>();
-            var bketo = bscope.ServiceProvider.GetRequiredService<KetoService>();
-            var bpwd = bscope.ServiceProvider.GetRequiredService<PasswordService>();
-            var email = bootstrapEmail.ToLowerInvariant();
+            var bdb    = bscope.ServiceProvider.GetRequiredService<RediensIamDbContext>();
+            var bketo  = bscope.ServiceProvider.GetRequiredService<KetoService>();
+            var bpwd   = bscope.ServiceProvider.GetRequiredService<PasswordService>();
+            var email  = appConfig.BootstrapEmail.ToLowerInvariant();
 
             var systemList = await bdb.UserLists.FirstOrDefaultAsync(ul => ul.Name == "__system__");
             if (systemList == null)
@@ -170,11 +161,11 @@ if (!string.IsNullOrEmpty(bootstrapEmail) && !string.IsNullOrEmpty(bootstrapPass
                     Id = Guid.NewGuid(), UserListId = systemList.Id,
                     Email = email, Username = email.Split('@')[0], Discriminator = "0000",
                     EmailVerified = true, EmailVerifiedAt = DateTimeOffset.UtcNow,
-                    PasswordHash = bpwd.Hash(bootstrapPassword),
+                    PasswordHash = bpwd.Hash(appConfig.BootstrapPassword),
                     Active = true, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
                 };
                 bdb.Users.Add(user);
-                await bketo.WriteRelationTupleAsync("System", "rediensiam", "super_admin", $"user:{user.Id}");
+                await bketo.WriteRelationTupleAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{user.Id}");
                 await bdb.SaveChangesAsync();
                 blog.LogInformation("Bootstrap super admin created: {Email}", email);
             }
@@ -218,7 +209,7 @@ app.UseWhen(
 app.Use(async (ctx, next) =>
 {
     var isAdminRoute = ctx.Request.Path.StartsWithSegments("/admin") || ctx.Request.Path.StartsWithSegments("/internal");
-    if (isAdminRoute && ctx.Connection.LocalPort == publicPort)
+    if (isAdminRoute && ctx.Connection.LocalPort == appConfig.PublicPort)
     {
         ctx.Response.StatusCode = 404;
         return;

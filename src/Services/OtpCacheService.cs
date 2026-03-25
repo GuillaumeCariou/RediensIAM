@@ -1,16 +1,17 @@
 using System.Security.Cryptography;
 using System.Text;
 using StackExchange.Redis;
+using RediensIAM.Config;
 using RediensIAM.Exceptions;
 
 namespace RediensIAM.Services;
 
-public class OtpCacheService(IConnectionMultiplexer redis, IConfiguration config)
+public class OtpCacheService(IConnectionMultiplexer redis, AppConfig appConfig)
 {
     private readonly IDatabase _db = redis.GetDatabase();
-    private readonly int _ttlSeconds = config.GetValue<int>("Security:OtpTtlSeconds", 300);
-    private readonly int _maxSmsPerWindow = config.GetValue<int>("Security:MaxSmsPerWindow", 3);
-    private readonly int _smsWindowMinutes = config.GetValue<int>("Security:SmsWindowMinutes", 10);
+    private readonly int _ttlSeconds = appConfig.OtpTtlSeconds;
+    private readonly int _maxSmsPerWindow = appConfig.MaxSmsPerWindow;
+    private readonly int _smsWindowMinutes = appConfig.SmsWindowMinutes;
 
     public async Task StoreOtpAsync(string prefix, Guid userId, string code)
     {

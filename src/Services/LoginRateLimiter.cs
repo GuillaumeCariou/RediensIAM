@@ -1,13 +1,14 @@
 using StackExchange.Redis;
+using RediensIAM.Config;
 using RediensIAM.Exceptions;
 
 namespace RediensIAM.Services;
 
-public class LoginRateLimiter(IConnectionMultiplexer redis, IConfiguration config)
+public class LoginRateLimiter(IConnectionMultiplexer redis, AppConfig appConfig)
 {
     private readonly IDatabase _db = redis.GetDatabase();
-    private readonly int _maxAttempts = config.GetValue<int>("Security:MaxLoginAttempts", 5);
-    private readonly int _lockoutMinutes = config.GetValue<int>("Security:LockoutMinutes", 15);
+    private readonly int _maxAttempts = appConfig.MaxLoginAttempts;
+    private readonly int _lockoutMinutes = appConfig.LockoutMinutes;
 
     public async Task<bool> IsBlockedAsync(string ipAddress, Guid? userId = null)
     {
