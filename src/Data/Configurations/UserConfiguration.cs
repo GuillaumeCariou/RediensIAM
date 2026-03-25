@@ -38,5 +38,6 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
         builder.HasMany(x => x.WebAuthnCredentials).WithOne(x => x.User).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
         builder.HasMany(x => x.BackupCodes).WithOne(x => x.User).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
         builder.HasMany(x => x.EmailTokens).WithOne(x => x.User).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasMany(x => x.SocialAccounts).WithOne(x => x.User).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
     }
 }

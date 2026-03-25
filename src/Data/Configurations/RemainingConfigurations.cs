@@ -150,6 +150,23 @@ public class EmailTokenConfiguration : IEntityTypeConfiguration<EmailToken>
     }
 }
 
+public class UserSocialAccountConfiguration : IEntityTypeConfiguration<UserSocialAccount>
+{
+    public void Configure(EntityTypeBuilder<UserSocialAccount> builder)
+    {
+        builder.ToTable("user_social_accounts");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+        builder.Property(x => x.Provider).IsRequired().HasMaxLength(100);
+        builder.Property(x => x.ProviderUserId).IsRequired().HasMaxLength(500);
+        builder.Property(x => x.Email).HasMaxLength(320);
+        builder.Property(x => x.LinkedAt).HasDefaultValueSql("now()");
+        builder.HasIndex(x => new { x.Provider, x.ProviderUserId }).IsUnique();
+        builder.HasIndex(x => x.UserId);
+        builder.HasOne(x => x.User).WithMany(x => x.SocialAccounts).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
 public class AuditLogConfiguration : IEntityTypeConfiguration<AuditLog>
 {
     private static readonly JsonSerializerOptions JsonOptions = new();

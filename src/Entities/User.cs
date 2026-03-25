@@ -31,4 +31,5 @@ public class User
     public ICollection<WebAuthnCredential> WebAuthnCredentials { get; set; } = [];
     public ICollection<BackupCode> BackupCodes { get; set; } = [];
     public ICollection<EmailToken> EmailTokens { get; set; } = [];
+    public ICollection<UserSocialAccount> SocialAccounts { get; set; } = [];
 }

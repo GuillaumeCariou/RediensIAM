@@ -97,7 +97,7 @@ export async function getProject(id: string) {
   return (await apiFetch(`/org/projects/${id}`)).json();
 }
 export async function updateProject(id: string, body: {
-  name?: string; require_role_to_login?: boolean; login_theme?: Record<string, string>;
+  name?: string; require_role_to_login?: boolean; login_theme?: Record<string, unknown>;
 }) {
   return (await apiFetch(`/org/projects/${id}`, { method: 'PATCH', body: JSON.stringify(body) })).json();
 }

@@ -65,6 +65,7 @@ builder.Services.AddScoped<PatGenerationService>();
 builder.Services.AddScoped<RoleAssignmentService>();
 builder.Services.AddScoped<ImpersonationService>();
 builder.Services.AddScoped<ServiceAccountService>();
+builder.Services.AddScoped<SocialLoginService>();
 builder.Services.AddHttpContextAccessor();
 
 // ── WebAuthn / Passkeys ────────────────────────────────────────────────────

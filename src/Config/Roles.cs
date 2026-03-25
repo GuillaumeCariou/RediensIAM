@@ -20,4 +20,8 @@ public static class Roles
     public const string KetoSuperAdminRelation = "super_admin";
     public const string KetoOrgAdminRelation   = "org_admin";
     public const string KetoManagerRelation    = "manager"; // relation on Projects namespace
+    public const string KetoMemberRelation     = "member";  // relation on UserLists namespace
+
+    // ── Well-known Hydra client IDs ───────────────────────────────────────────
+    public const string AdminClientId = "client_admin_system";
 }

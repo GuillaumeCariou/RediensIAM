@@ -31,7 +31,7 @@ public class SystemAdminController(
     public IActionResult GetConfig() => Ok(new
     {
         hydra_url    = appConfig.PublicUrl,
-        client_id    = "client_admin_system",
+        client_id    = Roles.AdminClientId,
         redirect_uri = $"{appConfig.PublicUrl}/admin/callback"
     });
 

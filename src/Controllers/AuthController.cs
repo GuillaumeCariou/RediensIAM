@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Fido2NetLib;
 using Fido2NetLib.Objects;
 using Microsoft.AspNetCore.Mvc;
@@ -25,6 +26,7 @@ public class AuthController(
     IEmailService emailService,
     ISmsService smsService,
     IFido2 fido2,
+    SocialLoginService socialLogin,
     AppConfig appConfig,
     ILogger<AuthController> logger) : ControllerBase
 {
@@ -42,7 +44,7 @@ public class AuthController(
                 return Redirect(redirect);
             }
 
-            if (req.Client?.ClientId == "client_admin_system")
+            if (req.Client?.ClientId == Roles.AdminClientId)
                 return Ok(new { project_name = "RediensIAM Admin", is_admin_login = true });
 
             var projectId = ExtractProjectId(req);
@@ -55,7 +57,7 @@ public class AuthController(
             {
                 project_id = projectId,
                 project_name = project.Name,
-                theme = project.LoginTheme,
+                theme = StripSecretsFromTheme(project.LoginTheme),
                 has_custom_template = project.LoginTemplate != null,
                 require_role = project.RequireRoleToLogin,
                 allow_self_registration = project.AllowSelfRegistration,
@@ -84,7 +86,7 @@ public class AuthController(
 
             return Ok(new
             {
-                project.LoginTheme,
+                login_theme = StripSecretsFromTheme(project.LoginTheme),
                 has_custom_template = project.LoginTemplate != null,
                 project.Name
             });
@@ -110,7 +112,7 @@ public class AuthController(
             return BadRequest(new { error = "invalid_challenge" });
         }
 
-        if (req.Client?.ClientId == "client_admin_system")
+        if (req.Client?.ClientId == Roles.AdminClientId)
             return await AdminLogin(body, req);
 
         var projectId = ExtractProjectId(req);
@@ -360,7 +362,7 @@ public class AuthController(
         if (userIdStr == null) return BadRequest(new { error = "missing_context" });
         var userId = Guid.Parse(userIdStr);
 
-        if (req.Client?.ClientId == "client_admin_system")
+        if (req.Client?.ClientId == Roles.AdminClientId)
         {
             var adminRoles = new List<string>();
             if (await keto.CheckAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{userId}"))
@@ -497,7 +499,7 @@ public class AuthController(
             var user = await BuildUserAsync(project.AssignedUserListId!.Value, email, body.Username, body.Password);
             db.Users.Add(user);
             await db.SaveChangesAsync();
-            await keto.WriteRelationTupleAsync("UserLists", project.AssignedUserListId!.Value.ToString(), "member", $"user:{user.Id}");
+            await keto.WriteRelationTupleAsync(Roles.KetoUserListsNamespace, project.AssignedUserListId!.Value.ToString(), "member", $"user:{user.Id}");
             await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.registered");
 
             var subject = $"{project.OrgId}:{user.Id}";
@@ -571,7 +573,7 @@ public class AuthController(
         };
         db.Users.Add(user);
         await db.SaveChangesAsync();
-        await keto.WriteRelationTupleAsync("UserLists", userListId.ToString(), "member", $"user:{user.Id}");
+        await keto.WriteRelationTupleAsync(Roles.KetoUserListsNamespace, userListId.ToString(), "member", $"user:{user.Id}");
         await audit.RecordAsync(orgId, projId, user.Id, "user.registered");
 
         var subject = $"{orgId}:{user.Id}";
@@ -735,6 +737,201 @@ public class AuthController(
             PasswordHash = passwords.Hash(password),
             Active = true, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
         };
+    }
+
+    // ── OAuth2 social login ───────────────────────────────────────────────────
+
+    [HttpGet("/auth/oauth2/start")]
+    public async Task<IActionResult> OAuthStart(
+        [FromQuery] string login_challenge,
+        [FromQuery] string provider_id)
+    {
+        HydraLoginRequest req;
+        try { req = await hydra.GetLoginRequestAsync(login_challenge); }
+        catch { return BadRequest(new { error = "invalid_challenge" }); }
+
+        var projectId = ExtractProjectId(req);
+        if (projectId == null) return BadRequest(new { error = "missing_project_id" });
+
+        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId) && p.Active);
+        if (project?.AssignedUserListId == null) return BadRequest(new { error = "project_not_ready" });
+
+        var providerCfg = GetProviderConfig(project.LoginTheme, provider_id);
+        if (providerCfg == null) return BadRequest(new { error = "provider_not_found" });
+        if (string.IsNullOrEmpty(providerCfg.ClientId)) return BadRequest(new { error = "provider_not_configured" });
+
+        var (url, _) = await socialLogin.BuildAuthorizationUrlAsync(providerCfg, login_challenge, projectId);
+        return Redirect(url);
+    }
+
+    [HttpGet("/auth/oauth2/callback")]
+    public async Task<IActionResult> OAuthCallback(
+        [FromQuery] string? code,
+        [FromQuery] string? state,
+        [FromQuery] string? error)
+    {
+        if (state == null) return BadRequest(new { error = "missing_state" });
+
+        var stateData = await socialLogin.ConsumeStateAsync(state);
+        if (stateData == null) return BadRequest(new { error = "invalid_or_expired_state" });
+
+        var errorRedirect = $"/auth/oauth2/error?login_challenge={Uri.EscapeDataString(stateData.LoginChallenge)}";
+
+        if (error != null || code == null)
+        {
+            logger.LogWarning("OAuth2 callback error for provider {Provider}: {Error}", stateData.ProviderId, error);
+            return Redirect(errorRedirect);
+        }
+
+        var project = await db.Projects
+            .Include(p => p.AssignedUserList)
+            .FirstOrDefaultAsync(p => p.Id == Guid.Parse(stateData.ProjectId) && p.Active);
+
+        if (project?.AssignedUserListId == null) return Redirect(errorRedirect);
+
+        var providerCfg = GetProviderConfig(project.LoginTheme, stateData.ProviderId);
+        if (providerCfg == null) return Redirect(errorRedirect);
+
+        var profile = await socialLogin.ExchangeAndGetProfileAsync(providerCfg, code);
+        if (profile == null) return Redirect(errorRedirect);
+
+        var user = await FindOrCreateSocialUserAsync(profile, stateData.ProviderId, project);
+        if (user == null) return Redirect(errorRedirect);
+
+        if (project.RequireRoleToLogin)
+        {
+            var hasRole = await db.UserProjectRoles.AnyAsync(r => r.UserId == user.Id && r.ProjectId == project.Id);
+            if (!hasRole)
+            {
+                var rejectUrl = await hydra.RejectLoginAsync(stateData.LoginChallenge, "access_denied", "no_role_assigned");
+                return Redirect(rejectUrl);
+            }
+        }
+
+        user.LastLoginAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+
+        var subject = $"{project.OrgId}:{user.Id}";
+        var ctx = new Dictionary<string, object>
+        {
+            ["org_id"]     = project.OrgId.ToString(),
+            ["project_id"] = project.Id.ToString(),
+            ["user_id"]    = user.Id.ToString(),
+        };
+
+        var redirectTo = await hydra.AcceptLoginAsync(stateData.LoginChallenge, subject, ctx);
+        await audit.RecordAsync(project.OrgId, project.Id, user.Id, $"user.login.social.{stateData.ProviderId}");
+        return Redirect(redirectTo);
+    }
+
+    private async Task<User?> FindOrCreateSocialUserAsync(SocialUserProfile profile, string provider, Project project)
+    {
+        // 1. Check existing social link
+        var social = await db.UserSocialAccounts
+            .Include(s => s.User)
+            .FirstOrDefaultAsync(s => s.Provider == provider && s.ProviderUserId == profile.ProviderUserId);
+
+        if (social != null) return social.User;
+
+        // 2. Try to link to existing user by email
+        User? user = null;
+        if (!string.IsNullOrEmpty(profile.Email))
+        {
+            user = await db.Users.FirstOrDefaultAsync(u =>
+                u.UserListId == project.AssignedUserListId &&
+                u.Email == profile.Email.ToLowerInvariant() &&
+                u.Active);
+        }
+
+        // 3. Create new user if not found
+        if (user == null)
+        {
+            if (string.IsNullOrEmpty(profile.Email)) return null;
+
+            var email = profile.Email.ToLowerInvariant();
+            var uname = Regex.Replace(
+                (profile.Name?.Split(' ')[0]?.ToLower() ?? email.Split('@')[0]), @"[^a-z0-9_]", "");
+            if (string.IsNullOrEmpty(uname)) uname = "user";
+
+            string discriminator;
+            do { discriminator = Random.Shared.Next(1000, 9999).ToString(); }
+            while (await db.Users.AnyAsync(u =>
+                u.UserListId == project.AssignedUserListId &&
+                u.Username == uname &&
+                u.Discriminator == discriminator));
+
+            user = new User
+            {
+                UserListId      = project.AssignedUserListId!.Value,
+                Username        = uname,
+                Discriminator   = discriminator,
+                Email           = email,
+                PasswordHash    = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+                EmailVerified   = true,
+                EmailVerifiedAt = DateTimeOffset.UtcNow,
+                Active          = true,
+                CreatedAt       = DateTimeOffset.UtcNow,
+                UpdatedAt       = DateTimeOffset.UtcNow,
+            };
+            db.Users.Add(user);
+            await db.SaveChangesAsync();
+
+            await keto.WriteRelationTupleAsync(
+                Roles.KetoUserListsNamespace,
+                project.AssignedUserListId!.Value.ToString(),
+                Roles.KetoMemberRelation,
+                $"user:{user.Id}");
+
+            await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.registered.social");
+        }
+
+        // 4. Record the social link
+        db.UserSocialAccounts.Add(new Entities.UserSocialAccount
+        {
+            UserId         = user.Id,
+            Provider       = provider,
+            ProviderUserId = profile.ProviderUserId,
+            Email          = profile.Email,
+            LinkedAt       = DateTimeOffset.UtcNow,
+        });
+        await db.SaveChangesAsync();
+
+        return user;
+    }
+
+    private static ProviderConfig? GetProviderConfig(Dictionary<string, object>? theme, string providerId)
+    {
+        if (theme == null || !theme.TryGetValue("providers", out var raw)) return null;
+        if (raw is not JsonElement el || el.ValueKind != JsonValueKind.Array) return null;
+
+        foreach (var p in el.EnumerateArray())
+        {
+            if (!p.TryGetProperty("id", out var idProp) || idProp.GetString() != providerId) continue;
+            if (p.TryGetProperty("enabled", out var enProp) && !enProp.GetBoolean()) return null;
+
+            var type         = p.TryGetProperty("type",          out var t)  ? t.GetString()  ?? "" : "";
+            var clientId     = p.TryGetProperty("client_id",     out var ci) ? ci.GetString() ?? "" : "";
+            var clientSecret = p.TryGetProperty("client_secret", out var cs) ? cs.GetString() ?? "" : "";
+            var issuerUrl    = p.TryGetProperty("issuer_url",    out var iu) ? iu.GetString() : null;
+
+            return new ProviderConfig(providerId, type, clientId, clientSecret, issuerUrl);
+        }
+        return null;
+    }
+
+    private static Dictionary<string, object>? StripSecretsFromTheme(Dictionary<string, object>? theme)
+    {
+        if (theme == null) return null;
+        if (!theme.TryGetValue("providers", out var raw)) return theme;
+        if (raw is not JsonElement el || el.ValueKind != JsonValueKind.Array) return theme;
+
+        var strippedProviders = el.EnumerateArray()
+            .Select(p => p.EnumerateObject()
+                .Where(prop => prop.Name != "client_secret")
+                .ToDictionary(prop => prop.Name, prop => (object)prop.Value.Clone()))
+            .ToList();
+
+        return new Dictionary<string, object>(theme) { ["providers"] = strippedProviders };
     }
 
     private static string? ExtractProjectId(HydraLoginRequest req)

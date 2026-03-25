@@ -20,6 +20,7 @@ public class RediensIamDbContext(DbContextOptions<RediensIamDbContext> options) 
     public DbSet<BackupCode> BackupCodes => Set<BackupCode>();
     public DbSet<EmailToken> EmailTokens => Set<EmailToken>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<UserSocialAccount> UserSocialAccounts => Set<UserSocialAccount>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

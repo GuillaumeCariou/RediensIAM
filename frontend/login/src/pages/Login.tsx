@@ -7,10 +7,12 @@ const themeIcons: Record<ColorTheme, string> = { light: '☀', dark: '☾', syst
 const themeOrder: ColorTheme[] = ['system', 'light', 'dark'];
 
 interface Provider {
-  type: 'google' | 'github' | 'gitlab' | 'oidc';
+  id: string;
+  type: 'google' | 'github' | 'gitlab' | 'facebook' | 'oidc';
   label: string;
   client_id: string;
   issuer_url?: string;
+  logo_url?: string;
   enabled: boolean;
 }
 
@@ -133,9 +135,12 @@ export default function Login() {
           <div style={{ marginBottom: '1rem' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               {providers.map(p => (
-                <button key={p.type} type="button" disabled
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', width: '100%', padding: '0.625rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--surface)', color: 'var(--text)', fontSize: '0.875rem', fontWeight: 500, cursor: 'not-allowed', opacity: 0.7 }}>
-                  {PROVIDER_ICONS[p.type] && <img src={PROVIDER_ICONS[p.type]} alt={p.type} style={{ height: '1rem', width: '1rem' }} />}
+                <button key={p.type + p.client_id} type="button"
+                  onClick={() => {
+                    window.location.href = `/auth/oauth2/start?login_challenge=${encodeURIComponent(challenge)}&provider_id=${encodeURIComponent(p.id)}`;
+                  }}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', width: '100%', padding: '0.625rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--surface)', color: 'var(--text)', fontSize: '0.875rem', fontWeight: 500, cursor: 'pointer' }}>
+                  {(p.logo_url || PROVIDER_ICONS[p.type]) && <img src={p.logo_url || PROVIDER_ICONS[p.type]} alt={p.type} style={{ height: '1rem', width: '1rem' }} />}
                   {p.label}
                 </button>
               ))}

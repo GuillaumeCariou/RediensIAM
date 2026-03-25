@@ -18,6 +18,7 @@ interface Provider {
   type: 'google' | 'github' | 'gitlab' | 'facebook' | 'oidc';
   label: string;
   client_id: string;
+  client_secret?: string;
   issuer_url?: string;
   logo_url?: string;
   enabled: boolean;
@@ -385,6 +386,10 @@ export default function LoginTheme() {
                               <Input value={p?.client_id ?? ''} onChange={e => updateBuiltin(type, { client_id: e.target.value })} placeholder="OAuth2 client ID" />
                             </div>
                           </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Client Secret</Label>
+                            <Input type="password" value={p?.client_secret ?? ''} onChange={e => updateBuiltin(type, { client_secret: e.target.value })} placeholder="OAuth2 client secret" autoComplete="new-password" />
+                          </div>
                           <LogoUpload value={p?.logo_url} onChange={v => updateBuiltin(type, { logo_url: v })} label="Custom logo (optional)" />
                         </div>
                       )}
@@ -437,6 +442,10 @@ export default function LoginTheme() {
                       <div className="space-y-1">
                         <Label className="text-xs">Issuer URL</Label>
                         <Input value={p.issuer_url ?? ''} onChange={e => updateOidc(p.id, { issuer_url: e.target.value })} placeholder="https://accounts.example.com" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Client Secret</Label>
+                        <Input type="password" value={p.client_secret ?? ''} onChange={e => updateOidc(p.id, { client_secret: e.target.value })} placeholder="OAuth2 client secret" autoComplete="new-password" />
                       </div>
                       <LogoUpload value={p.logo_url} onChange={v => updateOidc(p.id, { logo_url: v })} label="Logo" />
                     </div>
