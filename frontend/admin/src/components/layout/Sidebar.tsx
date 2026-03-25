@@ -2,7 +2,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Building2, Users, List, FolderKanban,
   Shield, Bot, ScrollText, BarChart3, LogOut, ChevronRight,
-  Sun, Moon, Monitor, Palette, UserCog, User,
+  Sun, Moon, Monitor, KeyRound, Settings, UserCog, User,
 } from 'lucide-react';
 import { useTheme, type Theme } from '@/context/ThemeContext';
 import { cn } from '@/lib/utils';
@@ -43,7 +43,8 @@ const projectNav: NavItem[] = [
   { label: 'Users',            to: '/project/users',             icon: <Users className="h-4 w-4" /> },
   { label: 'Roles',            to: '/project/roles',             icon: <Shield className="h-4 w-4" /> },
   { label: 'Service Accounts', to: '/project/service-accounts',  icon: <Bot className="h-4 w-4" /> },
-  { label: 'Login Theme',      to: '/project/theme',             icon: <Palette className="h-4 w-4" /> },
+  { label: 'Authentication',   to: '/project/authentication',    icon: <KeyRound className="h-4 w-4" /> },
+  { label: 'Settings',         to: '/project/settings',          icon: <Settings className="h-4 w-4" /> },
 ];
 
 const themeOptions: { value: Theme; icon: React.ReactNode; label: string }[] = [
@@ -101,11 +102,12 @@ export default function Sidebar() {
   ] : [];
 
   const sysProjNav: NavItem[] = sysProjBase ? [
-    { label: 'Overview',         to: sysProjBase,                            icon: <LayoutDashboard className="h-4 w-4" />, exact: true },
-    { label: 'Users',            to: `${sysProjBase}/users`,                 icon: <Users           className="h-4 w-4" /> },
-    { label: 'Roles',            to: `${sysProjBase}/roles`,                 icon: <Shield          className="h-4 w-4" /> },
-    { label: 'Service Accounts', to: `${sysProjBase}/service-accounts`,      icon: <Bot             className="h-4 w-4" /> },
-    { label: 'Login Theme',      to: `${sysProjBase}/theme`,                 icon: <Palette         className="h-4 w-4" /> },
+    { label: 'Overview',         to: sysProjBase,                              icon: <LayoutDashboard className="h-4 w-4" />, exact: true },
+    { label: 'Users',            to: `${sysProjBase}/users`,                   icon: <Users           className="h-4 w-4" /> },
+    { label: 'Roles',            to: `${sysProjBase}/roles`,                   icon: <Shield          className="h-4 w-4" /> },
+    { label: 'Service Accounts', to: `${sysProjBase}/service-accounts`,        icon: <Bot             className="h-4 w-4" /> },
+    { label: 'Authentication',   to: `${sysProjBase}/authentication`,          icon: <KeyRound        className="h-4 w-4" /> },
+    { label: 'Settings',         to: `${sysProjBase}/settings`,                icon: <Settings        className="h-4 w-4" /> },
   ] : [];
 
   // ── Which nav lists to render ─────────────────────────────────

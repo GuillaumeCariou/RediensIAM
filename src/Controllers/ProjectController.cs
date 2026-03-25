@@ -86,6 +86,24 @@ public class ProjectController(
         return Ok(new { message = "sessions_revoked" });
     }
 
+    [HttpGet("/project/stats")]
+    public async Task<IActionResult> GetStats()
+    {
+        var project = await db.Projects.FindAsync(ProjectId);
+        if (project?.AssignedUserListId == null) return NotFound();
+
+        var totalUsers  = await db.Users.CountAsync(u => u.UserListId == project.AssignedUserListId);
+        var activeUsers = await db.Users.CountAsync(u => u.UserListId == project.AssignedUserListId && u.Active);
+        var usersByRole = await db.UserProjectRoles
+            .Include(r => r.Role)
+            .Where(r => r.ProjectId == ProjectId)
+            .GroupBy(r => new { r.RoleId, r.Role.Name })
+            .Select(g => new { role_id = g.Key.RoleId, role_name = g.Key.Name, count = g.Count() })
+            .ToListAsync();
+
+        return Ok(new { total_users = totalUsers, active_users = activeUsers, users_by_role = usersByRole });
+    }
+
     // ── Roles ─────────────────────────────────────────────────────────────────
 
     [HttpGet("/project/roles")]

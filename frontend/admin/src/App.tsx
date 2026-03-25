@@ -35,7 +35,8 @@ import ProjectDashboard from './pages/project/ProjectDashboard';
 import ProjectUsers from './pages/project/ProjectUsers';
 import ProjectRoles from './pages/project/ProjectRoles';
 import ProjectServiceAccounts from './pages/project/ProjectServiceAccounts';
-import LoginTheme from './pages/project/LoginTheme';
+import Authentication from './pages/project/Authentication';
+import ProjectSettings from './pages/project/ProjectSettings';
 
 function Loading() {
   return (
@@ -83,7 +84,8 @@ function AppRoutes() {
           <Route path="system/organisations/:oid/projects/:pid/users" element={<ProjectUsers />} />
           <Route path="system/organisations/:oid/projects/:pid/roles" element={<ProjectRoles />} />
           <Route path="system/organisations/:oid/projects/:pid/service-accounts" element={<ProjectServiceAccounts />} />
-          <Route path="system/organisations/:oid/projects/:pid/theme" element={<LoginTheme />} />
+          <Route path="system/organisations/:oid/projects/:pid/authentication" element={<Authentication />} />
+          <Route path="system/organisations/:oid/projects/:pid/settings" element={<ProjectSettings />} />
           <Route path="system/users" element={<SystemUsers />} />
           <Route path="system/userlists" element={<SystemUserLists />} />
           <Route path="system/userlists/:id" element={<SystemUserListDetail />} />
@@ -111,7 +113,8 @@ function AppRoutes() {
           <Route path="project/users" element={<ProjectUsers />} />
           <Route path="project/roles" element={<ProjectRoles />} />
           <Route path="project/service-accounts" element={<ProjectServiceAccounts />} />
-          <Route path="project/theme" element={<LoginTheme />} />
+          <Route path="project/authentication" element={<Authentication />} />
+          <Route path="project/settings" element={<ProjectSettings />} />
         </Route>
 
         <Route path="*" element={<Navigate to={home} replace />} />

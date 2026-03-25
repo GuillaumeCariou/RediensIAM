@@ -7,8 +7,10 @@ import { Label } from '@/components/ui/label';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { listRoles, createRole, deleteRole } from '@/api';
+import { listRoles, createRole, deleteRole, getProject, updateProject } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
 
@@ -24,13 +26,31 @@ export default function ProjectRoles() {
   const [deleteTarget, setDeleteTarget] = useState<Role | null>(null);
   const [form, setForm] = useState({ name: '', description: '', rank: '100' });
   const [saving, setSaving] = useState(false);
+  const [defaultRoleId, setDefaultRoleId] = useState<string | null>(null);
+  const [savingDefault, setSavingDefault] = useState(false);
 
   const load = () => {
     if (!projectId) { setLoading(false); return; }
     setLoading(true);
-    listRoles(projectId).then(r => setRoles(r.roles ?? r ?? [])).catch(console.error).finally(() => setLoading(false));
+    Promise.all([
+      listRoles(projectId).then(r => setRoles(r.roles ?? r ?? [])),
+      getProject(projectId).then(p => setDefaultRoleId(p.default_role_id ?? null)),
+    ]).catch(console.error).finally(() => setLoading(false));
   };
   useEffect(load, [projectId]);
+
+  const handleDefaultRole = async (value: string) => {
+    setSavingDefault(true);
+    try {
+      if (value === '__none__') {
+        await updateProject(projectId, { clear_default_role: true });
+        setDefaultRoleId(null);
+      } else {
+        await updateProject(projectId, { default_role_id: value });
+        setDefaultRoleId(value);
+      }
+    } finally { setSavingDefault(false); }
+  };
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,6 +78,28 @@ export default function ProjectRoles() {
         action={projectId ? <Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />New Role</Button> : undefined}
       />
       <div className="p-6 space-y-4">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Default Role</CardTitle>
+            <CardDescription>Automatically assigned to new users on registration and social login.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loading ? <Skeleton className="h-9 w-48" /> : (
+              <Select value={defaultRoleId ?? '__none__'} onValueChange={handleDefaultRole} disabled={savingDefault}>
+                <SelectTrigger className="w-64 bg-background">
+                  <SelectValue placeholder="No default role" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">No default role</SelectItem>
+                  {[...roles].sort((a, b) => a.rank - b.rank).map(r => (
+                    <SelectItem key={r.id} value={r.id}>{r.name} <span className="text-muted-foreground ml-1 text-xs">(rank {r.rank})</span></SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </CardContent>
+        </Card>
+
         <div className="rounded-xl border bg-card overflow-hidden">
           <Table>
             <TableHeader>

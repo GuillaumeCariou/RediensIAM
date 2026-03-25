@@ -102,6 +102,19 @@ public class OrgController(
         if (project == null) return NotFound();
         if (body.Name != null) project.Name = body.Name;
         if (body.RequireRoleToLogin.HasValue) project.RequireRoleToLogin = body.RequireRoleToLogin.Value;
+        if (body.AllowSelfRegistration.HasValue) project.AllowSelfRegistration = body.AllowSelfRegistration.Value;
+        if (body.EmailVerificationEnabled.HasValue) project.EmailVerificationEnabled = body.EmailVerificationEnabled.Value;
+        if (body.SmsVerificationEnabled.HasValue) project.SmsVerificationEnabled = body.SmsVerificationEnabled.Value;
+        if (body.Active.HasValue) project.Active = body.Active.Value;
+        if (body.AllowedEmailDomains != null) project.AllowedEmailDomains = body.AllowedEmailDomains;
+        if (body.ClearDefaultRole == true)
+            project.DefaultRoleId = null;
+        else if (body.DefaultRoleId.HasValue)
+        {
+            var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == body.DefaultRoleId && r.ProjectId == id);
+            if (role == null) return BadRequest(new { error = "invalid_default_role" });
+            project.DefaultRoleId = body.DefaultRoleId;
+        }
         if (body.LoginTheme != null) project.LoginTheme = body.LoginTheme;
         project.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
@@ -491,7 +504,17 @@ public class OrgController(
 }
 
 public record CreateProjectRequest(string Name, string Slug, bool RequireRoleToLogin, string[]? RedirectUris);
-public record UpdateProjectRequest(string? Name, bool? RequireRoleToLogin, Dictionary<string, object>? LoginTheme);
+public record UpdateProjectRequest(
+    string? Name,
+    bool? RequireRoleToLogin,
+    bool? AllowSelfRegistration,
+    bool? EmailVerificationEnabled,
+    bool? SmsVerificationEnabled,
+    bool? Active,
+    string[]? AllowedEmailDomains,
+    Guid? DefaultRoleId,
+    bool? ClearDefaultRole,
+    Dictionary<string, object>? LoginTheme);
 public record AssignUserListRequest(Guid UserListId);
 public record CreateUserListRequest(string Name);
 public record CreateUserRequest(string Email, string Password, string? Username);

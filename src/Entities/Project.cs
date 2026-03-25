@@ -22,8 +22,11 @@ public class Project
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 
+    public Guid? DefaultRoleId { get; set; }
+
     public Organisation Organisation { get; set; } = null!;
     public UserList? AssignedUserList { get; set; }
+    public Role? DefaultRole { get; set; }
     public ICollection<Role> Roles { get; set; } = [];
     public ICollection<UserProjectRole> UserProjectRoles { get; set; } = [];
     public ICollection<ServiceAccountProjectRole> ServiceAccountProjectRoles { get; set; } = [];
