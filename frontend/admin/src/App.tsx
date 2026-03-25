@@ -17,6 +17,7 @@ import SystemServiceAccounts from './pages/system/SystemServiceAccounts';
 import SystemUserListDetail from './pages/system/UserListDetail';
 import OrgDetail from './pages/system/OrgDetail';
 import SystemProjectDetail from './pages/system/SystemProjectDetail';
+import SystemProjects from './pages/system/SystemProjects';
 import SystemServiceAccountDetail from './pages/system/SystemServiceAccountDetail';
 import SystemAdmins from './pages/system/SystemAdmins';
 
@@ -72,6 +73,7 @@ function AppRoutes() {
         <Route element={isSuperAdmin ? <Outlet /> : <Navigate to={home} replace />}>
           <Route path="system" element={<SystemDashboard />} />
           <Route path="system/admins" element={<SystemAdmins />} />
+          <Route path="system/projects" element={<SystemProjects />} />
           <Route path="system/organisations" element={<Organisations />} />
           <Route path="system/organisations/:id" element={<OrgDetail />} />
           <Route path="system/organisations/:id/userlists" element={<UserLists />} />

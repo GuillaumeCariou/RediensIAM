@@ -15,7 +15,8 @@ public class ProjectController(
     PatGenerationService patGen,
     KetoService keto,
     HydraAdminService hydra,
-    ServiceAccountService saService) : ControllerBase
+    ServiceAccountService saService,
+    PasswordService passwords) : ControllerBase
 {
     private TokenClaims Claims    => HttpContext.GetClaims()!;
     private Guid OrgId            => Guid.Parse(Claims.OrgId);
@@ -75,6 +76,32 @@ public class ProjectController(
         }
         catch (Exceptions.ForbiddenException ex) { return StatusCode(403, new { error = ex.Message }); }
         catch (Exceptions.NotFoundException ex)  { return NotFound(new { error = ex.Message }); }
+    }
+
+    [HttpPost("/project/users")]
+    public async Task<IActionResult> CreateUser([FromBody] CreateProjectUserRequest body)
+    {
+        var project = await db.Projects.FindAsync(ProjectId);
+        if (project?.AssignedUserListId == null) return BadRequest(new { error = "no_user_list" });
+
+        var listId = project.AssignedUserListId.Value;
+        var username = body.Username ?? body.Email.Split('@')[0];
+        string discriminator;
+        do { discriminator = Random.Shared.Next(1000, 9999).ToString(); }
+        while (await db.Users.AnyAsync(u => u.UserListId == listId && u.Username == username && u.Discriminator == discriminator));
+
+        var user = new User
+        {
+            UserListId = listId, Username = username,
+            Discriminator = discriminator, Email = body.Email.ToLowerInvariant(),
+            PasswordHash = passwords.Hash(body.Password),
+            Active = true, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+        };
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+        await keto.WriteRelationTupleAsync(Roles.KetoUserListsNamespace, listId.ToString(), "member", $"user:{user.Id}");
+        await roleService.AssignDefaultRoleAsync(project, user);
+        return Created($"/project/users/{user.Id}", new { user.Id, username = $"{user.Username}#{user.Discriminator}", user.Email });
     }
 
     [HttpDelete("/project/users/{id}/sessions")]
@@ -243,6 +270,7 @@ public class ProjectController(
     }
 }
 
+public record CreateProjectUserRequest(string Email, string? Username, string Password);
 public record AssignRoleRequest(Guid RoleId);
 public record CreateRoleRequest(string Name, string? Description, int Rank = 100);
 public record UpdateRoleRequest(string? Description, int? Rank);

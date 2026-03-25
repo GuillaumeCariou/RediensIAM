@@ -110,6 +110,9 @@ export async function deleteProject(id: string) {
 export async function getProjectStats(projectId: string) {
   return (await apiFetch(`/project/stats?project_id=${projectId}`)).json();
 }
+export async function createProjectUser(projectId: string, body: { email: string; username?: string; password: string }) {
+  return (await apiFetch(`/project/users?project_id=${projectId}`, { method: 'POST', body: JSON.stringify(body) })).json();
+}
 export async function assignUserList(projectId: string, userListId: string) {
   return (await apiFetch(`/org/projects/${projectId}/assign-userlist`, { method: 'POST', body: JSON.stringify({ user_list_id: userListId }) })).json();
 }
@@ -350,8 +353,14 @@ export async function impersonateUser(userId: string, projectId: string) {
 }
 
 // ── Admin-scoped project operations ──────────────────────────────
+export async function adminListAllProjects() {
+  return (await apiFetch('/admin/projects')).json();
+}
 export async function adminGetProject(id: string) {
   return (await apiFetch(`/admin/projects/${id}`)).json();
+}
+export async function adminGetProjectStats(id: string) {
+  return (await apiFetch(`/admin/projects/${id}/stats`)).json();
 }
 export async function adminUpdateProject(id: string, body: { name?: string; require_role_to_login?: boolean; allow_self_registration?: boolean; email_verification_enabled?: boolean; sms_verification_enabled?: boolean }) {
   return (await apiFetch(`/admin/projects/${id}`, { method: 'PATCH', body: JSON.stringify(body) })).json();

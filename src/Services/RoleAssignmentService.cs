@@ -179,4 +179,21 @@ public class RoleAssignmentService(RediensIamDbContext db, KetoService keto, Aud
         await audit.RecordAsync(orgId, null, actorId, "role.management.removed",
             "user", role.UserId.ToString(), new() { ["role"] = role.Role });
     }
+
+    public async Task AssignDefaultRoleAsync(Project project, User user)
+    {
+        if (project.DefaultRoleId == null) return;
+        var role = await db.Roles.FindAsync(project.DefaultRoleId.Value);
+        if (role == null || role.ProjectId != project.Id) return;
+        var already = await db.UserProjectRoles.AnyAsync(r =>
+            r.UserId == user.Id && r.ProjectId == project.Id && r.RoleId == role.Id);
+        if (already) return;
+        db.UserProjectRoles.Add(new UserProjectRole
+        {
+            UserId = user.Id, ProjectId = project.Id, RoleId = role.Id,
+            GrantedBy = user.Id, GrantedAt = DateTimeOffset.UtcNow
+        });
+        await db.SaveChangesAsync();
+        await keto.WriteRelationTupleAsync(Roles.KetoProjectsNamespace, project.Id.ToString(), $"role:{role.Name}", $"user:{user.Id}");
+    }
 }

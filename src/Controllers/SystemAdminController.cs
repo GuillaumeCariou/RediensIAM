@@ -601,6 +601,21 @@ public class SystemAdminController(
 
     // ── Projects (admin scope) ────────────────────────────────────────────────
 
+    [HttpGet("/admin/projects")]
+    public async Task<IActionResult> AdminListAllProjects()
+    {
+        if (!HasAdminAccess) return StatusCode(403);
+        var projects = await db.Projects
+            .Join(db.Organisations, p => p.OrgId, o => o.Id,
+                (p, o) => new {
+                    p.Id, p.Name, p.Slug, p.Active, p.OrgId,
+                    OrgName = o.Name, p.HydraClientId, p.CreatedAt
+                })
+            .OrderBy(p => p.OrgName).ThenBy(p => p.Name)
+            .ToListAsync();
+        return Ok(projects);
+    }
+
     [HttpGet("/admin/organisations/{id}/projects")]
     public async Task<IActionResult> AdminListOrgProjects(Guid id)
     {
@@ -726,6 +741,25 @@ public class SystemAdminController(
         project.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         return Ok(new { project.Id, message = "userlist_unassigned" });
+    }
+
+    [HttpGet("/admin/projects/{id}/stats")]
+    public async Task<IActionResult> AdminGetProjectStats(Guid id)
+    {
+        if (!HasAdminAccess) return StatusCode(403);
+        var project = await db.Projects.FindAsync(id);
+        if (project?.AssignedUserListId == null) return NotFound();
+
+        var totalUsers  = await db.Users.CountAsync(u => u.UserListId == project.AssignedUserListId);
+        var activeUsers = await db.Users.CountAsync(u => u.UserListId == project.AssignedUserListId && u.Active);
+        var usersByRole = await db.UserProjectRoles
+            .Include(r => r.Role)
+            .Where(r => r.ProjectId == id)
+            .GroupBy(r => new { r.RoleId, r.Role.Name })
+            .Select(g => new { role_id = g.Key.RoleId, role_name = g.Key.Name, count = g.Count() })
+            .ToListAsync();
+
+        return Ok(new { total_users = totalUsers, active_users = activeUsers, users_by_role = usersByRole });
     }
 
     // ── Roles (admin scope) ───────────────────────────────────────────────────

@@ -1,22 +1,19 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Pencil, Plus, Trash2, MoreHorizontal } from 'lucide-react';
+import { ArrowLeft, Pencil, Trash2, Users, UserCheck, Shield } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  adminGetProject, adminUpdateProject, adminAssignUserList, adminUnassignUserList,
-  listUserLists, adminListRoles, adminCreateRole, adminDeleteRole, adminDeleteProject,
-  getHydraClient,
+  adminGetProject, adminGetProjectStats, adminUpdateProject,
+  adminAssignUserList, adminUnassignUserList,
+  listUserLists, adminDeleteProject,
 } from '@/api';
 import { fmtDateShort } from '@/lib/utils';
 
@@ -24,67 +21,38 @@ interface Project {
   id: string; name: string; slug: string; active: boolean;
   hydra_client_id: string;
   assigned_user_list_id: string | null;
-  require_role_to_login: boolean;
-  allow_self_registration: boolean;
-  email_verification_enabled: boolean;
-  sms_verification_enabled: boolean;
   created_at: string;
 }
 interface UserList { id: string; name: string; immovable: boolean; }
-interface Role { id: string; name: string; description: string | null; }
-interface HydraClientInfo { client_id: string; client_name: string; grant_types: string[]; redirect_uris: string[]; scope: string; }
-
-const SETTINGS: { field: keyof Project; label: string; desc: string }[] = [
-  { field: 'require_role_to_login',       label: 'Require role to login',    desc: 'Block users with no assigned role from authenticating' },
-  { field: 'allow_self_registration',     label: 'Allow self-registration',  desc: 'Let users create their own accounts on the login page' },
-  { field: 'email_verification_enabled',  label: 'Email verification',       desc: 'Require email OTP on registration and password reset' },
-  { field: 'sms_verification_enabled',    label: 'SMS verification',         desc: 'Require SMS OTP on registration and password reset' },
-];
+interface Stats {
+  total_users: number; active_users: number;
+  users_by_role: { role_id: string; role_name: string; count: number }[];
+}
 
 export default function SystemProjectDetail() {
   const { oid, pid } = useParams<{ oid: string; pid: string }>();
   const navigate = useNavigate();
 
   const [project, setProject] = useState<Project | null>(null);
+  const [stats, setStats] = useState<Stats | null>(null);
   const [userLists, setUserLists] = useState<UserList[]>([]);
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [hydraClient, setHydraClient] = useState<HydraClientInfo | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // rename
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameVal, setRenameVal] = useState('');
-
-  // create role
-  const [createRoleOpen, setCreateRoleOpen] = useState(false);
-  const [newRole, setNewRole] = useState({ name: '', description: '' });
-  const [createRoleSaving, setCreateRoleSaving] = useState(false);
-
-  // delete role
-  const [deleteRoleTarget, setDeleteRoleTarget] = useState<Role | null>(null);
-
-  // delete project
   const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
 
   const load = useCallback(() => {
     if (!oid || !pid) return;
     setLoading(true);
     Promise.all([
-      adminGetProject(pid).then(p => { setProject(p); return p; }).then(p => {
-        if (p?.hydra_client_id) getHydraClient(p.hydra_client_id).then(setHydraClient).catch(() => {});
-      }),
+      adminGetProject(pid).then(setProject),
+      adminGetProjectStats(pid).then(setStats).catch(() => null),
       listUserLists(oid).then(r => setUserLists(r.user_lists ?? r ?? [])),
-      adminListRoles(pid).then(r => setRoles(r ?? [])),
     ]).catch(console.error).finally(() => setLoading(false));
   }, [oid, pid]);
 
   useEffect(() => { load(); }, [load]);
-
-  const handleToggle = async (field: string, value: boolean) => {
-    if (!pid) return;
-    await adminUpdateProject(pid, { [field]: value });
-    setProject(p => p ? { ...p, [field]: value } : p);
-  };
 
   const handleAssignList = async (ulId: string) => {
     if (!pid) return;
@@ -107,25 +75,6 @@ export default function SystemProjectDetail() {
     navigate(`/system/organisations/${oid}`);
   };
 
-  const handleCreateRole = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!pid) return;
-    setCreateRoleSaving(true);
-    try {
-      await adminCreateRole(pid, { name: newRole.name, description: newRole.description || undefined });
-      setCreateRoleOpen(false);
-      setNewRole({ name: '', description: '' });
-      adminListRoles(pid).then(r => setRoles(r ?? []));
-    } finally { setCreateRoleSaving(false); }
-  };
-
-  const handleDeleteRole = async () => {
-    if (!deleteRoleTarget || !pid) return;
-    await adminDeleteRole(pid, deleteRoleTarget.id);
-    setDeleteRoleTarget(null);
-    adminListRoles(pid).then(r => setRoles(r ?? []));
-  };
-
   const movableLists = userLists.filter(ul => !ul.immovable);
 
   return (
@@ -134,161 +83,129 @@ export default function SystemProjectDetail() {
         <ArrowLeft className="h-4 w-4" />Back to Organisation
       </Button>
 
-      {/* ── Project card ──────────────────────────────────────────────── */}
-      <div className="rounded-xl border bg-card p-6 space-y-6">
+      {/* ── Stats ── */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
+              <Users className="h-4 w-4" />Total Users
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {loading ? <Skeleton className="h-8 w-16" /> : <p className="text-3xl font-bold">{stats?.total_users ?? '—'}</p>}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
+              <UserCheck className="h-4 w-4" />Active Users
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {loading ? <Skeleton className="h-8 w-16" /> : (
+              <>
+                <p className="text-3xl font-bold">{stats?.active_users ?? '—'}</p>
+                {stats && stats.total_users > 0 && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {Math.round((stats.active_users / stats.total_users) * 100)}% active
+                  </p>
+                )}
+              </>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
+              <Shield className="h-4 w-4" />Roles
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {loading ? <Skeleton className="h-8 w-16" /> : <p className="text-3xl font-bold">{stats?.users_by_role.length ?? '—'}</p>}
+          </CardContent>
+        </Card>
+      </div>
 
-        {/* Header */}
-        <div className="flex items-start justify-between gap-4">
-          {loading
-            ? <div className="space-y-2"><Skeleton className="h-6 w-48" /><Skeleton className="h-4 w-80" /></div>
-            : <div>
-                <h1 className="text-xl font-bold">{project?.name}</h1>
-                <p className="text-sm text-muted-foreground">
-                  /{project?.slug} · <span className="font-mono text-xs">{project?.hydra_client_id}</span> · Created {fmtDateShort(project?.created_at ?? null)}
-                </p>
-              </div>
-          }
-          {!loading && project && (
-            <div className="flex items-center gap-2 shrink-0">
-              <Badge variant={project.active ? 'success' : 'secondary'}>
-                {project.active ? 'Active' : 'Inactive'}
-              </Badge>
-              <Button variant="outline" size="sm" className="text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => setDeleteProjectOpen(true)}>
-                <Trash2 className="h-4 w-4" />Delete
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => { setRenameVal(project.name); setRenameOpen(true); }}>
-                <Pencil className="h-4 w-4" />Rename
-              </Button>
-            </div>
-          )}
-        </div>
-
-        <Separator />
-
-        {/* User List assignment */}
-        <div className="space-y-2">
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Assigned User List</h2>
-          {loading
-            ? <Skeleton className="h-10 w-72" />
-            : <Select value={project?.assigned_user_list_id ?? '__none__'} onValueChange={handleAssignList}>
-                <SelectTrigger className="w-72">
-                  <SelectValue placeholder="— No user list assigned —" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">— None —</SelectItem>
-                  {movableLists.map(ul => (
-                    <SelectItem key={ul.id} value={ul.id}>{ul.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-          }
-          {!loading && !project?.assigned_user_list_id && (
-            <p className="text-xs text-amber-500">No user list assigned — users cannot log in to this project.</p>
-          )}
-        </div>
-
-        <Separator />
-
-        {/* Settings toggles */}
-        <div className="space-y-4">
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Settings</h2>
-          {loading
-            ? Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)
-            : project && SETTINGS.map(({ field, label, desc }) => (
-                <div key={field} className="flex items-center justify-between py-1">
-                  <div>
-                    <p className="text-sm font-medium">{label}</p>
-                    <p className="text-xs text-muted-foreground">{desc}</p>
+      {stats && stats.users_by_role.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle className="text-base">Users by Role</CardTitle></CardHeader>
+          <CardContent className="space-y-2">
+            {[...stats.users_by_role].sort((a, b) => b.count - a.count).map(r => (
+              <div key={r.role_id} className="flex items-center justify-between text-sm">
+                <span className="font-mono text-muted-foreground">{r.role_name}</span>
+                <div className="flex items-center gap-3">
+                  <div className="w-32 h-1.5 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full bg-primary rounded-full"
+                      style={{ width: stats.total_users > 0 ? `${(r.count / stats.total_users) * 100}%` : '0%' }}
+                    />
                   </div>
-                  <Switch
-                    checked={project[field] as boolean}
-                    onCheckedChange={v => handleToggle(field, v)}
-                  />
+                  <span className="font-medium w-6 text-right">{r.count}</span>
                 </div>
-              ))
-          }
-        </div>
-      </div>
-
-      {/* ── OAuth2 Client ─────────────────────────────────────────────── */}
-      <div className="rounded-xl border bg-card p-6 space-y-3">
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">OAuth2 Client</h2>
-        {loading
-          ? <Skeleton className="h-20 w-full" />
-          : project?.hydra_client_id
-          ? <div className="space-y-2 text-sm">
-              <div className="flex gap-2 items-center">
-                <span className="text-muted-foreground w-28 shrink-0">Client ID</span>
-                <code className="font-mono text-xs bg-muted px-2 py-0.5 rounded">{project.hydra_client_id}</code>
               </div>
-              {hydraClient && <>
-                <div className="flex gap-2 items-start">
-                  <span className="text-muted-foreground w-28 shrink-0">Grant Types</span>
-                  <div className="flex gap-1 flex-wrap">{hydraClient.grant_types?.map(g => <Badge key={g} variant="secondary" className="text-xs">{g}</Badge>)}</div>
-                </div>
-                <div className="flex gap-2 items-start">
-                  <span className="text-muted-foreground w-28 shrink-0">Redirect URIs</span>
-                  <div className="space-y-0.5">{hydraClient.redirect_uris?.map((u, i) => <p key={i} className="font-mono text-xs text-muted-foreground">{u}</p>)}</div>
-                </div>
-                <div className="flex gap-2 items-center">
-                  <span className="text-muted-foreground w-28 shrink-0">Scope</span>
-                  <span className="font-mono text-xs text-muted-foreground">{hydraClient.scope}</span>
-                </div>
-              </>}
-            </div>
-          : <p className="text-sm text-amber-500">No OAuth2 client registered for this project.</p>
-        }
-      </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
-      {/* ── Roles ─────────────────────────────────────────────────────── */}
-      <div className="rounded-xl border bg-card overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-3 border-b">
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Roles</h2>
-          <Button size="sm" onClick={() => setCreateRoleOpen(true)}>
-            <Plus className="h-4 w-4" />New Role
-          </Button>
-        </div>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Description</TableHead>
-              <TableHead className="w-12"></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+      {/* ── Project info ── */}
+      <Card>
+        <CardContent className="pt-6 space-y-4">
+          <div className="flex items-start justify-between gap-4">
             {loading
-              ? Array.from({ length: 2 }).map((_, i) => (
-                  <TableRow key={i}>{Array.from({ length: 3 }).map((__, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
-                ))
-              : roles.length === 0
-              ? <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground py-8">No roles defined yet.</TableCell></TableRow>
-              : roles.map(r => (
-                  <TableRow key={r.id}>
-                    <TableCell className="font-mono text-sm font-medium">{r.name}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{r.description ?? '—'}</TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent>
-                          <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteRoleTarget(r)}>
-                            <Trash2 className="h-4 w-4" />Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))
+              ? <div className="space-y-2"><Skeleton className="h-6 w-48" /><Skeleton className="h-4 w-80" /></div>
+              : <div>
+                  <h1 className="text-xl font-bold">{project?.name}</h1>
+                  <p className="text-sm text-muted-foreground">
+                    /{project?.slug} · <span className="font-mono text-xs">{project?.hydra_client_id}</span> · Created {fmtDateShort(project?.created_at ?? null)}
+                  </p>
+                </div>
             }
-          </TableBody>
-        </Table>
-      </div>
+            {!loading && project && (
+              <div className="flex items-center gap-2 shrink-0">
+                <Badge variant={project.active ? 'success' : 'secondary'}>
+                  {project.active ? 'Active' : 'Inactive'}
+                </Badge>
+                <Button variant="outline" size="sm" className="text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => setDeleteProjectOpen(true)}>
+                  <Trash2 className="h-4 w-4" />Delete
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => { setRenameVal(project.name); setRenameOpen(true); }}>
+                  <Pencil className="h-4 w-4" />Rename
+                </Button>
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
-      {/* ── Dialogs ───────────────────────────────────────────────────── */}
+      {/* ── Settings ── */}
+      <Card>
+        <CardHeader><CardTitle className="text-base">Settings</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label className="text-sm">Assigned User List</Label>
+            {loading
+              ? <Skeleton className="h-10 w-72" />
+              : <Select value={project?.assigned_user_list_id ?? '__none__'} onValueChange={handleAssignList}>
+                  <SelectTrigger className="w-72 bg-background">
+                    <SelectValue placeholder="— No user list assigned —" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— None —</SelectItem>
+                    {movableLists.map(ul => (
+                      <SelectItem key={ul.id} value={ul.id}>{ul.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+            }
+            {!loading && !project?.assigned_user_list_id && (
+              <p className="text-xs text-amber-500">No user list assigned — users cannot log in to this project.</p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
-      {/* Rename */}
+      {/* ── Dialogs ── */}
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Rename Project</DialogTitle></DialogHeader>
@@ -304,57 +221,6 @@ export default function SystemProjectDetail() {
           </form>
         </DialogContent>
       </Dialog>
-
-      {/* Create Role */}
-      <Dialog open={createRoleOpen} onOpenChange={setCreateRoleOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>New Role</DialogTitle>
-            <DialogDescription>Define a role that can be assigned to users in this project.</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleCreateRole} className="space-y-4">
-            <div className="space-y-2">
-              <Label>Name</Label>
-              <Input
-                value={newRole.name}
-                onChange={e => setNewRole(r => ({ ...r, name: e.target.value }))}
-                required placeholder="admin" pattern="[a-z0-9_-]+"
-              />
-              <p className="text-xs text-muted-foreground">Lowercase letters, numbers, hyphens and underscores only.</p>
-            </div>
-            <div className="space-y-2">
-              <Label>Description</Label>
-              <Input
-                value={newRole.description}
-                onChange={e => setNewRole(r => ({ ...r, description: e.target.value }))}
-                placeholder="Full access"
-              />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setCreateRoleOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={createRoleSaving}>{createRoleSaving ? 'Creating…' : 'Create'}</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete Role */}
-      <AlertDialog open={!!deleteRoleTarget} onOpenChange={v => !v && setDeleteRoleTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete role "{deleteRoleTarget?.name}"?</AlertDialogTitle>
-            <AlertDialogDescription>
-              All user role assignments for this role will be removed. This cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteRole} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <AlertDialog open={deleteProjectOpen} onOpenChange={setDeleteProjectOpen}>
         <AlertDialogContent>

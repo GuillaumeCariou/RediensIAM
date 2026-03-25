@@ -27,6 +27,7 @@ public class AuthController(
     ISmsService smsService,
     IFido2 fido2,
     SocialLoginService socialLogin,
+    RoleAssignmentService roleService,
     AppConfig appConfig,
     ILogger<AuthController> logger) : ControllerBase
 {
@@ -501,7 +502,7 @@ public class AuthController(
             await db.SaveChangesAsync();
             await keto.WriteRelationTupleAsync(Roles.KetoUserListsNamespace, project.AssignedUserListId!.Value.ToString(), "member", $"user:{user.Id}");
             await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.registered");
-            await AssignDefaultRoleAsync(project, user);
+            await roleService.AssignDefaultRoleAsync(project, user);
 
             var subject = $"{project.OrgId}:{user.Id}";
             var ctx = new Dictionary<string, object>
@@ -577,7 +578,7 @@ public class AuthController(
         await keto.WriteRelationTupleAsync(Roles.KetoUserListsNamespace, userListId.ToString(), "member", $"user:{user.Id}");
         await audit.RecordAsync(orgId, projId, user.Id, "user.registered");
         var regProject = await db.Projects.FindAsync(projId);
-        if (regProject != null) await AssignDefaultRoleAsync(regProject, user);
+        if (regProject != null) await roleService.AssignDefaultRoleAsync(regProject, user);
 
         var subject = $"{orgId}:{user.Id}";
         var ctx = new Dictionary<string, object>
@@ -886,7 +887,7 @@ public class AuthController(
                 $"user:{user.Id}");
 
             await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.registered.social");
-            await AssignDefaultRoleAsync(project, user);
+            await roleService.AssignDefaultRoleAsync(project, user);
         }
 
         // 4. Record the social link
@@ -901,23 +902,6 @@ public class AuthController(
         await db.SaveChangesAsync();
 
         return user;
-    }
-
-    private async Task AssignDefaultRoleAsync(Project project, User user)
-    {
-        if (project.DefaultRoleId == null) return;
-        var role = await db.Roles.FindAsync(project.DefaultRoleId.Value);
-        if (role == null || role.ProjectId != project.Id) return;
-        var already = await db.UserProjectRoles.AnyAsync(r =>
-            r.UserId == user.Id && r.ProjectId == project.Id && r.RoleId == role.Id);
-        if (already) return;
-        db.UserProjectRoles.Add(new UserProjectRole
-        {
-            UserId = user.Id, ProjectId = project.Id, RoleId = role.Id,
-            GrantedBy = user.Id, GrantedAt = DateTimeOffset.UtcNow
-        });
-        await db.SaveChangesAsync();
-        await keto.WriteRelationTupleAsync(Roles.KetoProjectsNamespace, project.Id.ToString(), $"role:{role.Name}", $"user:{user.Id}");
     }
 
     private static ProviderConfig? GetProviderConfig(Dictionary<string, object>? theme, string providerId)
