@@ -9,11 +9,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  adminGetProject, adminGetProjectStats, adminUpdateProject,
-  adminAssignUserList, adminUnassignUserList,
-  listUserLists, adminDeleteProject,
+  adminGetProject, adminGetProjectStats, adminUpdateProject, adminDeleteProject,
 } from '@/api';
 import { fmtDateShort } from '@/lib/utils';
 
@@ -23,7 +20,6 @@ interface Project {
   assigned_user_list_id: string | null;
   created_at: string;
 }
-interface UserList { id: string; name: string; immovable: boolean; }
 interface Stats {
   total_users: number; active_users: number;
   users_by_role: { role_id: string; role_name: string; count: number }[];
@@ -35,7 +31,6 @@ export default function SystemProjectDetail() {
 
   const [project, setProject] = useState<Project | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
-  const [userLists, setUserLists] = useState<UserList[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [renameOpen, setRenameOpen] = useState(false);
@@ -48,18 +43,10 @@ export default function SystemProjectDetail() {
     Promise.all([
       adminGetProject(pid).then(setProject),
       adminGetProjectStats(pid).then(setStats).catch(() => null),
-      listUserLists(oid).then(r => setUserLists(r.user_lists ?? r ?? [])),
     ]).catch(console.error).finally(() => setLoading(false));
   }, [oid, pid]);
 
   useEffect(() => { load(); }, [load]);
-
-  const handleAssignList = async (ulId: string) => {
-    if (!pid) return;
-    if (ulId === '__none__') await adminUnassignUserList(pid);
-    else await adminAssignUserList(pid, ulId);
-    adminGetProject(pid).then(setProject);
-  };
 
   const handleRename = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,8 +61,6 @@ export default function SystemProjectDetail() {
     await adminDeleteProject(pid);
     navigate(`/system/organisations/${oid}`);
   };
-
-  const movableLists = userLists.filter(ul => !ul.immovable);
 
   return (
     <div className="p-6 space-y-4">
@@ -173,33 +158,6 @@ export default function SystemProjectDetail() {
                   <Pencil className="h-4 w-4" />Rename
                 </Button>
               </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ── Settings ── */}
-      <Card>
-        <CardHeader><CardTitle className="text-base">Settings</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label className="text-sm">Assigned User List</Label>
-            {loading
-              ? <Skeleton className="h-10 w-72" />
-              : <Select value={project?.assigned_user_list_id ?? '__none__'} onValueChange={handleAssignList}>
-                  <SelectTrigger className="w-72 bg-background">
-                    <SelectValue placeholder="— No user list assigned —" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">— None —</SelectItem>
-                    {movableLists.map(ul => (
-                      <SelectItem key={ul.id} value={ul.id}>{ul.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-            }
-            {!loading && !project?.assigned_user_list_id && (
-              <p className="text-xs text-amber-500">No user list assigned — users cannot log in to this project.</p>
             )}
           </div>
         </CardContent>

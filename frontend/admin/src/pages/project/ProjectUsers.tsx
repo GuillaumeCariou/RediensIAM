@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import { useProjectContext } from '@/hooks/useOrgContext';
-import { UserPlus, Trash2, CheckCircle, XCircle, LogOut, Plus } from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
+import { UserPlus, Trash2, CheckCircle, XCircle, LogOut, Plus, List } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -12,6 +15,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   listProjectUsers, listRoles, assignRole, removeRole,
   forceLogoutProjectUser, getProject, createProjectUser,
+  listUserLists, assignUserList, unassignUserList,
+  adminAssignUserList, adminUnassignUserList,
 } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
@@ -22,12 +27,22 @@ interface ProjectUser {
   roles: { id: string; name: string }[];
 }
 interface Role { id: string; name: string; }
+interface UserList { id: string; name: string; immovable?: boolean; }
+interface Project {
+  assigned_user_list_id: string | null;
+  assigned_user_list_name: string | null;
+  default_role_id: string | null;
+}
 
 export default function ProjectUsers() {
-  const { projectId } = useProjectContext();
+  const { projectId, isSystemCtx } = useProjectContext();
+  const { oid } = useParams<{ oid?: string }>();
+  const { isOrgAdmin, orgId: tokenOrgId } = useAuth();
+
   const [users, setUsers] = useState<ProjectUser[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
-  const [defaultRoleId, setDefaultRoleId] = useState<string | null>(null);
+  const [project, setProject] = useState<Project | null>(null);
+  const [userLists, setUserLists] = useState<UserList[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
 
@@ -40,22 +55,48 @@ export default function ProjectUsers() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
 
+  const orgId = oid ?? tokenOrgId;
+
   const load = () => {
     if (!projectId) { setLoading(false); return; }
     setLoading(true);
-    Promise.all([
+    const fetches: Promise<unknown>[] = [
       listProjectUsers(projectId).then(r => setUsers(r.users ?? r ?? [])),
       listRoles(projectId).then(r => setRoles(r.roles ?? r ?? [])),
-      getProject(projectId).then(p => setDefaultRoleId(p.default_role_id ?? null)).catch(() => null),
-    ]).catch(console.error).finally(() => setLoading(false));
+      getProject(projectId).then(p => setProject(p)).catch(() => null),
+    ];
+    if (isOrgAdmin && orgId) {
+      fetches.push(listUserLists(orgId).then(r => setUserLists(r.user_lists ?? r ?? [])).catch(() => null));
+    }
+    Promise.all(fetches).catch(console.error).finally(() => setLoading(false));
   };
   useEffect(load, [projectId]);
+
+  const defaultRoleId = project?.default_role_id ?? null;
+  const defaultRoleName = roles.find(r => r.id === defaultRoleId)?.name;
+  const assignedListId = project?.assigned_user_list_id ?? null;
+  const assignedListName = project?.assigned_user_list_name
+    ?? userLists.find(ul => ul.id === assignedListId)?.name
+    ?? null;
+  const movableLists = userLists.filter(ul => !ul.immovable);
 
   const filtered = users.filter(u =>
     u.email.toLowerCase().includes(search.toLowerCase()) ||
     u.username.toLowerCase().includes(search.toLowerCase()) ||
     (u.display_name?.toLowerCase().includes(search.toLowerCase()) ?? false)
   );
+
+  const handleAssignList = async (ulId: string) => {
+    if (!projectId) return;
+    if (ulId === '__none__') {
+      if (isSystemCtx) await adminUnassignUserList(projectId);
+      else await unassignUserList(projectId);
+    } else {
+      if (isSystemCtx) await adminAssignUserList(projectId, ulId);
+      else await assignUserList(projectId, ulId);
+    }
+    getProject(projectId).then(p => setProject(p)).catch(() => null);
+  };
 
   const handleAssign = async () => {
     if (!assignOpen || !selectedRole) return;
@@ -100,8 +141,6 @@ export default function ProjectUsers() {
   const availableRoles = (user: ProjectUser) =>
     roles.filter(r => !user.roles.some(ur => ur.id === r.id));
 
-  const defaultRoleName = roles.find(r => r.id === defaultRoleId)?.name;
-
   return (
     <div>
       <PageHeader
@@ -114,6 +153,44 @@ export default function ProjectUsers() {
         }
       />
       <div className="p-6 space-y-4">
+        {/* ── User List card ── */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
+              <List className="h-4 w-4" />Assigned User List
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <Skeleton className="h-10 w-72" />
+            ) : isOrgAdmin ? (
+              <div className="space-y-2">
+                <Select value={assignedListId ?? '__none__'} onValueChange={handleAssignList}>
+                  <SelectTrigger className="w-72 bg-background">
+                    <SelectValue placeholder="— No user list assigned —" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— None —</SelectItem>
+                    {movableLists.map(ul => (
+                      <SelectItem key={ul.id} value={ul.id}>{ul.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {!assignedListId && (
+                  <p className="text-xs text-amber-500">No user list assigned — users cannot log in to this project.</p>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                {assignedListName
+                  ? <Badge variant="secondary">{assignedListName}</Badge>
+                  : <span className="text-sm text-muted-foreground italic">No user list assigned</span>
+                }
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         <div className="flex items-center gap-3">
           <Input
             placeholder="Search users…"
