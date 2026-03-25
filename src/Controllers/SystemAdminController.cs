@@ -691,10 +691,21 @@ public class SystemAdminController(
         var project = await db.Projects.FindAsync(id);
         if (project == null) return NotFound();
         if (body.Name != null) project.Name = body.Name;
-        if (body.RequireRoleToLogin.HasValue)    project.RequireRoleToLogin    = body.RequireRoleToLogin.Value;
-        if (body.AllowSelfRegistration.HasValue) project.AllowSelfRegistration = body.AllowSelfRegistration.Value;
+        if (body.RequireRoleToLogin.HasValue)       project.RequireRoleToLogin       = body.RequireRoleToLogin.Value;
+        if (body.AllowSelfRegistration.HasValue)    project.AllowSelfRegistration    = body.AllowSelfRegistration.Value;
         if (body.EmailVerificationEnabled.HasValue) project.EmailVerificationEnabled = body.EmailVerificationEnabled.Value;
         if (body.SmsVerificationEnabled.HasValue)   project.SmsVerificationEnabled   = body.SmsVerificationEnabled.Value;
+        if (body.Active.HasValue)                   project.Active                   = body.Active.Value;
+        if (body.AllowedEmailDomains != null)       project.AllowedEmailDomains      = body.AllowedEmailDomains;
+        if (body.ClearDefaultRole == true)
+            project.DefaultRoleId = null;
+        else if (body.DefaultRoleId.HasValue)
+        {
+            var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == body.DefaultRoleId && r.ProjectId == id);
+            if (role == null) return BadRequest(new { error = "invalid_default_role" });
+            project.DefaultRoleId = body.DefaultRoleId;
+        }
+        if (body.LoginTheme.HasValue) project.LoginTheme = body.LoginTheme.Value;
         project.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         return Ok(new { project.Id, project.Name });
@@ -888,7 +899,8 @@ public record AdminCreateUserRequest(string Email, string Password, string? User
 public record AssignOrgAdminRequest(Guid UserId, string Role, Guid? ScopeId);
 public record AdminCreateUserListRequest(string Name, Guid OrgId);
 public record AdminCreateProjectRequest(string Name, string Slug, bool RequireRoleToLogin, string[]? RedirectUris);
-public record AdminUpdateProjectRequest(string? Name, bool? RequireRoleToLogin, bool? AllowSelfRegistration, bool? EmailVerificationEnabled, bool? SmsVerificationEnabled);
+public record AdminUpdateProjectRequest(string? Name, bool? RequireRoleToLogin, bool? AllowSelfRegistration, bool? EmailVerificationEnabled, bool? SmsVerificationEnabled,
+    bool? Active, Guid? DefaultRoleId, bool? ClearDefaultRole, string[]? AllowedEmailDomains, System.Text.Json.JsonElement? LoginTheme);
 public record AdminAssignUserListRequest(Guid UserListId);
 public record CreateSystemSaRequest(string Name, string? Description);
 public record AssignSystemSaRoleRequest(string Role);
