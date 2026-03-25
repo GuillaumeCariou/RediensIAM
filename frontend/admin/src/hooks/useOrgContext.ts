@@ -1,4 +1,4 @@
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 
 // ── Org context ────────────────────────────────────────────────────────────────
@@ -28,9 +28,12 @@ export function useOrgContext() {
 
 export function useProjectContext() {
   const { oid, pid } = useParams<{ oid?: string; pid?: string }>();
+  const [searchParams] = useSearchParams();
   const { projectId: tokenProjectId } = useAuth();
 
-  const projectId   = pid ?? tokenProjectId;
+  // Priority: URL path param (system ctx) > query param (org admin link) > token claim (project manager)
+  const queryProjectId = searchParams.get('project_id') ?? undefined;
+  const projectId   = pid ?? queryProjectId ?? tokenProjectId;
   const isSystemCtx = !!(oid && pid);
   const projectBase = isSystemCtx
     ? `/system/organisations/${oid}/projects/${pid}`

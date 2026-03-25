@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getProject, getProjectStats } from '@/api';
+import { getProjectInfo, getProjectStats } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 
 interface Project {
@@ -30,7 +30,7 @@ export default function ProjectDashboard() {
   useEffect(() => {
     if (!projectId) { setLoading(false); return; }
     Promise.all([
-      getProject(projectId).then(setProject),
+      getProjectInfo(projectId).then(setProject),
       getProjectStats(projectId).then(setStats).catch(() => null),
     ]).catch(console.error).finally(() => setLoading(false));
   }, [projectId]);

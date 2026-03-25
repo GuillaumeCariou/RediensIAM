@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { getProject, updateProject, listRoles } from '@/api';
+import { getProjectInfo, updateProject, listRoles } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 
 interface Provider {
@@ -287,7 +287,7 @@ export default function Authentication() {
   useEffect(() => {
     if (!projectId) { setLoading(false); return; }
     Promise.all([
-      getProject(projectId).then(p => {
+      getProjectInfo(projectId).then(p => {
         if (p.login_theme) {
           const t = { ...DEFAULT_THEME, ...p.login_theme };
           if (t.providers) {

@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   listProjectUsers, listRoles, assignRole, removeRole,
-  forceLogoutProjectUser, getProject, createProjectUser,
+  forceLogoutProjectUser, getProjectInfo, createProjectUser,
   listUserLists, assignUserList, unassignUserList,
   adminAssignUserList, adminUnassignUserList,
 } from '@/api';
@@ -63,7 +63,7 @@ export default function ProjectUsers() {
     const fetches: Promise<unknown>[] = [
       listProjectUsers(projectId).then(r => setUsers(r.users ?? r ?? [])),
       listRoles(projectId).then(r => setRoles(r.roles ?? r ?? [])),
-      getProject(projectId).then(p => setProject(p)).catch(() => null),
+      getProjectInfo(projectId).then(p => setProject(p)).catch(() => null),
     ];
     if (isOrgAdmin && orgId) {
       fetches.push(listUserLists(orgId).then(r => setUserLists(r.user_lists ?? r ?? [])).catch(() => null));
@@ -95,7 +95,7 @@ export default function ProjectUsers() {
       if (isSystemCtx) await adminAssignUserList(projectId, ulId);
       else await assignUserList(projectId, ulId);
     }
-    getProject(projectId).then(p => setProject(p)).catch(() => null);
+    getProjectInfo(projectId).then(p => setProject(p)).catch(() => null);
   };
 
   const handleAssign = async () => {

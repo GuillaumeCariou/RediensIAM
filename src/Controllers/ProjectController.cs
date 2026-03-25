@@ -18,10 +18,40 @@ public class ProjectController(
     ServiceAccountService saService,
     PasswordService passwords) : ControllerBase
 {
-    private TokenClaims Claims    => HttpContext.GetClaims()!;
-    private Guid OrgId            => Guid.Parse(Claims.OrgId);
-    private Guid ProjectId        => Guid.Parse(Claims.ProjectId);
-    private Guid ActorId          => Claims.ParsedUserId;
+    private TokenClaims Claims => HttpContext.GetClaims()!;
+    private Guid ActorId      => Claims.ParsedUserId;
+
+    // Prefer ?project_id= query param (org/super admin context) over token claims (project manager context)
+    private Guid ProjectId
+    {
+        get
+        {
+            var q = HttpContext.Request.Query["project_id"].FirstOrDefault();
+            if (q != null && Guid.TryParse(q, out var g)) return g;
+            return Guid.Parse(Claims.ProjectId);
+        }
+    }
+
+    // ── Project info ──────────────────────────────────────────────────────────
+
+    [HttpGet("/project/info")]
+    public async Task<IActionResult> GetInfo()
+    {
+        var project = await db.Projects
+            .Include(p => p.AssignedUserList)
+            .Include(p => p.DefaultRole)
+            .FirstOrDefaultAsync(p => p.Id == ProjectId);
+        if (project == null) return NotFound();
+        return Ok(new
+        {
+            project.Id, project.Name, project.Slug, project.Active,
+            project.HydraClientId, project.RequireRoleToLogin,
+            project.AssignedUserListId,
+            AssignedUserListName = project.AssignedUserList?.Name,
+            project.DefaultRoleId,
+            DefaultRoleName = project.DefaultRole?.Name,
+        });
+    }
 
     // ── Users ─────────────────────────────────────────────────────────────────
 

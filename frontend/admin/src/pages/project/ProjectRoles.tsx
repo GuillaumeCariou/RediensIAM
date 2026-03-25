@@ -10,7 +10,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { listRoles, createRole, deleteRole, getProject, updateProject } from '@/api';
+import { listRoles, createRole, deleteRole, getProjectInfo, updateProject } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
 
@@ -34,7 +34,7 @@ export default function ProjectRoles() {
     setLoading(true);
     Promise.all([
       listRoles(projectId).then(r => setRoles(r.roles ?? r ?? [])),
-      getProject(projectId).then(p => setDefaultRoleId(p.default_role_id ?? null)),
+      getProjectInfo(projectId).then(p => setDefaultRoleId(p.default_role_id ?? null)),
     ]).catch(console.error).finally(() => setLoading(false));
   };
   useEffect(load, [projectId]);

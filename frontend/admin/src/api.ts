@@ -96,6 +96,9 @@ export async function createProject(body: {
 export async function getProject(id: string) {
   return (await apiFetch(`/org/projects/${id}`)).json();
 }
+export async function getProjectInfo(projectId: string) {
+  return (await apiFetch(`/project/info?project_id=${projectId}`)).json();
+}
 export async function updateProject(id: string, body: {
   name?: string; require_role_to_login?: boolean; allow_self_registration?: boolean;
   email_verification_enabled?: boolean; sms_verification_enabled?: boolean; active?: boolean;

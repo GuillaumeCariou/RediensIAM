@@ -9,7 +9,7 @@ import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { getProject, updateProject, deleteProject } from '@/api';
+import { getProjectInfo, updateProject, deleteProject } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 
 interface Project {
@@ -33,7 +33,7 @@ export default function ProjectSettings() {
 
   useEffect(() => {
     if (!projectId) { setLoading(false); return; }
-    getProject(projectId).then(p => {
+    getProjectInfo(projectId).then(p => {
       setProject(p);
       setName(p.name);
       setActive(p.active);
