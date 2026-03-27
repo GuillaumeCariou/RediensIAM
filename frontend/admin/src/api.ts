@@ -103,7 +103,9 @@ export async function updateProject(id: string, body: {
   name?: string; require_role_to_login?: boolean; allow_self_registration?: boolean;
   email_verification_enabled?: boolean; sms_verification_enabled?: boolean; active?: boolean;
   allowed_email_domains?: string[]; default_role_id?: string; clear_default_role?: boolean;
-  login_theme?: Record<string, unknown>;
+  login_theme?: Record<string, unknown>; min_password_length?: number;
+  password_require_uppercase?: boolean; password_require_lowercase?: boolean;
+  password_require_digit?: boolean; password_require_special?: boolean;
 }) {
   return (await apiFetch(`/project/info?project_id=${id}`, { method: 'PATCH', body: JSON.stringify(body) })).json();
 }
@@ -128,7 +130,7 @@ export async function listProjectUsers(projectId: string) {
   return (await apiFetch(`/project/users?project_id=${projectId}`)).json();
 }
 export async function assignRole(projectId: string, userId: string, roleId: string) {
-  return (await apiFetch(`/project/users/${userId}/roles`, { method: 'POST', body: JSON.stringify({ project_id: projectId, role_id: roleId }) })).json();
+  return (await apiFetch(`/project/users/${userId}/roles?project_id=${projectId}`, { method: 'POST', body: JSON.stringify({ role_id: roleId }) })).json();
 }
 export async function removeRole(projectId: string, userId: string, roleId: string) {
   return apiFetch(`/project/users/${userId}/roles/${roleId}?project_id=${projectId}`, { method: 'DELETE' });

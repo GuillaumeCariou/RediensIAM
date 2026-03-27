@@ -23,6 +23,11 @@ public class Project
     public DateTimeOffset UpdatedAt { get; set; }
 
     public Guid? DefaultRoleId { get; set; }
+    public int MinPasswordLength { get; set; }
+    public bool PasswordRequireUppercase { get; set; }
+    public bool PasswordRequireLowercase { get; set; }
+    public bool PasswordRequireDigit { get; set; }
+    public bool PasswordRequireSpecial { get; set; }
 
     public Organisation Organisation { get; set; } = null!;
     public UserList? AssignedUserList { get; set; }

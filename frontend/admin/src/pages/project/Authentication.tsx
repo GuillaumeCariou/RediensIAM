@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useProjectContext } from '@/hooks/useOrgContext';
 import { Save, Upload, X, Plus, Sun, Moon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -124,143 +124,7 @@ function LogoUpload({ value, onChange, label = 'Logo' }: { value?: string; onCha
   );
 }
 
-// ── Preview ──────────────────────────────────────────────────────────────────
-
 type PreviewMode = 'login' | 'register' | 'verify';
-
-interface PreviewProps {
-  theme: Theme;
-  dark: boolean;
-  mode: PreviewMode;
-  allowSelfReg: boolean;
-  emailVerif: boolean;
-  smsVerif: boolean;
-}
-
-function AuthPreview({ theme, dark, mode, allowSelfReg, emailVerif, smsVerif }: PreviewProps) {
-  const radius = `${theme.border_radius ?? 8}px`;
-  const bg = dark ? '#0f172a' : (theme.background_color ?? '#f9fafb');
-  const surface = dark ? '#1e293b' : (theme.surface_color ?? '#ffffff');
-  const text = dark ? '#f1f5f9' : (theme.text_color ?? '#111827');
-  const muted = dark ? 'rgba(241,245,249,0.45)' : `color-mix(in srgb, ${theme.text_color ?? '#111827'} 50%, transparent)`;
-  const border = dark ? '#334155' : '#d1d5db';
-  const inputBg = dark ? '#0f172a' : `color-mix(in srgb, ${theme.surface_color ?? '#fff'} 80%, #f3f4f6)`;
-  const primary = theme.primary_color ?? '#1a56db';
-  const effectiveFont = theme.font_family;
-
-  const enabledProviders = (theme.providers ?? []).filter(p => p.enabled);
-  const Field = () => <div className="h-8 border" style={{ borderRadius: radius, borderColor: border, background: inputBg }} />;
-  const Btn = ({ label }: { label: string }) => (
-    <div className="h-8 flex items-center justify-center text-white text-xs font-semibold"
-      style={{ background: primary, borderRadius: radius }}>{label}</div>
-  );
-
-  const Logo = () => theme.logo_url ? (
-    <div className="text-center">
-      <img src={theme.logo_url} alt="Logo" className="h-10 mx-auto object-contain"
-        onError={e => (e.currentTarget.style.display = 'none')} />
-    </div>
-  ) : null;
-
-  const Providers = () => enabledProviders.length > 0 ? (
-    <div className="space-y-2">
-      {enabledProviders.map(p => {
-        const icon = p.logo_url || PROVIDER_ICONS[p.type];
-        return (
-          <div key={p.id} className="flex items-center justify-center gap-2 w-full px-3 py-2 text-xs font-medium border cursor-default select-none"
-            style={{ borderRadius: radius, borderColor: border, background: surface, color: text }}>
-            {icon && <img src={icon} alt={p.type} className="h-4 w-4 object-contain" />}
-            {p.label}
-          </div>
-        );
-      })}
-      {(theme.hydra_local_login ?? true) && (
-        <div className="flex items-center gap-2 my-1">
-          <div className="flex-1 h-px" style={{ background: border }} />
-          <span className="text-xs" style={{ color: muted }}>or</span>
-          <div className="flex-1 h-px" style={{ background: border }} />
-        </div>
-      )}
-    </div>
-  ) : null;
-
-  let content: React.ReactNode;
-
-  if (mode === 'login') {
-    content = (
-      <>
-        <Logo />
-        <h1 className="text-lg font-bold text-center">Sign in</h1>
-        {(theme.hydra_local_login ?? true) && (
-          <p className="text-xs text-center" style={{ color: muted }}>Enter your credentials to continue</p>
-        )}
-        <Providers />
-        {(theme.hydra_local_login ?? true) && (
-          <div className="space-y-2">
-            <Field /><Field />
-            <Btn label="Sign in" />
-          </div>
-        )}
-        {allowSelfReg && (
-          <p className="text-xs text-center" style={{ color: muted }}>
-            Don't have an account?{' '}
-            <span style={{ color: primary, textDecoration: 'underline', cursor: 'pointer' }}>Sign up</span>
-          </p>
-        )}
-      </>
-    );
-  } else if (mode === 'register') {
-    content = (
-      <>
-        <Logo />
-        <h1 className="text-lg font-bold text-center">Create account</h1>
-        <p className="text-xs text-center" style={{ color: muted }}>Fill in your details to get started</p>
-        <Providers />
-        {(theme.hydra_local_login ?? true) && (
-          <div className="space-y-2">
-            <Field /><Field /><Field />
-            {smsVerif && <Field />}
-            <Btn label="Create account" />
-          </div>
-        )}
-        <p className="text-xs text-center" style={{ color: muted }}>
-          Already have an account?{' '}
-          <span style={{ color: primary, textDecoration: 'underline', cursor: 'pointer' }}>Sign in</span>
-        </p>
-      </>
-    );
-  } else {
-    const channel = emailVerif ? 'email' : smsVerif ? 'phone number' : 'contact';
-    content = (
-      <>
-        <Logo />
-        <h1 className="text-lg font-bold text-center">Verify your {emailVerif ? 'email' : 'phone'}</h1>
-        <p className="text-xs text-center" style={{ color: muted }}>Enter the 6-digit code sent to your {channel}</p>
-        <div className="space-y-2">
-          <div className="h-10 border flex items-center justify-center text-sm font-mono tracking-[0.4em]"
-            style={{ borderRadius: radius, borderColor: border, background: inputBg, color: muted }}>
-            • • • • • •
-          </div>
-          <Btn label="Verify" />
-        </div>
-        <p className="text-xs text-center" style={{ color: muted }}>
-          Didn't receive a code?{' '}
-          <span style={{ color: primary, textDecoration: 'underline', cursor: 'pointer' }}>Resend</span>
-        </p>
-      </>
-    );
-  }
-
-  return (
-    <div className="rounded-xl flex items-center justify-center min-h-[520px] p-6 transition-colors"
-      style={{ background: bg }}>
-      <div className="w-72 rounded-xl p-7 shadow-xl space-y-4 transition-colors"
-        style={{ background: surface, fontFamily: effectiveFont, borderRadius: radius, color: text }}>
-        {content}
-      </div>
-    </div>
-  );
-}
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -282,6 +146,11 @@ export default function Authentication() {
   const [smsVerif, setSmsVerif] = useState(false);
   const [allowedDomains, setAllowedDomains] = useState('');
   const [defaultRoleId, setDefaultRoleId] = useState<string | null>(null);
+  const [minPasswordLength, setMinPasswordLength] = useState(0);
+  const [requireUppercase, setRequireUppercase] = useState(false);
+  const [requireLowercase, setRequireLowercase] = useState(false);
+  const [requireDigit, setRequireDigit] = useState(false);
+  const [requireSpecial, setRequireSpecial] = useState(false);
   const [roles, setRoles] = useState<Role[]>([]);
 
   useEffect(() => {
@@ -301,6 +170,11 @@ export default function Authentication() {
         setSmsVerif(p.sms_verification_enabled ?? false);
         setAllowedDomains((p.allowed_email_domains ?? []).join(', '));
         setDefaultRoleId(p.default_role_id ?? null);
+        setMinPasswordLength(p.min_password_length ?? 0);
+        setRequireUppercase(p.password_require_uppercase ?? false);
+        setRequireLowercase(p.password_require_lowercase ?? false);
+        setRequireDigit(p.password_require_digit ?? false);
+        setRequireSpecial(p.password_require_special ?? false);
       }),
       listRoles(projectId).then(r => setRoles((r.roles ?? r ?? []).sort((a: Role, b: Role) => a.rank - b.rank))),
     ]).catch(console.error).finally(() => setLoading(false));
@@ -318,6 +192,11 @@ export default function Authentication() {
         email_verification_enabled: emailVerif,
         sms_verification_enabled: smsVerif,
         allowed_email_domains: domains,
+        min_password_length: minPasswordLength,
+        password_require_uppercase: requireUppercase,
+        password_require_lowercase: requireLowercase,
+        password_require_digit: requireDigit,
+        password_require_special: requireSpecial,
       };
       if (defaultRoleId) body.default_role_id = defaultRoleId;
       else body.clear_default_role = true;
@@ -326,6 +205,25 @@ export default function Authentication() {
       setTimeout(() => setSaved(false), 2000);
     } finally { setSaving(false); }
   };
+
+  // ── Preview iframe URL ──
+  const previewUrl = useMemo(() => {
+    const cfg = {
+      mode: previewMode,
+      dark: previewDark,
+      theme,
+      allow_self_registration: allowSelfReg,
+      email_verification_enabled: emailVerif,
+      sms_verification_enabled: smsVerif,
+      min_password_length: minPasswordLength,
+      password_require_uppercase: requireUppercase,
+      password_require_lowercase: requireLowercase,
+      password_require_digit: requireDigit,
+      password_require_special: requireSpecial,
+    };
+    return `/preview?cfg=${btoa(JSON.stringify(cfg))}`;
+  }, [previewMode, previewDark, theme, allowSelfReg, emailVerif, smsVerif,
+      minPasswordLength, requireUppercase, requireLowercase, requireDigit, requireSpecial]);
 
   // ── Builtin provider helpers ──
   const getBuiltin = (type: Provider['type']) => (theme.providers ?? []).find(p => p.type === type && p.id === type);
@@ -377,7 +275,7 @@ export default function Authentication() {
         }
       />
 
-      <div className="p-6 grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-6 items-start">
+      <div className="p-6 grid grid-cols-1 xl:grid-cols-[1fr_460px] gap-6 items-start">
         {/* ── Left: config tabs ── */}
         <div>
           <Tabs defaultValue="visual">
@@ -591,6 +489,40 @@ export default function Authentication() {
 
               <Card>
                 <CardHeader>
+                  <CardTitle className="text-base">Password Policy</CardTitle>
+                  <CardDescription>Requirements enforced when users register or are created by an admin.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center gap-3">
+                    <Label className="shrink-0">Minimum length</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={128}
+                      value={minPasswordLength}
+                      onChange={e => setMinPasswordLength(Math.max(0, Math.min(128, Number(e.target.value) || 0)))}
+                      className="w-24"
+                    />
+                    <span className="text-xs text-muted-foreground">characters (0 = disabled)</span>
+                  </div>
+                  <div className="space-y-3">
+                    {([
+                      { label: 'Require uppercase letter (A–Z)', checked: requireUppercase, set: setRequireUppercase },
+                      { label: 'Require lowercase letter (a–z)', checked: requireLowercase, set: setRequireLowercase },
+                      { label: 'Require number (0–9)',           checked: requireDigit,     set: setRequireDigit },
+                      { label: 'Require special character (!@#$…)', checked: requireSpecial, set: setRequireSpecial },
+                    ] as const).map(({ label, checked, set: setter }) => (
+                      <div key={label} className="flex items-center justify-between">
+                        <Label className="font-normal">{label}</Label>
+                        <Switch checked={checked} onCheckedChange={setter} />
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
                   <CardTitle className="text-base">Default Role</CardTitle>
                   <CardDescription>Role automatically assigned when a user registers or signs in via social login for the first time.</CardDescription>
                 </CardHeader>
@@ -684,16 +616,14 @@ export default function Authentication() {
             </Button>
           </div>
           <div className="rounded-xl border overflow-hidden">
-            <AuthPreview
-              theme={theme}
-              dark={previewDark}
-              mode={previewMode}
-              allowSelfReg={allowSelfReg}
-              emailVerif={emailVerif}
-              smsVerif={smsVerif}
+            <iframe
+              key={previewUrl}
+              src={previewUrl}
+              className="w-full border-0"
+              style={{ height: '620px', pointerEvents: 'none' }}
+              title="Login page preview"
             />
           </div>
-          <p className="text-xs text-muted-foreground text-center">Approximate preview — actual rendering may differ</p>
         </div>
       </div>
 

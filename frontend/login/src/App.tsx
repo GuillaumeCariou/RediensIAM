@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate, useSearchParams } from 'react-r
 import Login from './pages/Login';
 import MfaChallenge from './pages/MfaChallenge';
 import PasswordReset from './pages/PasswordReset';
+import Preview from './pages/Preview';
 import Register from './pages/Register';
 import './index.css';
 
@@ -28,6 +29,7 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/mfa" element={<MfaChallenge />} />
         <Route path="/password-reset" element={<PasswordReset />} />
+        <Route path="/preview" element={<Preview />} />
         <Route path="/register" element={<Register />} />
         <Route path="/auth/oauth2/error" element={<OAuthError />} />
         <Route path="*" element={<Navigate to="/login" />} />

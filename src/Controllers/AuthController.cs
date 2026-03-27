@@ -63,7 +63,12 @@ public class AuthController(
                 require_role = project.RequireRoleToLogin,
                 allow_self_registration = project.AllowSelfRegistration,
                 email_verification_enabled = project.EmailVerificationEnabled,
-                sms_verification_enabled = project.SmsVerificationEnabled
+                sms_verification_enabled = project.SmsVerificationEnabled,
+                min_password_length          = project.MinPasswordLength,
+                password_require_uppercase   = project.PasswordRequireUppercase,
+                password_require_lowercase   = project.PasswordRequireLowercase,
+                password_require_digit       = project.PasswordRequireDigit,
+                password_require_special     = project.PasswordRequireSpecial,
             });
         }
         catch (Exception ex)
@@ -480,6 +485,18 @@ public class AuthController(
         if (project == null) return NotFound(new { error = "project_not_found" });
         if (!project.AllowSelfRegistration) return StatusCode(403, new { error = "registration_not_allowed" });
         if (project.AssignedUserListId == null) return BadRequest(new { error = "project_not_ready" });
+
+        // M1: enforce project-level password policy
+        if (project.MinPasswordLength > 0 && body.Password.Length < project.MinPasswordLength)
+            return BadRequest(new { error = "password_too_short",     min_length = project.MinPasswordLength });
+        if (project.PasswordRequireUppercase && !body.Password.Any(char.IsUpper))
+            return BadRequest(new { error = "password_requires_uppercase" });
+        if (project.PasswordRequireLowercase && !body.Password.Any(char.IsLower))
+            return BadRequest(new { error = "password_requires_lowercase" });
+        if (project.PasswordRequireDigit && !body.Password.Any(char.IsDigit))
+            return BadRequest(new { error = "password_requires_digit" });
+        if (project.PasswordRequireSpecial && !body.Password.Any(c => !char.IsLetterOrDigit(c)))
+            return BadRequest(new { error = "password_requires_special" });
 
         var email = body.Email.ToLowerInvariant();
 
