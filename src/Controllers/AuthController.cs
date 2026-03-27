@@ -239,17 +239,26 @@ public class AuthController(
         if (userId == null || challenge == null || projectId == null)
             return BadRequest(new { error = "no_mfa_session" });
 
+        var userGuid = Guid.Parse(userId);
+        if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
+            return StatusCode(429, new { error = "rate_limited" });
+
         var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
             System.Text.Encoding.UTF8.GetBytes(body.Code.ToUpperInvariant())));
 
         var code = await db.BackupCodes.FirstOrDefaultAsync(c =>
-            c.UserId == Guid.Parse(userId) && c.CodeHash == hash && c.UsedAt == null);
-        if (code == null) return Unauthorized(new { error = "invalid_code" });
+            c.UserId == userGuid && c.CodeHash == hash && c.UsedAt == null);
+        if (code == null)
+        {
+            await rateLimiter.RecordFailureAsync(Ip, userGuid);
+            return Unauthorized(new { error = "invalid_code" });
+        }
 
         code.UsedAt = DateTimeOffset.UtcNow;
-        var user = await db.Users.FindAsync(Guid.Parse(userId));
+        var user = await db.Users.FindAsync(userGuid);
         user!.LastLoginAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
+        await rateLimiter.ResetAsync(Ip, userGuid);
 
         HttpContext.Session.Remove("mfa_pending_user");
         HttpContext.Session.Remove("mfa_pending_challenge");
@@ -273,12 +282,16 @@ public class AuthController(
     {
         var userId = HttpContext.Session.GetString("mfa_pending_user");
         if (userId == null) return BadRequest(new { error = "no_mfa_session" });
-        var user = await db.Users.FindAsync(Guid.Parse(userId));
+        var userGuid = Guid.Parse(userId);
+        if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
+            return StatusCode(429, new { error = "rate_limited" });
+        var user = await db.Users.FindAsync(userGuid);
         if (user == null || !user.PhoneVerified || string.IsNullOrEmpty(user.Phone))
             return BadRequest(new { error = "phone_not_configured" });
         var smsCode = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
         await otp.StoreSessionOtpAsync("sms_mfa", userId, smsCode);
         await smsService.SendOtpAsync(user.Phone, smsCode, "login");
+        await rateLimiter.RecordFailureAsync(Ip, userGuid);
         return Ok(new { sent = true });
     }
 
@@ -291,13 +304,21 @@ public class AuthController(
         if (userId == null || challenge == null || projectId == null)
             return BadRequest(new { error = "no_mfa_session" });
 
-        if (!await otp.VerifySessionOtpAsync("sms_mfa", userId, body.Code))
-            return Unauthorized(new { error = "invalid_code" });
+        var userGuid = Guid.Parse(userId);
+        if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
+            return StatusCode(429, new { error = "rate_limited" });
 
-        var user = await db.Users.FindAsync(Guid.Parse(userId));
+        if (!await otp.VerifySessionOtpAsync("sms_mfa", userId, body.Code))
+        {
+            await rateLimiter.RecordFailureAsync(Ip, userGuid);
+            return Unauthorized(new { error = "invalid_code" });
+        }
+
+        var user = await db.Users.FindAsync(userGuid);
         if (user == null) return NotFound();
         user.LastLoginAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
+        await rateLimiter.ResetAsync(Ip, userGuid);
 
         HttpContext.Session.Remove("mfa_pending_user");
         HttpContext.Session.Remove("mfa_pending_challenge");
@@ -324,22 +345,33 @@ public class AuthController(
         if (userId == null || challenge == null || projectId == null)
             return BadRequest(new { error = "no_mfa_session" });
 
-        var user = await db.Users.FindAsync(Guid.Parse(userId));
+        var userGuid = Guid.Parse(userId);
+        if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
+            return StatusCode(429, new { error = "rate_limited" });
+
+        var user = await db.Users.FindAsync(userGuid);
         if (user?.TotpSecret == null) return BadRequest(new { error = "totp_not_configured" });
 
         if (await otp.IsTotpUsedAsync(user.Id, body.Code))
+        {
+            await rateLimiter.RecordFailureAsync(Ip, userGuid);
             return Unauthorized(new { error = "code_already_used" });
+        }
 
         var secret = totpEncryption.Decrypt(user.TotpSecret);
         var totp = new Totp(secret);
         if (!totp.VerifyTotp(body.Code, out _, new VerificationWindow(1, 1)))
+        {
+            await rateLimiter.RecordFailureAsync(Ip, userGuid);
             return Unauthorized(new { error = "invalid_totp" });
+        }
 
         await otp.StoreTotpUsedAsync(user.Id, body.Code);
 
         var project = await db.Projects.FindAsync(Guid.Parse(projectId));
         user.LastLoginAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
+        await rateLimiter.ResetAsync(Ip, userGuid);
 
         HttpContext.Session.Remove("mfa_pending_user");
         HttpContext.Session.Remove("mfa_pending_challenge");

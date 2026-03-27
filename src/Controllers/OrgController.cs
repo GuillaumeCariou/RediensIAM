@@ -10,6 +10,7 @@ using RediensIAM.Services;
 namespace RediensIAM.Controllers;
 
 [ApiController]
+[RequireManagementLevel(ManagementLevel.OrgAdmin)]
 public class OrgController(
     RediensIamDbContext db,
     HydraAdminService hydra,
@@ -90,7 +91,9 @@ public class OrgController(
     [HttpGet("/org/projects/{id}")]
     public async Task<IActionResult> GetProject(Guid id)
     {
-        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
+        var isSuperAdmin = Claims.Roles.Contains(Roles.SuperAdmin);
+        var project = await db.Projects
+            .FirstOrDefaultAsync(p => p.Id == id && (isSuperAdmin || p.OrgId == OrgId));
         if (project == null) return NotFound();
         return Ok(project);
     }
@@ -98,7 +101,8 @@ public class OrgController(
     [HttpPatch("/org/projects/{id}")]
     public async Task<IActionResult> UpdateProject(Guid id, [FromBody] UpdateProjectRequest body)
     {
-        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
+        var isSuperAdmin = Claims.Roles.Contains(Roles.SuperAdmin);
+        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && (isSuperAdmin || p.OrgId == OrgId));
         if (project == null) return NotFound();
         if (body.Name != null) project.Name = body.Name;
         if (body.RequireRoleToLogin.HasValue) project.RequireRoleToLogin = body.RequireRoleToLogin.Value;
@@ -124,7 +128,8 @@ public class OrgController(
     [HttpDelete("/org/projects/{id}")]
     public async Task<IActionResult> DeleteProject(Guid id)
     {
-        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
+        var isSuperAdmin = Claims.Roles.Contains(Roles.SuperAdmin);
+        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && (isSuperAdmin || p.OrgId == OrgId));
         if (project == null) return NotFound();
         if (project.HydraClientId != null)
         {
@@ -287,6 +292,9 @@ public class OrgController(
         db.Users.Add(user);
         await db.SaveChangesAsync();
         await keto.WriteRelationTupleAsync(Roles.KetoUserListsNamespace, id.ToString(), "member", $"user:{user.Id}");
+        var assignedProjects = await db.Projects.Where(p => p.AssignedUserListId == id && p.OrgId == OrgId).ToListAsync();
+        foreach (var project in assignedProjects)
+            await roleService.AssignDefaultRoleAsync(project, user);
         return Created($"/org/userlists/{id}/users/{user.Id}", new
         {
             user.Id, username = $"{user.Username}#{user.Discriminator}", user.Email
@@ -465,6 +473,12 @@ public class OrgController(
 
         if (body.Role != null && body.Role == Roles.SuperAdmin)
             return StatusCode(403, new { error = "cannot_grant_super_admin" });
+
+        if (body.ScopeId != null && body.ScopeId != role.ScopeId)
+        {
+            var projectExists = await db.Projects.AnyAsync(p => p.Id == body.ScopeId && p.OrgId == orgId);
+            if (!projectExists) return BadRequest(new { error = "project_not_in_org" });
+        }
 
         // Delete old Keto tuple before updating
         var oldSubject = role.ScopeId.HasValue ? $"user:{role.UserId}|project:{role.ScopeId}" : $"user:{role.UserId}";

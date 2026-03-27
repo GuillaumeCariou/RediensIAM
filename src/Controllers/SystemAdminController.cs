@@ -9,6 +9,7 @@ using RediensIAM.Services;
 namespace RediensIAM.Controllers;
 
 [ApiController]
+[RequireManagementLevel(ManagementLevel.OrgAdmin)]
 public class SystemAdminController(
     RediensIamDbContext db,
     HydraAdminService hydra,
@@ -18,40 +19,30 @@ public class SystemAdminController(
     PatGenerationService patGen,
     ImpersonationService impersonation,
     ServiceAccountService saService,
+    RoleAssignmentService roleService,
     AppConfig appConfig,
     ILogger<SystemAdminController> logger) : ControllerBase
 {
-    private TokenClaims? Claims    => HttpContext.GetClaims();
-    private bool IsSuperAdmin      => Claims?.Roles.Contains(Roles.SuperAdmin) ?? false;
-    private bool IsOrgAdmin        => Claims?.Roles.Contains(Roles.OrgAdmin) ?? false;
-    private bool HasAdminAccess    => IsSuperAdmin || IsOrgAdmin;
-    private Guid GetActorId()      => Claims?.ParsedUserId ?? Guid.Empty;
-
-    [HttpGet("/admin/config")]
-    public IActionResult GetConfig() => Ok(new
-    {
-        hydra_url    = appConfig.PublicUrl,
-        client_id    = Roles.AdminClientId,
-        redirect_uri = $"{appConfig.PublicUrl}/admin/callback"
-    });
+    private TokenClaims Claims => HttpContext.GetClaims()!;
+    private Guid GetActorId() => Claims.ParsedUserId;
 
     // ── Organisations ─────────────────────────────────────────────────────────
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpGet("/admin/organisations")]
     public async Task<IActionResult> ListOrgs()
     {
-        if (!HasAdminAccess) return StatusCode(403);
-        var orgs = await db.Organisations
+var orgs = await db.Organisations
             .Where(o => o.Slug != "__system__")
             .Select(o => new { o.Id, o.Name, o.Slug, o.Active, o.SuspendedAt, o.CreatedAt }).ToListAsync();
         return Ok(orgs);
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpPost("/admin/organisations")]
     public async Task<IActionResult> CreateOrg([FromBody] CreateOrgRequest body)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var actorId = GetActorId();
+var actorId = GetActorId();
 
         var orgList = new UserList { Name = $"{body.Name} Org List", Immovable = true, CreatedAt = DateTimeOffset.UtcNow };
         db.UserLists.Add(orgList);
@@ -77,8 +68,7 @@ public class SystemAdminController(
     [HttpGet("/admin/organisations/{id}")]
     public async Task<IActionResult> GetOrg(Guid id)
     {
-        if (!HasAdminAccess) return StatusCode(403);
-        var org = await db.Organisations
+var org = await db.Organisations
             .Where(o => o.Id == id)
             .Select(o => new { o.Id, o.Name, o.Slug, o.Active, o.SuspendedAt, o.CreatedAt, o.UpdatedAt, o.OrgListId, o.CreatedBy })
             .FirstOrDefaultAsync();
@@ -86,11 +76,11 @@ public class SystemAdminController(
         return Ok(org);
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpPatch("/admin/organisations/{id}")]
     public async Task<IActionResult> UpdateOrg(Guid id, [FromBody] UpdateOrgRequest body)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var org = await db.Organisations.FindAsync(id);
+var org = await db.Organisations.FindAsync(id);
         if (org == null) return NotFound();
         if (body.Name != null) org.Name = body.Name;
         org.UpdatedAt = DateTimeOffset.UtcNow;
@@ -98,11 +88,11 @@ public class SystemAdminController(
         return Ok(new { org.Id, org.Name });
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpPost("/admin/organisations/{id}/suspend")]
     public async Task<IActionResult> SuspendOrg(Guid id)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var org = await db.Organisations.FindAsync(id);
+var org = await db.Organisations.FindAsync(id);
         if (org == null) return NotFound();
         org.Active = false; org.SuspendedAt = DateTimeOffset.UtcNow; org.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
@@ -110,11 +100,11 @@ public class SystemAdminController(
         return Ok(new { message = "org_suspended" });
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpPost("/admin/organisations/{id}/unsuspend")]
     public async Task<IActionResult> UnsuspendOrg(Guid id)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var org = await db.Organisations.FindAsync(id);
+var org = await db.Organisations.FindAsync(id);
         if (org == null) return NotFound();
         org.Active = true; org.SuspendedAt = null; org.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
@@ -122,11 +112,11 @@ public class SystemAdminController(
         return Ok(new { message = "org_unsuspended" });
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpDelete("/admin/organisations/{id}")]
     public async Task<IActionResult> DeleteOrg(Guid id)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var org = await db.Organisations.FindAsync(id);
+var org = await db.Organisations.FindAsync(id);
         if (org == null) return NotFound();
 
         var projects = await db.Projects.Where(p => p.OrgId == id).ToListAsync();
@@ -163,11 +153,11 @@ public class SystemAdminController(
 
     // ── Users ─────────────────────────────────────────────────────────────────
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpGet("/admin/users")]
     public async Task<IActionResult> SearchUsers([FromQuery] string? q, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
-        if (!HasAdminAccess) return StatusCode(403);
-        var query = db.Users.AsQueryable();
+var query = db.Users.AsQueryable();
         if (!string.IsNullOrEmpty(q))
             query = query.Where(u => u.Email.Contains(q) || u.Username.Contains(q));
         var users = await query
@@ -179,11 +169,11 @@ public class SystemAdminController(
         return Ok(users);
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpGet("/admin/users/{id}")]
     public async Task<IActionResult> GetUser(Guid id)
     {
-        if (!HasAdminAccess) return StatusCode(403);
-        var user = await db.Users
+var user = await db.Users
             .Include(u => u.UserList).ThenInclude(ul => ul.Organisation)
             .FirstOrDefaultAsync(u => u.Id == id);
         if (user == null) return NotFound();
@@ -207,11 +197,11 @@ public class SystemAdminController(
         });
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpPatch("/admin/users/{id}")]
     public async Task<IActionResult> UpdateUser(Guid id, [FromBody] AdminUpdateUserRequest body)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id == id);
+var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id == id);
         if (user == null) return NotFound();
         if (body.Email != null) { user.Email = body.Email.ToLowerInvariant(); user.EmailVerified = false; user.EmailVerifiedAt = null; }
         if (body.Username != null) user.Username = body.Username;
@@ -227,11 +217,11 @@ public class SystemAdminController(
         return Ok(new { user.Id, user.Email, user.Username, user.Discriminator, user.DisplayName, user.Phone, user.Active, user.EmailVerified, user.LockedUntil, user.FailedLoginCount });
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpPost("/admin/users/{id}/force-logout")]
     public async Task<IActionResult> ForceLogout(Guid id)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id == id);
+var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id == id);
         if (user == null) return NotFound();
         var orgId = user.UserList.OrgId?.ToString() ?? "";
         await hydra.RevokeSessionsAsync($"{orgId}:{id}");
@@ -239,11 +229,11 @@ public class SystemAdminController(
         return Ok(new { message = "sessions_revoked" });
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpPost("/admin/users/{id}/impersonate")]
     public async Task<IActionResult> ImpersonateUser(Guid id, [FromBody] ImpersonateRequest body)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var actorId = GetActorId();
+var actorId = GetActorId();
         if (actorId == id) return BadRequest(new { error = "cannot_impersonate_self" });
 
         var user = await db.Users.FindAsync(id);
@@ -287,8 +277,7 @@ public class SystemAdminController(
     [HttpGet("/admin/userlists")]
     public async Task<IActionResult> ListAllUserLists([FromQuery] Guid? org_id)
     {
-        if (!HasAdminAccess) return StatusCode(403);
-        var query = db.UserLists.AsQueryable();
+var query = db.UserLists.AsQueryable();
         if (org_id.HasValue) query = query.Where(ul => ul.OrgId == org_id);
         var lists = await query
             .Select(ul => new {
@@ -301,8 +290,7 @@ public class SystemAdminController(
     [HttpGet("/admin/userlists/{id}")]
     public async Task<IActionResult> GetUserList(Guid id)
     {
-        if (!HasAdminAccess) return StatusCode(403);
-        var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(ul => ul.Id == id);
+var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(ul => ul.Id == id);
         if (ul == null) return NotFound();
         return Ok(new
         {
@@ -315,8 +303,7 @@ public class SystemAdminController(
     [HttpGet("/admin/userlists/{id}/users")]
     public async Task<IActionResult> ListUsersInList(Guid id)
     {
-        if (!HasAdminAccess) return StatusCode(403);
-        if (!await db.UserLists.AnyAsync(ul => ul.Id == id)) return NotFound();
+if (!await db.UserLists.AnyAsync(ul => ul.Id == id)) return NotFound();
         var users = await db.Users
             .Where(u => u.UserListId == id)
             .Select(u => new { u.Id, u.Username, u.Discriminator, u.Email, u.DisplayName, u.Active, u.LastLoginAt })
@@ -324,11 +311,11 @@ public class SystemAdminController(
         return Ok(users);
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpPost("/admin/userlists/{id}/users")]
     public async Task<IActionResult> AddUserToList(Guid id, [FromBody] AdminCreateUserRequest body)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var ul = await db.UserLists.FindAsync(id);
+var ul = await db.UserLists.FindAsync(id);
         if (ul == null) return NotFound();
         var username = body.Username ?? body.Email.Split('@')[0];
         string discriminator;
@@ -349,17 +336,20 @@ public class SystemAdminController(
         await keto.WriteRelationTupleAsync(Roles.KetoUserListsNamespace, id.ToString(), "member", $"user:{user.Id}");
         if (ul.OrgId == null && ul.Immovable)
             await keto.WriteRelationTupleAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{user.Id}");
+        var assignedProjects = await db.Projects.Where(p => p.AssignedUserListId == id).ToListAsync();
+        foreach (var project in assignedProjects)
+            await roleService.AssignDefaultRoleAsync(project, user);
         return Created($"/admin/userlists/{id}/users/{user.Id}", new
         {
             user.Id, username = $"{user.Username}#{user.Discriminator}", user.Email
         });
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpDelete("/admin/userlists/{id}/users/{uid}")]
     public async Task<IActionResult> RemoveUserFromList(Guid id, Guid uid)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var ul   = await db.UserLists.FindAsync(id);
+var ul   = await db.UserLists.FindAsync(id);
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == uid && u.UserListId == id);
         if (user == null) return NotFound();
         await keto.DeleteRelationTupleAsync(Roles.KetoUserListsNamespace, id.ToString(), "member", $"user:{uid}");
@@ -370,11 +360,11 @@ public class SystemAdminController(
         return NoContent();
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpPost("/admin/userlists")]
     public async Task<IActionResult> AdminCreateUserList([FromBody] AdminCreateUserListRequest body)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var ul = new UserList { Name = body.Name, OrgId = body.OrgId, Immovable = false, CreatedAt = DateTimeOffset.UtcNow };
+var ul = new UserList { Name = body.Name, OrgId = body.OrgId, Immovable = false, CreatedAt = DateTimeOffset.UtcNow };
         db.UserLists.Add(ul);
         await db.SaveChangesAsync();
         return Created($"/admin/userlists/{ul.Id}", new { ul.Id, ul.Name });
@@ -385,18 +375,17 @@ public class SystemAdminController(
     [HttpGet("/admin/service-accounts")]
     public async Task<IActionResult> ListServiceAccounts()
     {
-        if (!HasAdminAccess) return StatusCode(403);
-        var sas = await db.ServiceAccounts
+var sas = await db.ServiceAccounts
             .Where(sa => sa.IsSystem)
             .Select(sa => new { sa.Id, sa.Name, sa.Description, sa.Active, sa.LastUsedAt, sa.CreatedAt }).ToListAsync();
         return Ok(sas);
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpPost("/admin/service-accounts")]
     public async Task<IActionResult> CreateSystemServiceAccount([FromBody] CreateSystemSaRequest body)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var rootList = await GetOrCreateRootListAsync();
+var rootList = await GetOrCreateRootListAsync();
         var sa = new ServiceAccount
         {
             UserListId = rootList.Id, Name = body.Name, Description = body.Description,
@@ -408,11 +397,11 @@ public class SystemAdminController(
         return Created($"/admin/service-accounts/{sa.Id}", new { sa.Id, sa.Name, sa.Description });
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpGet("/admin/service-accounts/{id}")]
     public async Task<IActionResult> GetSystemServiceAccount(Guid id)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var sa = await db.ServiceAccounts
+var sa = await db.ServiceAccounts
             .Include(sa => sa.PersonalAccessTokens)
             .Include(sa => sa.OrgRoles)
             .FirstOrDefaultAsync(sa => sa.Id == id && sa.IsSystem);
@@ -425,11 +414,11 @@ public class SystemAdminController(
         });
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpDelete("/admin/service-accounts/{id}")]
     public async Task<IActionResult> DeleteSystemServiceAccount(Guid id)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var sa = await db.ServiceAccounts.Include(sa => sa.UserList)
+var sa = await db.ServiceAccounts.Include(sa => sa.UserList)
             .FirstOrDefaultAsync(sa => sa.Id == id && sa.IsSystem);
         if (sa == null) return NotFound();
         db.ServiceAccounts.Remove(sa);
@@ -438,50 +427,50 @@ public class SystemAdminController(
         return NoContent();
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpGet("/admin/service-accounts/{id}/pat")]
     public async Task<IActionResult> ListSystemPats(Guid id)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        if (!await db.ServiceAccounts.AnyAsync(sa => sa.Id == id && sa.IsSystem)) return NotFound();
+if (!await db.ServiceAccounts.AnyAsync(sa => sa.Id == id && sa.IsSystem)) return NotFound();
         return Ok(await saService.ListPatsAsync(id));
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpPost("/admin/service-accounts/{id}/pat")]
     public async Task<IActionResult> GenerateSystemPat(Guid id, [FromBody] GeneratePatRequest body)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var sa = await db.ServiceAccounts.Include(sa => sa.UserList)
+var sa = await db.ServiceAccounts.Include(sa => sa.UserList)
             .FirstOrDefaultAsync(sa => sa.Id == id && sa.IsSystem);
         if (sa == null) return NotFound();
         var (raw, pat) = await patGen.GenerateAsync(id, body.Name, body.ExpiresAt, GetActorId());
         return Created($"/admin/service-accounts/{id}/pat/{pat.Id}", new { pat.Id, pat.Name, pat.ExpiresAt, token = raw });
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpDelete("/admin/service-accounts/{id}/pat/{patId}")]
     public async Task<IActionResult> RevokeSystemPat(Guid id, Guid patId)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        if (!await db.ServiceAccounts.AnyAsync(sa => sa.Id == id && sa.IsSystem)) return NotFound();
+if (!await db.ServiceAccounts.AnyAsync(sa => sa.Id == id && sa.IsSystem)) return NotFound();
         try { await saService.RevokePat(patId, id); return NoContent(); }
         catch (KeyNotFoundException) { return NotFound(); }
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpGet("/admin/service-accounts/{id}/roles")]
     public async Task<IActionResult> ListSystemSaRoles(Guid id)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var roles = await db.ServiceAccountOrgRoles
+var roles = await db.ServiceAccountOrgRoles
             .Where(r => r.ServiceAccountId == id)
             .Select(r => new { r.Id, r.Role, r.GrantedAt })
             .ToListAsync();
         return Ok(roles);
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpPost("/admin/service-accounts/{id}/roles")]
     public async Task<IActionResult> AssignSystemSaRole(Guid id, [FromBody] AssignSystemSaRoleRequest body)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var sa = await db.ServiceAccounts.Include(sa => sa.UserList)
+var sa = await db.ServiceAccounts.Include(sa => sa.UserList)
             .FirstOrDefaultAsync(sa => sa.Id == id && sa.IsSystem);
         if (sa == null) return NotFound();
         var existing = await db.ServiceAccountOrgRoles.FirstOrDefaultAsync(r => r.ServiceAccountId == id && r.Role == body.Role);
@@ -496,41 +485,41 @@ public class SystemAdminController(
         return Created($"/admin/service-accounts/{id}/roles/{role.Id}", new { role.Id, role.Role, role.GrantedAt });
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpDelete("/admin/service-accounts/{id}/roles/{roleId}")]
     public async Task<IActionResult> RemoveSystemSaRole(Guid id, Guid roleId)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var role = await db.ServiceAccountOrgRoles.FirstOrDefaultAsync(r => r.Id == roleId && r.ServiceAccountId == id);
+var role = await db.ServiceAccountOrgRoles.FirstOrDefaultAsync(r => r.Id == roleId && r.ServiceAccountId == id);
         if (role == null) return NotFound();
         db.ServiceAccountOrgRoles.Remove(role);
         await db.SaveChangesAsync();
         return NoContent();
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpGet("/admin/service-accounts/{id}/keys")]
     public async Task<IActionResult> GetSystemSaKeys(Guid id)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var sa = await db.ServiceAccounts.FirstOrDefaultAsync(sa => sa.Id == id && sa.IsSystem);
+var sa = await db.ServiceAccounts.FirstOrDefaultAsync(sa => sa.Id == id && sa.IsSystem);
         if (sa == null) return NotFound();
         return Ok(await saService.GetKeysAsync(sa, hydra));
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpPost("/admin/service-accounts/{id}/keys")]
     public async Task<IActionResult> AddSystemSaKey(Guid id, [FromBody] SaKeyRequest body)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var sa = await db.ServiceAccounts.FirstOrDefaultAsync(sa => sa.Id == id && sa.IsSystem);
+var sa = await db.ServiceAccounts.FirstOrDefaultAsync(sa => sa.Id == id && sa.IsSystem);
         if (sa == null) return NotFound();
         try { var clientId = await saService.AddKeyAsync(sa, body.Jwk, hydra); return Ok(new { client_id = clientId }); }
         catch (Exception ex) { return BadRequest(new { error = "hydra_error", detail = ex.Message }); }
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpDelete("/admin/service-accounts/{id}/keys")]
     public async Task<IActionResult> RemoveSystemSaKey(Guid id)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var sa = await db.ServiceAccounts.FirstOrDefaultAsync(sa => sa.Id == id && sa.IsSystem);
+var sa = await db.ServiceAccounts.FirstOrDefaultAsync(sa => sa.Id == id && sa.IsSystem);
         if (sa == null) return NotFound();
         await saService.RemoveKeyAsync(sa, hydra);
         return Ok(new { message = "key_removed" });
@@ -541,8 +530,7 @@ public class SystemAdminController(
     [HttpGet("/admin/organisations/{id}/admins")]
     public async Task<IActionResult> ListOrgAdmins(Guid id)
     {
-        if (!HasAdminAccess) return StatusCode(403);
-        var orgRoles = await db.OrgRoles.Where(r => r.OrgId == id).Include(r => r.User).ToListAsync();
+var orgRoles = await db.OrgRoles.Where(r => r.OrgId == id).Include(r => r.User).ToListAsync();
         var projectIds = orgRoles.Where(r => r.ScopeId.HasValue).Select(r => r.ScopeId!.Value).Distinct().ToList();
         var projects = await db.Projects.Where(p => projectIds.Contains(p.Id)).ToDictionaryAsync(p => p.Id);
         return Ok(orgRoles.Select(r => new
@@ -554,11 +542,11 @@ public class SystemAdminController(
         }));
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpPost("/admin/organisations/{id}/admins")]
     public async Task<IActionResult> AssignOrgAdmin(Guid id, [FromBody] AssignOrgAdminRequest body)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var existing = await db.OrgRoles.FirstOrDefaultAsync(r =>
+var existing = await db.OrgRoles.FirstOrDefaultAsync(r =>
             r.OrgId == id && r.UserId == body.UserId && r.Role == body.Role && r.ScopeId == body.ScopeId);
         if (existing != null) return Ok(new { existing.Id });
         var role = new OrgRole
@@ -573,11 +561,11 @@ public class SystemAdminController(
         return Created($"/admin/organisations/{id}/admins/{role.Id}", new { role.Id });
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpDelete("/admin/organisations/{id}/admins/{roleId}")]
     public async Task<IActionResult> RemoveOrgAdmin(Guid id, Guid roleId)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var role = await db.OrgRoles.FirstOrDefaultAsync(r => r.Id == roleId && r.OrgId == id);
+var role = await db.OrgRoles.FirstOrDefaultAsync(r => r.Id == roleId && r.OrgId == id);
         if (role == null) return NotFound();
         db.OrgRoles.Remove(role);
         await db.SaveChangesAsync();
@@ -591,8 +579,7 @@ public class SystemAdminController(
     [HttpGet("/admin/organisations/{id}/service-accounts")]
     public async Task<IActionResult> ListOrgServiceAccounts(Guid id)
     {
-        if (!HasAdminAccess) return StatusCode(403);
-        var sas = await db.ServiceAccounts
+var sas = await db.ServiceAccounts
             .Where(sa => sa.UserList.OrgId == id)
             .Select(sa => new { sa.Id, sa.Name, sa.Description, sa.Active, sa.LastUsedAt })
             .ToListAsync();
@@ -604,8 +591,7 @@ public class SystemAdminController(
     [HttpGet("/admin/projects")]
     public async Task<IActionResult> AdminListAllProjects()
     {
-        if (!HasAdminAccess) return StatusCode(403);
-        var projects = await db.Projects
+var projects = await db.Projects
             .Join(db.Organisations, p => p.OrgId, o => o.Id,
                 (p, o) => new {
                     p.Id, p.Name, p.Slug, p.Active, p.OrgId,
@@ -619,18 +605,17 @@ public class SystemAdminController(
     [HttpGet("/admin/organisations/{id}/projects")]
     public async Task<IActionResult> AdminListOrgProjects(Guid id)
     {
-        if (!HasAdminAccess) return StatusCode(403);
-        var projects = await db.Projects
+var projects = await db.Projects
             .Where(p => p.OrgId == id).OrderBy(p => p.Name)
             .Select(p => new { p.Id, p.Name, p.Slug, p.Active }).ToListAsync();
         return Ok(projects);
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpPost("/admin/organisations/{id}/projects")]
     public async Task<IActionResult> AdminCreateProject(Guid id, [FromBody] AdminCreateProjectRequest body)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var actorId = GetActorId();
+var actorId = GetActorId();
         var project = new Project
         {
             OrgId = id, Name = body.Name, Slug = body.Slug,
@@ -671,8 +656,7 @@ public class SystemAdminController(
     [HttpGet("/admin/projects/{id}")]
     public async Task<IActionResult> AdminGetProject(Guid id)
     {
-        if (!HasAdminAccess) return StatusCode(403);
-        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id);
+var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id);
         if (project == null) return NotFound();
         return Ok(new
         {
@@ -684,11 +668,11 @@ public class SystemAdminController(
         });
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpPatch("/admin/projects/{id}")]
     public async Task<IActionResult> AdminUpdateProject(Guid id, [FromBody] AdminUpdateProjectRequest body)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var project = await db.Projects.FindAsync(id);
+var project = await db.Projects.FindAsync(id);
         if (project == null) return NotFound();
         if (body.Name != null) project.Name = body.Name;
         if (body.RequireRoleToLogin.HasValue)       project.RequireRoleToLogin       = body.RequireRoleToLogin.Value;
@@ -705,17 +689,17 @@ public class SystemAdminController(
             if (role == null) return BadRequest(new { error = "invalid_default_role" });
             project.DefaultRoleId = body.DefaultRoleId;
         }
-        if (body.LoginTheme.HasValue) project.LoginTheme = body.LoginTheme.Value;
+        if (body.LoginTheme != null) project.LoginTheme = body.LoginTheme;
         project.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         return Ok(new { project.Id, project.Name });
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpDelete("/admin/projects/{id}")]
     public async Task<IActionResult> AdminDeleteProject(Guid id)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var project = await db.Projects.FindAsync(id);
+var project = await db.Projects.FindAsync(id);
         if (project == null) return NotFound();
         if (!string.IsNullOrEmpty(project.HydraClientId))
         {
@@ -728,11 +712,11 @@ public class SystemAdminController(
         return NoContent();
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpPost("/admin/projects/{id}/assign-userlist")]
     public async Task<IActionResult> AdminAssignUserList(Guid id, [FromBody] AdminAssignUserListRequest body)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var project = await db.Projects.FindAsync(id);
+var project = await db.Projects.FindAsync(id);
         if (project == null) return NotFound();
         var list = await db.UserLists.FirstOrDefaultAsync(ul => ul.Id == body.UserListId && ul.OrgId == project.OrgId);
         if (list == null) return BadRequest(new { error = "userlist_not_in_org" });
@@ -742,11 +726,11 @@ public class SystemAdminController(
         return Ok(new { project.Id, project.AssignedUserListId });
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpDelete("/admin/projects/{id}/assign-userlist")]
     public async Task<IActionResult> AdminUnassignUserList(Guid id)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var project = await db.Projects.FindAsync(id);
+var project = await db.Projects.FindAsync(id);
         if (project == null) return NotFound();
         project.AssignedUserListId = null;
         project.UpdatedAt = DateTimeOffset.UtcNow;
@@ -757,8 +741,7 @@ public class SystemAdminController(
     [HttpGet("/admin/projects/{id}/stats")]
     public async Task<IActionResult> AdminGetProjectStats(Guid id)
     {
-        if (!HasAdminAccess) return StatusCode(403);
-        var project = await db.Projects.FindAsync(id);
+var project = await db.Projects.FindAsync(id);
         if (project?.AssignedUserListId == null) return NotFound();
 
         var totalUsers  = await db.Users.CountAsync(u => u.UserListId == project.AssignedUserListId);
@@ -778,19 +761,18 @@ public class SystemAdminController(
     [HttpGet("/admin/projects/{id}/roles")]
     public async Task<IActionResult> AdminListRoles(Guid id)
     {
-        if (!HasAdminAccess) return StatusCode(403);
-        var roles = await db.Roles
+var roles = await db.Roles
             .Where(r => r.ProjectId == id)
             .Select(r => new { r.Id, r.Name, r.Description, r.Rank })
             .ToListAsync();
         return Ok(roles);
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpPost("/admin/projects/{id}/roles")]
     public async Task<IActionResult> AdminCreateRole(Guid id, [FromBody] AdminCreateRoleRequest body)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        if (!await db.Projects.AnyAsync(p => p.Id == id)) return NotFound();
+if (!await db.Projects.AnyAsync(p => p.Id == id)) return NotFound();
         var role = new Role
         {
             ProjectId = id, Name = body.Name, Description = body.Description,
@@ -801,11 +783,11 @@ public class SystemAdminController(
         return Created($"/admin/projects/{id}/roles/{role.Id}", new { role.Id, role.Name, role.Rank });
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpDelete("/admin/projects/{id}/roles/{rid}")]
     public async Task<IActionResult> AdminDeleteRole(Guid id, Guid rid)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == rid && r.ProjectId == id);
+var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == rid && r.ProjectId == id);
         if (role == null) return NotFound();
         db.Roles.Remove(role);
         await db.SaveChangesAsync();
@@ -817,8 +799,7 @@ public class SystemAdminController(
     [HttpGet("/admin/audit-log")]
     public async Task<IActionResult> GetAuditLog([FromQuery] int limit = 50, [FromQuery] int offset = 0)
     {
-        if (!HasAdminAccess) return StatusCode(403);
-        var logs = await db.AuditLogs
+var logs = await db.AuditLogs
             .OrderByDescending(l => l.CreatedAt)
             .Skip(offset).Take(limit)
             .Select(l => new { l.Id, l.Action, l.OrgId, l.ProjectId, l.ActorId, l.TargetType, l.TargetId, l.IpAddress, l.CreatedAt, l.Metadata })
@@ -829,8 +810,7 @@ public class SystemAdminController(
     [HttpGet("/admin/metrics")]
     public async Task<IActionResult> GetMetrics()
     {
-        if (!HasAdminAccess) return StatusCode(403);
-        return Ok(new
+return Ok(new
         {
             org_count    = await db.Organisations.CountAsync(),
             active_users = await db.Users.CountAsync(u => u.Active),
@@ -841,16 +821,15 @@ public class SystemAdminController(
     [HttpGet("/admin/hydra/clients")]
     public async Task<IActionResult> ListHydraClients()
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var clients = await hydra.ListOAuth2ClientsAsync();
+var clients = await hydra.ListOAuth2ClientsAsync();
         return Ok(clients);
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpPost("/admin/hydra/clients")]
     public async Task<IActionResult> CreateHydraClient([FromBody] CreateHydraClientRequest body)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var client = await hydra.CreateOAuth2ClientAsync(new
+var client = await hydra.CreateOAuth2ClientAsync(new
         {
             client_name = body.ClientName,
             grant_types = body.GrantTypes,
@@ -864,17 +843,16 @@ public class SystemAdminController(
     [HttpGet("/admin/hydra/clients/{id}")]
     public async Task<IActionResult> GetHydraClient(string id)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        var client = await hydra.GetOAuth2ClientAsync(id);
+var client = await hydra.GetOAuth2ClientAsync(id);
         if (client == null) return NotFound();
         return Ok(client);
     }
 
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
     [HttpDelete("/admin/hydra/clients/{id}")]
     public async Task<IActionResult> DeleteHydraClient(string id)
     {
-        if (!IsSuperAdmin) return StatusCode(403);
-        await hydra.DeleteOAuth2ClientAsync(id);
+await hydra.DeleteOAuth2ClientAsync(id);
         return NoContent();
     }
 
@@ -900,7 +878,7 @@ public record AssignOrgAdminRequest(Guid UserId, string Role, Guid? ScopeId);
 public record AdminCreateUserListRequest(string Name, Guid OrgId);
 public record AdminCreateProjectRequest(string Name, string Slug, bool RequireRoleToLogin, string[]? RedirectUris);
 public record AdminUpdateProjectRequest(string? Name, bool? RequireRoleToLogin, bool? AllowSelfRegistration, bool? EmailVerificationEnabled, bool? SmsVerificationEnabled,
-    bool? Active, Guid? DefaultRoleId, bool? ClearDefaultRole, string[]? AllowedEmailDomains, System.Text.Json.JsonElement? LoginTheme);
+    bool? Active, Guid? DefaultRoleId, bool? ClearDefaultRole, string[]? AllowedEmailDomains, Dictionary<string, object>? LoginTheme);
 public record AdminAssignUserListRequest(Guid UserListId);
 public record CreateSystemSaRequest(string Name, string? Description);
 public record AssignSystemSaRoleRequest(string Role);
