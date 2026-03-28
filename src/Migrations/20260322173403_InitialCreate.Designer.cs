@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using RediensIAM.Data;
@@ -11,9 +12,11 @@ using RediensIAM.Data;
 namespace RediensIAM.Migrations
 {
     [DbContext(typeof(RediensIamDbContext))]
-    partial class RediensIamDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260322173403_InitialCreate")]
+    partial class InitialCreate
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -325,9 +328,6 @@ namespace RediensIAM.Migrations
                     b.Property<Guid?>("CreatedBy")
                         .HasColumnType("uuid");
 
-                    b.Property<Guid?>("DefaultRoleId")
-                        .HasColumnType("uuid");
-
                     b.Property<bool>("EmailVerificationEnabled")
                         .HasColumnType("boolean");
 
@@ -370,8 +370,6 @@ namespace RediensIAM.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("AssignedUserListId");
-
-                    b.HasIndex("DefaultRoleId");
 
                     b.HasIndex("OrgId", "Slug")
                         .IsUnique();
@@ -443,11 +441,6 @@ namespace RediensIAM.Migrations
 
                     b.Property<string>("HydraClientId")
                         .HasColumnType("text");
-
-                    b.Property<bool>("IsSystem")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false);
 
                     b.Property<DateTimeOffset?>("LastUsedAt")
                         .HasColumnType("timestamp with time zone");
@@ -714,45 +707,6 @@ namespace RediensIAM.Migrations
                     b.ToTable("user_project_roles", (string)null);
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.UserSocialAccount", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid")
-                        .HasDefaultValueSql("gen_random_uuid()");
-
-                    b.Property<string>("Email")
-                        .HasMaxLength(320)
-                        .HasColumnType("character varying(320)");
-
-                    b.Property<DateTimeOffset>("LinkedAt")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("timestamp with time zone")
-                        .HasDefaultValueSql("now()");
-
-                    b.Property<string>("Provider")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("ProviderUserId")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("UserId");
-
-                    b.HasIndex("Provider", "ProviderUserId")
-                        .IsUnique();
-
-                    b.ToTable("user_social_accounts", (string)null);
-                });
-
             modelBuilder.Entity("RediensIAM.Entities.WebAuthnCredential", b =>
                 {
                     b.Property<Guid>("Id")
@@ -865,11 +819,6 @@ namespace RediensIAM.Migrations
                         .HasForeignKey("AssignedUserListId")
                         .OnDelete(DeleteBehavior.SetNull);
 
-                    b.HasOne("RediensIAM.Entities.Role", "DefaultRole")
-                        .WithMany()
-                        .HasForeignKey("DefaultRoleId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("RediensIAM.Entities.Organisation", "Organisation")
                         .WithMany("Projects")
                         .HasForeignKey("OrgId")
@@ -877,8 +826,6 @@ namespace RediensIAM.Migrations
                         .IsRequired();
 
                     b.Navigation("AssignedUserList");
-
-                    b.Navigation("DefaultRole");
 
                     b.Navigation("Organisation");
                 });
@@ -983,17 +930,6 @@ namespace RediensIAM.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.UserSocialAccount", b =>
-                {
-                    b.HasOne("RediensIAM.Entities.User", "User")
-                        .WithMany("SocialAccounts")
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("User");
-                });
-
             modelBuilder.Entity("RediensIAM.Entities.WebAuthnCredential", b =>
                 {
                     b.HasOne("RediensIAM.Entities.User", "User")
@@ -1046,8 +982,6 @@ namespace RediensIAM.Migrations
                     b.Navigation("OrgRoles");
 
                     b.Navigation("ProjectRoles");
-
-                    b.Navigation("SocialAccounts");
 
                     b.Navigation("WebAuthnCredentials");
                 });

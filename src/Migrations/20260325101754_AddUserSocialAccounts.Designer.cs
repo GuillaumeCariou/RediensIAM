@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using RediensIAM.Data;
@@ -11,9 +12,11 @@ using RediensIAM.Data;
 namespace RediensIAM.Migrations
 {
     [DbContext(typeof(RediensIamDbContext))]
-    partial class RediensIamDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260325101754_AddUserSocialAccounts")]
+    partial class AddUserSocialAccounts
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -325,9 +328,6 @@ namespace RediensIAM.Migrations
                     b.Property<Guid?>("CreatedBy")
                         .HasColumnType("uuid");
 
-                    b.Property<Guid?>("DefaultRoleId")
-                        .HasColumnType("uuid");
-
                     b.Property<bool>("EmailVerificationEnabled")
                         .HasColumnType("boolean");
 
@@ -370,8 +370,6 @@ namespace RediensIAM.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("AssignedUserListId");
-
-                    b.HasIndex("DefaultRoleId");
 
                     b.HasIndex("OrgId", "Slug")
                         .IsUnique();
@@ -865,11 +863,6 @@ namespace RediensIAM.Migrations
                         .HasForeignKey("AssignedUserListId")
                         .OnDelete(DeleteBehavior.SetNull);
 
-                    b.HasOne("RediensIAM.Entities.Role", "DefaultRole")
-                        .WithMany()
-                        .HasForeignKey("DefaultRoleId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("RediensIAM.Entities.Organisation", "Organisation")
                         .WithMany("Projects")
                         .HasForeignKey("OrgId")
@@ -877,8 +870,6 @@ namespace RediensIAM.Migrations
                         .IsRequired();
 
                     b.Navigation("AssignedUserList");
-
-                    b.Navigation("DefaultRole");
 
                     b.Navigation("Organisation");
                 });
