@@ -124,7 +124,7 @@ function JwtProfileSection({ saId, getKeys, addKey, removeKey }: {
 export default function OrgServiceAccountDetail() {
   const { saId } = useParams<{ saId: string }>();
   const navigate = useNavigate();
-  const { orgBase } = useOrgContext();
+  const { orgId, orgBase } = useOrgContext();
 
   const [sa, setSa] = useState<Sa | null>(null);
   const [loading, setLoading] = useState(true);
