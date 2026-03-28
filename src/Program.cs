@@ -203,7 +203,7 @@ app.UseWhen(
 // Block admin/internal on public port
 app.Use(async (ctx, next) =>
 {
-    var isAdminRoute = ctx.Request.Path.StartsWithSegments("/admin") || ctx.Request.Path.StartsWithSegments("/internal") || ctx.Request.Path.StartsWithSegments("/service-accounts");
+    var isAdminRoute = ctx.Request.Path.StartsWithSegments("/admin") || ctx.Request.Path.StartsWithSegments("/internal");
     if (isAdminRoute && ctx.Connection.LocalPort == appConfig.PublicPort)
     {
         ctx.Response.StatusCode = 404;
