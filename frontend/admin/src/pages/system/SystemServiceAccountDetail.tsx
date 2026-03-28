@@ -16,6 +16,7 @@ import {
   generatePat, revokePat,
   assignSaRole, removeSaRole,
   getSaApiKeys, addSaApiKey, removeSaApiKey,
+  listOrgs, listProjects,
 } from '@/api';
 import { fmtDateShort } from '@/lib/utils';
 
@@ -120,6 +121,9 @@ export default function SystemServiceAccountDetail() {
   // Role assign
   const [roleOpen, setRoleOpen] = useState(false);
   const [roleSaving, setRoleSaving] = useState(false);
+  const [roleForm, setRoleForm] = useState({ role: '', org_id: '', project_id: '' });
+  const [orgs, setOrgs] = useState<{ id: string; name: string }[]>([]);
+  const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
 
   // Role remove
   const [removeRoleTarget, setRemoveRoleTarget] = useState<SaRole | null>(null);
@@ -166,11 +170,35 @@ export default function SystemServiceAccountDetail() {
     load();
   };
 
-  const handleAssignRole = async (role: string) => {
-    if (!id) return;
+  const openRoleDialog = () => {
+    setRoleForm({ role: '', org_id: '', project_id: '' });
+    setOrgs([]);
+    setProjects([]);
+    listOrgs().then((r: { id: string; name: string }[]) => setOrgs(r ?? [])).catch(console.error);
+    setRoleOpen(true);
+  };
+
+  const handleRoleChange = (role: string) => {
+    setRoleForm({ role, org_id: '', project_id: '' });
+    setProjects([]);
+  };
+
+  const handleOrgChange = (org_id: string) => {
+    setRoleForm(f => ({ ...f, org_id, project_id: '' }));
+    setProjects([]);
+    if (org_id) listProjects(org_id).then((r: { id: string; name: string }[]) => setProjects(r ?? [])).catch(console.error);
+  };
+
+  const handleAssignRole = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!id || !roleForm.role) return;
     setRoleSaving(true);
     try {
-      await assignSaRole(id, { role });
+      await assignSaRole(id, {
+        role: roleForm.role,
+        org_id: roleForm.org_id || undefined,
+        project_id: roleForm.project_id || undefined,
+      });
       setRoleOpen(false);
       load();
     } finally { setRoleSaving(false); }
@@ -229,7 +257,7 @@ export default function SystemServiceAccountDetail() {
       <div className="rounded-xl border bg-card overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Assigned Roles</h2>
-          <Button size="sm" onClick={() => setRoleOpen(true)}>
+          <Button size="sm" onClick={openRoleDialog}>
             <Plus className="h-4 w-4" />Assign Role
           </Button>
         </div>
@@ -392,22 +420,54 @@ export default function SystemServiceAccountDetail() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Assign Role</DialogTitle>
-            <DialogDescription>System service accounts can only hold the super_admin role.</DialogDescription>
+            <DialogDescription>Grant a management role to this service account.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <form onSubmit={handleAssignRole} className="space-y-4">
             <div className="space-y-2">
               <Label>Role</Label>
-              <Select onValueChange={handleAssignRole} disabled={roleSaving}>
+              <Select value={roleForm.role} onValueChange={handleRoleChange} disabled={roleSaving}>
                 <SelectTrigger><SelectValue placeholder="Select a role" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="super_admin">super_admin</SelectItem>
+                  <SelectItem value="org_admin">org_admin</SelectItem>
+                  <SelectItem value="project_admin">project_admin</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRoleOpen(false)}>Cancel</Button>
-          </DialogFooter>
+            {(roleForm.role === 'org_admin' || roleForm.role === 'project_admin') && (
+              <div className="space-y-2">
+                <Label>Organisation</Label>
+                <Select value={roleForm.org_id} onValueChange={handleOrgChange} disabled={roleSaving}>
+                  <SelectTrigger><SelectValue placeholder="Select an organisation" /></SelectTrigger>
+                  <SelectContent>
+                    {orgs.map(o => <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {roleForm.role === 'project_admin' && roleForm.org_id && (
+              <div className="space-y-2">
+                <Label>Project</Label>
+                <Select value={roleForm.project_id} onValueChange={v => setRoleForm(f => ({ ...f, project_id: v }))} disabled={roleSaving}>
+                  <SelectTrigger><SelectValue placeholder="Select a project" /></SelectTrigger>
+                  <SelectContent>
+                    {projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setRoleOpen(false)}>Cancel</Button>
+              <Button
+                type="submit"
+                disabled={roleSaving || !roleForm.role
+                  || (roleForm.role === 'org_admin' && !roleForm.org_id)
+                  || (roleForm.role === 'project_admin' && (!roleForm.org_id || !roleForm.project_id))}
+              >
+                {roleSaving ? 'Assigning…' : 'Assign'}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 
