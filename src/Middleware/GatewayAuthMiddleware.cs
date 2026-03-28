@@ -5,9 +5,7 @@ using RediensIAM.Services;
 
 namespace RediensIAM.Middleware;
 
-public class GatewayAuthMiddleware(
-    RequestDelegate next,
-    HydraService hydra)
+public class GatewayAuthMiddleware(RequestDelegate next)
 {
     private const string PatPrefix = "rediens_pat_";
 
@@ -33,6 +31,7 @@ public class GatewayAuthMiddleware(
         }
         else
         {
+            var hydra = ctx.RequestServices.GetRequiredService<HydraService>();
             claims = await hydra.ValidateJwtAsync(token);
         }
 
