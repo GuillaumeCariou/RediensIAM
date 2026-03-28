@@ -22,7 +22,7 @@ namespace RediensIAM.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("RediensIAM.Entities.AuditLog", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.AuditLog", b =>
                 {
                     b.Property<long>("Id")
                         .ValueGeneratedOnAdd()
@@ -82,7 +82,7 @@ namespace RediensIAM.Migrations
                     b.ToTable("audit_log", (string)null);
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.BackupCode", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.BackupCode", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -111,7 +111,7 @@ namespace RediensIAM.Migrations
                     b.ToTable("backup_codes", (string)null);
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.EmailToken", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.EmailToken", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -153,7 +153,7 @@ namespace RediensIAM.Migrations
                     b.ToTable("email_tokens", (string)null);
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.OrgRole", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.OrgRole", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -195,7 +195,7 @@ namespace RediensIAM.Migrations
                     b.ToTable("org_roles", (string)null);
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.Organisation", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.Organisation", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -250,7 +250,7 @@ namespace RediensIAM.Migrations
                     b.ToTable("organisations", (string)null);
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.PersonalAccessToken", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.PersonalAccessToken", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -293,7 +293,7 @@ namespace RediensIAM.Migrations
                     b.ToTable("personal_access_tokens", (string)null);
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.Project", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.Project", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -341,6 +341,9 @@ namespace RediensIAM.Migrations
                         .IsRequired()
                         .HasColumnType("jsonb");
 
+                    b.Property<int>("MinPasswordLength")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -348,6 +351,18 @@ namespace RediensIAM.Migrations
 
                     b.Property<Guid>("OrgId")
                         .HasColumnType("uuid");
+
+                    b.Property<bool>("PasswordRequireDigit")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("PasswordRequireLowercase")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("PasswordRequireSpecial")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("PasswordRequireUppercase")
+                        .HasColumnType("boolean");
 
                     b.Property<bool>("RequireRoleToLogin")
                         .ValueGeneratedOnAdd()
@@ -379,7 +394,7 @@ namespace RediensIAM.Migrations
                     b.ToTable("projects", (string)null);
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.Role", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.Role", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -418,7 +433,7 @@ namespace RediensIAM.Migrations
                     b.ToTable("roles", (string)null);
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.ServiceAccount", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.ServiceAccount", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -444,11 +459,6 @@ namespace RediensIAM.Migrations
                     b.Property<string>("HydraClientId")
                         .HasColumnType("text");
 
-                    b.Property<bool>("IsSystem")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false);
-
                     b.Property<DateTimeOffset?>("LastUsedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -470,7 +480,7 @@ namespace RediensIAM.Migrations
                     b.ToTable("service_accounts", (string)null);
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.ServiceAccountOrgRole", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.ServiceAccountRole", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -483,6 +493,12 @@ namespace RediensIAM.Migrations
                         .HasDefaultValueSql("now()");
 
                     b.Property<Guid?>("GrantedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("OrgId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ProjectId")
                         .HasColumnType("uuid");
 
                     b.Property<string>("Role")
@@ -495,54 +511,15 @@ namespace RediensIAM.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("ServiceAccountId", "Role")
+                    b.HasIndex("ServiceAccountId");
+
+                    b.HasIndex("ServiceAccountId", "Role", "OrgId", "ProjectId")
                         .IsUnique();
 
-                    b.ToTable("service_account_org_roles", (string)null);
+                    b.ToTable("service_account_roles", (string)null);
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.ServiceAccountProjectRole", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid")
-                        .HasDefaultValueSql("gen_random_uuid()");
-
-                    b.Property<string>("DisplayName")
-                        .HasColumnType("text");
-
-                    b.Property<DateTimeOffset>("GrantedAt")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("timestamp with time zone")
-                        .HasDefaultValueSql("now()");
-
-                    b.Property<Guid?>("GrantedBy")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("ProjectId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Role")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<Guid>("SaId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ProjectId");
-
-                    b.HasIndex("SaId");
-
-                    b.HasIndex("SaId", "ProjectId", "Role")
-                        .IsUnique();
-
-                    b.ToTable("service_account_project_roles", (string)null);
-                });
-
-            modelBuilder.Entity("RediensIAM.Entities.User", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.User", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -641,7 +618,7 @@ namespace RediensIAM.Migrations
                     b.ToTable("users", (string)null);
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.UserList", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.UserList", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -676,7 +653,7 @@ namespace RediensIAM.Migrations
                     b.ToTable("user_lists", (string)null);
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.UserProjectRole", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.UserProjectRole", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -714,7 +691,7 @@ namespace RediensIAM.Migrations
                     b.ToTable("user_project_roles", (string)null);
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.UserSocialAccount", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.UserSocialAccount", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -753,7 +730,7 @@ namespace RediensIAM.Migrations
                     b.ToTable("user_social_accounts", (string)null);
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.WebAuthnCredential", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.WebAuthnCredential", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -795,9 +772,9 @@ namespace RediensIAM.Migrations
                     b.ToTable("webauthn_credentials", (string)null);
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.BackupCode", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.BackupCode", b =>
                 {
-                    b.HasOne("RediensIAM.Entities.User", "User")
+                    b.HasOne("RediensIAM.Data.Entities.User", "User")
                         .WithMany("BackupCodes")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -806,9 +783,9 @@ namespace RediensIAM.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.EmailToken", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.EmailToken", b =>
                 {
-                    b.HasOne("RediensIAM.Entities.User", "User")
+                    b.HasOne("RediensIAM.Data.Entities.User", "User")
                         .WithMany("EmailTokens")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -817,15 +794,15 @@ namespace RediensIAM.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.OrgRole", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.OrgRole", b =>
                 {
-                    b.HasOne("RediensIAM.Entities.Organisation", "Organisation")
+                    b.HasOne("RediensIAM.Data.Entities.Organisation", "Organisation")
                         .WithMany("OrgRoles")
                         .HasForeignKey("OrgId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("RediensIAM.Entities.User", "User")
+                    b.HasOne("RediensIAM.Data.Entities.User", "User")
                         .WithMany("OrgRoles")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -836,9 +813,9 @@ namespace RediensIAM.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.Organisation", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.Organisation", b =>
                 {
-                    b.HasOne("RediensIAM.Entities.UserList", "OrgList")
+                    b.HasOne("RediensIAM.Data.Entities.UserList", "OrgList")
                         .WithMany()
                         .HasForeignKey("OrgListId")
                         .OnDelete(DeleteBehavior.Restrict)
@@ -847,9 +824,9 @@ namespace RediensIAM.Migrations
                     b.Navigation("OrgList");
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.PersonalAccessToken", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.PersonalAccessToken", b =>
                 {
-                    b.HasOne("RediensIAM.Entities.ServiceAccount", "ServiceAccount")
+                    b.HasOne("RediensIAM.Data.Entities.ServiceAccount", "ServiceAccount")
                         .WithMany("PersonalAccessTokens")
                         .HasForeignKey("ServiceAccountId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -858,19 +835,19 @@ namespace RediensIAM.Migrations
                     b.Navigation("ServiceAccount");
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.Project", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.Project", b =>
                 {
-                    b.HasOne("RediensIAM.Entities.UserList", "AssignedUserList")
+                    b.HasOne("RediensIAM.Data.Entities.UserList", "AssignedUserList")
                         .WithMany("Projects")
                         .HasForeignKey("AssignedUserListId")
                         .OnDelete(DeleteBehavior.SetNull);
 
-                    b.HasOne("RediensIAM.Entities.Role", "DefaultRole")
+                    b.HasOne("RediensIAM.Data.Entities.Role", "DefaultRole")
                         .WithMany()
                         .HasForeignKey("DefaultRoleId")
                         .OnDelete(DeleteBehavior.SetNull);
 
-                    b.HasOne("RediensIAM.Entities.Organisation", "Organisation")
+                    b.HasOne("RediensIAM.Data.Entities.Organisation", "Organisation")
                         .WithMany("Projects")
                         .HasForeignKey("OrgId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -883,9 +860,9 @@ namespace RediensIAM.Migrations
                     b.Navigation("Organisation");
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.Role", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.Role", b =>
                 {
-                    b.HasOne("RediensIAM.Entities.Project", "Project")
+                    b.HasOne("RediensIAM.Data.Entities.Project", "Project")
                         .WithMany("Roles")
                         .HasForeignKey("ProjectId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -894,9 +871,9 @@ namespace RediensIAM.Migrations
                     b.Navigation("Project");
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.ServiceAccount", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.ServiceAccount", b =>
                 {
-                    b.HasOne("RediensIAM.Entities.UserList", "UserList")
+                    b.HasOne("RediensIAM.Data.Entities.UserList", "UserList")
                         .WithMany("ServiceAccounts")
                         .HasForeignKey("UserListId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -905,10 +882,10 @@ namespace RediensIAM.Migrations
                     b.Navigation("UserList");
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.ServiceAccountOrgRole", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.ServiceAccountRole", b =>
                 {
-                    b.HasOne("RediensIAM.Entities.ServiceAccount", "ServiceAccount")
-                        .WithMany("OrgRoles")
+                    b.HasOne("RediensIAM.Data.Entities.ServiceAccount", "ServiceAccount")
+                        .WithMany("Roles")
                         .HasForeignKey("ServiceAccountId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
@@ -916,28 +893,9 @@ namespace RediensIAM.Migrations
                     b.Navigation("ServiceAccount");
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.ServiceAccountProjectRole", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.User", b =>
                 {
-                    b.HasOne("RediensIAM.Entities.Project", "Project")
-                        .WithMany("ServiceAccountProjectRoles")
-                        .HasForeignKey("ProjectId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("RediensIAM.Entities.ServiceAccount", "ServiceAccount")
-                        .WithMany("ProjectRoles")
-                        .HasForeignKey("SaId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Project");
-
-                    b.Navigation("ServiceAccount");
-                });
-
-            modelBuilder.Entity("RediensIAM.Entities.User", b =>
-                {
-                    b.HasOne("RediensIAM.Entities.UserList", "UserList")
+                    b.HasOne("RediensIAM.Data.Entities.UserList", "UserList")
                         .WithMany("Users")
                         .HasForeignKey("UserListId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -946,9 +904,9 @@ namespace RediensIAM.Migrations
                     b.Navigation("UserList");
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.UserList", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.UserList", b =>
                 {
-                    b.HasOne("RediensIAM.Entities.Organisation", "Organisation")
+                    b.HasOne("RediensIAM.Data.Entities.Organisation", "Organisation")
                         .WithMany("UserLists")
                         .HasForeignKey("OrgId")
                         .OnDelete(DeleteBehavior.Cascade);
@@ -956,21 +914,21 @@ namespace RediensIAM.Migrations
                     b.Navigation("Organisation");
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.UserProjectRole", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.UserProjectRole", b =>
                 {
-                    b.HasOne("RediensIAM.Entities.Project", "Project")
+                    b.HasOne("RediensIAM.Data.Entities.Project", "Project")
                         .WithMany("UserProjectRoles")
                         .HasForeignKey("ProjectId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("RediensIAM.Entities.Role", "Role")
+                    b.HasOne("RediensIAM.Data.Entities.Role", "Role")
                         .WithMany("UserProjectRoles")
                         .HasForeignKey("RoleId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("RediensIAM.Entities.User", "User")
+                    b.HasOne("RediensIAM.Data.Entities.User", "User")
                         .WithMany("ProjectRoles")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -983,9 +941,9 @@ namespace RediensIAM.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.UserSocialAccount", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.UserSocialAccount", b =>
                 {
-                    b.HasOne("RediensIAM.Entities.User", "User")
+                    b.HasOne("RediensIAM.Data.Entities.User", "User")
                         .WithMany("SocialAccounts")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -994,9 +952,9 @@ namespace RediensIAM.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.WebAuthnCredential", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.WebAuthnCredential", b =>
                 {
-                    b.HasOne("RediensIAM.Entities.User", "User")
+                    b.HasOne("RediensIAM.Data.Entities.User", "User")
                         .WithMany("WebAuthnCredentials")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -1005,7 +963,7 @@ namespace RediensIAM.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.Organisation", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.Organisation", b =>
                 {
                     b.Navigation("OrgRoles");
 
@@ -1014,30 +972,26 @@ namespace RediensIAM.Migrations
                     b.Navigation("UserLists");
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.Project", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.Project", b =>
                 {
                     b.Navigation("Roles");
 
-                    b.Navigation("ServiceAccountProjectRoles");
-
                     b.Navigation("UserProjectRoles");
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.Role", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.Role", b =>
                 {
                     b.Navigation("UserProjectRoles");
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.ServiceAccount", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.ServiceAccount", b =>
                 {
-                    b.Navigation("OrgRoles");
-
                     b.Navigation("PersonalAccessTokens");
 
-                    b.Navigation("ProjectRoles");
+                    b.Navigation("Roles");
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.User", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.User", b =>
                 {
                     b.Navigation("BackupCodes");
 
@@ -1052,7 +1006,7 @@ namespace RediensIAM.Migrations
                     b.Navigation("WebAuthnCredentials");
                 });
 
-            modelBuilder.Entity("RediensIAM.Entities.UserList", b =>
+            modelBuilder.Entity("RediensIAM.Data.Entities.UserList", b =>
                 {
                     b.Navigation("Projects");
 

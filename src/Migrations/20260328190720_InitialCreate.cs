@@ -129,45 +129,6 @@ namespace RediensIAM.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "projects",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "uuid", nullable: false, defaultValueSql: "gen_random_uuid()"),
-                    OrgId = table.Column<Guid>(type: "uuid", nullable: false),
-                    Name = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
-                    Slug = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: false),
-                    HydraClientId = table.Column<string>(type: "text", nullable: true),
-                    AssignedUserListId = table.Column<Guid>(type: "uuid", nullable: true),
-                    LoginTheme = table.Column<string>(type: "jsonb", nullable: false),
-                    LoginTemplate = table.Column<string>(type: "text", nullable: true),
-                    RequireRoleToLogin = table.Column<bool>(type: "boolean", nullable: false, defaultValue: false),
-                    AllowSelfRegistration = table.Column<bool>(type: "boolean", nullable: false, defaultValue: false),
-                    AllowedEmailDomains = table.Column<string[]>(type: "text[]", nullable: false),
-                    EmailVerificationEnabled = table.Column<bool>(type: "boolean", nullable: false),
-                    SmsVerificationEnabled = table.Column<bool>(type: "boolean", nullable: false),
-                    Active = table.Column<bool>(type: "boolean", nullable: false, defaultValue: true),
-                    CreatedBy = table.Column<Guid>(type: "uuid", nullable: true),
-                    CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false, defaultValueSql: "now()"),
-                    UpdatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false, defaultValueSql: "now()")
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_projects", x => x.Id);
-                    table.ForeignKey(
-                        name: "FK_projects_organisations_OrgId",
-                        column: x => x.OrgId,
-                        principalTable: "organisations",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
-                    table.ForeignKey(
-                        name: "FK_projects_user_lists_AssignedUserListId",
-                        column: x => x.AssignedUserListId,
-                        principalTable: "user_lists",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.SetNull);
-                });
-
-            migrationBuilder.CreateTable(
                 name: "service_accounts",
                 columns: table => new
                 {
@@ -231,29 +192,6 @@ namespace RediensIAM.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "roles",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "uuid", nullable: false, defaultValueSql: "gen_random_uuid()"),
-                    ProjectId = table.Column<Guid>(type: "uuid", nullable: false),
-                    Name = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: false),
-                    Description = table.Column<string>(type: "text", nullable: true),
-                    Rank = table.Column<int>(type: "integer", nullable: false, defaultValue: 100),
-                    CreatedBy = table.Column<Guid>(type: "uuid", nullable: true),
-                    CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false, defaultValueSql: "now()")
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_roles", x => x.Id);
-                    table.ForeignKey(
-                        name: "FK_roles_projects_ProjectId",
-                        column: x => x.ProjectId,
-                        principalTable: "projects",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
-                });
-
-            migrationBuilder.CreateTable(
                 name: "personal_access_tokens",
                 columns: table => new
                 {
@@ -278,20 +216,22 @@ namespace RediensIAM.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "service_account_org_roles",
+                name: "service_account_roles",
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uuid", nullable: false, defaultValueSql: "gen_random_uuid()"),
                     ServiceAccountId = table.Column<Guid>(type: "uuid", nullable: false),
                     Role = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: false),
+                    OrgId = table.Column<Guid>(type: "uuid", nullable: true),
+                    ProjectId = table.Column<Guid>(type: "uuid", nullable: true),
                     GrantedBy = table.Column<Guid>(type: "uuid", nullable: true),
                     GrantedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false, defaultValueSql: "now()")
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_service_account_org_roles", x => x.Id);
+                    table.PrimaryKey("PK_service_account_roles", x => x.Id);
                     table.ForeignKey(
-                        name: "FK_service_account_org_roles_service_accounts_ServiceAccountId",
+                        name: "FK_service_account_roles_service_accounts_ServiceAccountId",
                         column: x => x.ServiceAccountId,
                         principalTable: "service_accounts",
                         principalColumn: "Id",
@@ -299,30 +239,23 @@ namespace RediensIAM.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "service_account_project_roles",
+                name: "user_social_accounts",
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uuid", nullable: false, defaultValueSql: "gen_random_uuid()"),
-                    SaId = table.Column<Guid>(type: "uuid", nullable: false),
-                    ProjectId = table.Column<Guid>(type: "uuid", nullable: false),
-                    Role = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: false),
-                    DisplayName = table.Column<string>(type: "text", nullable: true),
-                    GrantedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false, defaultValueSql: "now()"),
-                    GrantedBy = table.Column<Guid>(type: "uuid", nullable: true)
+                    UserId = table.Column<Guid>(type: "uuid", nullable: false),
+                    Provider = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: false),
+                    ProviderUserId = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: false),
+                    Email = table.Column<string>(type: "character varying(320)", maxLength: 320, nullable: true),
+                    LinkedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false, defaultValueSql: "now()")
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_service_account_project_roles", x => x.Id);
+                    table.PrimaryKey("PK_user_social_accounts", x => x.Id);
                     table.ForeignKey(
-                        name: "FK_service_account_project_roles_projects_ProjectId",
-                        column: x => x.ProjectId,
-                        principalTable: "projects",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
-                    table.ForeignKey(
-                        name: "FK_service_account_project_roles_service_accounts_SaId",
-                        column: x => x.SaId,
-                        principalTable: "service_accounts",
+                        name: "FK_user_social_accounts_users_UserId",
+                        column: x => x.UserId,
+                        principalTable: "users",
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Cascade);
                 });
@@ -347,6 +280,74 @@ namespace RediensIAM.Migrations
                         name: "FK_webauthn_credentials_users_UserId",
                         column: x => x.UserId,
                         principalTable: "users",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "projects",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uuid", nullable: false, defaultValueSql: "gen_random_uuid()"),
+                    OrgId = table.Column<Guid>(type: "uuid", nullable: false),
+                    Name = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
+                    Slug = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: false),
+                    HydraClientId = table.Column<string>(type: "text", nullable: true),
+                    AssignedUserListId = table.Column<Guid>(type: "uuid", nullable: true),
+                    LoginTheme = table.Column<string>(type: "jsonb", nullable: false),
+                    LoginTemplate = table.Column<string>(type: "text", nullable: true),
+                    RequireRoleToLogin = table.Column<bool>(type: "boolean", nullable: false, defaultValue: false),
+                    AllowSelfRegistration = table.Column<bool>(type: "boolean", nullable: false, defaultValue: false),
+                    AllowedEmailDomains = table.Column<string[]>(type: "text[]", nullable: false),
+                    EmailVerificationEnabled = table.Column<bool>(type: "boolean", nullable: false),
+                    SmsVerificationEnabled = table.Column<bool>(type: "boolean", nullable: false),
+                    Active = table.Column<bool>(type: "boolean", nullable: false, defaultValue: true),
+                    CreatedBy = table.Column<Guid>(type: "uuid", nullable: true),
+                    CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false, defaultValueSql: "now()"),
+                    UpdatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false, defaultValueSql: "now()"),
+                    DefaultRoleId = table.Column<Guid>(type: "uuid", nullable: true),
+                    MinPasswordLength = table.Column<int>(type: "integer", nullable: false),
+                    PasswordRequireUppercase = table.Column<bool>(type: "boolean", nullable: false),
+                    PasswordRequireLowercase = table.Column<bool>(type: "boolean", nullable: false),
+                    PasswordRequireDigit = table.Column<bool>(type: "boolean", nullable: false),
+                    PasswordRequireSpecial = table.Column<bool>(type: "boolean", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_projects", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_projects_organisations_OrgId",
+                        column: x => x.OrgId,
+                        principalTable: "organisations",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                    table.ForeignKey(
+                        name: "FK_projects_user_lists_AssignedUserListId",
+                        column: x => x.AssignedUserListId,
+                        principalTable: "user_lists",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.SetNull);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "roles",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uuid", nullable: false, defaultValueSql: "gen_random_uuid()"),
+                    ProjectId = table.Column<Guid>(type: "uuid", nullable: false),
+                    Name = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: false),
+                    Description = table.Column<string>(type: "text", nullable: true),
+                    Rank = table.Column<int>(type: "integer", nullable: false, defaultValue: 100),
+                    CreatedBy = table.Column<Guid>(type: "uuid", nullable: true),
+                    CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false, defaultValueSql: "now()")
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_roles", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_roles_projects_ProjectId",
+                        column: x => x.ProjectId,
+                        principalTable: "projects",
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Cascade);
                 });
@@ -459,6 +460,11 @@ namespace RediensIAM.Migrations
                 column: "AssignedUserListId");
 
             migrationBuilder.CreateIndex(
+                name: "IX_projects_DefaultRoleId",
+                table: "projects",
+                column: "DefaultRoleId");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_projects_OrgId_Slug",
                 table: "projects",
                 columns: new[] { "OrgId", "Slug" },
@@ -471,25 +477,14 @@ namespace RediensIAM.Migrations
                 unique: true);
 
             migrationBuilder.CreateIndex(
-                name: "IX_service_account_org_roles_ServiceAccountId_Role",
-                table: "service_account_org_roles",
-                columns: new[] { "ServiceAccountId", "Role" },
-                unique: true);
+                name: "IX_service_account_roles_ServiceAccountId",
+                table: "service_account_roles",
+                column: "ServiceAccountId");
 
             migrationBuilder.CreateIndex(
-                name: "IX_service_account_project_roles_ProjectId",
-                table: "service_account_project_roles",
-                column: "ProjectId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_service_account_project_roles_SaId",
-                table: "service_account_project_roles",
-                column: "SaId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_service_account_project_roles_SaId_ProjectId_Role",
-                table: "service_account_project_roles",
-                columns: new[] { "SaId", "ProjectId", "Role" },
+                name: "IX_service_account_roles_ServiceAccountId_Role_OrgId_ProjectId",
+                table: "service_account_roles",
+                columns: new[] { "ServiceAccountId", "Role", "OrgId", "ProjectId" },
                 unique: true);
 
             migrationBuilder.CreateIndex(
@@ -528,6 +523,17 @@ namespace RediensIAM.Migrations
                 table: "user_project_roles",
                 columns: new[] { "UserId", "ProjectId", "RoleId" },
                 unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_user_social_accounts_Provider_ProviderUserId",
+                table: "user_social_accounts",
+                columns: new[] { "Provider", "ProviderUserId" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_user_social_accounts_UserId",
+                table: "user_social_accounts",
+                column: "UserId");
 
             migrationBuilder.CreateIndex(
                 name: "IX_users_UserListId_Active",
@@ -596,14 +602,34 @@ namespace RediensIAM.Migrations
                 principalTable: "user_lists",
                 principalColumn: "Id",
                 onDelete: ReferentialAction.Restrict);
+
+            migrationBuilder.AddForeignKey(
+                name: "FK_projects_roles_DefaultRoleId",
+                table: "projects",
+                column: "DefaultRoleId",
+                principalTable: "roles",
+                principalColumn: "Id",
+                onDelete: ReferentialAction.SetNull);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropForeignKey(
+                name: "FK_projects_organisations_OrgId",
+                table: "projects");
+
+            migrationBuilder.DropForeignKey(
                 name: "FK_user_lists_organisations_OrgId",
                 table: "user_lists");
+
+            migrationBuilder.DropForeignKey(
+                name: "FK_projects_user_lists_AssignedUserListId",
+                table: "projects");
+
+            migrationBuilder.DropForeignKey(
+                name: "FK_projects_roles_DefaultRoleId",
+                table: "projects");
 
             migrationBuilder.DropTable(
                 name: "audit_log");
@@ -621,13 +647,13 @@ namespace RediensIAM.Migrations
                 name: "personal_access_tokens");
 
             migrationBuilder.DropTable(
-                name: "service_account_org_roles");
-
-            migrationBuilder.DropTable(
-                name: "service_account_project_roles");
+                name: "service_account_roles");
 
             migrationBuilder.DropTable(
                 name: "user_project_roles");
+
+            migrationBuilder.DropTable(
+                name: "user_social_accounts");
 
             migrationBuilder.DropTable(
                 name: "webauthn_credentials");
@@ -636,19 +662,19 @@ namespace RediensIAM.Migrations
                 name: "service_accounts");
 
             migrationBuilder.DropTable(
-                name: "roles");
-
-            migrationBuilder.DropTable(
                 name: "users");
-
-            migrationBuilder.DropTable(
-                name: "projects");
 
             migrationBuilder.DropTable(
                 name: "organisations");
 
             migrationBuilder.DropTable(
                 name: "user_lists");
+
+            migrationBuilder.DropTable(
+                name: "roles");
+
+            migrationBuilder.DropTable(
+                name: "projects");
         }
     }
 }
