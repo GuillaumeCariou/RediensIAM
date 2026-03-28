@@ -111,7 +111,7 @@ var app = builder.Build();
     {
         try
         {
-            await db.Database.MigrateAsync();
+            await db.Database.EnsureCreatedAsync();
             logger.LogInformation("Database schema ready");
             break;
         }
