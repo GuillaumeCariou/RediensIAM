@@ -16,7 +16,7 @@ import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
-interface SA { id: string; name: string; description: string | null; active: boolean; last_used_at: string | null; created_at: string; }
+interface SA { id: string; name: string; description: string | null; active: boolean; last_used_at: string | null; created_at: string; org_id: string | null; }
 interface UserList { id: string; name: string; }
 
 export default function OrgServiceAccounts() {
@@ -34,7 +34,7 @@ export default function OrgServiceAccounts() {
     if (!orgId) { setLoading(false); return; }
     setLoading(true);
     Promise.all([
-      listServiceAccounts().then(r => setAccounts(r ?? [])),
+      listServiceAccounts().then(r => setAccounts((r ?? []).filter((sa: SA) => sa.org_id === orgId))),
       listUserLists(orgId).then(r => setUserLists(r.user_lists ?? r ?? [])),
     ]).catch(console.error).finally(() => setLoading(false));
   };
@@ -83,7 +83,7 @@ export default function OrgServiceAccounts() {
                 : accounts.length === 0
                 ? <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-12"><Bot className="h-8 w-8 mx-auto mb-2 opacity-40" />No service accounts</TableCell></TableRow>
                 : accounts.map(sa => (
-                    <TableRow key={sa.id}>
+                    <TableRow key={sa.id} className="cursor-pointer" onClick={() => navigate(`${orgBase}/service-accounts/${sa.id}`)}>
                       <TableCell>
                         <p className="font-medium">{sa.name}</p>
                         {sa.description && <p className="text-xs text-muted-foreground">{sa.description}</p>}
@@ -93,11 +93,11 @@ export default function OrgServiceAccounts() {
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">{fmtDate(sa.last_used_at)}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{fmtDate(sa.created_at)}</TableCell>
-                      <TableCell>
+                      <TableCell onClick={e => e.stopPropagation()}>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
                           <DropdownMenuContent>
-                            <DropdownMenuItem onClick={() => navigate(`${orgBase}/service-accounts/${sa.id}`)}><Key className="h-4 w-4" />Manage PATs</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => navigate(`${orgBase}/service-accounts/${sa.id}`)}><Key className="h-4 w-4" />Manage</DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteTarget(sa)}><Trash2 className="h-4 w-4" />Delete</DropdownMenuItem>
                           </DropdownMenuContent>
