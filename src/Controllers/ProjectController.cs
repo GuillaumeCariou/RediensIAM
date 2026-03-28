@@ -2,21 +2,19 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using RediensIAM.Config;
 using RediensIAM.Data;
-using RediensIAM.Entities;
+using RediensIAM.Data.Entities;
+using RediensIAM.Filters;
 using RediensIAM.Middleware;
 using RediensIAM.Services;
 
 namespace RediensIAM.Controllers;
 
 [ApiController]
-[RequireManagementLevel(ManagementLevel.ProjectManager)]
+[RequireManagementLevel(ManagementLevel.ProjectAdmin)]
 public class ProjectController(
     RediensIamDbContext db,
-    RoleAssignmentService roleService,
-    PatGenerationService patGen,
     KetoService keto,
-    HydraAdminService hydra,
-    ServiceAccountService saService,
+    HydraService hydra,
     PasswordService passwords) : ControllerBase
 {
     private TokenClaims Claims    => HttpContext.GetClaims()!;
@@ -24,13 +22,17 @@ public class ProjectController(
     private bool IsSuperAdmin     => Claims.Roles.Contains(Roles.SuperAdmin);
     private Guid CallerOrgId      => Guid.TryParse(Claims.OrgId, out var g) ? g : Guid.Empty;
 
-    // Prefer ?project_id= query param (org/super admin context) over token claims (project manager context)
+    // OrgAdmin and SuperAdmin may target any project in their org via ?project_id=.
+    // ProjectAdmin is locked to the project encoded in their own token claims.
     private Guid ProjectId
     {
         get
         {
-            var q = HttpContext.Request.Query["project_id"].FirstOrDefault();
-            if (q != null && Guid.TryParse(q, out var g)) return g;
+            if (Claims.GetManagementLevel() <= ManagementLevel.OrgAdmin)
+            {
+                var q = HttpContext.Request.Query["project_id"].FirstOrDefault();
+                if (q != null && Guid.TryParse(q, out var g)) return g;
+            }
             return Guid.Parse(Claims.ProjectId);
         }
     }
@@ -137,12 +139,12 @@ public class ProjectController(
     [HttpPost("/project/users/{id}/roles")]
     public async Task<IActionResult> AssignRole(Guid id, [FromBody] AssignRoleRequest body)
     {
-        // RoleAssignmentService re-validates authority via Keto; the org check here prevents
+        // KetoService re-validates authority; the org check here prevents
         // leaking project existence across tenants.
         if (await GetProjectAsync() == null) return NotFound();
         try
         {
-            await roleService.AssignProjectRoleAsync(ActorId, id, ProjectId, body.RoleId);
+            await keto.AssignProjectRoleAsync(ActorId, id, ProjectId, body.RoleId);
             return Ok(new { message = "role_assigned" });
         }
         catch (Exceptions.ForbiddenException ex)  { return StatusCode(403, new { error = ex.Message }); }
@@ -156,7 +158,7 @@ public class ProjectController(
         if (await GetProjectAsync() == null) return NotFound();
         try
         {
-            await roleService.RemoveProjectRoleAsync(ActorId, id, ProjectId, roleId);
+            await keto.RemoveProjectRoleAsync(ActorId, id, ProjectId, roleId);
             return NoContent();
         }
         catch (Exceptions.ForbiddenException ex) { return StatusCode(403, new { error = ex.Message }); }
@@ -197,7 +199,7 @@ public class ProjectController(
         db.Users.Add(user);
         await db.SaveChangesAsync();
         await keto.WriteRelationTupleAsync(Roles.KetoUserListsNamespace, listId.ToString(), "member", $"user:{user.Id}");
-        await roleService.AssignDefaultRoleAsync(project, user);
+        await keto.AssignDefaultRoleAsync(project, user);
         return Created($"/project/users/{user.Id}", new { user.Id, username = $"{user.Username}#{user.Discriminator}", user.Email });
     }
 
@@ -286,68 +288,6 @@ public class ProjectController(
         return NoContent();
     }
 
-    // ── Service Accounts ──────────────────────────────────────────────────────
-
-    [HttpGet("/project/service-accounts")]
-    public async Task<IActionResult> ListServiceAccounts()
-    {
-        var project = await GetProjectAsync();
-        if (project?.AssignedUserListId == null) return NotFound();
-        var sas = await db.ServiceAccounts
-            .Where(sa => sa.UserListId == project.AssignedUserListId)
-            .Select(sa => new { sa.Id, sa.Name, sa.Description, sa.Active, sa.LastUsedAt }).ToListAsync();
-        return Ok(sas);
-    }
-
-    [HttpPost("/project/service-accounts")]
-    public async Task<IActionResult> CreateServiceAccount([FromBody] CreateServiceAccountRequest body)
-    {
-        var project = await GetProjectAsync();
-        if (project?.AssignedUserListId == null) return BadRequest(new { error = "project_not_ready" });
-        var sa = new ServiceAccount
-        {
-            UserListId = project.AssignedUserListId.Value, Name = body.Name,
-            Description = body.Description, Active = true, CreatedBy = ActorId, CreatedAt = DateTimeOffset.UtcNow
-        };
-        db.ServiceAccounts.Add(sa);
-        await db.SaveChangesAsync();
-        return Created($"/project/service-accounts/{sa.Id}", new { sa.Id, sa.Name });
-    }
-
-    [HttpGet("/project/service-accounts/{id}/pat")]
-    public async Task<IActionResult> ListPats(Guid id)
-    {
-        // H3: verify the SA belongs to this project's assigned user list
-        var project = await GetProjectAsync();
-        if (project?.AssignedUserListId == null) return NotFound();
-        if (!await db.ServiceAccounts.AnyAsync(sa => sa.Id == id && sa.UserListId == project.AssignedUserListId))
-            return NotFound();
-        return Ok(await saService.ListPatsAsync(id));
-    }
-
-    [HttpPost("/project/service-accounts/{id}/pat")]
-    public async Task<IActionResult> GeneratePat(Guid id, [FromBody] GeneratePatRequest body)
-    {
-        var project = await GetProjectAsync();
-        if (project?.AssignedUserListId == null) return NotFound();
-        var sa = await db.ServiceAccounts.FirstOrDefaultAsync(
-            sa => sa.Id == id && sa.UserListId == project.AssignedUserListId);
-        if (sa == null) return NotFound();
-        var (raw, pat) = await patGen.GenerateAsync(id, body.Name, body.ExpiresAt, ActorId);
-        return Ok(new { pat.Id, pat.Name, token = raw, pat.ExpiresAt, message = "store_this_token_shown_once" });
-    }
-
-    [HttpDelete("/project/service-accounts/{id}/pat/{patId}")]
-    public async Task<IActionResult> RevokePat(Guid id, Guid patId)
-    {
-        var project = await GetProjectAsync();
-        if (project?.AssignedUserListId == null) return NotFound();
-        if (!await db.ServiceAccounts.AnyAsync(sa => sa.Id == id && sa.UserListId == project.AssignedUserListId))
-            return NotFound();
-        try { await saService.RevokePat(patId, id); return NoContent(); }
-        catch (KeyNotFoundException) { return NotFound(); }
-    }
-
     // ── Audit log + cleanup ───────────────────────────────────────────────────
 
     [HttpGet("/project/audit-log")]
@@ -394,5 +334,4 @@ public record CreateProjectUserRequest(string Email, string? Username, string Pa
 public record AssignRoleRequest(Guid RoleId);
 public record CreateRoleRequest(string Name, string? Description, int Rank = 100);
 public record UpdateRoleRequest(string? Description, int? Rank);
-public record CreateServiceAccountRequest(string Name, string? Description);
 public record CleanupRequest(bool DryRun = true, bool RemoveOrphanedRoles = true);

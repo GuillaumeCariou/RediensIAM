@@ -11,8 +11,9 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
-  listProjectServiceAccounts, createProjectServiceAccount,
-  generateProjectPat, listProjectPats, revokeProjectPat, deleteProjectServiceAccount,
+  listServiceAccounts, createServiceAccount,
+  generatePat, listPats, revokePat, deleteServiceAccount,
+  getProjectInfo,
 } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
@@ -33,6 +34,7 @@ function CopyButton({ text }: { text: string }) {
 export default function ProjectServiceAccounts() {
   const { projectId } = useProjectContext();
   const [accounts, setAccounts] = useState<SA[]>([]);
+  const [assignedListId, setAssignedListId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<SA | null>(null);
@@ -47,18 +49,19 @@ export default function ProjectServiceAccounts() {
   const load = () => {
     if (!projectId) { setLoading(false); return; }
     setLoading(true);
-    listProjectServiceAccounts(projectId)
-      .then(r => setAccounts(r.service_accounts ?? r ?? []))
-      .catch(console.error)
-      .finally(() => setLoading(false));
+    Promise.all([
+      listServiceAccounts().then(r => setAccounts(r ?? [])),
+      getProjectInfo(projectId).then(r => setAssignedListId(r.assigned_user_list_id ?? null)),
+    ]).catch(console.error).finally(() => setLoading(false));
   };
   useEffect(load, [projectId]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!assignedListId) return;
     setSaving(true);
     try {
-      await createProjectServiceAccount(projectId, { name: form.name, description: form.description || undefined });
+      await createServiceAccount({ name: form.name, description: form.description || undefined, user_list_id: assignedListId });
       setCreateOpen(false);
       setForm({ name: '', description: '' });
       load();
@@ -67,7 +70,7 @@ export default function ProjectServiceAccounts() {
 
   const openPats = async (sa: SA) => {
     setPatSa(sa);
-    const res = await listProjectPats(projectId, sa.id);
+    const res = await listPats(sa.id);
     setPats(res.pats ?? res ?? []);
   };
 
@@ -76,7 +79,7 @@ export default function ProjectServiceAccounts() {
     if (!genPatOpen) return;
     setSaving(true);
     try {
-      const res = await generateProjectPat(projectId, genPatOpen.id, { name: patForm.name, expires_at: patForm.expires_at || undefined });
+      const res = await generatePat(genPatOpen.id, { name: patForm.name, expires_at: patForm.expires_at || undefined });
       setNewPat(res.token);
       setPatForm({ name: '', expires_at: '' });
       setGenPatOpen(null);
@@ -86,13 +89,13 @@ export default function ProjectServiceAccounts() {
 
   const handleRevokePat = async (patId: string) => {
     if (!patSa) return;
-    await revokeProjectPat(projectId, patSa.id, patId);
+    await revokePat(patSa.id, patId);
     setPats(p => p.filter(x => x.id !== patId));
   };
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
-    await deleteProjectServiceAccount(projectId, deleteTarget.id);
+    await deleteServiceAccount(deleteTarget.id);
     setDeleteTarget(null);
     load();
   };
@@ -102,7 +105,7 @@ export default function ProjectServiceAccounts() {
       <PageHeader
         title="Service Accounts"
         description="Non-human identities for this project"
-        action={projectId ? <Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />New Service Account</Button> : undefined}
+        action={projectId ? <Button onClick={() => setCreateOpen(true)} disabled={!assignedListId}><Plus className="h-4 w-4" />New Service Account</Button> : undefined}
       />
       <div className="p-6 space-y-4">
         <div className="rounded-xl border bg-card overflow-hidden">

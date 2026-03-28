@@ -1,4 +1,5 @@
 using System.Text.Json;
+using RediensIAM.Config;
 using RediensIAM.Models;
 using RediensIAM.Services;
 
@@ -6,10 +7,9 @@ namespace RediensIAM.Middleware;
 
 public class GatewayAuthMiddleware(
     RequestDelegate next,
-    HydraJwksCache jwksCache)
+    HydraService hydra)
 {
     private const string PatPrefix = "rediens_pat_";
-    private const string ImpersonationPrefix = "rediens_imp_";
 
     public async Task InvokeAsync(HttpContext ctx)
     {
@@ -23,17 +23,9 @@ public class GatewayAuthMiddleware(
         var token = header["Bearer ".Length..].Trim();
         TokenClaims? claims;
 
-        if (token.StartsWith(ImpersonationPrefix, StringComparison.Ordinal))
+        if (token.StartsWith(PatPrefix, StringComparison.Ordinal))
         {
-            var impService = ctx.RequestServices.GetRequiredService<ImpersonationService>();
-            var imp = await impService.ResolveAsync(token);
-            claims = imp is not null
-                ? new TokenClaims { UserId = imp.UserId, OrgId = imp.OrgId, ProjectId = imp.ProjectId, Roles = imp.Roles, IsImpersonation = true }
-                : null;
-        }
-        else if (token.StartsWith(PatPrefix, StringComparison.Ordinal))
-        {
-            var patService = ctx.RequestServices.GetRequiredService<PatIntrospectionService>();
+            var patService = ctx.RequestServices.GetRequiredService<PatService>();
             var result = await patService.IntrospectAsync(token);
             claims = result is { Active: true }
                 ? new TokenClaims { UserId = result.Sub, OrgId = result.OrgId, ProjectId = result.ProjectId, Roles = result.Roles, IsServiceAccount = true }
@@ -41,7 +33,7 @@ public class GatewayAuthMiddleware(
         }
         else
         {
-            claims = await jwksCache.ValidateJwtAsync(token);
+            claims = await hydra.ValidateJwtAsync(token);
         }
 
         if (claims is null)
@@ -69,4 +61,12 @@ public static class ClaimsExtensions
 
     public static bool HasRole(this TokenClaims claims, params string[] roles)
         => roles.Any(r => claims.Roles.Contains(r));
+
+    public static ManagementLevel GetManagementLevel(this TokenClaims claims)
+    {
+        if (claims.Roles.Contains(Roles.SuperAdmin))   return ManagementLevel.SuperAdmin;
+        if (claims.Roles.Contains(Roles.OrgAdmin))     return ManagementLevel.OrgAdmin;
+        if (claims.Roles.Contains(Roles.ProjectAdmin)) return ManagementLevel.ProjectAdmin;
+        return ManagementLevel.None;
+    }
 }

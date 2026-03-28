@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
-import { listOrgServiceAccounts, createServiceAccount, deleteServiceAccount, listUserLists } from '@/api';
+import { listServiceAccounts, createServiceAccount, deleteServiceAccount, listUserLists } from '@/api';
 import { useOrgContext } from '@/hooks/useOrgContext';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
@@ -34,7 +34,7 @@ export default function OrgServiceAccounts() {
     if (!orgId) { setLoading(false); return; }
     setLoading(true);
     Promise.all([
-      listOrgServiceAccounts(orgId).then(r => setAccounts(r.service_accounts ?? r ?? [])),
+      listServiceAccounts().then(r => setAccounts(r ?? [])),
       listUserLists(orgId).then(r => setUserLists(r.user_lists ?? r ?? [])),
     ]).catch(console.error).finally(() => setLoading(false));
   };

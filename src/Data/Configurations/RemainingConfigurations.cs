@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
-using RediensIAM.Entities;
+using RediensIAM.Data.Entities;
 
 namespace RediensIAM.Data.Configurations;
 
@@ -13,13 +13,26 @@ public class ServiceAccountConfiguration : IEntityTypeConfiguration<ServiceAccou
         builder.HasKey(x => x.Id);
         builder.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
         builder.Property(x => x.Name).IsRequired().HasMaxLength(200);
-        builder.Property(x => x.IsSystem).HasDefaultValue(false);
         builder.Property(x => x.Active).HasDefaultValue(true);
         builder.Property(x => x.CreatedAt).HasDefaultValueSql("now()");
         builder.HasIndex(x => new { x.UserListId, x.Name }).IsUnique();
         builder.HasIndex(x => x.UserListId);
         builder.HasMany(x => x.PersonalAccessTokens).WithOne(x => x.ServiceAccount).HasForeignKey(x => x.ServiceAccountId).OnDelete(DeleteBehavior.Cascade);
-        builder.HasMany(x => x.ProjectRoles).WithOne(x => x.ServiceAccount).HasForeignKey(x => x.SaId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasMany(x => x.Roles).WithOne(x => x.ServiceAccount).HasForeignKey(x => x.ServiceAccountId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public class ServiceAccountRoleConfiguration : IEntityTypeConfiguration<ServiceAccountRole>
+{
+    public void Configure(EntityTypeBuilder<ServiceAccountRole> builder)
+    {
+        builder.ToTable("service_account_roles");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+        builder.Property(x => x.Role).IsRequired().HasMaxLength(100);
+        builder.Property(x => x.GrantedAt).HasDefaultValueSql("now()");
+        builder.HasIndex(x => new { x.ServiceAccountId, x.Role, x.OrgId, x.ProjectId }).IsUnique();
+        builder.HasIndex(x => x.ServiceAccountId);
     }
 }
 
@@ -80,34 +93,6 @@ public class OrgRoleConfiguration : IEntityTypeConfiguration<OrgRole>
     }
 }
 
-public class ServiceAccountProjectRoleConfiguration : IEntityTypeConfiguration<ServiceAccountProjectRole>
-{
-    public void Configure(EntityTypeBuilder<ServiceAccountProjectRole> builder)
-    {
-        builder.ToTable("service_account_project_roles");
-        builder.HasKey(x => x.Id);
-        builder.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
-        builder.Property(x => x.Role).IsRequired().HasMaxLength(100);
-        builder.Property(x => x.GrantedAt).HasDefaultValueSql("now()");
-        builder.HasIndex(x => new { x.SaId, x.ProjectId, x.Role }).IsUnique();
-        builder.HasIndex(x => x.ProjectId);
-        builder.HasIndex(x => x.SaId);
-    }
-}
-
-public class ServiceAccountOrgRoleConfiguration : IEntityTypeConfiguration<ServiceAccountOrgRole>
-{
-    public void Configure(EntityTypeBuilder<ServiceAccountOrgRole> builder)
-    {
-        builder.ToTable("service_account_org_roles");
-        builder.HasKey(x => x.Id);
-        builder.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
-        builder.Property(x => x.Role).IsRequired().HasMaxLength(100);
-        builder.Property(x => x.GrantedAt).HasDefaultValueSql("now()");
-        builder.HasOne(x => x.ServiceAccount).WithMany(x => x.OrgRoles).HasForeignKey(x => x.ServiceAccountId).OnDelete(DeleteBehavior.Cascade);
-        builder.HasIndex(x => new { x.ServiceAccountId, x.Role }).IsUnique();
-    }
-}
 
 public class WebAuthnCredentialConfiguration : IEntityTypeConfiguration<WebAuthnCredential>
 {

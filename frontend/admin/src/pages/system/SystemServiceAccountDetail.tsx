@@ -12,10 +12,10 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  getSystemServiceAccount, deleteSystemServiceAccount,
-  generateSystemPat, revokeSystemPat,
-  assignSystemSaRole, removeSystemSaRole,
-  getSystemSaKeys, addSystemSaKey, removeSystemSaKey,
+  getServiceAccount, deleteServiceAccount,
+  generatePat, revokePat,
+  assignSaRole, removeSaRole,
+  getSaApiKeys, addSaApiKey, removeSaApiKey,
 } from '@/api';
 import { fmtDateShort } from '@/lib/utils';
 
@@ -26,7 +26,7 @@ function JwtProfileSection({ saId }: { saId: string }) {
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState('');
 
-  const load = useCallback(() => { getSystemSaKeys(saId).then(setKeyInfo).catch(console.error); }, [saId]);
+  const load = useCallback(() => { getSaApiKeys(saId).then(setKeyInfo).catch(console.error); }, [saId]);
   useEffect(load, [load]);
 
   const handleGenerate = async () => {
@@ -43,7 +43,7 @@ function JwtProfileSection({ saId }: { saId: string }) {
       (publicJwk as Record<string, unknown>).kid = kid;
       (publicJwk as Record<string, unknown>).use = 'sig';
       (privateJwk as Record<string, unknown>).kid = kid;
-      const res = await addSystemSaKey(saId, publicJwk);
+      const res = await addSaApiKey(saId, publicJwk);
       if (res.error) { setError('Failed: ' + res.error); return; }
       const blob = new Blob([JSON.stringify({ private_key: privateJwk, client_id: res.client_id, alg: 'RS256', note: 'Keep this safe — it will not be shown again.' }, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -58,7 +58,7 @@ function JwtProfileSection({ saId }: { saId: string }) {
 
   const handleRemove = async () => {
     setRemoving(true);
-    try { await removeSystemSaKey(saId); load(); }
+    try { await removeSaApiKey(saId); load(); }
     finally { setRemoving(false); }
   };
 
@@ -98,7 +98,7 @@ interface Sa {
   pats: Pat[]; roles: SaRole[];
 }
 interface Pat { id: string; name: string; expires_at: string | null; last_used_at: string | null; created_at: string; }
-interface SaRole { id: string; role: string; granted_at: string; }
+interface SaRole { id: string; role: string; org_id: string | null; project_id: string | null; granted_at: string; }
 
 export default function SystemServiceAccountDetail() {
   const { id } = useParams<{ id: string }>();
@@ -130,7 +130,7 @@ export default function SystemServiceAccountDetail() {
   const load = useCallback(() => {
     if (!id) return;
     setLoading(true);
-    getSystemServiceAccount(id)
+    getServiceAccount(id)
       .then(setSa)
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -140,7 +140,7 @@ export default function SystemServiceAccountDetail() {
 
   const handleDelete = async () => {
     if (!id) return;
-    await deleteSystemServiceAccount(id);
+    await deleteServiceAccount(id);
     navigate('/system/service-accounts');
   };
 
@@ -149,7 +149,7 @@ export default function SystemServiceAccountDetail() {
     if (!id) return;
     setPatSaving(true);
     try {
-      const res = await generateSystemPat(id, {
+      const res = await generatePat(id, {
         name: newPat.name,
         expires_at: newPat.expires_at || undefined,
       });
@@ -161,7 +161,7 @@ export default function SystemServiceAccountDetail() {
 
   const handleRevokePat = async () => {
     if (!revokeTarget || !id) return;
-    await revokeSystemPat(id, revokeTarget.id);
+    await revokePat(id, revokeTarget.id);
     setRevokeTarget(null);
     load();
   };
@@ -170,7 +170,7 @@ export default function SystemServiceAccountDetail() {
     if (!id) return;
     setRoleSaving(true);
     try {
-      await assignSystemSaRole(id, role);
+      await assignSaRole(id, { role });
       setRoleOpen(false);
       load();
     } finally { setRoleSaving(false); }
@@ -178,7 +178,7 @@ export default function SystemServiceAccountDetail() {
 
   const handleRemoveRole = async () => {
     if (!removeRoleTarget || !id) return;
-    await removeSystemSaRole(id, removeRoleTarget.id);
+    await removeSaRole(id, removeRoleTarget.id);
     setRemoveRoleTarget(null);
     load();
   };

@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using OtpNet;
 using RediensIAM.Config;
 using RediensIAM.Data;
-using RediensIAM.Entities;
+using RediensIAM.Data.Entities;
 using RediensIAM.Services;
 
 namespace RediensIAM.Controllers;
@@ -16,18 +16,16 @@ namespace RediensIAM.Controllers;
 [ApiController]
 public class AuthController(
     RediensIamDbContext db,
-    HydraAdminService hydra,
+    HydraService hydra,
     PasswordService passwords,
     OtpCacheService otp,
     LoginRateLimiter rateLimiter,
     AuditLogService audit,
-    TotpEncryptionService totpEncryption,
     KetoService keto,
     IEmailService emailService,
     ISmsService smsService,
     IFido2 fido2,
     SocialLoginService socialLogin,
-    RoleAssignmentService roleService,
     AppConfig appConfig,
     ILogger<AuthController> logger) : ControllerBase
 {
@@ -358,7 +356,7 @@ public class AuthController(
             return Unauthorized(new { error = "code_already_used" });
         }
 
-        var secret = totpEncryption.Decrypt(user.TotpSecret);
+        var secret = TotpEncryption.Decrypt(Convert.FromHexString(appConfig.TotpSecretEncryptionKey), user.TotpSecret);
         var totp = new Totp(secret);
         if (!totp.VerifyTotp(body.Code, out _, new VerificationWindow(1, 1)))
         {
@@ -408,7 +406,7 @@ public class AuthController(
             if (await keto.HasAnyRelationAsync(Roles.KetoOrgsNamespace, Roles.KetoOrgAdminRelation, $"user:{userId}"))
                 adminRoles.Add(Roles.OrgAdmin);
             if (await keto.HasAnyRelationAsync(Roles.KetoProjectsNamespace, Roles.KetoManagerRelation, $"user:{userId}"))
-                adminRoles.Add(Roles.ProjectManager);
+                adminRoles.Add(Roles.ProjectAdmin);
 
             if (adminRoles.Count == 0)
             {
@@ -422,7 +420,7 @@ public class AuthController(
                 .OrderBy(r => r.GrantedAt)
                 .FirstOrDefaultAsync();
             var projectRole = await db.OrgRoles
-                .Where(r => r.UserId == userId && r.Role == Roles.ProjectManager)
+                .Where(r => r.UserId == userId && r.Role == Roles.ProjectAdmin)
                 .OrderBy(r => r.GrantedAt)
                 .FirstOrDefaultAsync();
 
@@ -551,7 +549,7 @@ public class AuthController(
             await db.SaveChangesAsync();
             await keto.WriteRelationTupleAsync(Roles.KetoUserListsNamespace, project.AssignedUserListId!.Value.ToString(), "member", $"user:{user.Id}");
             await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.registered");
-            await roleService.AssignDefaultRoleAsync(project, user);
+            await keto.AssignDefaultRoleAsync(project, user);
 
             var subject = $"{project.OrgId}:{user.Id}";
             var ctx = new Dictionary<string, object>
@@ -627,7 +625,7 @@ public class AuthController(
         await keto.WriteRelationTupleAsync(Roles.KetoUserListsNamespace, userListId.ToString(), "member", $"user:{user.Id}");
         await audit.RecordAsync(orgId, projId, user.Id, "user.registered");
         var regProject = await db.Projects.FindAsync(projId);
-        if (regProject != null) await roleService.AssignDefaultRoleAsync(regProject, user);
+        if (regProject != null) await keto.AssignDefaultRoleAsync(regProject, user);
 
         var subject = $"{orgId}:{user.Id}";
         var ctx = new Dictionary<string, object>
@@ -936,11 +934,11 @@ public class AuthController(
                 $"user:{user.Id}");
 
             await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.registered.social");
-            await roleService.AssignDefaultRoleAsync(project, user);
+            await keto.AssignDefaultRoleAsync(project, user);
         }
 
         // 4. Record the social link
-        db.UserSocialAccounts.Add(new Entities.UserSocialAccount
+        db.UserSocialAccounts.Add(new UserSocialAccount
         {
             UserId         = user.Id,
             Provider       = provider,

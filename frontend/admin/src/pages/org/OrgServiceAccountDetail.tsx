@@ -10,7 +10,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { getOrgServiceAccount, deleteServiceAccount, generatePat, revokePat, getServiceAccountKeys, addServiceAccountKey, removeServiceAccountKey } from '@/api';
+import { getServiceAccount, deleteServiceAccount, generatePat, revokePat, getSaApiKeys, addSaApiKey, removeSaApiKey } from '@/api';
 import { useOrgContext } from '@/hooks/useOrgContext';
 import { fmtDateShort } from '@/lib/utils';
 
@@ -137,7 +137,7 @@ export default function OrgServiceAccountDetail() {
   const load = useCallback(() => {
     if (!saId) return;
     setLoading(true);
-    getOrgServiceAccount(saId)
+    getServiceAccount(saId)
       .then(setSa)
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -261,9 +261,9 @@ export default function OrgServiceAccountDetail() {
       {saId && (
         <JwtProfileSection
           saId={saId}
-          getKeys={getServiceAccountKeys}
-          addKey={addServiceAccountKey}
-          removeKey={removeServiceAccountKey}
+          getKeys={getSaApiKeys}
+          addKey={addSaApiKey}
+          removeKey={removeSaApiKey}
         />
       )}
 

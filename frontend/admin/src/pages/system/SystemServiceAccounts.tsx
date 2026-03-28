@@ -10,7 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { listServiceAccounts, createSystemServiceAccount, deleteSystemServiceAccount } from '@/api';
+import { listServiceAccounts, createServiceAccount, deleteServiceAccount, listUserLists } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDateShort } from '@/lib/utils';
 
@@ -26,6 +26,7 @@ interface ServiceAccount {
 export default function SystemServiceAccounts() {
   const navigate = useNavigate();
   const [accounts, setAccounts] = useState<ServiceAccount[]>([]);
+  const [systemListId, setSystemListId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -36,19 +37,25 @@ export default function SystemServiceAccounts() {
 
   const load = useCallback(() => {
     setLoading(true);
-    listServiceAccounts()
-      .then(res => setAccounts(res ?? []))
-      .catch(console.error)
-      .finally(() => setLoading(false));
+    Promise.all([
+      listServiceAccounts().then((res: (ServiceAccount & { is_system: boolean })[]) =>
+        setAccounts((res ?? []).filter(sa => sa.is_system))
+      ),
+      listUserLists().then((res: { id: string; org_id: string | null; immovable: boolean }[]) => {
+        const syslist = (res ?? []).find(l => l.org_id == null && l.immovable);
+        if (syslist) setSystemListId(syslist.id);
+      }),
+    ]).catch(console.error).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!systemListId) return;
     setCreateSaving(true);
     try {
-      await createSystemServiceAccount({ name: newSa.name, description: newSa.description || undefined });
+      await createServiceAccount({ name: newSa.name, description: newSa.description || undefined, user_list_id: systemListId });
       setCreateOpen(false);
       setNewSa({ name: '', description: '' });
       load();
@@ -57,7 +64,7 @@ export default function SystemServiceAccounts() {
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
-    await deleteSystemServiceAccount(deleteTarget.id);
+    await deleteServiceAccount(deleteTarget.id);
     setDeleteTarget(null);
     load();
   };
@@ -69,7 +76,7 @@ export default function SystemServiceAccounts() {
         <div className="rounded-xl border bg-card overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b">
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Service Accounts</h2>
-            <Button size="sm" onClick={() => setCreateOpen(true)}>
+            <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!systemListId}>
               <Plus className="h-4 w-4" />New Service Account
             </Button>
           </div>

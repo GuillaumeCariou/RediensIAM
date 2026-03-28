@@ -20,9 +20,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   getOrg, suspendOrg, unsuspendOrg, updateOrg, deleteOrg,
   listSystemUserListMembers,
-  adminListOrgAdmins, adminAssignOrgAdmin,
+  listOrgAdmins, assignOrgAdmin,
   addUserToList, removeSystemUserFromList,
-  adminListOrgServiceAccounts,
+  listServiceAccounts,
   listUserLists, adminCreateUserList,
   listProjects, adminCreateProject,
 } from '@/api';
@@ -31,7 +31,7 @@ import { fmtDateShort } from '@/lib/utils';
 interface Org { id: string; name: string; slug: string; active: boolean; suspended_at: string | null; created_at: string; org_list_id: string; }
 interface Member { id: string; username: string; discriminator: string; email: string; active: boolean; }
 interface OrgRole { id: string; user_id: string; user_name: string; user_email: string; role: string; scope_id: string | null; scope_name: string | null; granted_at: string; }
-interface ServiceAccount { id: string; name: string; description: string | null; active: boolean; last_used_at: string | null; }
+interface ServiceAccount { id: string; name: string; description: string | null; active: boolean; last_used_at: string | null; org_id: string | null; }
 interface UserList { id: string; name: string; immovable: boolean; }
 interface Project { id: string; name: string; slug: string; active: boolean; assigned_user_list_id: string | null; }
 
@@ -86,8 +86,8 @@ export default function OrgDetail() {
         setOrg(o);
         return Promise.all([
           listSystemUserListMembers(o.org_list_id).then(r => setOrgListMembers(r ?? [])),
-          adminListOrgAdmins(id).then(r => setOrgRoles(r ?? [])),
-          adminListOrgServiceAccounts(id).then(r => setServiceAccounts(r ?? [])),
+          listOrgAdmins(id).then(r => setOrgRoles(r ?? [])),
+          listServiceAccounts().then((r: ServiceAccount[]) => setServiceAccounts((r ?? []).filter(sa => sa.org_id === id))),
           listUserLists(id).then(r => {
             const all: UserList[] = r.user_lists ?? r ?? [];
             setUserLists(all.filter(l => !l.immovable));
@@ -147,7 +147,7 @@ export default function OrgDetail() {
     if (!assignRoleTarget || !id) return;
     setAssignRoleSaving(true);
     try {
-      await adminAssignOrgAdmin(id, assignRoleTarget.id, assignRoleForm.role, assignRoleForm.scope_id || undefined);
+      await assignOrgAdmin(id, assignRoleTarget.id, assignRoleForm.role, assignRoleForm.scope_id || undefined);
       setAssignRoleTarget(null);
       setAssignRoleForm({ role: 'org_admin', scope_id: '' });
       load();
@@ -384,7 +384,7 @@ export default function OrgDetail() {
                 : userLists.length === 0
                 ? <TableRow><TableCell colSpan={2} className="text-center text-muted-foreground py-8">No user lists.</TableCell></TableRow>
                 : userLists.map(ul => (
-                    <TableRow key={ul.id} className="cursor-pointer hover:bg-muted/50" onClick={() => navigate(`/system/userlists/${ul.id}`)}>
+                    <TableRow key={ul.id} className="cursor-pointer hover:bg-muted/50" onClick={() => navigate(`/system/organisations/${id}/userlists/${ul.id}`)}>
                       <TableCell className="font-medium">{ul.name}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">—</TableCell>
                     </TableRow>

@@ -1,11 +1,14 @@
 namespace RediensIAM.Config;
 
+// Lower value = more privileged. Used by RequireManagementLevelAttribute and KetoService.
+public enum ManagementLevel { SuperAdmin = 1, OrgAdmin = 2, ProjectAdmin = 3, None = 99 }
+
 public static class Roles
 {
     // ── Management roles (stored in OrgRoles.Role + JWT claims) ───────────────
-    public const string SuperAdmin     = "super_admin";
-    public const string OrgAdmin       = "org_admin";
-    public const string ProjectManager = "project_manager";
+    public const string SuperAdmin    = "super_admin";
+    public const string OrgAdmin      = "org_admin";
+    public const string ProjectAdmin  = "project_admin";
 
     // ── Keto namespaces ───────────────────────────────────────────────────────
     public const string KetoSystemNamespace    = "System";

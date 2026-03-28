@@ -2,25 +2,28 @@ import { apiFetch } from './auth';
 
 // ── Organisations ─────────────────────────────────────────────────
 export async function listOrgs() {
-  return (await apiFetch('/admin/organisations')).json();
+  return (await apiFetch('/admin/organizations')).json();
 }
 export async function createOrg(body: { name: string; slug: string; metadata?: Record<string, string> }) {
-  return (await apiFetch('/admin/organisations', { method: 'POST', body: JSON.stringify(body) })).json();
+  return (await apiFetch('/admin/organizations', { method: 'POST', body: JSON.stringify(body) })).json();
 }
 export async function getOrg(id: string) {
-  return (await apiFetch(`/admin/organisations/${id}`)).json();
+  return (await apiFetch(`/admin/organizations/${id}`)).json();
+}
+export async function getOrgInfo() {
+  return (await apiFetch('/org/info')).json();
 }
 export async function updateOrg(id: string, body: { name?: string; metadata?: Record<string, string> }) {
-  return (await apiFetch(`/admin/organisations/${id}`, { method: 'PATCH', body: JSON.stringify(body) })).json();
+  return (await apiFetch(`/admin/organizations/${id}`, { method: 'PATCH', body: JSON.stringify(body) })).json();
 }
 export async function deleteOrg(id: string) {
-  return apiFetch(`/admin/organisations/${id}`, { method: 'DELETE' });
+  return apiFetch(`/admin/organizations/${id}`, { method: 'DELETE' });
 }
 export async function suspendOrg(id: string) {
-  return (await apiFetch(`/admin/organisations/${id}/suspend`, { method: 'POST' })).json();
+  return (await apiFetch(`/admin/organizations/${id}/suspend`, { method: 'POST' })).json();
 }
 export async function unsuspendOrg(id: string) {
-  return (await apiFetch(`/admin/organisations/${id}/unsuspend`, { method: 'POST' })).json();
+  return (await apiFetch(`/admin/organizations/${id}/unsuspend`, { method: 'POST' })).json();
 }
 
 // ── Users (global) ────────────────────────────────────────────────
@@ -34,7 +37,7 @@ export async function enableUser(id: string) {
   return (await apiFetch(`/admin/users/${id}/enable`, { method: 'POST' })).json();
 }
 export async function forceLogoutUser(id: string) {
-  return (await apiFetch(`/admin/users/${id}/force-logout`, { method: 'POST' })).json();
+  return (await apiFetch(`/admin/users/${id}/sessions`, { method: 'DELETE' })).json();
 }
 export async function adminGetUser(id: string) {
   return (await apiFetch(`/admin/users/${id}`)).json();
@@ -119,10 +122,10 @@ export async function createProjectUser(projectId: string, body: { email: string
   return (await apiFetch(`/project/users?project_id=${projectId}`, { method: 'POST', body: JSON.stringify(body) })).json();
 }
 export async function assignUserList(projectId: string, userListId: string) {
-  return (await apiFetch(`/org/projects/${projectId}/assign-userlist`, { method: 'POST', body: JSON.stringify({ user_list_id: userListId }) })).json();
+  return (await apiFetch(`/org/projects/${projectId}/userlist`, { method: 'PUT', body: JSON.stringify({ user_list_id: userListId }) })).json();
 }
 export async function unassignUserList(projectId: string) {
-  return apiFetch(`/org/projects/${projectId}/assign-userlist`, { method: 'DELETE' });
+  return apiFetch(`/org/projects/${projectId}/userlist`, { method: 'DELETE' });
 }
 
 // ── Project users & roles ─────────────────────────────────────────
@@ -150,52 +153,36 @@ export async function deleteRole(projectId: string, roleId: string) {
   return apiFetch(`/project/roles/${roleId}?project_id=${projectId}`, { method: 'DELETE' });
 }
 
-// ── Org service account detail ────────────────────────────────────
-export async function getOrgServiceAccount(id: string) {
-  return (await apiFetch(`/org/service-accounts/${id}`)).json();
-}
-
-// ── Project service accounts ──────────────────────────────────────
-export async function listProjectServiceAccounts(projectId: string) {
-  return (await apiFetch(`/project/service-accounts?project_id=${projectId}`)).json();
-}
-export async function createProjectServiceAccount(projectId: string, body: { name: string; description?: string }) {
-  return (await apiFetch(`/project/service-accounts?project_id=${projectId}`, { method: 'POST', body: JSON.stringify(body) })).json();
-}
-export async function generateProjectPat(projectId: string, saId: string, body: { name: string; expires_at?: string }) {
-  return (await apiFetch(`/project/service-accounts/${saId}/pat?project_id=${projectId}`, { method: 'POST', body: JSON.stringify(body) })).json();
-}
-export async function listProjectPats(projectId: string, saId: string) {
-  return (await apiFetch(`/project/service-accounts/${saId}/pat?project_id=${projectId}`)).json();
-}
-export async function revokeProjectPat(projectId: string, saId: string, patId: string) {
-  return apiFetch(`/project/service-accounts/${saId}/pat/${patId}?project_id=${projectId}`, { method: 'DELETE' });
-}
-export async function deleteProjectServiceAccount(projectId: string, id: string) {
-  return apiFetch(`/project/service-accounts/${id}?project_id=${projectId}`, { method: 'DELETE' });
-}
-
-// ── Service Accounts ──────────────────────────────────────────────
+// ── Service Accounts (unified) ────────────────────────────────────
 export async function listServiceAccounts() {
-  return (await apiFetch('/admin/service-accounts')).json();
-}
-export async function listOrgServiceAccounts(orgId: string) {
-  return (await apiFetch(`/admin/organisations/${orgId}/service-accounts`)).json();
+  return (await apiFetch('/service-accounts')).json();
 }
 export async function createServiceAccount(body: { user_list_id: string; name: string; description?: string }) {
-  return (await apiFetch('/org/service-accounts', { method: 'POST', body: JSON.stringify(body) })).json();
+  return (await apiFetch('/service-accounts', { method: 'POST', body: JSON.stringify(body) })).json();
+}
+export async function getServiceAccount(id: string) {
+  return (await apiFetch(`/service-accounts/${id}`)).json();
 }
 export async function deleteServiceAccount(id: string) {
-  return apiFetch(`/org/service-accounts/${id}`, { method: 'DELETE' });
-}
-export async function generatePat(saId: string, body: { name: string; expires_at?: string }) {
-  return (await apiFetch(`/org/service-accounts/${saId}/pat`, { method: 'POST', body: JSON.stringify(body) })).json();
+  return apiFetch(`/service-accounts/${id}`, { method: 'DELETE' });
 }
 export async function listPats(saId: string) {
-  return (await apiFetch(`/org/service-accounts/${saId}/pat`)).json();
+  return (await apiFetch(`/service-accounts/${saId}/pat`)).json();
+}
+export async function generatePat(saId: string, body: { name: string; expires_at?: string }) {
+  return (await apiFetch(`/service-accounts/${saId}/pat`, { method: 'POST', body: JSON.stringify(body) })).json();
 }
 export async function revokePat(saId: string, patId: string) {
-  return apiFetch(`/org/service-accounts/${saId}/pat/${patId}`, { method: 'DELETE' });
+  return apiFetch(`/service-accounts/${saId}/pat/${patId}`, { method: 'DELETE' });
+}
+export async function listSaRoles(saId: string) {
+  return (await apiFetch(`/service-accounts/${saId}/roles`)).json();
+}
+export async function assignSaRole(saId: string, body: { role: string; org_id?: string; project_id?: string }) {
+  return (await apiFetch(`/service-accounts/${saId}/roles`, { method: 'POST', body: JSON.stringify(body) })).json();
+}
+export async function removeSaRole(saId: string, roleId: string) {
+  return apiFetch(`/service-accounts/${saId}/roles/${roleId}`, { method: 'DELETE' });
 }
 
 // ── Account (self) ────────────────────────────────────────────────
@@ -215,16 +202,16 @@ export async function updateMe(body: { display_name?: string }) {
   return (await apiFetch('/account/me', { method: 'PATCH', body: JSON.stringify(body) })).json();
 }
 export async function changePassword(body: { current_password: string; new_password: string }) {
-  return (await apiFetch('/account/change-password', { method: 'POST', body: JSON.stringify(body) })).json();
+  return (await apiFetch('/account/password', { method: 'PATCH', body: JSON.stringify(body) })).json();
 }
 export async function setupPhone(phone: string) {
-  return (await apiFetch('/account/phone/setup', { method: 'POST', body: JSON.stringify({ phone }) })).json();
+  return (await apiFetch('/account/mfa/phone/setup', { method: 'POST', body: JSON.stringify({ phone }) })).json();
 }
 export async function verifyPhone(code: string) {
-  return (await apiFetch('/account/phone/verify', { method: 'POST', body: JSON.stringify({ code }) })).json();
+  return (await apiFetch('/account/mfa/phone/verify', { method: 'POST', body: JSON.stringify({ code }) })).json();
 }
 export async function removePhone() {
-  return apiFetch('/account/phone', { method: 'DELETE' });
+  return apiFetch('/account/mfa/phone', { method: 'DELETE' });
 }
 
 // ── WebAuthn / Passkeys ────────────────────────────────────────────────────
@@ -241,24 +228,15 @@ export async function deleteWebAuthnCredential(id: string) {
   return apiFetch(`/account/mfa/webauthn/credentials/${id}`, { method: 'DELETE' });
 }
 
-// ── JWT Profile keys ───────────────────────────────────────────────────────
-export async function getServiceAccountKeys(saId: string) {
-  return (await apiFetch(`/org/service-accounts/${saId}/keys`)).json();
+// ── SA API keys (JWK) ─────────────────────────────────────────────────────
+export async function getSaApiKeys(saId: string) {
+  return (await apiFetch(`/service-accounts/${saId}/api-keys`)).json();
 }
-export async function addServiceAccountKey(saId: string, jwk: object) {
-  return (await apiFetch(`/org/service-accounts/${saId}/keys`, { method: 'POST', body: JSON.stringify({ jwk }) })).json();
+export async function addSaApiKey(saId: string, jwk: object) {
+  return (await apiFetch(`/service-accounts/${saId}/api-keys`, { method: 'POST', body: JSON.stringify({ jwk }) })).json();
 }
-export async function removeServiceAccountKey(saId: string) {
-  return (await apiFetch(`/org/service-accounts/${saId}/keys`, { method: 'DELETE' })).json();
-}
-export async function getSystemSaKeys(saId: string) {
-  return (await apiFetch(`/admin/service-accounts/${saId}/keys`)).json();
-}
-export async function addSystemSaKey(saId: string, jwk: object) {
-  return (await apiFetch(`/admin/service-accounts/${saId}/keys`, { method: 'POST', body: JSON.stringify({ jwk }) })).json();
-}
-export async function removeSystemSaKey(saId: string) {
-  return (await apiFetch(`/admin/service-accounts/${saId}/keys`, { method: 'DELETE' })).json();
+export async function removeSaApiKey(saId: string) {
+  return (await apiFetch(`/service-accounts/${saId}/api-keys`, { method: 'DELETE' })).json();
 }
 export async function getMfaStatus() {
   return (await apiFetch('/account/mfa')).json();
@@ -270,7 +248,7 @@ export async function confirmTotp(body: { code: string }) {
   return (await apiFetch('/account/mfa/totp/confirm', { method: 'POST', body: JSON.stringify(body) })).json();
 }
 export async function regenerateBackupCodes() {
-  return (await apiFetch('/account/mfa/backup-codes/generate', { method: 'POST' })).json();
+  return (await apiFetch('/account/mfa/backup-codes', { method: 'POST' })).json();
 }
 
 // ── Audit log ─────────────────────────────────────────────────────
@@ -290,43 +268,27 @@ export async function getMetrics() {
 
 // ── Org-list manager (org-scoped) ─────────────────────────────────
 export async function listOrgListManagers() {
-  return (await apiFetch('/org/org-list/users')).json();
+  return (await apiFetch('/org/admins')).json();
 }
 export async function assignOrgListManager(body: { user_id: string; role: string; scope_id?: string }) {
-  return (await apiFetch('/org/org-list/users', { method: 'POST', body: JSON.stringify(body) })).json();
+  return (await apiFetch('/org/admins', { method: 'POST', body: JSON.stringify(body) })).json();
 }
 export async function updateOrgListManager(id: string, body: { role?: string; scope_id?: string }) {
-  return (await apiFetch(`/org/org-list/users/${id}`, { method: 'PATCH', body: JSON.stringify(body) })).json();
+  return (await apiFetch(`/org/admins/${id}`, { method: 'PATCH', body: JSON.stringify(body) })).json();
 }
 export async function removeOrgListManager(id: string) {
-  return apiFetch(`/org/org-list/users/${id}`, { method: 'DELETE' });
+  return apiFetch(`/org/admins/${id}`, { method: 'DELETE' });
 }
 
 // ── Org admin roles ───────────────────────────────────────────────
 export async function listOrgAdmins(orgId: string) {
-  return (await apiFetch(`/admin/organisations/${orgId}/admins`)).json();
+  return (await apiFetch(`/admin/organizations/${orgId}/admins`)).json();
 }
 export async function assignOrgAdmin(orgId: string, userId: string, role: string, scopeId?: string) {
-  return (await apiFetch(`/admin/organisations/${orgId}/admins`, { method: 'POST', body: JSON.stringify({ user_id: userId, role, scope_id: scopeId }) })).json();
+  return (await apiFetch(`/admin/organizations/${orgId}/admins`, { method: 'POST', body: JSON.stringify({ user_id: userId, role, scope_id: scopeId }) })).json();
 }
 export async function removeOrgAdmin(orgId: string, roleId: string) {
-  return apiFetch(`/admin/organisations/${orgId}/admins/${roleId}`, { method: 'DELETE' });
-}
-
-// ── Admin-scoped org admin management ────────────────────────────
-export async function adminListOrgAdmins(orgId: string) {
-  return (await apiFetch(`/admin/organisations/${orgId}/admins`)).json();
-}
-export async function adminAssignOrgAdmin(orgId: string, userId: string, role: string, scopeId?: string) {
-  return (await apiFetch(`/admin/organisations/${orgId}/admins`, { method: 'POST', body: JSON.stringify({ user_id: userId, role, scope_id: scopeId }) })).json();
-}
-export async function adminRemoveOrgAdmin(orgId: string, roleId: string) {
-  return apiFetch(`/admin/organisations/${orgId}/admins/${roleId}`, { method: 'DELETE' });
-}
-
-// ── Admin-scoped org service accounts ────────────────────────────
-export async function adminListOrgServiceAccounts(orgId: string) {
-  return (await apiFetch(`/admin/organisations/${orgId}/service-accounts`)).json();
+  return apiFetch(`/admin/organizations/${orgId}/admins/${roleId}`, { method: 'DELETE' });
 }
 
 // ── Admin-scoped user list & project creation ─────────────────────
@@ -334,13 +296,10 @@ export async function adminCreateUserList(body: { name: string; org_id: string }
   return (await apiFetch('/admin/userlists', { method: 'POST', body: JSON.stringify(body) })).json();
 }
 export async function listAdminOrgProjects(orgId: string) {
-  return (await apiFetch(`/admin/organisations/${orgId}/projects`)).json();
+  return (await apiFetch(`/org/projects?org_id=${orgId}`)).json();
 }
 export async function adminCreateProject(orgId: string, body: { name: string; slug: string; redirect_uris?: string[]; require_role_to_login?: boolean }) {
-  return (await apiFetch(`/admin/organisations/${orgId}/projects`, { method: 'POST', body: JSON.stringify(body) })).json();
-}
-export async function impersonateUser(userId: string, projectId: string) {
-  return (await apiFetch(`/admin/users/${userId}/impersonate`, { method: 'POST', body: JSON.stringify({ project_id: projectId }) })).json();
+  return (await apiFetch(`/admin/organizations/${orgId}/projects`, { method: 'POST', body: JSON.stringify(body) })).json();
 }
 
 // ── Admin-scoped project operations ──────────────────────────────
@@ -348,45 +307,16 @@ export async function adminListAllProjects() {
   return (await apiFetch('/admin/projects')).json();
 }
 export async function adminGetProject(id: string) {
-  return (await apiFetch(`/admin/projects/${id}`)).json();
+  return (await apiFetch(`/org/projects/${id}`)).json();
 }
 export async function adminGetProjectStats(id: string) {
   return (await apiFetch(`/admin/projects/${id}/stats`)).json();
 }
 export async function adminAssignUserList(projectId: string, userListId: string) {
-  return (await apiFetch(`/admin/projects/${projectId}/assign-userlist`, { method: 'POST', body: JSON.stringify({ user_list_id: userListId }) })).json();
+  return (await apiFetch(`/admin/projects/${projectId}/userlist`, { method: 'PUT', body: JSON.stringify({ user_list_id: userListId }) })).json();
 }
 export async function adminUnassignUserList(projectId: string) {
-  return apiFetch(`/admin/projects/${projectId}/assign-userlist`, { method: 'DELETE' });
-}
-
-// ── System Service Accounts ────────────────────────────────────────
-export async function createSystemServiceAccount(body: { name: string; description?: string }) {
-  return (await apiFetch('/admin/service-accounts', { method: 'POST', body: JSON.stringify(body) })).json();
-}
-export async function getSystemServiceAccount(id: string) {
-  return (await apiFetch(`/admin/service-accounts/${id}`)).json();
-}
-export async function deleteSystemServiceAccount(id: string) {
-  return apiFetch(`/admin/service-accounts/${id}`, { method: 'DELETE' });
-}
-export async function generateSystemPat(saId: string, body: { name: string; expires_at?: string }) {
-  return (await apiFetch(`/admin/service-accounts/${saId}/pat`, { method: 'POST', body: JSON.stringify(body) })).json();
-}
-export async function listSystemPats(saId: string) {
-  return (await apiFetch(`/admin/service-accounts/${saId}/pat`)).json();
-}
-export async function revokeSystemPat(saId: string, patId: string) {
-  return apiFetch(`/admin/service-accounts/${saId}/pat/${patId}`, { method: 'DELETE' });
-}
-export async function listSystemSaRoles(saId: string) {
-  return (await apiFetch(`/admin/service-accounts/${saId}/roles`)).json();
-}
-export async function assignSystemSaRole(saId: string, role: string) {
-  return (await apiFetch(`/admin/service-accounts/${saId}/roles`, { method: 'POST', body: JSON.stringify({ role }) })).json();
-}
-export async function removeSystemSaRole(saId: string, roleId: string) {
-  return apiFetch(`/admin/service-accounts/${saId}/roles/${roleId}`, { method: 'DELETE' });
+  return apiFetch(`/admin/projects/${projectId}/userlist`, { method: 'DELETE' });
 }
 
 // ── Admin-scoped role management ──────────────────────────────────

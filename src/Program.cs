@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using StackExchange.Redis;
 using RediensIAM.Config;
 using RediensIAM.Data;
-using RediensIAM.Entities;
+using RediensIAM.Data.Entities;
 using RediensIAM.Middleware;
 using RediensIAM.Services;
 
@@ -53,18 +53,12 @@ builder.Services.AddMemoryCache();
 
 // ── Services ───────────────────────────────────────────────────────────────
 builder.Services.AddScoped<PasswordService>();
-builder.Services.AddScoped<TotpEncryptionService>();
 builder.Services.AddScoped<OtpCacheService>();
 builder.Services.AddScoped<LoginRateLimiter>();
-builder.Services.AddSingleton<HydraJwksCache>();
-builder.Services.AddScoped<HydraAdminService>();
+builder.Services.AddScoped<HydraService>();
 builder.Services.AddScoped<KetoService>();
 builder.Services.AddScoped<AuditLogService>();
-builder.Services.AddScoped<PatIntrospectionService>();
-builder.Services.AddScoped<PatGenerationService>();
-builder.Services.AddScoped<RoleAssignmentService>();
-builder.Services.AddScoped<ImpersonationService>();
-builder.Services.AddScoped<ServiceAccountService>();
+builder.Services.AddScoped<PatService>();
 builder.Services.AddScoped<SocialLoginService>();
 builder.Services.AddHttpContextAccessor();
 
@@ -192,7 +186,7 @@ app.UseRouting();
 app.MapHealthChecks("/health");
 
 // Protect account/project/org/internal routes — admin SPA loads without auth (handles PKCE itself)
-var protectedPrefixes = new[] { "/account", "/project", "/org", "/internal" };
+var protectedPrefixes = new[] { "/account", "/project", "/org", "/internal", "/service-accounts" };
 app.UseWhen(
     ctx => protectedPrefixes.Any(p => ctx.Request.Path.StartsWithSegments(p)),
     branch => branch.UseMiddleware<GatewayAuthMiddleware>());
@@ -209,7 +203,7 @@ app.UseWhen(
 // Block admin/internal on public port
 app.Use(async (ctx, next) =>
 {
-    var isAdminRoute = ctx.Request.Path.StartsWithSegments("/admin") || ctx.Request.Path.StartsWithSegments("/internal");
+    var isAdminRoute = ctx.Request.Path.StartsWithSegments("/admin") || ctx.Request.Path.StartsWithSegments("/internal") || ctx.Request.Path.StartsWithSegments("/service-accounts");
     if (isAdminRoute && ctx.Connection.LocalPort == appConfig.PublicPort)
     {
         ctx.Response.StatusCode = 404;
@@ -217,6 +211,11 @@ app.Use(async (ctx, next) =>
     }
     await next(ctx);
 });
+
+// Public — no auth required; must be a minimal endpoint to bypass [RequireManagementLevel] on SystemAdminController
+app.MapGet("/admin/config", (AppConfig cfg) => Results.Json(
+    new { hydra_url = cfg.PublicUrl, client_id = Roles.AdminClientId, redirect_uri = $"{cfg.PublicUrl}/admin/callback" },
+    new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower }));
 
 app.MapControllers();
 

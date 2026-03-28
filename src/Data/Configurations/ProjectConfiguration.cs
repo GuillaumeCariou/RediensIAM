@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
-using RediensIAM.Entities;
+using RediensIAM.Data.Entities;
 
 namespace RediensIAM.Data.Configurations;
 
@@ -36,6 +36,5 @@ public class ProjectConfiguration : IEntityTypeConfiguration<Project>
         builder.HasOne(x => x.DefaultRole).WithMany().HasForeignKey(x => x.DefaultRoleId).OnDelete(DeleteBehavior.SetNull);
         builder.HasMany(x => x.Roles).WithOne(x => x.Project).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
         builder.HasMany(x => x.UserProjectRoles).WithOne(x => x.Project).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
-        builder.HasMany(x => x.ServiceAccountProjectRoles).WithOne(x => x.Project).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
     }
 }
