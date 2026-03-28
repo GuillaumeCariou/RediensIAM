@@ -10,7 +10,8 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { getServiceAccount, deleteServiceAccount, generatePat, revokePat, getSaApiKeys, addSaApiKey, removeSaApiKey } from '@/api';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { getServiceAccount, deleteServiceAccount, generatePat, revokePat, getSaApiKeys, addSaApiKey, removeSaApiKey, listSaRoles, assignSaRole, removeSaRole, listProjects } from '@/api';
 import { useOrgContext } from '@/hooks/useOrgContext';
 import { fmtDateShort } from '@/lib/utils';
 
@@ -20,6 +21,8 @@ interface Sa {
   hydra_client_id: string | null; pats: Pat[];
 }
 interface Pat { id: string; name: string; expires_at: string | null; last_used_at: string | null; created_at: string; }
+interface SaRole { id: string; role: string; org_id: string | null; project_id: string | null; granted_at: string; }
+interface Project { id: string; name: string; }
 
 // ── JWT Profile Keys section ───────────────────────────────────────────────
 function JwtProfileSection({ saId, getKeys, addKey, removeKey }: {
@@ -134,13 +137,19 @@ export default function OrgServiceAccountDetail() {
   const [revokeTarget, setRevokeTarget] = useState<Pat | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
+  const [roles, setRoles] = useState<SaRole[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [roleDialogOpen, setRoleDialogOpen] = useState(false);
+  const [roleForm, setRoleForm] = useState({ role: '', project_id: '' });
+  const [roleSaving, setRoleSaving] = useState(false);
+
   const load = useCallback(() => {
     if (!saId) return;
     setLoading(true);
-    getServiceAccount(saId)
-      .then(setSa)
-      .catch(console.error)
-      .finally(() => setLoading(false));
+    Promise.all([
+      getServiceAccount(saId).then(setSa),
+      listSaRoles(saId).then(r => setRoles(r ?? [])),
+    ]).catch(console.error).finally(() => setLoading(false));
   }, [saId]);
 
   useEffect(() => { load(); }, [load]);
@@ -178,6 +187,33 @@ export default function OrgServiceAccountDetail() {
   };
 
   const closeTokenDialog = () => { setRawToken(null); load(); };
+
+  const openRoleDialog = () => {
+    setRoleForm({ role: '', project_id: '' });
+    if (orgId) listProjects(orgId).then(r => setProjects(r.projects ?? r ?? [])).catch(console.error);
+    setRoleDialogOpen(true);
+  };
+
+  const handleAssignRole = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!saId || !orgId) return;
+    setRoleSaving(true);
+    try {
+      await assignSaRole(saId, {
+        role: roleForm.role,
+        org_id: orgId,
+        project_id: roleForm.role === 'project_admin' ? roleForm.project_id : undefined,
+      });
+      setRoleDialogOpen(false);
+      listSaRoles(saId).then(r => setRoles(r ?? []));
+    } finally { setRoleSaving(false); }
+  };
+
+  const handleRemoveRole = async (roleId: string) => {
+    if (!saId) return;
+    await removeSaRole(saId, roleId);
+    setRoles(r => r.filter(x => x.id !== roleId));
+  };
 
   return (
     <div className="p-6 space-y-4">
@@ -266,6 +302,81 @@ export default function OrgServiceAccountDetail() {
           removeKey={removeSaApiKey}
         />
       )}
+
+      {/* Roles */}
+      <div className="rounded-xl border bg-card overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b">
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Roles</h2>
+          <Button size="sm" onClick={openRoleDialog}><Plus className="h-4 w-4" />Assign Role</Button>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Role</TableHead>
+              <TableHead>Scope</TableHead>
+              <TableHead>Granted</TableHead>
+              <TableHead className="w-12"></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {roles.length === 0
+              ? <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-8">No roles assigned.</TableCell></TableRow>
+              : roles.map(r => (
+                  <TableRow key={r.id}>
+                    <TableCell><Badge variant="outline">{r.role}</Badge></TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {r.project_id ? `project: ${r.project_id}` : r.org_id ? `org: ${r.org_id}` : '—'}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{fmtDateShort(r.granted_at)}</TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="icon" onClick={() => handleRemoveRole(r.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                    </TableCell>
+                  </TableRow>
+                ))
+            }
+          </TableBody>
+        </Table>
+      </div>
+
+      {/* Assign Role dialog */}
+      <Dialog open={roleDialogOpen} onOpenChange={setRoleDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Assign Role</DialogTitle>
+            <DialogDescription>Grant a management role to this service account.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleAssignRole} className="space-y-4">
+            <div className="space-y-2">
+              <Label>Role</Label>
+              <Select value={roleForm.role} onValueChange={v => setRoleForm(f => ({ ...f, role: v, project_id: '' }))}>
+                <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="org_admin">org_admin</SelectItem>
+                  <SelectItem value="project_admin">project_admin</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {roleForm.role === 'project_admin' && (
+              <div className="space-y-2">
+                <Label>Project</Label>
+                <Select value={roleForm.project_id} onValueChange={v => setRoleForm(f => ({ ...f, project_id: v }))}>
+                  <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
+                  <SelectContent>
+                    {projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setRoleDialogOpen(false)}>Cancel</Button>
+              <Button
+                type="submit"
+                disabled={roleSaving || !roleForm.role || (roleForm.role === 'project_admin' && !roleForm.project_id)}
+              >{roleSaving ? 'Assigning…' : 'Assign'}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* Generate PAT dialog */}
       <Dialog open={patOpen} onOpenChange={setPatOpen}>
