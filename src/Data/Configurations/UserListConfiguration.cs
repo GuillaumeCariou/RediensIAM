@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
-using RediensIAM.Entities;
+using RediensIAM.Data.Entities;
 
 namespace RediensIAM.Data.Configurations;
 

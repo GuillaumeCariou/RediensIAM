@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Plus, MoreHorizontal, Trash2, ArrowRight, CheckCircle, XCircle, Link2, Link2Off } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,6 +26,7 @@ interface Project {
 interface UserList { id: string; name: string; }
 
 export default function Projects() {
+  const navigate = useNavigate();
   const { orgId, projectUrl } = useOrgContext();
   const [projects, setProjects] = useState<Project[]>([]);
   const [userLists, setUserLists] = useState<UserList[]>([]);
@@ -124,7 +125,7 @@ export default function Projects() {
                     </TableRow>
                   )
                 : projects.map(p => (
-                    <TableRow key={p.id}>
+                    <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => navigate(projectUrl(p.id))}>
                       <TableCell className="font-medium">{p.name}</TableCell>
                       <TableCell className="font-mono text-sm text-muted-foreground">{p.slug}</TableCell>
                       <TableCell>
@@ -146,7 +147,7 @@ export default function Projects() {
                         }
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">{fmtDateShort(p.created_at)}</TableCell>
-                      <TableCell>
+                      <TableCell onClick={e => e.stopPropagation()}>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>

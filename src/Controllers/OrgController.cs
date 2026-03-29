@@ -317,11 +317,52 @@ public class OrgController(
     {
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == uid && u.UserListId == id && u.UserList.OrgId == OrgId);
         if (user == null) return NotFound();
-        if (body.DisplayName != null) user.DisplayName = body.DisplayName;
-        if (body.Active.HasValue) { user.Active = body.Active.Value; if (!body.Active.Value) user.DisabledAt = DateTimeOffset.UtcNow; }
+        return await ApplyUserUpdate(user, body);
+    }
+
+    [HttpGet("/org/users/{uid}")]
+    public async Task<IActionResult> GetOrgUser(Guid uid)
+    {
+        var user = await db.Users
+            .Include(u => u.UserList)
+            .FirstOrDefaultAsync(u => u.Id == uid && u.UserList.OrgId == OrgId);
+        if (user == null) return NotFound();
+        var orgRoles = await db.OrgRoles
+            .Where(r => r.UserId == uid && r.OrgId == OrgId)
+            .Select(r => new { r.Role, r.OrgId, r.ScopeId })
+            .ToListAsync();
+        return Ok(new {
+            user.Id, user.Email, user.Username, user.Discriminator, user.DisplayName,
+            user.Phone, user.Active, user.EmailVerified,
+            user.LockedUntil, user.FailedLoginCount,
+            user.LastLoginAt, user.CreatedAt, user.UpdatedAt,
+            roles = orgRoles
+        });
+    }
+
+    [HttpPatch("/org/users/{uid}")]
+    public async Task<IActionResult> UpdateOrgUser(Guid uid, [FromBody] UpdateUserRequest body)
+    {
+        var user = await db.Users.Include(u => u.UserList)
+            .FirstOrDefaultAsync(u => u.Id == uid && u.UserList.OrgId == OrgId);
+        if (user == null) return NotFound();
+        return await ApplyUserUpdate(user, body);
+    }
+
+    private async Task<IActionResult> ApplyUserUpdate(User user, UpdateUserRequest body)
+    {
+        if (body.Email != null) { user.Email = body.Email.ToLowerInvariant(); user.EmailVerified = false; user.EmailVerifiedAt = null; }
+        if (body.Username != null) user.Username = body.Username;
+        if (body.DisplayName != null) user.DisplayName = body.DisplayName == "" ? null : body.DisplayName;
+        if (body.Phone != null) user.Phone = body.Phone == "" ? null : body.Phone;
+        if (body.Active.HasValue) { user.Active = body.Active.Value; user.DisabledAt = body.Active.Value ? null : DateTimeOffset.UtcNow; }
+        if (body.EmailVerified.HasValue) { user.EmailVerified = body.EmailVerified.Value; user.EmailVerifiedAt = body.EmailVerified.Value ? DateTimeOffset.UtcNow : null; }
+        if (body.ClearLock == true) { user.LockedUntil = null; user.FailedLoginCount = 0; }
+        if (!string.IsNullOrEmpty(body.NewPassword)) user.PasswordHash = passwords.Hash(body.NewPassword);
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
-        return Ok(new { user.Id, user.Active, user.DisplayName });
+        await audit.RecordAsync(OrgId, null, ActorId, "user.updated", "user", user.Id.ToString());
+        return Ok(new { user.Id, user.Email, user.Username, user.Discriminator, user.DisplayName, user.Phone, user.Active, user.EmailVerified, user.LockedUntil, user.FailedLoginCount });
     }
 
     [HttpDelete("/org/userlists/{id}/users/{uid}")]
@@ -434,7 +475,7 @@ public record UpdateProjectRequest(
 public record AssignUserListRequest(Guid UserListId);
 public record CreateUserListRequest(string Name);
 public record CreateUserRequest(string Email, string Password, string? Username);
-public record UpdateUserRequest(string? DisplayName, bool? Active);
+public record UpdateUserRequest(string? Email, string? Username, string? DisplayName, string? Phone, bool? Active, bool? EmailVerified, bool? ClearLock, string? NewPassword);
 public record OrgCleanupRequest(bool RemoveOrphanedRoles = true, bool RemoveInactiveUsers = false, int InactiveThresholdDays = 90, bool DryRun = true);
 public record OrgAssignManagerRequest(Guid UserId, string Role, Guid? ScopeId);
 public record OrgUpdateManagerRequest(string? Role, Guid? ScopeId);

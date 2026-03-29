@@ -5,8 +5,9 @@ using Fido2NetLib.Objects;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using OtpNet;
+using RediensIAM.Config;
 using RediensIAM.Data;
-using RediensIAM.Entities;
+using RediensIAM.Data.Entities;
 using RediensIAM.Middleware;
 using RediensIAM.Services;
 
@@ -16,9 +17,9 @@ namespace RediensIAM.Controllers;
 public class AccountController(
     RediensIamDbContext db,
     PasswordService passwords,
-    TotpEncryptionService totpEncryption,
     AuditLogService audit,
-    HydraAdminService hydra,
+    HydraService hydra,
+    AppConfig appConfig,
     ISmsService smsService,
     OtpCacheService otpCache,
     IFido2 fido2) : ControllerBase
@@ -53,7 +54,7 @@ public class AccountController(
         return Ok(new { user.Id, user.DisplayName });
     }
 
-    [HttpPost("/account/change-password")]
+    [HttpPatch("/account/password")]
     public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest body)
     {
         var userId = Claims.ParsedUserId;
@@ -74,7 +75,7 @@ public class AccountController(
         var user = await db.Users.FindAsync(Claims.ParsedUserId);
         if (user == null) return NotFound();
         var secret = KeyGeneration.GenerateRandomKey(20);
-        var encrypted = totpEncryption.Encrypt(secret);
+        var encrypted = TotpEncryption.Encrypt(Convert.FromHexString(appConfig.TotpSecretEncryptionKey), secret);
         HttpContext.Session.SetString("totp_setup_secret", encrypted);
         var base32 = Base32Encoding.ToString(secret);
         var issuer = "RediensIAM";
@@ -88,7 +89,7 @@ public class AccountController(
         var userId = Claims.ParsedUserId;
         var encryptedSecret = HttpContext.Session.GetString("totp_setup_secret");
         if (encryptedSecret == null) return BadRequest(new { error = "no_setup_session" });
-        var secret = totpEncryption.Decrypt(encryptedSecret);
+        var secret = TotpEncryption.Decrypt(Convert.FromHexString(appConfig.TotpSecretEncryptionKey), encryptedSecret);
         var totp = new Totp(secret);
         if (!totp.VerifyTotp(body.Code, out _, new VerificationWindow(1, 1)))
             return BadRequest(new { error = "invalid_code" });
@@ -113,7 +114,7 @@ public class AccountController(
         return Ok(new { message = "totp_enabled", backup_codes = backupCodes.Select(c => c.code).ToList() });
     }
 
-    [HttpPost("/account/mfa/backup-codes/generate")]
+    [HttpPost("/account/mfa/backup-codes")]
     public async Task<IActionResult> RegenerateBackupCodes()
     {
         var userId = Claims.ParsedUserId;
@@ -165,7 +166,7 @@ public class AccountController(
 
     // ── Phone / SMS MFA setup ─────────────────────────────────────────────────
 
-    [HttpPost("/account/phone/setup")]
+    [HttpPost("/account/mfa/phone/setup")]
     public async Task<IActionResult> SetupPhone([FromBody] PhoneSetupRequest body)
     {
         var code = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
@@ -175,7 +176,7 @@ public class AccountController(
         return Ok(new { sent = true });
     }
 
-    [HttpPost("/account/phone/verify")]
+    [HttpPost("/account/mfa/phone/verify")]
     public async Task<IActionResult> VerifyPhone([FromBody] PhoneVerifyRequest body)
     {
         var phone = HttpContext.Session.GetString("phone_setup_number");
@@ -192,7 +193,7 @@ public class AccountController(
         return Ok(new { message = "phone_verified" });
     }
 
-    [HttpDelete("/account/phone")]
+    [HttpDelete("/account/mfa/phone")]
     public async Task<IActionResult> RemovePhone()
     {
         var user = await db.Users.FindAsync(Claims.ParsedUserId);

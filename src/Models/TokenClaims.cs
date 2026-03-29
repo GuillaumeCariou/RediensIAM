@@ -7,7 +7,6 @@ public record TokenClaims
     public required string ProjectId { get; init; }
     public required List<string> Roles { get; init; }
     public bool IsServiceAccount { get; init; }
-    public bool IsImpersonation { get; init; }
 
     // Strips the "orgId:userId" compound format used in Hydra subjects
     public Guid ParsedUserId

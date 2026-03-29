@@ -12,7 +12,7 @@ export function useOrgContext() {
   const orgId        = id ?? oid ?? tokenOrgId;
   const isSystemCtx  = !!(id ?? oid);
   const orgBase      = isSystemCtx ? `/system/organisations/${orgId}` : '/org';
-  const userListBase = isSystemCtx ? '/system/userlists'              : '/org/userlists';
+  const userListBase = isSystemCtx ? `${orgBase}/userlists`           : '/org/userlists';
 
   // Link to a specific project's management page
   const projectUrl = (projId: string) =>

@@ -48,6 +48,15 @@ export async function adminUpdateUser(id: string, body: {
 }) {
   return (await apiFetch(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(body) })).json();
 }
+export async function orgGetUser(id: string) {
+  return (await apiFetch(`/org/users/${id}`)).json();
+}
+export async function orgUpdateUser(id: string, body: {
+  email?: string; username?: string; display_name?: string; phone?: string;
+  active?: boolean; email_verified?: boolean; clear_lock?: boolean; new_password?: string;
+}) {
+  return (await apiFetch(`/org/users/${id}`, { method: 'PATCH', body: JSON.stringify(body) })).json();
+}
 
 // ── UserLists ─────────────────────────────────────────────────────
 export async function listUserLists(orgId?: string) {

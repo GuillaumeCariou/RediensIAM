@@ -28,6 +28,7 @@ export default function ProjectRoles() {
   const [saving, setSaving] = useState(false);
   const [defaultRoleId, setDefaultRoleId] = useState<string | null>(null);
   const [savingDefault, setSavingDefault] = useState(false);
+  const [defaultRoleError, setDefaultRoleError] = useState('');
 
   const load = () => {
     if (!projectId) { setLoading(false); return; }
@@ -41,6 +42,7 @@ export default function ProjectRoles() {
 
   const handleDefaultRole = async (value: string) => {
     setSavingDefault(true);
+    setDefaultRoleError('');
     try {
       if (value === '__none__') {
         await updateProject(projectId, { clear_default_role: true });
@@ -49,7 +51,8 @@ export default function ProjectRoles() {
         await updateProject(projectId, { default_role_id: value });
         setDefaultRoleId(value);
       }
-    } finally { setSavingDefault(false); }
+    } catch { setDefaultRoleError('Failed to save default role.'); }
+    finally { setSavingDefault(false); }
   };
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -85,17 +88,20 @@ export default function ProjectRoles() {
           </CardHeader>
           <CardContent>
             {loading ? <Skeleton className="h-9 w-48" /> : (
-              <Select value={defaultRoleId ?? '__none__'} onValueChange={handleDefaultRole} disabled={savingDefault}>
-                <SelectTrigger className="w-64 bg-background">
-                  <SelectValue placeholder="No default role" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">No default role</SelectItem>
-                  {[...roles].sort((a, b) => a.rank - b.rank).map(r => (
-                    <SelectItem key={r.id} value={r.id}>{r.name} <span className="text-muted-foreground ml-1 text-xs">(rank {r.rank})</span></SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="space-y-1">
+                <Select value={defaultRoleId ?? '__none__'} onValueChange={handleDefaultRole} disabled={savingDefault}>
+                  <SelectTrigger className="w-64 bg-background">
+                    <SelectValue placeholder="No default role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">No default role</SelectItem>
+                    {[...roles].sort((a, b) => a.rank - b.rank).map(r => (
+                      <SelectItem key={r.id} value={r.id}>{r.name} <span className="text-muted-foreground ml-1 text-xs">(rank {r.rank})</span></SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {defaultRoleError && <p className="text-xs text-destructive">{defaultRoleError}</p>}
+              </div>
             )}
           </CardContent>
         </Card>

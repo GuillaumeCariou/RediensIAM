@@ -1,5 +1,5 @@
 using RediensIAM.Data;
-using RediensIAM.Entities;
+using RediensIAM.Data.Entities;
 
 namespace RediensIAM.Services;
 

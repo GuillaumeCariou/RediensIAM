@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getOrg, listProjects, listUserLists } from '@/api';
+import { getOrgInfo, listProjects, listUserLists } from '@/api';
 import { useOrgContext } from '@/hooks/useOrgContext';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDateShort } from '@/lib/utils';
@@ -27,7 +27,7 @@ export default function OrgDashboard() {
   useEffect(() => {
     if (!orgId) { setLoading(false); return; }
     Promise.all([
-      getOrg(orgId).then(setOrg),
+      getOrgInfo().then(setOrg),
       listProjects(orgId).then(r => setProjects(r.projects ?? r ?? [])),
       listUserLists(orgId).then(r => setLists(r.user_lists ?? r ?? [])),
     ]).catch(console.error).finally(() => setLoading(false));

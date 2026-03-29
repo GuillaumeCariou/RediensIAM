@@ -5,42 +5,47 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getUserList, cleanupUserList } from '@/api';
+import { getUserList, getSystemUserList, cleanupUserList } from '@/api';
+import { useOrgContext } from '@/hooks/useOrgContext';
 import PageHeader from '@/components/layout/PageHeader';
 import UserListMembersPanel from '@/components/UserListMembersPanel';
 
 interface UserList {
-  id: string; name: string; immovable: boolean; user_count: number; created_at: string;
+  id: string; name: string; org_id?: string | null; org_name?: string | null;
+  immovable: boolean; user_count: number; created_at: string;
 }
 
-export default function OrgUserListDetail() {
-  const { id } = useParams<{ id: string }>();
+export default function UserListDetail() {
+  // Handles all three route shapes: :id, :listId (org under system org), and standalone
+  const { id, listId } = useParams<{ id?: string; listId?: string }>();
+  const resolvedId = listId ?? id ?? '';
   const navigate = useNavigate();
+  const { isSystemCtx } = useOrgContext();
+
   const [list, setList] = useState<UserList | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // ── Cleanup dialog ────────────────────────────────────────────
-  const [cleanupOpen, setCleanupOpen]       = useState(false);
-  const [cleanupDryRun, setCleanupDryRun]   = useState(true);
+  const [cleanupOpen, setCleanupOpen]         = useState(false);
+  const [cleanupDryRun, setCleanupDryRun]     = useState(true);
   const [cleanupInactive, setCleanupInactive] = useState(false);
-  const [cleanupDays, setCleanupDays]       = useState(90);
-  const [cleanupRunning, setCleanupRunning] = useState(false);
-  const [cleanupResult, setCleanupResult]   = useState<{
+  const [cleanupDays, setCleanupDays]         = useState(90);
+  const [cleanupRunning, setCleanupRunning]   = useState(false);
+  const [cleanupResult, setCleanupResult]     = useState<{
     orphaned_roles_found: number; inactive_users_found: number;
     orphaned_roles_removed: number; inactive_users_removed: number; dry_run: boolean;
   } | null>(null);
 
   useEffect(() => {
-    if (!id) return;
-    getUserList(id).then(setList).catch(console.error).finally(() => setLoading(false));
-  }, [id]);
+    if (!resolvedId) return;
+    const fetch = isSystemCtx ? getSystemUserList(resolvedId) : getUserList(resolvedId);
+    fetch.then(setList).catch(console.error).finally(() => setLoading(false));
+  }, [resolvedId, isSystemCtx]);
 
   const handleCleanup = async () => {
-    if (!id) return;
-    setCleanupRunning(true);
-    setCleanupResult(null);
+    if (!resolvedId) return;
+    setCleanupRunning(true); setCleanupResult(null);
     try {
-      const res = await cleanupUserList(id, {
+      const res = await cleanupUserList(resolvedId, {
         remove_orphaned_roles: true,
         remove_inactive_users: cleanupInactive,
         inactive_threshold_days: cleanupDays,
@@ -54,6 +59,7 @@ export default function OrgUserListDetail() {
     <div>
       <PageHeader
         title={loading ? 'Loading…' : (list?.name ?? 'User List')}
+        description={list?.org_name ? `Organisation: ${list.org_name}` : undefined}
         action={
           <div className="flex items-center gap-2">
             {list && (list.immovable
@@ -74,11 +80,10 @@ export default function OrgUserListDetail() {
 
         {loading
           ? <Skeleton className="h-48 w-full" />
-          : id && <UserListMembersPanel listId={id} title={list?.name ?? 'Members'} />
+          : resolvedId && <UserListMembersPanel listId={resolvedId} title={list?.name ?? 'Members'} isSystemCtx={isSystemCtx} />
         }
       </div>
 
-      {/* ── Cleanup dialog ── */}
       <Dialog open={cleanupOpen} onOpenChange={v => { setCleanupOpen(v); if (!v) setCleanupResult(null); }}>
         <DialogContent>
           <DialogHeader>
