@@ -20,6 +20,7 @@ public class RediensIamDbContext(DbContextOptions<RediensIamDbContext> options) 
     public DbSet<EmailToken> EmailTokens => Set<EmailToken>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<UserSocialAccount> UserSocialAccounts => Set<UserSocialAccount>();
+    public DbSet<OrgSmtpConfig> OrgSmtpConfigs => Set<OrgSmtpConfig>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

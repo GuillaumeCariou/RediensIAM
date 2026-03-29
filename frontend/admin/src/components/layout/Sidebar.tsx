@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Building2, Users, List, FolderKanban,
   Shield, Bot, ScrollText, BarChart3, LogOut, ChevronRight,
-  Sun, Moon, Monitor, KeyRound, Settings, UserCog, User, ChevronDown,
+  Sun, Moon, Monitor, KeyRound, Settings, UserCog, User, ChevronDown, Mail,
 } from 'lucide-react';
 import { useTheme, type Theme } from '@/context/ThemeContext';
 import { cn } from '@/lib/utils';
@@ -32,6 +32,7 @@ const systemNav: NavItem[] = [
   { label: 'Projects',         to: '/system/projects',         icon: <FolderKanban className="h-4 w-4" />, superOnly: true },
   { label: 'User Lists',       to: '/system/userlists',        icon: <List className="h-4 w-4" />,        superOnly: true },
   { label: 'Service Accounts', to: '/system/service-accounts', icon: <Bot className="h-4 w-4" />,         superOnly: true },
+  { label: 'Email',            to: '/system/email',            icon: <Mail className="h-4 w-4" />,        superOnly: true },
   { label: 'Audit Log',        to: '/system/audit-log',        icon: <ScrollText className="h-4 w-4" /> },
   { label: 'Metrics',          to: '/system/metrics',          icon: <BarChart3 className="h-4 w-4" /> },
 ];
@@ -42,6 +43,7 @@ const orgNav: NavItem[] = [
   { label: 'User Lists',       to: '/org/userlists',         icon: <List className="h-4 w-4" /> },
   { label: 'Admins',           to: '/org/admins',            icon: <Shield className="h-4 w-4" /> },
   { label: 'Service Accounts', to: '/org/service-accounts',  icon: <Bot className="h-4 w-4" /> },
+  { label: 'Email',            to: '/org/email',             icon: <Mail className="h-4 w-4" /> },
   { label: 'Audit Log',        to: '/org/audit-log',         icon: <ScrollText className="h-4 w-4" /> },
 ];
 
@@ -125,6 +127,7 @@ export default function Sidebar() {
     { label: 'User Lists',       to: `${sysOrgBase}/userlists`,          icon: <List          className="h-4 w-4" /> },
     { label: 'Admins',           to: `${sysOrgBase}/admins`,             icon: <Shield        className="h-4 w-4" /> },
     { label: 'Service Accounts', to: `${sysOrgBase}/service-accounts`,   icon: <Bot           className="h-4 w-4" /> },
+    { label: 'Email',            to: `${sysOrgBase}/email`,              icon: <Mail          className="h-4 w-4" /> },
     { label: 'Audit Log',        to: `${sysOrgBase}/audit-log`,          icon: <ScrollText    className="h-4 w-4" /> },
   ] : [];
 

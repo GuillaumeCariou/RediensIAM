@@ -12,6 +12,7 @@ import Organisations from './pages/system/Organisations';
 import SystemUsers from './pages/system/Users';
 import AuditLog from './pages/system/AuditLog';
 import SystemMetrics from './pages/system/Metrics';
+import SystemEmail from './pages/system/SystemEmail';
 import SystemUserLists from './pages/system/SystemUserLists';
 import SystemServiceAccounts from './pages/system/SystemServiceAccounts';
 import OrgDetail from './pages/system/OrgDetail';
@@ -27,6 +28,7 @@ import UserLists from './pages/org/UserLists';
 import Projects from './pages/org/Projects';
 import OrgServiceAccounts from './pages/org/OrgServiceAccounts';
 import OrgAuditLog from './pages/org/OrgAuditLog';
+import OrgEmail from './pages/org/OrgEmail';
 
 // Project pages
 import ProjectDashboard from './pages/project/ProjectDashboard';
@@ -79,6 +81,7 @@ function AppRoutes() {
           <Route path="system/organisations/:id/service-accounts" element={<OrgServiceAccounts />} />
           <Route path="system/organisations/:id/service-accounts/:saId" element={<ServiceAccountDetail />} />
           <Route path="system/organisations/:id/audit-log" element={<OrgAuditLog />} />
+          <Route path="system/organisations/:id/email" element={<OrgEmail />} />
           <Route path="system/organisations/:oid/projects/:pid" element={<SystemProjectDetail />} />
           <Route path="system/organisations/:oid/projects/:pid/users" element={<ProjectUsers />} />
           <Route path="system/organisations/:oid/projects/:pid/roles" element={<ProjectRoles />} />
@@ -93,6 +96,7 @@ function AppRoutes() {
           <Route path="system/service-accounts/:id" element={<ServiceAccountDetail />} />
           <Route path="system/audit-log" element={<AuditLog />} />
           <Route path="system/metrics" element={<SystemMetrics />} />
+          <Route path="system/email" element={<SystemEmail />} />
         </Route>
 
         {/* Org — org_admin (and super_admin) */}
@@ -105,6 +109,7 @@ function AppRoutes() {
           <Route path="org/service-accounts" element={<OrgServiceAccounts />} />
           <Route path="org/service-accounts/:saId" element={<ServiceAccountDetail />} />
           <Route path="org/audit-log" element={<OrgAuditLog />} />
+          <Route path="org/email" element={<OrgEmail />} />
         </Route>
 
         {/* Project — project_manager (and above) */}

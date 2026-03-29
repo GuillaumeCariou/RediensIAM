@@ -152,6 +152,26 @@ public class UserSocialAccountConfiguration : IEntityTypeConfiguration<UserSocia
     }
 }
 
+public class OrgSmtpConfigConfiguration : IEntityTypeConfiguration<OrgSmtpConfig>
+{
+    public void Configure(EntityTypeBuilder<OrgSmtpConfig> builder)
+    {
+        builder.ToTable("org_smtp_configs");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+        builder.Property(x => x.Host).IsRequired().HasMaxLength(500);
+        builder.Property(x => x.Port).HasDefaultValue(587);
+        builder.Property(x => x.StartTls).HasDefaultValue(true);
+        builder.Property(x => x.Username).HasMaxLength(500);
+        builder.Property(x => x.FromAddress).IsRequired().HasMaxLength(320);
+        builder.Property(x => x.FromName).IsRequired().HasMaxLength(200);
+        builder.Property(x => x.CreatedAt).HasDefaultValueSql("now()");
+        builder.Property(x => x.UpdatedAt).HasDefaultValueSql("now()");
+        builder.HasIndex(x => x.OrgId).IsUnique();
+        builder.HasOne(x => x.Organisation).WithOne().HasForeignKey<OrgSmtpConfig>(x => x.OrgId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
 public class AuditLogConfiguration : IEntityTypeConfiguration<AuditLog>
 {
     private static readonly JsonSerializerOptions JsonOptions = new();

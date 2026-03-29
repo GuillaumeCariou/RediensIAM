@@ -33,6 +33,7 @@ public class ProjectConfiguration : IEntityTypeConfiguration<Project>
 
         builder.Property(x => x.AllowedEmailDomains).HasColumnType("text[]");
 
+        builder.Property(x => x.EmailFromName).HasMaxLength(200);
         builder.HasOne(x => x.DefaultRole).WithMany().HasForeignKey(x => x.DefaultRoleId).OnDelete(DeleteBehavior.SetNull);
         builder.HasMany(x => x.Roles).WithOne(x => x.Project).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
         builder.HasMany(x => x.UserProjectRoles).WithOne(x => x.Project).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);

@@ -28,6 +28,7 @@ public class Project
     public bool PasswordRequireLowercase { get; set; }
     public bool PasswordRequireDigit { get; set; }
     public bool PasswordRequireSpecial { get; set; }
+    public string? EmailFromName { get; set; }
 
     public Organisation Organisation { get; set; } = null!;
     public UserList? AssignedUserList { get; set; }

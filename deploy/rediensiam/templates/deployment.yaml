@@ -49,6 +49,11 @@ spec:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secrets
                   key: argon2-pepper
+            - name: Smtp__Password
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: smtp-password
           readinessProbe:
             httpGet:
               path: /health

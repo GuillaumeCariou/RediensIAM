@@ -145,6 +145,7 @@ export default function Authentication() {
   const [emailVerif, setEmailVerif] = useState(false);
   const [smsVerif, setSmsVerif] = useState(false);
   const [allowedDomains, setAllowedDomains] = useState('');
+  const [emailFromName, setEmailFromName] = useState('');
   const [defaultRoleId, setDefaultRoleId] = useState<string | null>(null);
   const [minPasswordLength, setMinPasswordLength] = useState(0);
   const [requireUppercase, setRequireUppercase] = useState(false);
@@ -169,6 +170,7 @@ export default function Authentication() {
         setEmailVerif(p.email_verification_enabled ?? false);
         setSmsVerif(p.sms_verification_enabled ?? false);
         setAllowedDomains((p.allowed_email_domains ?? []).join(', '));
+        setEmailFromName(p.email_from_name ?? '');
         setDefaultRoleId(p.default_role_id ?? null);
         setMinPasswordLength(p.min_password_length ?? 0);
         setRequireUppercase(p.password_require_uppercase ?? false);
@@ -192,6 +194,7 @@ export default function Authentication() {
         email_verification_enabled: emailVerif,
         sms_verification_enabled: smsVerif,
         allowed_email_domains: domains,
+        ...(emailFromName ? { email_from_name: emailFromName } : { clear_email_from_name: true }),
         min_password_length: minPasswordLength,
         password_require_uppercase: requireUppercase,
         password_require_lowercase: requireLowercase,
@@ -563,6 +566,23 @@ export default function Authentication() {
                       <p className="text-xs text-muted-foreground">Send a 6-digit OTP to the user's phone number</p>
                     </div>
                     <Switch checked={smsVerif} onCheckedChange={setSmsVerif} />
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Email Branding</CardTitle>
+                  <CardDescription>Override the sender display name for emails sent from this project. Leave blank to use the organisation's setting.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-1.5">
+                    <Label>From name</Label>
+                    <Input
+                      value={emailFromName}
+                      onChange={e => setEmailFromName(e.target.value)}
+                      placeholder="e.g. Acme Dev Portal (inherits from org if blank)"
+                    />
                   </div>
                 </CardContent>
               </Card>

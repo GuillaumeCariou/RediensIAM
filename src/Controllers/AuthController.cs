@@ -579,7 +579,7 @@ public class AuthController(
         await otp.StoreSessionOtpAsync("reg", sessionId, code);
 
         if (project.EmailVerificationEnabled)
-            await emailService.SendOtpAsync(email, code, "registration");
+            await emailService.SendOtpAsync(email, code, "registration", project.OrgId, project.Id);
         else if (project.SmsVerificationEnabled && body.Phone != null)
             await smsService.SendOtpAsync(body.Phone, code, "registration");
 
@@ -673,7 +673,7 @@ public class AuthController(
             await otp.StoreSessionOtpAsync("reset", sessionId, code);
 
             if (project.EmailVerificationEnabled)
-                await emailService.SendOtpAsync(user.Email, code, "password_reset");
+                await emailService.SendOtpAsync(user.Email, code, "password_reset", project.OrgId, project.Id);
             else if (project.SmsVerificationEnabled)
                 await smsService.SendOtpAsync(body.Phone ?? user.Email, code, "password_reset");
 

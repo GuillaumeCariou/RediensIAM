@@ -31,6 +31,13 @@ env:
   Keto__WriteUrl: "http://rediensiam-keto-write:4467"
   App__PublicUrl: "http://localhost"
   App__Domain: "localhost"
+  # SMTP — optional; if Smtp__Host is absent, per-org SMTP still works but global fallback is disabled
+  Smtp__Host: ""
+  Smtp__Port: "587"
+  Smtp__StartTls: "true"
+  Smtp__Username: ""
+  Smtp__FromAddress: "noreply@localhost"
+  Smtp__FromName: "RediensIAM"
 
 secrets: {}  # override via values.secret.yaml
 

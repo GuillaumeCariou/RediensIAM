@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using RediensIAM.Config;
@@ -18,6 +19,8 @@ public class OrgController(
     KetoService keto,
     PasswordService passwords,
     AuditLogService audit,
+    AppConfig appConfig,
+    IEmailService emailService,
     ILogger<OrgController> logger) : ControllerBase
 {
     private TokenClaims Claims => HttpContext.GetClaims() ?? throw new UnauthorizedException("Not authenticated");
@@ -131,6 +134,10 @@ public class OrgController(
             project.DefaultRoleId = body.DefaultRoleId;
         }
         if (body.LoginTheme != null) project.LoginTheme = body.LoginTheme;
+        if (body.ClearEmailFromName == true)
+            project.EmailFromName = null;
+        else if (body.EmailFromName != null)
+            project.EmailFromName = body.EmailFromName;
         project.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         return Ok(new { project.Id, project.Name });
@@ -446,6 +453,96 @@ public class OrgController(
         return NoContent();
     }
 
+    // ── SMTP ──────────────────────────────────────────────────────────────────
+
+    [HttpGet("/org/smtp")]
+    public async Task<IActionResult> GetSmtp()
+    {
+        var config = await db.OrgSmtpConfigs.FirstOrDefaultAsync(c => c.OrgId == OrgId);
+        if (config == null) return Ok(new { configured = false });
+        return Ok(new
+        {
+            configured   = true,
+            config.Host,
+            config.Port,
+            config.StartTls,
+            config.Username,
+            config.FromAddress,
+            config.FromName,
+            config.UpdatedAt,
+        });
+    }
+
+    [HttpPut("/org/smtp")]
+    public async Task<IActionResult> UpsertSmtp([FromBody] UpsertSmtpRequest body)
+    {
+        var orgId  = OrgId;
+        var config = await db.OrgSmtpConfigs.FirstOrDefaultAsync(c => c.OrgId == orgId);
+        var key    = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
+
+        if (config == null)
+        {
+            config = new OrgSmtpConfig
+            {
+                OrgId       = orgId,
+                Host        = body.Host,
+                Port        = body.Port,
+                StartTls    = body.StartTls,
+                Username    = body.Username,
+                PasswordEnc = body.Password != null
+                    ? TotpEncryption.Encrypt(key, System.Text.Encoding.UTF8.GetBytes(body.Password))
+                    : null,
+                FromAddress = body.FromAddress,
+                FromName    = body.FromName,
+                CreatedAt   = DateTimeOffset.UtcNow,
+                UpdatedAt   = DateTimeOffset.UtcNow,
+            };
+            db.OrgSmtpConfigs.Add(config);
+        }
+        else
+        {
+            config.Host        = body.Host;
+            config.Port        = body.Port;
+            config.StartTls    = body.StartTls;
+            config.Username    = body.Username;
+            if (body.Password != null)
+                config.PasswordEnc = TotpEncryption.Encrypt(key, System.Text.Encoding.UTF8.GetBytes(body.Password));
+            config.FromAddress = body.FromAddress;
+            config.FromName    = body.FromName;
+            config.UpdatedAt   = DateTimeOffset.UtcNow;
+        }
+
+        await db.SaveChangesAsync();
+        return Ok(new { message = "smtp_config_saved" });
+    }
+
+    [HttpDelete("/org/smtp")]
+    public async Task<IActionResult> DeleteSmtp()
+    {
+        var config = await db.OrgSmtpConfigs.FirstOrDefaultAsync(c => c.OrgId == OrgId);
+        if (config == null) return NoContent();
+        db.OrgSmtpConfigs.Remove(config);
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+
+    [HttpPost("/org/smtp/test")]
+    public async Task<IActionResult> TestSmtp()
+    {
+        var actor = await db.Users.FirstOrDefaultAsync(u => u.Id == ActorId);
+        if (actor == null) return BadRequest(new { error = "user_not_found" });
+        try
+        {
+            await emailService.SendOtpAsync(actor.Email, "123456", "registration", OrgId);
+            return Ok(new { message = "test_email_sent", to = actor.Email });
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "SMTP test failed for org {OrgId}", OrgId);
+            return BadRequest(new { error = "smtp_test_failed", detail = ex.Message });
+        }
+    }
+
     [HttpGet("/org/audit-log")]
     public async Task<IActionResult> GetAuditLog([FromQuery] int limit = 50, [FromQuery] int offset = 0)
     {
@@ -471,7 +568,9 @@ public record UpdateProjectRequest(
     string[]? AllowedEmailDomains,
     Guid? DefaultRoleId,
     bool? ClearDefaultRole,
-    Dictionary<string, object>? LoginTheme);
+    Dictionary<string, object>? LoginTheme,
+    string? EmailFromName,
+    bool? ClearEmailFromName);
 public record AssignUserListRequest(Guid UserListId);
 public record CreateUserListRequest(string Name);
 public record CreateUserRequest(string Email, string Password, string? Username);
@@ -479,3 +578,4 @@ public record UpdateUserRequest(string? Email, string? Username, string? Display
 public record OrgCleanupRequest(bool RemoveOrphanedRoles = true, bool RemoveInactiveUsers = false, int InactiveThresholdDays = 90, bool DryRun = true);
 public record OrgAssignManagerRequest(Guid UserId, string Role, Guid? ScopeId);
 public record OrgUpdateManagerRequest(string? Role, Guid? ScopeId);
+public record UpsertSmtpRequest(string Host, int Port, bool StartTls, string? Username, string? Password, string FromAddress, string FromName);

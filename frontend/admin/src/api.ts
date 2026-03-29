@@ -118,6 +118,7 @@ export async function updateProject(id: string, body: {
   login_theme?: Record<string, unknown>; min_password_length?: number;
   password_require_uppercase?: boolean; password_require_lowercase?: boolean;
   password_require_digit?: boolean; password_require_special?: boolean;
+  email_from_name?: string; clear_email_from_name?: boolean;
 }) {
   return (await apiFetch(`/project/info?project_id=${id}`, { method: 'PATCH', body: JSON.stringify(body) })).json();
 }
@@ -340,4 +341,37 @@ export async function adminDeleteRole(projectId: string, roleId: string) {
 }
 export async function adminDeleteProject(projectId: string) {
   return apiFetch(`/admin/projects/${projectId}`, { method: 'DELETE' });
+}
+
+// ── Email overview (super admin) ─────────────────────────────────
+export async function getEmailOverview() {
+  return (await apiFetch('/admin/email/overview')).json();
+}
+
+// ── Org SMTP (org admin) ──────────────────────────────────────────
+export async function getOrgSmtp() {
+  return (await apiFetch('/org/smtp')).json();
+}
+export async function upsertOrgSmtp(body: { host: string; port: number; start_tls: boolean; username?: string; password?: string; from_address: string; from_name: string }) {
+  return (await apiFetch('/org/smtp', { method: 'PUT', body: JSON.stringify(body) })).json();
+}
+export async function deleteOrgSmtp() {
+  return apiFetch('/org/smtp', { method: 'DELETE' });
+}
+export async function testOrgSmtp() {
+  return (await apiFetch('/org/smtp/test', { method: 'POST' })).json();
+}
+
+// ── Org SMTP (super admin) ────────────────────────────────────────
+export async function adminGetOrgSmtp(orgId: string) {
+  return (await apiFetch(`/admin/organizations/${orgId}/smtp`)).json();
+}
+export async function adminUpsertOrgSmtp(orgId: string, body: { host: string; port: number; start_tls: boolean; username?: string; password?: string; from_address: string; from_name: string }) {
+  return (await apiFetch(`/admin/organizations/${orgId}/smtp`, { method: 'PUT', body: JSON.stringify(body) })).json();
+}
+export async function adminDeleteOrgSmtp(orgId: string) {
+  return apiFetch(`/admin/organizations/${orgId}/smtp`, { method: 'DELETE' });
+}
+export async function adminTestOrgSmtp(orgId: string) {
+  return (await apiFetch(`/admin/organizations/${orgId}/smtp/test`, { method: 'POST' })).json();
 }
