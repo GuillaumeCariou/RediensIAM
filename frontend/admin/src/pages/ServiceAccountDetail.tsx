@@ -18,8 +18,19 @@ import {
   getSaApiKeys, addSaApiKey, removeSaApiKey,
   listOrgs, listProjects,
 } from '@/api';
+import { useOrgContext } from '@/hooks/useOrgContext';
+import { useAuth } from '@/context/AuthContext';
 import { fmtDateShort } from '@/lib/utils';
 
+interface Sa {
+  id: string; name: string; description: string | null;
+  active: boolean; last_used_at: string | null; created_at: string;
+  pats: Pat[]; roles: SaRole[];
+}
+interface Pat { id: string; name: string; expires_at: string | null; last_used_at: string | null; created_at: string; }
+interface SaRole { id: string; role: string; org_id: string | null; project_id: string | null; granted_at: string; }
+
+// ── JWT Profile section ────────────────────────────────────────────────────────
 function JwtProfileSection({ saId }: { saId: string }) {
   type KeyInfo = { client_id: string | null; has_key: boolean; kid: string | null };
   const [keyInfo, setKeyInfo] = useState<KeyInfo | null>(null);
@@ -93,70 +104,61 @@ function JwtProfileSection({ saId }: { saId: string }) {
   );
 }
 
-interface Sa {
-  id: string; name: string; description: string | null;
-  active: boolean; last_used_at: string | null; created_at: string;
-  pats: Pat[]; roles: SaRole[];
-}
-interface Pat { id: string; name: string; expires_at: string | null; last_used_at: string | null; created_at: string; }
-interface SaRole { id: string; role: string; org_id: string | null; project_id: string | null; granted_at: string; }
-
-export default function SystemServiceAccountDetail() {
-  const { id } = useParams<{ id: string }>();
+// ── Main component ─────────────────────────────────────────────────────────────
+export default function ServiceAccountDetail() {
+  // Support both :id (system routes) and :saId (org routes)
+  const { id, saId: saIdParam } = useParams<{ id?: string; saId?: string }>();
+  const saId = id ?? saIdParam ?? '';
   const navigate = useNavigate();
+
+  const { orgId, orgBase } = useOrgContext();
+  const { isSuperAdmin } = useAuth();
 
   const [sa, setSa] = useState<Sa | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // PAT generation
+  // PAT
   const [patOpen, setPatOpen] = useState(false);
   const [newPat, setNewPat] = useState({ name: '', expires_at: '' });
   const [patSaving, setPatSaving] = useState(false);
   const [rawToken, setRawToken] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-
-  // PAT revoke
   const [revokeTarget, setRevokeTarget] = useState<Pat | null>(null);
 
-  // Role assign
+  // Roles
   const [roleOpen, setRoleOpen] = useState(false);
   const [roleSaving, setRoleSaving] = useState(false);
   const [roleForm, setRoleForm] = useState({ role: '', org_id: '', project_id: '' });
   const [orgs, setOrgs] = useState<{ id: string; name: string }[]>([]);
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
-
-  // Role remove
   const [removeRoleTarget, setRemoveRoleTarget] = useState<SaRole | null>(null);
 
-  // Delete SA
+  // Delete
   const [deleteOpen, setDeleteOpen] = useState(false);
 
   const load = useCallback(() => {
-    if (!id) return;
+    if (!saId) return;
     setLoading(true);
-    getServiceAccount(id)
+    getServiceAccount(saId)
       .then(setSa)
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [saId]);
 
   useEffect(() => { load(); }, [load]);
 
   const handleDelete = async () => {
-    if (!id) return;
-    await deleteServiceAccount(id);
-    navigate('/system/service-accounts');
+    if (!saId) return;
+    await deleteServiceAccount(saId);
+    navigate(`${orgBase}/service-accounts`);
   };
 
   const handleGeneratePat = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!id) return;
+    if (!saId) return;
     setPatSaving(true);
     try {
-      const res = await generatePat(id, {
-        name: newPat.name,
-        expires_at: newPat.expires_at || undefined,
-      });
+      const res = await generatePat(saId, { name: newPat.name, expires_at: newPat.expires_at || undefined });
       setRawToken(res.token);
       setPatOpen(false);
       setNewPat({ name: '', expires_at: '' });
@@ -164,37 +166,42 @@ export default function SystemServiceAccountDetail() {
   };
 
   const handleRevokePat = async () => {
-    if (!revokeTarget || !id) return;
-    await revokePat(id, revokeTarget.id);
+    if (!revokeTarget || !saId) return;
+    await revokePat(saId, revokeTarget.id);
     setRevokeTarget(null);
     load();
   };
 
   const openRoleDialog = () => {
-    setRoleForm({ role: '', org_id: '', project_id: '' });
-    setOrgs([]);
+    const prefilledOrg = isSuperAdmin ? '' : (orgId ?? '');
+    setRoleForm({ role: '', org_id: prefilledOrg, project_id: '' });
     setProjects([]);
-    listOrgs().then((r: { id: string; name: string }[]) => setOrgs(r ?? [])).catch(console.error);
+    if (isSuperAdmin) {
+      setOrgs([]);
+      listOrgs().then((r: { id: string; name: string }[]) => setOrgs(r ?? [])).catch(console.error);
+    } else if (prefilledOrg) {
+      listProjects(prefilledOrg).then(r => setProjects(r.projects ?? r ?? [])).catch(console.error);
+    }
     setRoleOpen(true);
   };
 
   const handleRoleChange = (role: string) => {
-    setRoleForm({ role, org_id: '', project_id: '' });
-    setProjects([]);
+    setRoleForm(f => ({ ...f, role, project_id: '' }));
+    // If org already pre-filled and role requires project, projects already loaded
   };
 
   const handleOrgChange = (org_id: string) => {
     setRoleForm(f => ({ ...f, org_id, project_id: '' }));
     setProjects([]);
-    if (org_id) listProjects(org_id).then((r: { id: string; name: string }[]) => setProjects(r ?? [])).catch(console.error);
+    if (org_id) listProjects(org_id).then(r => setProjects(r.projects ?? r ?? [])).catch(console.error);
   };
 
   const handleAssignRole = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!id || !roleForm.role) return;
+    if (!saId || !roleForm.role) return;
     setRoleSaving(true);
     try {
-      await assignSaRole(id, {
+      await assignSaRole(saId, {
         role: roleForm.role,
         org_id: roleForm.org_id || undefined,
         project_id: roleForm.project_id || undefined,
@@ -205,8 +212,8 @@ export default function SystemServiceAccountDetail() {
   };
 
   const handleRemoveRole = async () => {
-    if (!removeRoleTarget || !id) return;
-    await removeSaRole(id, removeRoleTarget.id);
+    if (!removeRoleTarget || !saId) return;
+    await removeSaRole(saId, removeRoleTarget.id);
     setRemoveRoleTarget(null);
     load();
   };
@@ -218,67 +225,68 @@ export default function SystemServiceAccountDetail() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const closeTokenDialog = () => {
-    setRawToken(null);
-    load();
-  };
+  const closeTokenDialog = () => { setRawToken(null); load(); };
+
+  const roleSubmitDisabled = roleSaving || !roleForm.role
+    || (roleForm.role === 'org_admin' && !roleForm.org_id)
+    || (roleForm.role === 'project_admin' && (!roleForm.org_id || !roleForm.project_id));
 
   return (
     <div className="p-6 space-y-4">
-      <Button variant="ghost" size="sm" className="-ml-1" onClick={() => navigate('/system/service-accounts')}>
+      <Button variant="ghost" size="sm" className="-ml-1" onClick={() => navigate(`${orgBase}/service-accounts`)}>
         <ArrowLeft className="h-4 w-4" />Back to Service Accounts
       </Button>
 
-      {/* ── SA Card ───────────────────────────────────────────────────── */}
-      <div className="rounded-xl border bg-card p-6 space-y-4">
+      {/* SA Card */}
+      <div className="rounded-xl border bg-card p-6">
         {loading
           ? <div className="space-y-2"><Skeleton className="h-6 w-48" /><Skeleton className="h-4 w-72" /></div>
           : sa && (
-            <>
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h1 className="text-xl font-bold">{sa.name}</h1>
-                  {sa.description && <p className="text-sm text-muted-foreground">{sa.description}</p>}
-                  <p className="text-xs text-muted-foreground mt-1">Created {fmtDateShort(sa.created_at)}</p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <Badge variant={sa.active ? 'success' : 'secondary'}>{sa.active ? 'Active' : 'Inactive'}</Badge>
-                  <Button variant="outline" size="sm" className="text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => setDeleteOpen(true)}>
-                    <Trash2 className="h-4 w-4" />Delete
-                  </Button>
-                </div>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h1 className="text-xl font-bold">{sa.name}</h1>
+                {sa.description && <p className="text-sm text-muted-foreground">{sa.description}</p>}
+                <p className="text-xs text-muted-foreground mt-1">Created {fmtDateShort(sa.created_at)}</p>
               </div>
-            </>
+              <div className="flex items-center gap-2 shrink-0">
+                <Badge variant={sa.active ? 'success' : 'secondary'}>{sa.active ? 'Active' : 'Inactive'}</Badge>
+                <Button variant="outline" size="sm" className="text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => setDeleteOpen(true)}>
+                  <Trash2 className="h-4 w-4" />Delete
+                </Button>
+              </div>
+            </div>
           )
         }
       </div>
 
-      {/* ── Roles ─────────────────────────────────────────────────────── */}
+      {/* Roles */}
       <div className="rounded-xl border bg-card overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Assigned Roles</h2>
-          <Button size="sm" onClick={openRoleDialog}>
-            <Plus className="h-4 w-4" />Assign Role
-          </Button>
+          <Button size="sm" onClick={openRoleDialog}><Plus className="h-4 w-4" />Assign Role</Button>
         </div>
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Role</TableHead>
-              <TableHead>Granted At</TableHead>
+              <TableHead>Scope</TableHead>
+              <TableHead>Granted</TableHead>
               <TableHead className="w-12"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading
               ? Array.from({ length: 1 }).map((_, i) => (
-                  <TableRow key={i}>{Array.from({ length: 3 }).map((__, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
+                  <TableRow key={i}>{Array.from({ length: 4 }).map((__, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
                 ))
               : (sa?.roles ?? []).length === 0
-              ? <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground py-8">No roles assigned.</TableCell></TableRow>
+              ? <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-8">No roles assigned.</TableCell></TableRow>
               : (sa?.roles ?? []).map(r => (
                   <TableRow key={r.id}>
                     <TableCell><Badge variant="outline" className="font-mono">{r.role}</Badge></TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {r.project_id ? `project: ${r.project_id}` : r.org_id ? `org: ${r.org_id}` : '—'}
+                    </TableCell>
                     <TableCell className="text-sm text-muted-foreground">{fmtDateShort(r.granted_at)}</TableCell>
                     <TableCell>
                       <DropdownMenu>
@@ -299,13 +307,11 @@ export default function SystemServiceAccountDetail() {
         </Table>
       </div>
 
-      {/* ── PATs ──────────────────────────────────────────────────────── */}
+      {/* PATs */}
       <div className="rounded-xl border bg-card overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Personal Access Tokens</h2>
-          <Button size="sm" onClick={() => setPatOpen(true)}>
-            <Plus className="h-4 w-4" />Generate PAT
-          </Button>
+          <Button size="sm" onClick={() => setPatOpen(true)}><Plus className="h-4 w-4" />Generate PAT</Button>
         </div>
         <Table>
           <TableHeader>
@@ -349,12 +355,10 @@ export default function SystemServiceAccountDetail() {
         </Table>
       </div>
 
-      {/* ── JWT Profile ───────────────────────────────────────────────── */}
-      {id && <JwtProfileSection saId={id} />}
+      {/* JWT Profile */}
+      {saId && <JwtProfileSection saId={saId} />}
 
-      {/* ── Dialogs ───────────────────────────────────────────────────── */}
-
-      {/* Generate PAT */}
+      {/* Generate PAT dialog */}
       <Dialog open={patOpen} onOpenChange={setPatOpen}>
         <DialogContent>
           <DialogHeader>
@@ -378,22 +382,18 @@ export default function SystemServiceAccountDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* Show raw token */}
+      {/* Raw token reveal */}
       <Dialog open={!!rawToken} onOpenChange={v => !v && closeTokenDialog()}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Token Generated</DialogTitle>
-            <DialogDescription className="text-amber-500 font-medium">
-              This token will not be shown again. Copy it now.
-            </DialogDescription>
+            <DialogDescription className="text-amber-500 font-medium">This token will not be shown again. Copy it now.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-3">
-            <div className="flex gap-2">
-              <Input readOnly value={rawToken ?? ''} className="font-mono text-xs" />
-              <Button type="button" variant="outline" size="icon" onClick={copyToken}>
-                {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
-              </Button>
-            </div>
+          <div className="flex gap-2">
+            <Input readOnly value={rawToken ?? ''} className="font-mono text-xs" />
+            <Button type="button" variant="outline" size="icon" onClick={copyToken}>
+              {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+            </Button>
           </div>
           <DialogFooter>
             <Button onClick={closeTokenDialog}>Done</Button>
@@ -415,7 +415,7 @@ export default function SystemServiceAccountDetail() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Assign Role */}
+      {/* Assign Role dialog */}
       <Dialog open={roleOpen} onOpenChange={setRoleOpen}>
         <DialogContent>
           <DialogHeader>
@@ -428,13 +428,14 @@ export default function SystemServiceAccountDetail() {
               <Select value={roleForm.role} onValueChange={handleRoleChange} disabled={roleSaving}>
                 <SelectTrigger><SelectValue placeholder="Select a role" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="super_admin">super_admin</SelectItem>
+                  {isSuperAdmin && <SelectItem value="super_admin">super_admin</SelectItem>}
                   <SelectItem value="org_admin">org_admin</SelectItem>
                   <SelectItem value="project_admin">project_admin</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            {(roleForm.role === 'org_admin' || roleForm.role === 'project_admin') && (
+            {/* Org picker: SuperAdmin sees a picker; OrgAdmin org is pre-filled (hidden) */}
+            {isSuperAdmin && (roleForm.role === 'org_admin' || roleForm.role === 'project_admin') && (
               <div className="space-y-2">
                 <Label>Organisation</Label>
                 <Select value={roleForm.org_id} onValueChange={handleOrgChange} disabled={roleSaving}>
@@ -458,14 +459,7 @@ export default function SystemServiceAccountDetail() {
             )}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setRoleOpen(false)}>Cancel</Button>
-              <Button
-                type="submit"
-                disabled={roleSaving || !roleForm.role
-                  || (roleForm.role === 'org_admin' && !roleForm.org_id)
-                  || (roleForm.role === 'project_admin' && (!roleForm.org_id || !roleForm.project_id))}
-              >
-                {roleSaving ? 'Assigning…' : 'Assign'}
-              </Button>
+              <Button type="submit" disabled={roleSubmitDisabled}>{roleSaving ? 'Assigning…' : 'Assign'}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -476,7 +470,7 @@ export default function SystemServiceAccountDetail() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Remove role "{removeRoleTarget?.role}"?</AlertDialogTitle>
-            <AlertDialogDescription>This will revoke system-level access for this service account.</AlertDialogDescription>
+            <AlertDialogDescription>This will revoke this management role from the service account.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
@@ -490,7 +484,7 @@ export default function SystemServiceAccountDetail() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete "{sa?.name}"?</AlertDialogTitle>
-            <AlertDialogDescription>All PATs will be revoked and system access removed. This cannot be undone.</AlertDialogDescription>
+            <AlertDialogDescription>All PATs will be revoked. This cannot be undone.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>

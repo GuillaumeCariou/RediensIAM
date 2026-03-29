@@ -18,8 +18,8 @@ import SystemUserListDetail from './pages/system/UserListDetail';
 import OrgDetail from './pages/system/OrgDetail';
 import SystemProjectDetail from './pages/system/SystemProjectDetail';
 import SystemProjects from './pages/system/SystemProjects';
-import SystemServiceAccountDetail from './pages/system/SystemServiceAccountDetail';
 import SystemAdmins from './pages/system/SystemAdmins';
+import ServiceAccountDetail from './pages/ServiceAccountDetail';
 
 // Org pages
 import OrgDashboard from './pages/org/OrgDashboard';
@@ -27,7 +27,6 @@ import UserLists from './pages/org/UserLists';
 import Projects from './pages/org/Projects';
 import OrgAdmins from './pages/org/OrgAdmins';
 import OrgServiceAccounts from './pages/org/OrgServiceAccounts';
-import OrgServiceAccountDetail from './pages/org/OrgServiceAccountDetail';
 import OrgAuditLog from './pages/org/OrgAuditLog';
 import OrgUserListDetail from './pages/org/UserListDetail';
 
@@ -80,7 +79,7 @@ function AppRoutes() {
           <Route path="system/organisations/:id/projects" element={<Projects />} />
           <Route path="system/organisations/:id/admins" element={<OrgAdmins />} />
           <Route path="system/organisations/:id/service-accounts" element={<OrgServiceAccounts />} />
-          <Route path="system/organisations/:id/service-accounts/:saId" element={<OrgServiceAccountDetail />} />
+          <Route path="system/organisations/:id/service-accounts/:saId" element={<ServiceAccountDetail />} />
           <Route path="system/organisations/:id/audit-log" element={<OrgAuditLog />} />
           <Route path="system/organisations/:oid/projects/:pid" element={<SystemProjectDetail />} />
           <Route path="system/organisations/:oid/projects/:pid/users" element={<ProjectUsers />} />
@@ -91,8 +90,9 @@ function AppRoutes() {
           <Route path="system/users" element={<SystemUsers />} />
           <Route path="system/userlists" element={<SystemUserLists />} />
           <Route path="system/userlists/:id" element={<SystemUserListDetail />} />
+          <Route path="system/organisations/:id/userlists/:listId" element={<SystemUserListDetail />} />
           <Route path="system/service-accounts" element={<SystemServiceAccounts />} />
-          <Route path="system/service-accounts/:id" element={<SystemServiceAccountDetail />} />
+          <Route path="system/service-accounts/:id" element={<ServiceAccountDetail />} />
           <Route path="system/audit-log" element={<AuditLog />} />
           <Route path="system/metrics" element={<SystemMetrics />} />
         </Route>
@@ -105,7 +105,7 @@ function AppRoutes() {
           <Route path="org/projects" element={<Projects />} />
           <Route path="org/admins" element={<OrgAdmins />} />
           <Route path="org/service-accounts" element={<OrgServiceAccounts />} />
-          <Route path="org/service-accounts/:saId" element={<OrgServiceAccountDetail />} />
+          <Route path="org/service-accounts/:saId" element={<ServiceAccountDetail />} />
           <Route path="org/audit-log" element={<OrgAuditLog />} />
         </Route>
 
