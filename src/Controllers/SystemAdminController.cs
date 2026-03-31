@@ -127,20 +127,24 @@ var org = await db.Organisations.FindAsync(id);
         var orgRoles = await db.OrgRoles.Where(r => r.OrgId == id).ToListAsync();
         db.OrgRoles.RemoveRange(orgRoles);
 
-        var lists = await db.UserLists.Where(ul => ul.OrgId == id).ToListAsync();
-        foreach (var list in lists)
+        // Query only list IDs — avoid loading UserList entities into EF's change tracker,
+        // which would trigger EF's own cascade and create a circular-dependency error.
+        var listIds = await db.UserLists.Where(ul => ul.OrgId == id).Select(ul => ul.Id).ToListAsync();
+        foreach (var listId in listIds)
         {
-            var users = await db.Users.Where(u => u.UserListId == list.Id).ToListAsync();
+            var users = await db.Users.Where(u => u.UserListId == listId).ToListAsync();
             foreach (var u in users)
-                await keto.DeleteRelationTupleAsync(Roles.KetoUserListsNamespace, list.Id.ToString(), "member", $"user:{u.Id}");
+                await keto.DeleteRelationTupleAsync(Roles.KetoUserListsNamespace, listId.ToString(), "member", $"user:{u.Id}");
             db.Users.RemoveRange(users);
         }
-        db.UserLists.RemoveRange(lists);
+        // Save the user deletions before tackling the org+lists circular FK.
+        await db.SaveChangesAsync();
 
         await keto.DeleteRelationTupleAsync(Roles.KetoOrgsNamespace, id.ToString(), "org", $"{Roles.KetoSystemNamespace}:{Roles.KetoSystemObject}");
 
-        db.Organisations.Remove(org);
-        await db.SaveChangesAsync();
+        // Use raw SQL so PostgreSQL handles the circular FK (org.OrgListId ↔ list.OrgId)
+        // in a single statement where both sides are deleted atomically.
+        await db.Database.ExecuteSqlRawAsync("DELETE FROM organisations WHERE \"Id\" = {0}", id);
         return NoContent();
     }
 

@@ -35,6 +35,7 @@ public class OrganisationConfiguration : IEntityTypeConfiguration<Organisation>
         builder.HasMany(x => x.UserLists)
                .WithOne(x => x.Organisation)
                .HasForeignKey(x => x.OrgId)
+               .IsRequired(false)
                .OnDelete(DeleteBehavior.Cascade);
 
         builder.HasMany(x => x.Projects)

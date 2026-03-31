@@ -246,3 +246,6 @@ app.MapFallback("/admin/{**path}", async ctx =>
 app.MapFallbackToFile("index.html");
 
 app.Run();
+
+// Expose Program to integration test project
+public partial class Program { }

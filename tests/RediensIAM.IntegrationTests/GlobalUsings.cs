@@ -1,0 +1,10 @@
+global using System.Net;
+global using System.Net.Http.Json;
+global using System.Text.Json;
+global using System.Text.Json.Nodes;
+global using FluentAssertions;
+global using Microsoft.EntityFrameworkCore;
+global using RediensIAM.Data;
+global using RediensIAM.Data.Entities;
+global using RediensIAM.IntegrationTests.Infrastructure;
+global using Xunit;

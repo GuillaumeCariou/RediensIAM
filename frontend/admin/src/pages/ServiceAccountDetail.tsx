@@ -108,7 +108,7 @@ function JwtProfileSection({ saId }: { saId: string }) {
 export default function ServiceAccountDetail() {
   // Support both :id (system routes) and :saId (org routes)
   const { id, saId: saIdParam } = useParams<{ id?: string; saId?: string }>();
-  const saId = id ?? saIdParam ?? '';
+  const saId = saIdParam ?? id ?? '';
   const navigate = useNavigate();
 
   const { orgId, orgBase } = useOrgContext();
