@@ -60,7 +60,7 @@ public class ProjectController(
         return Ok(new
         {
             project.Id, project.Name, project.Slug, project.Active,
-            project.HydraClientId, project.RequireRoleToLogin,
+            project.HydraClientId, project.RequireRoleToLogin, project.RequireMfa,
             project.AssignedUserListId,
             AssignedUserListName   = project.AssignedUserList?.Name,
             project.DefaultRoleId,
@@ -81,6 +81,7 @@ public class ProjectController(
         if (body.Name != null)                     project.Name                    = body.Name;
         if (body.Active.HasValue)                  project.Active                  = body.Active.Value;
         if (body.RequireRoleToLogin.HasValue)       project.RequireRoleToLogin      = body.RequireRoleToLogin.Value;
+        if (body.RequireMfa.HasValue)               project.RequireMfa              = body.RequireMfa.Value;
         if (body.AllowSelfRegistration.HasValue)    project.AllowSelfRegistration   = body.AllowSelfRegistration.Value;
         if (body.EmailVerificationEnabled.HasValue) project.EmailVerificationEnabled = body.EmailVerificationEnabled.Value;
         if (body.SmsVerificationEnabled.HasValue)   project.SmsVerificationEnabled  = body.SmsVerificationEnabled.Value;
@@ -331,10 +332,11 @@ public class ProjectController(
     }
 }
 
-public record UpdateProjectInfoRequest(string? Name, bool? Active, bool? RequireRoleToLogin, bool? AllowSelfRegistration,
-    bool? EmailVerificationEnabled, bool? SmsVerificationEnabled, string[]? AllowedEmailDomains,
-    Guid? DefaultRoleId, bool? ClearDefaultRole, Dictionary<string, object>? LoginTheme,
-    int? MinPasswordLength, bool? PasswordRequireUppercase, bool? PasswordRequireLowercase,
+public record UpdateProjectInfoRequest(string? Name, bool? Active, bool? RequireRoleToLogin, bool? RequireMfa,
+    bool? AllowSelfRegistration, bool? EmailVerificationEnabled, bool? SmsVerificationEnabled,
+    string[]? AllowedEmailDomains, Guid? DefaultRoleId, bool? ClearDefaultRole,
+    Dictionary<string, object>? LoginTheme, int? MinPasswordLength,
+    bool? PasswordRequireUppercase, bool? PasswordRequireLowercase,
     bool? PasswordRequireDigit, bool? PasswordRequireSpecial);
 public record CreateProjectUserRequest(string Email, string? Username, string Password);
 public record AssignRoleRequest(Guid RoleId);

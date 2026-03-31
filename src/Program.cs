@@ -126,6 +126,7 @@ var app = builder.Build();
                     ""UpdatedAt""   TIMESTAMPTZ NOT NULL DEFAULT now()
                 );
                 ALTER TABLE projects ADD COLUMN IF NOT EXISTS ""EmailFromName"" TEXT;
+                ALTER TABLE projects ADD COLUMN IF NOT EXISTS ""RequireMfa"" BOOLEAN NOT NULL DEFAULT false;
             ");
             logger.LogInformation("Database schema ready");
             break;

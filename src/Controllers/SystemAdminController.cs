@@ -211,6 +211,19 @@ var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id
         return Ok(new { user.Id, user.Email, user.Username, user.Discriminator, user.DisplayName, user.Phone, user.Active, user.EmailVerified, user.LockedUntil, user.FailedLoginCount });
     }
 
+    [HttpPost("/admin/users/{id}/unlock")]
+    public async Task<IActionResult> UnlockUser(Guid id)
+    {
+        var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id == id);
+        if (user == null) return NotFound();
+        user.LockedUntil      = null;
+        user.FailedLoginCount = 0;
+        user.UpdatedAt        = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        await audit.RecordAsync(user.UserList.OrgId, null, GetActorId(), "user.unlocked", "user", id.ToString());
+        return Ok(new { user.Id, message = "user_unlocked" });
+    }
+
     [HttpDelete("/admin/users/{id}/sessions")]
     public async Task<IActionResult> ForceLogout(Guid id)
     {
@@ -431,6 +444,7 @@ var project = await db.Projects.FindAsync(id);
         if (project == null) return NotFound();
         if (body.Name != null) project.Name = body.Name;
         if (body.RequireRoleToLogin.HasValue)       project.RequireRoleToLogin       = body.RequireRoleToLogin.Value;
+        if (body.RequireMfa.HasValue)               project.RequireMfa               = body.RequireMfa.Value;
         if (body.AllowSelfRegistration.HasValue)    project.AllowSelfRegistration    = body.AllowSelfRegistration.Value;
         if (body.EmailVerificationEnabled.HasValue) project.EmailVerificationEnabled = body.EmailVerificationEnabled.Value;
         if (body.SmsVerificationEnabled.HasValue)   project.SmsVerificationEnabled   = body.SmsVerificationEnabled.Value;
@@ -761,8 +775,8 @@ public record AdminCreateUserRequest(string Email, string Password, string? User
 public record AssignOrgAdminRequest(Guid UserId, string Role, Guid? ScopeId);
 public record AdminCreateUserListRequest(string Name, Guid OrgId);
 public record AdminCreateProjectRequest(string Name, string Slug, bool RequireRoleToLogin, string[]? RedirectUris);
-public record AdminUpdateProjectRequest(string? Name, bool? RequireRoleToLogin, bool? AllowSelfRegistration, bool? EmailVerificationEnabled, bool? SmsVerificationEnabled,
-    bool? Active, Guid? DefaultRoleId, bool? ClearDefaultRole, string[]? AllowedEmailDomains, Dictionary<string, object>? LoginTheme);
+public record AdminUpdateProjectRequest(string? Name, bool? RequireRoleToLogin, bool? RequireMfa, bool? AllowSelfRegistration, bool? EmailVerificationEnabled,
+    bool? SmsVerificationEnabled, bool? Active, Guid? DefaultRoleId, bool? ClearDefaultRole, string[]? AllowedEmailDomains, Dictionary<string, object>? LoginTheme);
 public record AdminAssignUserListRequest(Guid UserListId);
 public record AdminUpdateUserRequest(string? Email, string? Username, string? DisplayName, string? Phone, bool? Active, bool? EmailVerified, bool? ClearLock, string? NewPassword);
 public record AdminCreateRoleRequest(string Name, string? Description, int? Rank);

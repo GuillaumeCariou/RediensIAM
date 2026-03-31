@@ -179,6 +179,21 @@ public class AuthController(
             }
         }
 
+        // B3: Mandatory MFA — if project requires MFA and user has none configured, block login
+        if (project.RequireMfa)
+        {
+            var hasMfa = user.TotpEnabled || user.PhoneVerified ||
+                         await db.WebAuthnCredentials.AnyAsync(w => w.UserId == user.Id);
+            if (!hasMfa)
+            {
+                HttpContext.Session.SetString("mfa_setup_required",  "true");
+                HttpContext.Session.SetString("mfa_pending_user",     user.Id.ToString());
+                HttpContext.Session.SetString("mfa_pending_project",  projectId);
+                HttpContext.Session.SetString("mfa_pending_challenge", body.LoginChallenge);
+                return Ok(new { requires_mfa_setup = true });
+            }
+        }
+
         if (user.TotpEnabled)
         {
             HttpContext.Session.SetString("mfa_pending_user", user.Id.ToString());

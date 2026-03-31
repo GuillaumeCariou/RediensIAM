@@ -14,6 +14,7 @@ public class Project
     public string? LoginTemplate { get; set; }
     public bool RequireRoleToLogin { get; set; }
     public bool AllowSelfRegistration { get; set; }
+    public bool RequireMfa { get; set; }
     public string[] AllowedEmailDomains { get; set; } = [];
     public bool EmailVerificationEnabled { get; set; }
     public bool SmsVerificationEnabled { get; set; }

@@ -122,6 +122,7 @@ public class OrgController(
         if (project == null) return NotFound();
         if (body.Name != null) project.Name = body.Name;
         if (body.RequireRoleToLogin.HasValue) project.RequireRoleToLogin = body.RequireRoleToLogin.Value;
+        if (body.RequireMfa.HasValue) project.RequireMfa = body.RequireMfa.Value;
         if (body.AllowSelfRegistration.HasValue) project.AllowSelfRegistration = body.AllowSelfRegistration.Value;
         if (body.EmailVerificationEnabled.HasValue) project.EmailVerificationEnabled = body.EmailVerificationEnabled.Value;
         if (body.SmsVerificationEnabled.HasValue) project.SmsVerificationEnabled = body.SmsVerificationEnabled.Value;
@@ -379,6 +380,19 @@ public class OrgController(
         return Ok(new { user.Id, user.Email, user.Username, user.Discriminator, user.DisplayName, user.Phone, user.Active, user.EmailVerified, user.LockedUntil, user.FailedLoginCount });
     }
 
+    [HttpPost("/org/userlists/{id}/users/{uid}/unlock")]
+    public async Task<IActionResult> UnlockUser(Guid id, Guid uid)
+    {
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == uid && u.UserListId == id && u.UserList.OrgId == OrgId);
+        if (user == null) return NotFound();
+        user.LockedUntil      = null;
+        user.FailedLoginCount = 0;
+        user.UpdatedAt        = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        await audit.RecordAsync(OrgId, null, ActorId, "user.unlocked", "user", uid.ToString());
+        return Ok(new { user.Id, message = "user_unlocked" });
+    }
+
     [HttpDelete("/org/userlists/{id}/users/{uid}")]
     public async Task<IActionResult> RemoveUser(Guid id, Guid uid)
     {
@@ -568,6 +582,7 @@ public record CreateProjectRequest(string Name, string Slug, bool RequireRoleToL
 public record UpdateProjectRequest(
     string? Name,
     bool? RequireRoleToLogin,
+    bool? RequireMfa,
     bool? AllowSelfRegistration,
     bool? EmailVerificationEnabled,
     bool? SmsVerificationEnabled,
