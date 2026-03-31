@@ -290,17 +290,21 @@ public class OrgController(
     public async Task<IActionResult> ListUsersInList(Guid id)
     {
         if (!await db.UserLists.AnyAsync(ul => ul.Id == id && ul.OrgId == OrgId)) return NotFound();
+        var userIds = await db.Users.Where(u => u.UserListId == id).Select(u => u.Id).ToListAsync();
+        var pendingInvites = await db.EmailTokens
+            .Where(t => userIds.Contains(t.UserId) && t.Kind == "invite" && t.UsedAt == null && t.ExpiresAt > DateTimeOffset.UtcNow)
+            .Select(t => t.UserId).ToHashSetAsync();
         var users = await db.Users
             .Where(u => u.UserListId == id)
             .Select(u => new { u.Id, u.Username, u.Discriminator, u.Email, u.DisplayName, u.Active, u.LastLoginAt })
             .ToListAsync();
-        return Ok(users);
+        return Ok(users.Select(u => new { u.Id, u.Username, u.Discriminator, u.Email, u.DisplayName, u.Active, u.LastLoginAt, invite_pending = pendingInvites.Contains(u.Id) }));
     }
 
     [HttpPost("/org/userlists/{id}/users")]
     public async Task<IActionResult> AddUserToList(Guid id, [FromBody] CreateUserRequest body)
     {
-        var ul = await db.UserLists.FirstOrDefaultAsync(ul => ul.Id == id && ul.OrgId == OrgId);
+        var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(ul => ul.Id == id && ul.OrgId == OrgId);
         if (ul == null) return NotFound();
 
         var username = body.Username ?? body.Email.Split('@')[0];
@@ -308,12 +312,13 @@ public class OrgController(
         do { discriminator = Random.Shared.Next(1000, 9999).ToString(); }
         while (await db.Users.AnyAsync(u => u.UserListId == id && u.Username == username && u.Discriminator == discriminator));
 
+        var isInvite = string.IsNullOrEmpty(body.Password);
         var user = new User
         {
             UserListId = id, Username = username,
             Discriminator = discriminator, Email = body.Email.ToLowerInvariant(),
-            PasswordHash = passwords.Hash(body.Password),
-            Active = true, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+            PasswordHash = isInvite ? Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)) : passwords.Hash(body.Password!),
+            Active = !isInvite, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
         };
         db.Users.Add(user);
         await db.SaveChangesAsync();
@@ -321,10 +326,67 @@ public class OrgController(
         var assignedProjects = await db.Projects.Where(p => p.AssignedUserListId == id && p.OrgId == OrgId).ToListAsync();
         foreach (var project in assignedProjects)
             await keto.AssignDefaultRoleAsync(project, user);
+
+        string? inviteUrl = null;
+        if (isInvite)
+        {
+            var raw  = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw)));
+            db.EmailTokens.Add(new EmailToken
+            {
+                UserId    = user.Id,
+                Kind      = "invite",
+                TokenHash = hash,
+                ExpiresAt = DateTimeOffset.UtcNow.AddHours(72),
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+            inviteUrl = $"{appConfig.PublicUrl}/auth/invite/complete?token={Uri.EscapeDataString(raw)}";
+            var orgName = ul.Organisation?.Name ?? "the organization";
+            await emailService.SendInviteAsync(user.Email, inviteUrl, orgName);
+        }
+
+        await audit.RecordAsync(OrgId, null, ActorId, isInvite ? "user.invited" : "user.created", "user", user.Id.ToString());
         return Created($"/org/userlists/{id}/users/{user.Id}", new
         {
-            user.Id, username = $"{user.Username}#{user.Discriminator}", user.Email
+            user.Id, username = $"{user.Username}#{user.Discriminator}", user.Email,
+            invite_pending = isInvite
         });
+    }
+
+    [HttpPost("/org/userlists/{id}/users/{uid}/resend-invite")]
+    public async Task<IActionResult> ResendInvite(Guid id, Guid uid)
+    {
+        var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(ul => ul.Id == id && ul.OrgId == OrgId);
+        if (ul == null) return NotFound();
+
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == uid && u.UserListId == id);
+        if (user == null) return NotFound();
+        if (user.Active) return BadRequest(new { error = "user_already_active" });
+
+        // Expire any existing invite tokens
+        var existing = await db.EmailTokens
+            .Where(t => t.UserId == uid && t.Kind == "invite" && t.UsedAt == null)
+            .ToListAsync();
+        foreach (var t in existing) t.ExpiresAt = DateTimeOffset.UtcNow;
+
+        var raw  = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw)));
+        db.EmailTokens.Add(new EmailToken
+        {
+            UserId    = user.Id,
+            Kind      = "invite",
+            TokenHash = hash,
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(72),
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var inviteUrl = $"{appConfig.PublicUrl}/auth/invite/complete?token={Uri.EscapeDataString(raw)}";
+        var orgName   = ul.Organisation?.Name ?? "the organization";
+        await emailService.SendInviteAsync(user.Email, inviteUrl, orgName);
+        await audit.RecordAsync(OrgId, null, ActorId, "user.invite_resent", "user", uid.ToString());
+        return Ok(new { message = "invite_resent" });
     }
 
     [HttpPatch("/org/userlists/{id}/users/{uid}")]
@@ -595,7 +657,7 @@ public record UpdateProjectRequest(
     bool? ClearEmailFromName);
 public record AssignUserListRequest(Guid UserListId);
 public record CreateUserListRequest(string Name);
-public record CreateUserRequest(string Email, string Password, string? Username);
+public record CreateUserRequest(string Email, string? Password, string? Username);
 public record UpdateUserRequest(string? Email, string? Username, string? DisplayName, string? Phone, bool? Active, bool? EmailVerified, bool? ClearLock, string? NewPassword);
 public record OrgCleanupRequest(bool RemoveOrphanedRoles = true, bool RemoveInactiveUsers = false, int InactiveThresholdDays = 90, bool DryRun = true);
 public record OrgAssignManagerRequest(Guid UserId, string Role, Guid? ScopeId);

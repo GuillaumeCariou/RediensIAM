@@ -278,21 +278,24 @@ if (!await db.UserLists.AnyAsync(ul => ul.Id == id)) return NotFound();
     [HttpPost("/admin/userlists/{id}/users")]
     public async Task<IActionResult> AddUserToList(Guid id, [FromBody] AdminCreateUserRequest body)
     {
-var ul = await db.UserLists.FindAsync(id);
+        var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(ul => ul.Id == id);
         if (ul == null) return NotFound();
         var username = body.Username ?? body.Email.Split('@')[0];
         string discriminator;
         do { discriminator = Random.Shared.Next(1000, 9999).ToString(); }
         while (await db.Users.AnyAsync(u => u.UserListId == id && u.Username == username && u.Discriminator == discriminator));
         var emailVerified = body.EmailVerified ?? false;
+        var isInvite = string.IsNullOrEmpty(body.Password);
         var user = new User
         {
             UserListId = id, Username = username,
             Discriminator = discriminator, Email = body.Email.ToLowerInvariant(),
-            PasswordHash = passwords.Hash(body.Password),
+            PasswordHash = isInvite
+                ? Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32))
+                : passwords.Hash(body.Password!),
             EmailVerified = emailVerified,
             EmailVerifiedAt = emailVerified ? DateTimeOffset.UtcNow : null,
-            Active = true, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+            Active = !isInvite, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
         };
         db.Users.Add(user);
         await db.SaveChangesAsync();
@@ -302,9 +305,30 @@ var ul = await db.UserLists.FindAsync(id);
         var assignedProjects = await db.Projects.Where(p => p.AssignedUserListId == id).ToListAsync();
         foreach (var project in assignedProjects)
             await keto.AssignDefaultRoleAsync(project, user);
+
+        if (isInvite)
+        {
+            var raw  = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(raw)));
+            db.EmailTokens.Add(new EmailToken
+            {
+                UserId    = user.Id,
+                Kind      = "invite",
+                TokenHash = hash,
+                ExpiresAt = DateTimeOffset.UtcNow.AddHours(72),
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+            var inviteUrl = $"{appConfig.PublicUrl}/auth/invite/complete?token={Uri.EscapeDataString(raw)}";
+            var orgName   = ul.Organisation?.Name ?? "the organization";
+            await emailService.SendInviteAsync(user.Email, inviteUrl, orgName);
+        }
+
         return Created($"/admin/userlists/{id}/users/{user.Id}", new
         {
-            user.Id, username = $"{user.Username}#{user.Discriminator}", user.Email
+            user.Id, username = $"{user.Username}#{user.Discriminator}", user.Email,
+            invite_pending = isInvite
         });
     }
 
@@ -771,7 +795,7 @@ await hydra.DeleteOAuth2ClientAsync(id);
 // ── Request records ───────────────────────────────────────────────────────────
 public record CreateOrgRequest(string Name, string Slug);
 public record UpdateOrgRequest(string? Name);
-public record AdminCreateUserRequest(string Email, string Password, string? Username, bool? EmailVerified);
+public record AdminCreateUserRequest(string Email, string? Password, string? Username, bool? EmailVerified);
 public record AssignOrgAdminRequest(Guid UserId, string Role, Guid? ScopeId);
 public record AdminCreateUserListRequest(string Name, Guid OrgId);
 public record AdminCreateProjectRequest(string Name, string Slug, bool RequireRoleToLogin, string[]? RedirectUris);

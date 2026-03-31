@@ -662,6 +662,27 @@ public class AuthController(
         return Ok(new { redirect_to = redirectUrl });
     }
 
+    [HttpPost("/auth/invite/complete")]
+    public async Task<IActionResult> CompleteInvite([FromBody] InviteCompleteRequest body)
+    {
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(body.Token)));
+        var token = await db.EmailTokens.Include(t => t.User)
+            .FirstOrDefaultAsync(t => t.TokenHash == hash && t.Kind == "invite");
+
+        if (token == null || token.ExpiresAt < DateTimeOffset.UtcNow || token.UsedAt != null)
+            return BadRequest(new { error = "invalid_or_expired_token" });
+
+        token.User.PasswordHash     = passwords.Hash(body.Password);
+        token.User.Active           = true;
+        token.User.EmailVerified    = true;
+        token.User.EmailVerifiedAt  = DateTimeOffset.UtcNow;
+        token.User.UpdatedAt        = DateTimeOffset.UtcNow;
+        token.UsedAt                = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        return Ok(new { message = "invite_accepted" });
+    }
+
     [HttpGet("/auth/verify-email")]
     public async Task<IActionResult> VerifyEmail([FromQuery] string token)
     {
@@ -1130,3 +1151,4 @@ public record RegisterRequest(string LoginChallenge, string Email, string Passwo
 public record VerifyOtpRequest(string SessionId, string Code);
 public record PasswordResetRequestBody(Guid ProjectId, string Email, string? Phone);
 public record PasswordResetConfirmBody(string Token, string NewPassword);
+public record InviteCompleteRequest(string Token, string Password);

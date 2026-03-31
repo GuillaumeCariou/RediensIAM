@@ -13,6 +13,7 @@ namespace RediensIAM.Services;
 public interface IEmailService
 {
     Task SendOtpAsync(string to, string code, string purpose, Guid? orgId = null, Guid? projectId = null);
+    Task SendInviteAsync(string to, string inviteUrl, string orgName, Guid? projectId = null);
 }
 
 public class StubEmailService(ILogger<StubEmailService> logger) : IEmailService
@@ -20,6 +21,12 @@ public class StubEmailService(ILogger<StubEmailService> logger) : IEmailService
     public Task SendOtpAsync(string to, string code, string purpose, Guid? orgId = null, Guid? projectId = null)
     {
         logger.LogWarning("[STUB EMAIL] To={To} Purpose={Purpose} Code={Code}", to, purpose, code);
+        return Task.CompletedTask;
+    }
+
+    public Task SendInviteAsync(string to, string inviteUrl, string orgName, Guid? projectId = null)
+    {
+        logger.LogWarning("[STUB EMAIL] Invite To={To} Org={Org} Url={Url}", to, orgName, inviteUrl);
         return Task.CompletedTask;
     }
 }
@@ -99,6 +106,72 @@ public class SmtpEmailService(
         };
 
         // ── Send ─────────────────────────────────────────────────────────────
+        using var client = new SmtpClient();
+        await client.ConnectAsync(host, port,
+            startTls ? SecureSocketOptions.StartTls : SecureSocketOptions.Auto);
+
+        if (!string.IsNullOrEmpty(username))
+            await client.AuthenticateAsync(username, password);
+
+        await client.SendAsync(message);
+        await client.DisconnectAsync(true);
+    }
+
+    public async Task SendInviteAsync(string to, string inviteUrl, string orgName, Guid? projectId = null)
+    {
+        // ── Resolve SMTP config ──────────────────────────────────────────────
+        string? host;
+        int port;
+        bool startTls;
+        string? username;
+        string? password;
+        string fromAddress;
+        string fromName;
+
+        var orgConfig = (projectId.HasValue
+            ? await db.Projects.Where(p => p.Id == projectId.Value).Select(p => p.OrgId).FirstOrDefaultAsync()
+            : (Guid?)null) is Guid orgIdFromProject
+            ? await db.OrgSmtpConfigs.FirstOrDefaultAsync(c => c.OrgId == orgIdFromProject)
+            : null;
+
+        if (orgConfig != null)
+        {
+            host        = orgConfig.Host;
+            port        = orgConfig.Port;
+            startTls    = orgConfig.StartTls;
+            username    = orgConfig.Username;
+            password    = orgConfig.PasswordEnc != null
+                ? Encoding.UTF8.GetString(TotpEncryption.Decrypt(
+                    Convert.FromHexString(appConfig.TotpSecretEncryptionKey), orgConfig.PasswordEnc))
+                : null;
+            fromAddress = orgConfig.FromAddress;
+            fromName    = orgConfig.FromName;
+        }
+        else if (!string.IsNullOrEmpty(appConfig.SmtpHost))
+        {
+            host        = appConfig.SmtpHost;
+            port        = appConfig.SmtpPort;
+            startTls    = appConfig.SmtpStartTls;
+            username    = appConfig.SmtpUsername;
+            password    = appConfig.SmtpPassword;
+            fromAddress = appConfig.SmtpFromAddress;
+            fromName    = appConfig.SmtpFromName;
+        }
+        else
+        {
+            logger.LogWarning("[EMAIL NO-OP] No SMTP configured. Invite To={To} Org={Org}", to, orgName);
+            return;
+        }
+
+        var message = new MimeMessage();
+        message.From.Add(new MailboxAddress(fromName, fromAddress));
+        message.To.Add(new MailboxAddress("", to));
+        message.Subject = $"You've been invited to {orgName}";
+        message.Body = new TextPart("plain")
+        {
+            Text = $"You have been invited to join {orgName}.\n\nClick the link below to accept your invitation and set your password:\n\n{inviteUrl}\n\nThis link expires in 72 hours."
+        };
+
         using var client = new SmtpClient();
         await client.ConnectAsync(host, port,
             startTls ? SecureSocketOptions.StartTls : SecureSocketOptions.Auto);

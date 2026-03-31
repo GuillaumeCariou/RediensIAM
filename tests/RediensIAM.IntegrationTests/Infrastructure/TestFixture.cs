@@ -197,7 +197,8 @@ public sealed class TestFixture : IAsyncLifetime
 /// </summary>
 public class StubEmailService : IEmailService
 {
-    public List<SentEmail> SentEmails { get; } = [];
+    public List<SentEmail>   SentEmails   { get; } = [];
+    public List<SentInvite>  SentInvites  { get; } = [];
 
     public Task SendOtpAsync(string to, string code, string purpose,
         Guid? orgId = null, Guid? projectId = null)
@@ -205,9 +206,16 @@ public class StubEmailService : IEmailService
         SentEmails.Add(new SentEmail(to, purpose, code));
         return Task.CompletedTask;
     }
+
+    public Task SendInviteAsync(string to, string inviteUrl, string orgName, Guid? projectId = null)
+    {
+        SentInvites.Add(new SentInvite(to, inviteUrl, orgName));
+        return Task.CompletedTask;
+    }
 }
 
 public record SentEmail(string To, string Purpose, string Code);
+public record SentInvite(string To, string InviteUrl, string OrgName);
 
 /// <summary>Captures SMS OTP codes so tests can complete the MFA flow.</summary>
 public class StubSmsService : ISmsService
