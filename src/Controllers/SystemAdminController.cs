@@ -444,7 +444,12 @@ var project = await db.Projects.FindAsync(id);
             if (role == null) return BadRequest(new { error = "invalid_default_role" });
             project.DefaultRoleId = body.DefaultRoleId;
         }
-        if (body.LoginTheme != null) project.LoginTheme = body.LoginTheme;
+        if (body.LoginTheme != null)
+        {
+            var encKey = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
+            project.LoginTheme = TotpEncryption.EncryptProviderSecretsInTheme(
+                body.LoginTheme, project.LoginTheme, encKey)!;
+        }
         project.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         return Ok(new { project.Id, project.Name });

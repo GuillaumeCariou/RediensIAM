@@ -106,9 +106,11 @@ public class OrgController(
     public async Task<IActionResult> GetProject(Guid id)
     {
         var isSuperAdmin = Claims.Roles.Contains(Roles.SuperAdmin);
-        var project = await db.Projects
+        var project = await db.Projects.AsNoTracking()
             .FirstOrDefaultAsync(p => p.Id == id && (isSuperAdmin || p.OrgId == OrgId));
         if (project == null) return NotFound();
+        // Strip client secrets before exposing to caller
+        project.LoginTheme = TotpEncryption.StripSecretsFromTheme(project.LoginTheme);
         return Ok(project);
     }
 
@@ -133,7 +135,12 @@ public class OrgController(
             if (role == null) return BadRequest(new { error = "invalid_default_role" });
             project.DefaultRoleId = body.DefaultRoleId;
         }
-        if (body.LoginTheme != null) project.LoginTheme = body.LoginTheme;
+        if (body.LoginTheme != null)
+        {
+            var encKey = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
+            project.LoginTheme = TotpEncryption.EncryptProviderSecretsInTheme(
+                body.LoginTheme, project.LoginTheme, encKey)!;
+        }
         if (body.ClearEmailFromName == true)
             project.EmailFromName = null;
         else if (body.EmailFromName != null)

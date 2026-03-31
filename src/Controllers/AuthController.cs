@@ -497,6 +497,9 @@ public class AuthController(
     [HttpPost("/auth/register")]
     public async Task<IActionResult> Register([FromBody] RegisterRequest body)
     {
+        if (await rateLimiter.IsBlockedAsync(Ip, null, "register"))
+            return StatusCode(429, new { error = "rate_limited" });
+
         HydraLoginRequest req;
         try { req = await hydra.GetLoginRequestAsync(body.LoginChallenge); }
         catch (Exception ex)
@@ -534,11 +537,17 @@ public class AuthController(
         {
             var domain = email.Split('@').LastOrDefault() ?? "";
             if (!project.AllowedEmailDomains.Contains(domain))
+            {
+                await rateLimiter.RecordFailureAsync(Ip, null, "register");
                 return StatusCode(403, new { error = "domain_not_allowed" });
+            }
         }
 
         if (await db.Users.AnyAsync(u => u.UserListId == project.AssignedUserListId && u.Email == email))
+        {
+            await rateLimiter.RecordFailureAsync(Ip, null, "register");
             return Conflict(new { error = "email_already_exists" });
+        }
 
         var verificationEnabled = project.EmailVerificationEnabled || project.SmsVerificationEnabled;
 
@@ -658,6 +667,9 @@ public class AuthController(
     [HttpPost("/auth/password-reset/request")]
     public async Task<IActionResult> RequestPasswordReset([FromBody] PasswordResetRequestBody body)
     {
+        if (await rateLimiter.IsBlockedAsync(Ip, null, "reset"))
+            return StatusCode(429, new { error = "rate_limited" });
+
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == body.ProjectId && p.Active);
         if (project?.AssignedUserListId == null || (!project.EmailVerificationEnabled && !project.SmsVerificationEnabled))
             return BadRequest(new { error = "verification_not_configured" });
@@ -665,10 +677,12 @@ public class AuthController(
         var user = await db.Users.FirstOrDefaultAsync(u =>
             u.UserListId == project.AssignedUserListId && u.Email == body.Email.ToLowerInvariant());
 
+        // Always generate code to keep compute time constant
+        var sessionId = Guid.NewGuid().ToString("N");
+        var code = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
+
         if (user != null)
         {
-            var sessionId = Guid.NewGuid().ToString("N");
-            var code = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
             await otp.StorePendingAsync("reset", sessionId, user.Id.ToString());
             await otp.StoreSessionOtpAsync("reset", sessionId, code);
 
@@ -680,7 +694,10 @@ public class AuthController(
             return Ok(new { session_id = sessionId });
         }
 
-        // Return 200 without session_id to prevent email enumeration
+        // Constant-time: perform equivalent Redis writes to prevent timing-based email enumeration
+        await otp.StorePendingAsync("reset:void", sessionId, "void");
+        await otp.StoreSessionOtpAsync("reset:void", sessionId, code);
+        await rateLimiter.RecordFailureAsync(Ip, null, "reset");
         return Ok(new { });
     }
 
@@ -951,20 +968,34 @@ public class AuthController(
         return user;
     }
 
-    private static ProviderConfig? GetProviderConfig(Dictionary<string, object>? theme, string providerId)
+    private ProviderConfig? GetProviderConfig(Dictionary<string, object>? theme, string providerId)
     {
         if (theme == null || !theme.TryGetValue("providers", out var raw)) return null;
         if (raw is not JsonElement el || el.ValueKind != JsonValueKind.Array) return null;
+
+        var encKey = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
 
         foreach (var p in el.EnumerateArray())
         {
             if (!p.TryGetProperty("id", out var idProp) || idProp.GetString() != providerId) continue;
             if (p.TryGetProperty("enabled", out var enProp) && !enProp.GetBoolean()) return null;
 
-            var type         = p.TryGetProperty("type",          out var t)  ? t.GetString()  ?? "" : "";
-            var clientId     = p.TryGetProperty("client_id",     out var ci) ? ci.GetString() ?? "" : "";
-            var clientSecret = p.TryGetProperty("client_secret", out var cs) ? cs.GetString() ?? "" : "";
-            var issuerUrl    = p.TryGetProperty("issuer_url",    out var iu) ? iu.GetString() : null;
+            var type     = p.TryGetProperty("type",      out var t)  ? t.GetString()  ?? "" : "";
+            var clientId = p.TryGetProperty("client_id", out var ci) ? ci.GetString() ?? "" : "";
+            var issuerUrl = p.TryGetProperty("issuer_url", out var iu) ? iu.GetString() : null;
+
+            // Prefer encrypted secret; fall back to legacy plaintext for backward compatibility
+            var clientSecret = "";
+            if (p.TryGetProperty("client_secret_enc", out var csEnc) &&
+                !string.IsNullOrEmpty(csEnc.GetString()))
+            {
+                try { clientSecret = TotpEncryption.DecryptString(encKey, csEnc.GetString()!); }
+                catch { /* corrupt/mismatched key — treat as no secret */ }
+            }
+            else if (p.TryGetProperty("client_secret", out var cs))
+            {
+                clientSecret = cs.GetString() ?? "";
+            }
 
             return new ProviderConfig(providerId, type, clientId, clientSecret, issuerUrl);
         }
@@ -972,19 +1003,7 @@ public class AuthController(
     }
 
     private static Dictionary<string, object>? StripSecretsFromTheme(Dictionary<string, object>? theme)
-    {
-        if (theme == null) return null;
-        if (!theme.TryGetValue("providers", out var raw)) return theme;
-        if (raw is not JsonElement el || el.ValueKind != JsonValueKind.Array) return theme;
-
-        var strippedProviders = el.EnumerateArray()
-            .Select(p => p.EnumerateObject()
-                .Where(prop => prop.Name != "client_secret")
-                .ToDictionary(prop => prop.Name, prop => (object)prop.Value.Clone()))
-            .ToList();
-
-        return new Dictionary<string, object>(theme) { ["providers"] = strippedProviders };
-    }
+        => TotpEncryption.StripSecretsFromTheme(theme);
 
     private static string? ExtractProjectId(HydraLoginRequest req)
     {

@@ -193,6 +193,27 @@ if (!string.IsNullOrEmpty(appConfig.BootstrapEmail) && !string.IsNullOrEmpty(app
 // ── Middleware pipeline ────────────────────────────────────────────────────
 app.UseMiddleware<AppExceptionMiddleware>();
 app.UseForwardedHeaders();
+
+// ── Security headers ───────────────────────────────────────────────────────
+app.Use(async (ctx, next) =>
+{
+    ctx.Response.Headers["X-Content-Type-Options"]  = "nosniff";
+    ctx.Response.Headers["Referrer-Policy"]         = "strict-origin-when-cross-origin";
+    ctx.Response.Headers["X-XSS-Protection"]        = "0";
+    ctx.Response.Headers["Permissions-Policy"]      = "geolocation=(), camera=(), microphone=()";
+
+    // X-Frame-Options: skip for /preview — the admin SPA loads it in an iframe
+    if (!ctx.Request.Path.StartsWithSegments("/preview"))
+        ctx.Response.Headers["X-Frame-Options"] = "DENY";
+
+    // CSP only for the login SPA (not the admin SPA — it has its own inline scripts)
+    if (!ctx.Request.Path.StartsWithSegments("/admin"))
+        ctx.Response.Headers["Content-Security-Policy"] =
+            "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; frame-ancestors 'none';";
+
+    await next();
+});
+
 app.UseSession();
 app.UseCors("AdminSpa");
 app.UseDefaultFiles();
