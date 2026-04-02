@@ -174,6 +174,7 @@ var app = builder.Build();
                 ALTER TABLE projects ADD COLUMN IF NOT EXISTS ""AllowedScopes"" TEXT[] NOT NULL DEFAULT '{}';
                 ALTER TABLE organisations ADD COLUMN IF NOT EXISTS ""AuditRetentionDays"" INTEGER;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS ""NewDeviceAlertsEnabled"" BOOLEAN NOT NULL DEFAULT true;
+                ALTER TABLE users ALTER COLUMN ""PasswordHash"" DROP NOT NULL;
 
                 CREATE TABLE IF NOT EXISTS saml_idp_configs (
                     ""Id""                      UUID         PRIMARY KEY DEFAULT gen_random_uuid(),

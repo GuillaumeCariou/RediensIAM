@@ -28,9 +28,13 @@ public class SamlService(
         {
             try
             {
+                var metaUri = new Uri(idp.MetadataUrl);
+                if (metaUri.Scheme != Uri.UriSchemeHttps)
+                    throw new InvalidOperationException("SAML metadata URL must use HTTPS");
+
                 var descriptor = new EntityDescriptor();
                 await descriptor.ReadIdPSsoDescriptorFromUrlAsync(
-                    httpClientFactory, new Uri(idp.MetadataUrl));
+                    httpClientFactory, metaUri);
 
                 if (descriptor.IdPSsoDescriptor == null)
                     throw new InvalidOperationException("No IdPSsoDescriptor in metadata");

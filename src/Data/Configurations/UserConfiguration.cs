@@ -17,7 +17,7 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
         builder.Property(x => x.Username).IsRequired().HasMaxLength(100);
         builder.Property(x => x.Discriminator).IsRequired().HasMaxLength(10);
         builder.Property(x => x.Email).IsRequired().HasMaxLength(320);
-        builder.Property(x => x.PasswordHash).IsRequired();
+        builder.Property(x => x.PasswordHash).IsRequired(false);
         builder.Property(x => x.Active).HasDefaultValue(true);
         builder.Property(x => x.FailedLoginCount).HasDefaultValue(0);
         builder.Property(x => x.NewDeviceAlertsEnabled).HasDefaultValue(true);

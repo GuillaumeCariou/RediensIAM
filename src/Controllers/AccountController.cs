@@ -61,7 +61,7 @@ public class AccountController(
         var userId = Claims.ParsedUserId;
         var user = await db.Users.FindAsync(userId);
         if (user == null) return NotFound();
-        if (!passwords.Verify(body.CurrentPassword, user.PasswordHash))
+        if (user.PasswordHash == null || !passwords.Verify(body.CurrentPassword, user.PasswordHash))
             return BadRequest(new { error = "invalid_current_password" });
         user.PasswordHash = passwords.Hash(body.NewPassword);
         user.UpdatedAt = DateTimeOffset.UtcNow;
@@ -338,10 +338,8 @@ public class AccountController(
         if (user == null) return NotFound();
 
         // Guard: must not remove the last auth method
-        var hasPassword = !string.IsNullOrEmpty(user.PasswordHash) &&
-            user.PasswordHash.Length > 40; // real hash vs random bytes placeholder
         var otherSocial = await db.UserSocialAccounts.CountAsync(s => s.UserId == userId && s.Id != id);
-        if (!hasPassword && otherSocial == 0)
+        if (user.PasswordHash == null && otherSocial == 0)
             return BadRequest(new { error = "cannot_remove_last_auth_method" });
 
         db.UserSocialAccounts.Remove(account);

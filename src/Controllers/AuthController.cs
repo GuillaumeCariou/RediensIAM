@@ -166,7 +166,7 @@ public class AuthController(
             return Unauthorized(new { error = "account_locked", locked_until = user.LockedUntil });
         }
 
-        if (!passwords.Verify(body.Password, user.PasswordHash))
+        if (user.PasswordHash == null || !passwords.Verify(body.Password, user.PasswordHash))
         {
             user.FailedLoginCount++;
             if (user.FailedLoginCount >= appConfig.MaxLoginAttempts)
@@ -838,7 +838,7 @@ public class AuthController(
         if (user.LockedUntil.HasValue && user.LockedUntil > DateTimeOffset.UtcNow)
             return Unauthorized(new { error = "account_locked", locked_until = user.LockedUntil });
 
-        if (!passwords.Verify(body.Password, user.PasswordHash))
+        if (user.PasswordHash == null || !passwords.Verify(body.Password, user.PasswordHash))
         {
             user.FailedLoginCount++;
             if (user.FailedLoginCount >= appConfig.MaxLoginAttempts)
@@ -1143,7 +1143,7 @@ public class AuthController(
                 Username        = uname,
                 Discriminator   = discriminator,
                 Email           = email,
-                PasswordHash    = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+                PasswordHash    = null,   // social-only user — no password
                 EmailVerified   = true,
                 EmailVerifiedAt = DateTimeOffset.UtcNow,
                 Active          = true,

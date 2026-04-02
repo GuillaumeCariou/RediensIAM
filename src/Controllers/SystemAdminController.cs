@@ -310,9 +310,7 @@ if (!await db.UserLists.AnyAsync(ul => ul.Id == id)) return NotFound();
         {
             UserListId = id, Username = username,
             Discriminator = discriminator, Email = body.Email.ToLowerInvariant(),
-            PasswordHash = isInvite
-                ? Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32))
-                : passwords.Hash(body.Password!),
+            PasswordHash = isInvite ? null : passwords.Hash(body.Password!),
             EmailVerified = emailVerified,
             EmailVerifiedAt = emailVerified ? DateTimeOffset.UtcNow : null,
             Active = !isInvite, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow

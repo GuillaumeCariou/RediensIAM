@@ -16,7 +16,6 @@ public class SamlController(
     RediensIamDbContext db,
     HydraService hydra,
     AuditLogService audit,
-    PasswordService passwords,
     SamlService saml,
     AppConfig appConfig,
     ILogger<SamlController> logger) : ControllerBase
@@ -97,8 +96,10 @@ public class SamlController(
             if (saml2AuthnResponse.Status != Saml2StatusCodes.Success)
                 throw new AuthenticationException($"SAML status: {saml2AuthnResponse.Status}");
 
-            // Manual InResponseTo check against session-stored request ID
-            if (expectedReqId != null && saml2AuthnResponse.InResponseTo?.Value != expectedReqId)
+            // Require a matching session-stored request ID — blocks IdP-initiated and replayed responses
+            if (expectedReqId == null)
+                throw new AuthenticationException("No pending SAML request found for this session");
+            if (saml2AuthnResponse.InResponseTo?.Value != expectedReqId)
                 throw new AuthenticationException("InResponseTo mismatch");
 
             httpRequest.Binding.Unbind(httpRequest, saml2AuthnResponse);
@@ -106,7 +107,7 @@ public class SamlController(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "SAML ACS validation failed");
-            return BadRequest(new { error = "saml_response_invalid", detail = ex.Message });
+            return BadRequest(new { error = "saml_response_invalid" });
         }
 
         var identity = saml2AuthnResponse.ClaimsIdentity;
@@ -157,14 +158,16 @@ public class SamlController(
     [HttpGet("/auth/saml/metadata")]
     public IActionResult Metadata()
     {
+        var entityId = System.Security.SecurityElement.Escape(SpEntity);
+        var acsUrl   = System.Security.SecurityElement.Escape(AcsUrl.ToString());
         var xml = $"""
             <?xml version="1.0" encoding="utf-8"?>
-            <EntityDescriptor entityID="{SpEntity}" xmlns="urn:oasis:names:tc:SAML:2.0:metadata">
+            <EntityDescriptor entityID="{entityId}" xmlns="urn:oasis:names:tc:SAML:2.0:metadata">
               <SPSSODescriptor AuthnRequestsSigned="false" WantAssertionsSigned="true"
                   protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
                 <AssertionConsumerService
                     Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
-                    Location="{AcsUrl}" index="0" isDefault="true"/>
+                    Location="{acsUrl}" index="0" isDefault="true"/>
               </SPSSODescriptor>
             </EntityDescriptor>
             """;
@@ -191,8 +194,7 @@ public class SamlController(
             Discriminator = discriminator,
             DisplayName   = displayName,
             EmailVerified = true,
-            PasswordHash  = passwords.Hash(
-                Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32))),
+            PasswordHash  = null,   // SAML-provisioned user — no password
             Active    = true,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow

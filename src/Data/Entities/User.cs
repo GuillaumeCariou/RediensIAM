@@ -9,7 +9,7 @@ public class User
     public string Email { get; set; } = string.Empty;
     public bool EmailVerified { get; set; }
     public DateTimeOffset? EmailVerifiedAt { get; set; }
-    public string PasswordHash { get; set; } = string.Empty;
+    public string? PasswordHash { get; set; }
     public string? DisplayName { get; set; }
     public string? Phone { get; set; }
     public bool PhoneVerified { get; set; }
