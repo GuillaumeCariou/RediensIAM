@@ -20,6 +20,7 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
         builder.Property(x => x.PasswordHash).IsRequired();
         builder.Property(x => x.Active).HasDefaultValue(true);
         builder.Property(x => x.FailedLoginCount).HasDefaultValue(0);
+        builder.Property(x => x.NewDeviceAlertsEnabled).HasDefaultValue(true);
         builder.Property(x => x.CreatedAt).HasDefaultValueSql("now()");
         builder.Property(x => x.UpdatedAt).HasDefaultValueSql("now()");
 

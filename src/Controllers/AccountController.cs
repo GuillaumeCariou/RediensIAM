@@ -36,7 +36,7 @@ public class AccountController(
         {
             user.Id, user.Username, user.Discriminator, user.Email,
             user.DisplayName, user.EmailVerified, user.TotpEnabled,
-            user.WebAuthnEnabled, user.LastLoginAt,
+            user.WebAuthnEnabled, user.LastLoginAt, user.NewDeviceAlertsEnabled,
             roles      = Claims.Roles,
             project_id = Claims.ProjectId,
             org_id     = Claims.OrgId
@@ -49,9 +49,10 @@ public class AccountController(
         var user = await db.Users.FindAsync(Claims.ParsedUserId);
         if (user == null) return NotFound();
         if (body.DisplayName != null) user.DisplayName = body.DisplayName;
+        if (body.NewDeviceAlertsEnabled.HasValue) user.NewDeviceAlertsEnabled = body.NewDeviceAlertsEnabled.Value;
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
-        return Ok(new { user.Id, user.DisplayName });
+        return Ok(new { user.Id, user.DisplayName, user.NewDeviceAlertsEnabled });
     }
 
     [HttpPatch("/account/password")]
@@ -311,9 +312,45 @@ public class AccountController(
         await db.SaveChangesAsync();
         return Ok(new { message = "credential_deleted" });
     }
+
+    // ── Linked social accounts ────────────────────────────────────────────────
+
+    [HttpGet("/account/social-accounts")]
+    public async Task<IActionResult> GetSocialAccounts()
+    {
+        var userId = Claims.ParsedUserId;
+        var accounts = await db.UserSocialAccounts
+            .Where(s => s.UserId == userId)
+            .OrderBy(s => s.LinkedAt)
+            .Select(s => new { s.Id, s.Provider, s.Email, s.LinkedAt })
+            .ToListAsync();
+        return Ok(accounts);
+    }
+
+    [HttpDelete("/account/social-accounts/{id}")]
+    public async Task<IActionResult> UnlinkSocialAccount(Guid id)
+    {
+        var userId = Claims.ParsedUserId;
+        var account = await db.UserSocialAccounts.FirstOrDefaultAsync(s => s.Id == id && s.UserId == userId);
+        if (account == null) return NotFound();
+
+        var user = await db.Users.FindAsync(userId);
+        if (user == null) return NotFound();
+
+        // Guard: must not remove the last auth method
+        var hasPassword = !string.IsNullOrEmpty(user.PasswordHash) &&
+            user.PasswordHash.Length > 40; // real hash vs random bytes placeholder
+        var otherSocial = await db.UserSocialAccounts.CountAsync(s => s.UserId == userId && s.Id != id);
+        if (!hasPassword && otherSocial == 0)
+            return BadRequest(new { error = "cannot_remove_last_auth_method" });
+
+        db.UserSocialAccounts.Remove(account);
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
 }
 
-public record UpdateMeRequest(string? DisplayName);
+public record UpdateMeRequest(string? DisplayName, bool? NewDeviceAlertsEnabled);
 public record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 public record TotpConfirmRequest(string Code);
 public record PhoneSetupRequest(string Phone);

@@ -21,6 +21,7 @@ public class User
     public DateTimeOffset? LastLoginAt { get; set; }
     public int FailedLoginCount { get; set; }
     public DateTimeOffset? LockedUntil { get; set; }
+    public bool NewDeviceAlertsEnabled { get; set; } = true;
     public Dictionary<string, object> Metadata { get; set; } = [];
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }

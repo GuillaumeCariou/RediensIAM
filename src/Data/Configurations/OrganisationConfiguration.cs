@@ -18,6 +18,7 @@ public class OrganisationConfiguration : IEntityTypeConfiguration<Organisation>
         builder.Property(x => x.Slug).IsRequired().HasMaxLength(100);
         builder.HasIndex(x => x.Slug).IsUnique();
         builder.Property(x => x.Active).HasDefaultValue(true);
+        builder.Property(x => x.AuditRetentionDays).IsRequired(false);
         builder.Property(x => x.CreatedAt).HasDefaultValueSql("now()");
         builder.Property(x => x.UpdatedAt).HasDefaultValueSql("now()");
 

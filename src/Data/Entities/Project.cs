@@ -30,6 +30,9 @@ public class Project
     public bool PasswordRequireDigit { get; set; }
     public bool PasswordRequireSpecial { get; set; }
     public string? EmailFromName { get; set; }
+    public string[] IpAllowlist { get; set; } = [];
+    public bool CheckBreachedPasswords { get; set; }
+    public string[] AllowedScopes { get; set; } = [];
 
     public Organisation Organisation { get; set; } = null!;
     public UserList? AssignedUserList { get; set; }

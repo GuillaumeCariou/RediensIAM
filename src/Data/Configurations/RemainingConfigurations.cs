@@ -172,6 +172,39 @@ public class OrgSmtpConfigConfiguration : IEntityTypeConfiguration<OrgSmtpConfig
     }
 }
 
+public class WebhookConfiguration : IEntityTypeConfiguration<Webhook>
+{
+    public void Configure(EntityTypeBuilder<Webhook> builder)
+    {
+        builder.ToTable("webhooks");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+        builder.Property(x => x.Url).IsRequired().HasMaxLength(2000);
+        builder.Property(x => x.SecretEnc).IsRequired().HasDefaultValue("");
+        builder.Property(x => x.Active).HasDefaultValue(true);
+        builder.Property(x => x.CreatedAt).HasDefaultValueSql("now()");
+        builder.Property(x => x.Events).HasColumnType("jsonb");
+        builder.HasIndex(x => x.OrgId);
+        builder.HasIndex(x => x.ProjectId);
+        builder.HasMany(x => x.Deliveries).WithOne(x => x.Webhook).HasForeignKey(x => x.WebhookId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+public class WebhookDeliveryConfiguration : IEntityTypeConfiguration<WebhookDelivery>
+{
+    public void Configure(EntityTypeBuilder<WebhookDelivery> builder)
+    {
+        builder.ToTable("webhook_deliveries");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+        builder.Property(x => x.Event).IsRequired().HasMaxLength(200);
+        builder.Property(x => x.Payload).IsRequired().HasColumnType("jsonb");
+        builder.Property(x => x.CreatedAt).HasDefaultValueSql("now()");
+        builder.HasIndex(x => x.WebhookId);
+        builder.HasIndex(x => x.CreatedAt);
+    }
+}
+
 public class AuditLogConfiguration : IEntityTypeConfiguration<AuditLog>
 {
     private static readonly JsonSerializerOptions JsonOptions = new();
@@ -195,6 +228,27 @@ public class AuditLogConfiguration : IEntityTypeConfiguration<AuditLog>
         builder.HasIndex(x => new { x.ProjectId, x.CreatedAt });
         builder.HasIndex(x => new { x.ActorId, x.CreatedAt });
         builder.HasIndex(x => new { x.Action, x.CreatedAt });
+    }
+}
 
+public class SamlIdpConfigConfiguration : IEntityTypeConfiguration<SamlIdpConfig>
+{
+    public void Configure(EntityTypeBuilder<SamlIdpConfig> builder)
+    {
+        builder.ToTable("saml_idp_configs");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
+        builder.Property(x => x.EntityId).IsRequired().HasMaxLength(500);
+        builder.Property(x => x.MetadataUrl).HasMaxLength(1000);
+        builder.Property(x => x.SsoUrl).HasMaxLength(1000);
+        builder.Property(x => x.EmailAttributeName).IsRequired().HasMaxLength(200).HasDefaultValue("email");
+        builder.Property(x => x.DisplayNameAttributeName).HasMaxLength(200);
+        builder.Property(x => x.JitProvisioning).HasDefaultValue(true);
+        builder.Property(x => x.Active).HasDefaultValue(true);
+        builder.Property(x => x.CreatedAt).HasDefaultValueSql("now()");
+        builder.Property(x => x.UpdatedAt).HasDefaultValueSql("now()");
+        builder.HasIndex(x => x.ProjectId);
+        builder.HasOne(x => x.Project).WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasOne(x => x.DefaultRole).WithMany().HasForeignKey(x => x.DefaultRoleId).OnDelete(DeleteBehavior.SetNull);
     }
 }

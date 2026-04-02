@@ -113,6 +113,8 @@ public sealed class TestFixture : IAsyncLifetime
 
                 builder.ConfigureServices(services =>
                 {
+                    // TestServer doesn't set RemoteIpAddress — inject loopback so IP allowlist tests work
+                    services.AddSingleton<IStartupFilter>(new LoopbackRemoteIpStartupFilter());
                     // Replace real email service with the shared singleton stub
                     var descriptor = services.SingleOrDefault(d => d.ServiceType == typeof(IEmailService));
                     if (descriptor != null) services.Remove(descriptor);
@@ -212,10 +214,19 @@ public class StubEmailService : IEmailService
         SentInvites.Add(new SentInvite(to, inviteUrl, orgName));
         return Task.CompletedTask;
     }
+
+    public Task SendNewDeviceAlertAsync(string to, string ipAddress, string userAgent, DateTimeOffset loginAt)
+    {
+        NewDeviceAlerts.Add(new SentNewDeviceAlert(to, ipAddress));
+        return Task.CompletedTask;
+    }
+
+    public List<SentNewDeviceAlert> NewDeviceAlerts { get; } = [];
 }
 
 public record SentEmail(string To, string Purpose, string Code);
 public record SentInvite(string To, string InviteUrl, string OrgName);
+public record SentNewDeviceAlert(string To, string IpAddress);
 
 /// <summary>Captures SMS OTP codes so tests can complete the MFA flow.</summary>
 public class StubSmsService : ISmsService
@@ -230,3 +241,17 @@ public class StubSmsService : ISmsService
 }
 
 public record SentSms(string To, string Purpose, string Code);
+
+// Sets RemoteIpAddress to loopback for all test requests (TestServer leaves it null)
+file sealed class LoopbackRemoteIpStartupFilter : IStartupFilter
+{
+    public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+    {
+        app.Use((ctx, nxt) =>
+        {
+            ctx.Connection.RemoteIpAddress ??= System.Net.IPAddress.Loopback;
+            return nxt(ctx);
+        });
+        next(app);
+    };
+}

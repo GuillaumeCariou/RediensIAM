@@ -1,6 +1,7 @@
 using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Distributed;
 using RediensIAM.Config;
 using RediensIAM.Data;
 using RediensIAM.Data.Entities;
@@ -20,6 +21,7 @@ public class SystemAdminController(
     AuditLogService audit,
     AppConfig appConfig,
     IEmailService emailService,
+    IDistributedCache cache,
     ILogger<SystemAdminController> logger) : ControllerBase
 {
     private TokenClaims Claims => HttpContext.GetClaims()!;
@@ -79,9 +81,10 @@ var actorId = GetActorId();
 var org = await db.Organisations.FindAsync(id);
         if (org == null) return NotFound();
         if (body.Name != null) org.Name = body.Name;
+        if (body.AuditRetentionDays.HasValue) org.AuditRetentionDays = body.AuditRetentionDays == -1 ? null : body.AuditRetentionDays;
         org.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
-        return Ok(new { org.Id, org.Name });
+        return Ok(new { org.Id, org.Name, org.AuditRetentionDays });
     }
 
     [HttpPost("/admin/organizations/{id}/suspend")]
@@ -224,10 +227,27 @@ var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id
         return Ok(new { user.Id, message = "user_unlocked" });
     }
 
+    [HttpGet("/admin/users/{id}/sessions")]
+    public async Task<IActionResult> ListSessions(Guid id)
+    {
+        var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id == id);
+        if (user == null) return NotFound();
+        var orgId = user.UserList.OrgId?.ToString() ?? "";
+        var sessions = await hydra.ListConsentSessionsAsync($"{orgId}:{id}");
+        return Ok(sessions.Select(s => new
+        {
+            client_id   = s.ConsentRequest?.Client?.ClientId,
+            client_name = s.ConsentRequest?.Client?.ClientName,
+            scopes      = s.GrantedScopes,
+            created_at  = s.ConsentRequest?.RequestedAt,
+            expires_at  = s.ExpiresAt
+        }));
+    }
+
     [HttpDelete("/admin/users/{id}/sessions")]
     public async Task<IActionResult> ForceLogout(Guid id)
     {
-var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id == id);
+        var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id == id);
         if (user == null) return NotFound();
         var orgId = user.UserList.OrgId?.ToString() ?? "";
         await hydra.RevokeSessionsAsync($"{orgId}:{id}");
@@ -316,7 +336,7 @@ if (!await db.UserLists.AnyAsync(ul => ul.Id == id)) return NotFound();
                 UserId    = user.Id,
                 Kind      = "invite",
                 TokenHash = hash,
-                ExpiresAt = DateTimeOffset.UtcNow.AddHours(72),
+                ExpiresAt = DateTimeOffset.UtcNow.AddHours(appConfig.InviteExpiryHours),
                 CreatedAt = DateTimeOffset.UtcNow
             });
             await db.SaveChangesAsync();
@@ -488,9 +508,42 @@ var project = await db.Projects.FindAsync(id);
             project.LoginTheme = TotpEncryption.EncryptProviderSecretsInTheme(
                 body.LoginTheme, project.LoginTheme, encKey)!;
         }
+        if (body.IpAllowlist != null) project.IpAllowlist = body.IpAllowlist;
+        if (body.CheckBreachedPasswords.HasValue) project.CheckBreachedPasswords = body.CheckBreachedPasswords.Value;
         project.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         return Ok(new { project.Id, project.Name });
+    }
+
+    [HttpGet("/admin/projects/{id}/scopes")]
+    public async Task<IActionResult> AdminGetProjectScopes(Guid id)
+    {
+        var project = await db.Projects.FindAsync(id);
+        if (project == null) return NotFound();
+        return Ok(new { custom_scopes = project.AllowedScopes, built_in = new[] { "openid", "profile", "offline_access" } });
+    }
+
+    [HttpPut("/admin/projects/{id}/scopes")]
+    public async Task<IActionResult> AdminUpdateProjectScopes(Guid id, [FromBody] UpdateScopesRequest body)
+    {
+        var project = await db.Projects.FindAsync(id);
+        if (project == null) return NotFound();
+
+        var invalid = body.Scopes.Where(s => !System.Text.RegularExpressions.Regex.IsMatch(s, @"^[a-z0-9_:.-]+$")).ToArray();
+        if (invalid.Length > 0) return BadRequest(new { error = "invalid_scope_names", invalid });
+
+        project.AllowedScopes = body.Scopes;
+        project.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+
+        if (project.HydraClientId != null)
+        {
+            try { await hydra.UpdateOAuth2ClientScopeAsync(project.HydraClientId, project.AllowedScopes); }
+            catch (Exception ex) { logger.LogWarning(ex, "Hydra scope update failed for project {ProjectId}", id); }
+        }
+
+        await audit.RecordAsync(null, id, GetActorId(), "project.scopes_updated", "project", id.ToString());
+        return Ok(new { project.Id, custom_scopes = project.AllowedScopes });
     }
 
     [HttpDelete("/admin/projects/{id}")]
@@ -790,19 +843,192 @@ await hydra.DeleteOAuth2ClientAsync(id);
         return NoContent();
     }
 
+    // ── Export ────────────────────────────────────────────────────────────────
+
+    [HttpGet("/admin/organizations/{id}/export/users")]
+    public async Task<IActionResult> AdminExportUsers(Guid id, [FromQuery] string format = "csv")
+    {
+        var org = await db.Organisations.FindAsync(id);
+        if (org == null) return NotFound();
+
+        var rateLimitKey = $"export_rl:{GetActorId()}:admin:users:{id}";
+        if (await cache.GetAsync(rateLimitKey) != null)
+            return StatusCode(429, new { error = "export_rate_limited", retry_after_seconds = appConfig.ExportRateLimitMinutes * 60 });
+        await cache.SetAsync(rateLimitKey, [1], new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(appConfig.ExportRateLimitMinutes) });
+
+        await audit.RecordAsync(id, null, GetActorId(), "export.users", "organisation", id.ToString(),
+            new Dictionary<string, object> { ["format"] = format });
+
+        var userListIds = await db.UserLists.Where(ul => ul.OrgId == id).Select(ul => ul.Id).ToListAsync();
+        var users = db.Users
+            .Where(u => userListIds.Contains(u.UserListId))
+            .OrderBy(u => u.CreatedAt)
+            .Select(u => new { u.Id, u.Email, u.Username, u.DisplayName, u.Phone, u.Active, u.EmailVerified, u.TotpEnabled, u.UserListId, u.LastLoginAt, u.CreatedAt });
+
+        if (format == "json")
+        {
+            var data = await users.ToListAsync();
+            Response.Headers["Content-Disposition"] = $"attachment; filename=users-org-{id}.json";
+            return new JsonResult(data);
+        }
+
+        Response.Headers["Content-Disposition"] = $"attachment; filename=users-org-{id}.csv";
+        Response.ContentType = "text/csv";
+        await Response.WriteAsync("id,email,username,display_name,phone,active,email_verified,totp_enabled,user_list_id,last_login_at,created_at\n");
+        await foreach (var u in users.AsAsyncEnumerable())
+            await Response.WriteAsync($"{u.Id},{AdminCsvEscape(u.Email)},{AdminCsvEscape(u.Username)},{AdminCsvEscape(u.DisplayName)},{AdminCsvEscape(u.Phone)},{u.Active},{u.EmailVerified},{u.TotpEnabled},{u.UserListId},{u.LastLoginAt:O},{u.CreatedAt:O}\n");
+        return Empty;
+    }
+
+    [HttpGet("/admin/organizations/{id}/export/audit-log")]
+    public async Task<IActionResult> AdminExportAuditLog(
+        Guid id,
+        [FromQuery] string format = "csv",
+        [FromQuery] DateTimeOffset? from = null,
+        [FromQuery] DateTimeOffset? to = null)
+    {
+        var org = await db.Organisations.FindAsync(id);
+        if (org == null) return NotFound();
+
+        var rateLimitKey = $"export_rl:{GetActorId()}:admin:auditlog:{id}";
+        if (await cache.GetAsync(rateLimitKey) != null)
+            return StatusCode(429, new { error = "export_rate_limited", retry_after_seconds = appConfig.ExportRateLimitMinutes * 60 });
+        await cache.SetAsync(rateLimitKey, [1], new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(appConfig.ExportRateLimitMinutes) });
+
+        await audit.RecordAsync(id, null, GetActorId(), "export.audit_log", "organisation", id.ToString(),
+            new Dictionary<string, object> { ["format"] = format, ["from"] = from?.ToString("O") ?? "", ["to"] = to?.ToString("O") ?? "" });
+
+        var query = db.AuditLogs
+            .Where(l => l.OrgId == id)
+            .Where(l => from == null || l.CreatedAt >= from)
+            .Where(l => to == null || l.CreatedAt <= to)
+            .OrderBy(l => l.CreatedAt)
+            .Select(l => new { l.Id, l.Action, l.ProjectId, l.ActorId, l.TargetType, l.TargetId, l.IpAddress, l.CreatedAt });
+
+        if (format == "json")
+        {
+            var data = await query.ToListAsync();
+            Response.Headers["Content-Disposition"] = $"attachment; filename=audit-log-{id}.json";
+            return new JsonResult(data);
+        }
+
+        Response.Headers["Content-Disposition"] = $"attachment; filename=audit-log-{id}.csv";
+        Response.ContentType = "text/csv";
+        await Response.WriteAsync("id,action,project_id,actor_id,target_type,target_id,ip_address,created_at\n");
+        await foreach (var l in query.AsAsyncEnumerable())
+            await Response.WriteAsync($"{l.Id},{AdminCsvEscape(l.Action)},{l.ProjectId},{l.ActorId},{AdminCsvEscape(l.TargetType)},{AdminCsvEscape(l.TargetId)},{AdminCsvEscape(l.IpAddress)},{l.CreatedAt:O}\n");
+        return Empty;
+    }
+
+    private static string AdminCsvEscape(string? value)
+    {
+        if (value == null) return "";
+        if (value.Contains(',') || value.Contains('"') || value.Contains('\n'))
+            return $"\"{value.Replace("\"", "\"\"")}\"";
+        return value;
+    }
+
+    // ── SAML IdP management (admin) ───────────────────────────────────────────
+
+    [HttpGet("/admin/projects/{id}/saml-providers")]
+    public async Task<IActionResult> AdminListSamlProviders(Guid id)
+    {
+        var project = await db.Projects.FindAsync(id);
+        if (project == null) return NotFound();
+        var providers = await db.SamlIdpConfigs
+            .Where(x => x.ProjectId == id)
+            .OrderBy(x => x.CreatedAt)
+            .Select(x => new {
+                x.Id, x.EntityId, x.MetadataUrl, x.SsoUrl,
+                x.EmailAttributeName, x.DisplayNameAttributeName,
+                x.JitProvisioning, x.DefaultRoleId, x.Active,
+                x.CreatedAt, x.UpdatedAt
+            })
+            .ToListAsync();
+        return Ok(providers);
+    }
+
+    [HttpPost("/admin/projects/{id}/saml-providers")]
+    public async Task<IActionResult> AdminCreateSamlProvider(Guid id, [FromBody] AdminCreateSamlProviderRequest req)
+    {
+        var project = await db.Projects.FindAsync(id);
+        if (project == null) return NotFound();
+
+        var entity = new SamlIdpConfig
+        {
+            ProjectId                = id,
+            EntityId                 = req.EntityId,
+            MetadataUrl              = req.MetadataUrl,
+            SsoUrl                   = req.SsoUrl,
+            CertificatePem           = req.CertificatePem,
+            EmailAttributeName       = req.EmailAttributeName ?? "email",
+            DisplayNameAttributeName = req.DisplayNameAttributeName,
+            JitProvisioning          = req.JitProvisioning ?? true,
+            DefaultRoleId            = req.DefaultRoleId,
+            Active                   = true,
+            CreatedAt                = DateTimeOffset.UtcNow,
+            UpdatedAt                = DateTimeOffset.UtcNow
+        };
+        db.SamlIdpConfigs.Add(entity);
+        await db.SaveChangesAsync();
+        await audit.RecordAsync(project.OrgId, id, GetActorId(), "saml_provider.created", "saml_idp_config", entity.Id.ToString());
+        return Ok(new { entity.Id });
+    }
+
+    [HttpPatch("/admin/projects/{projectId}/saml-providers/{providerId}")]
+    public async Task<IActionResult> AdminUpdateSamlProvider(Guid projectId, Guid providerId, [FromBody] AdminUpdateSamlProviderRequest req)
+    {
+        var provider = await db.SamlIdpConfigs
+            .Include(x => x.Project)
+            .FirstOrDefaultAsync(x => x.Id == providerId && x.ProjectId == projectId);
+        if (provider == null) return NotFound();
+
+        if (req.EntityId != null)                 provider.EntityId                 = req.EntityId;
+        if (req.MetadataUrl != null)               provider.MetadataUrl               = req.MetadataUrl;
+        if (req.SsoUrl != null)                    provider.SsoUrl                    = req.SsoUrl;
+        if (req.CertificatePem != null)            provider.CertificatePem            = req.CertificatePem;
+        if (req.EmailAttributeName != null)        provider.EmailAttributeName        = req.EmailAttributeName;
+        if (req.DisplayNameAttributeName != null)  provider.DisplayNameAttributeName  = req.DisplayNameAttributeName;
+        if (req.JitProvisioning.HasValue)          provider.JitProvisioning           = req.JitProvisioning.Value;
+        if (req.DefaultRoleId.HasValue)            provider.DefaultRoleId             = req.DefaultRoleId == Guid.Empty ? null : req.DefaultRoleId;
+        if (req.Active.HasValue)                   provider.Active                    = req.Active.Value;
+        provider.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await db.SaveChangesAsync();
+        await audit.RecordAsync(provider.Project.OrgId, projectId, GetActorId(), "saml_provider.updated", "saml_idp_config", providerId.ToString());
+        return Ok();
+    }
+
+    [HttpDelete("/admin/projects/{projectId}/saml-providers/{providerId}")]
+    public async Task<IActionResult> AdminDeleteSamlProvider(Guid projectId, Guid providerId)
+    {
+        var provider = await db.SamlIdpConfigs
+            .Include(x => x.Project)
+            .FirstOrDefaultAsync(x => x.Id == providerId && x.ProjectId == projectId);
+        if (provider == null) return NotFound();
+
+        db.SamlIdpConfigs.Remove(provider);
+        await db.SaveChangesAsync();
+        await audit.RecordAsync(provider.Project.OrgId, projectId, GetActorId(), "saml_provider.deleted", "saml_idp_config", providerId.ToString());
+        return NoContent();
+    }
+
 }
 
 // ── Request records ───────────────────────────────────────────────────────────
 public record CreateOrgRequest(string Name, string Slug);
-public record UpdateOrgRequest(string? Name);
+public record UpdateOrgRequest(string? Name, int? AuditRetentionDays);
 public record AdminCreateUserRequest(string Email, string? Password, string? Username, bool? EmailVerified);
 public record AssignOrgAdminRequest(Guid UserId, string Role, Guid? ScopeId);
 public record AdminCreateUserListRequest(string Name, Guid OrgId);
 public record AdminCreateProjectRequest(string Name, string Slug, bool RequireRoleToLogin, string[]? RedirectUris);
 public record AdminUpdateProjectRequest(string? Name, bool? RequireRoleToLogin, bool? RequireMfa, bool? AllowSelfRegistration, bool? EmailVerificationEnabled,
-    bool? SmsVerificationEnabled, bool? Active, Guid? DefaultRoleId, bool? ClearDefaultRole, string[]? AllowedEmailDomains, Dictionary<string, object>? LoginTheme);
+    bool? SmsVerificationEnabled, bool? Active, Guid? DefaultRoleId, bool? ClearDefaultRole, string[]? AllowedEmailDomains, Dictionary<string, object>? LoginTheme,
+    string[]? IpAllowlist, bool? CheckBreachedPasswords);
 public record AdminAssignUserListRequest(Guid UserListId);
 public record AdminUpdateUserRequest(string? Email, string? Username, string? DisplayName, string? Phone, bool? Active, bool? EmailVerified, bool? ClearLock, string? NewPassword);
 public record AdminCreateRoleRequest(string Name, string? Description, int? Rank);
 public record CreateHydraClientRequest(string ClientName, string[] GrantTypes, string[] RedirectUris, string? Scope);
 public record AdminUpsertSmtpRequest(string Host, int Port, bool StartTls, string? Username, string? Password, string FromAddress, string FromName);
+public record AdminCreateSamlProviderRequest(string EntityId, string? MetadataUrl, string? SsoUrl, string? CertificatePem, string? EmailAttributeName, string? DisplayNameAttributeName, bool? JitProvisioning, Guid? DefaultRoleId);
+public record AdminUpdateSamlProviderRequest(string? EntityId, string? MetadataUrl, string? SsoUrl, string? CertificatePem, string? EmailAttributeName, string? DisplayNameAttributeName, bool? JitProvisioning, Guid? DefaultRoleId, bool? Active);

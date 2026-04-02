@@ -11,6 +11,7 @@ public class Organisation
     public bool Active { get; set; } = true;
     public DateTimeOffset? SuspendedAt { get; set; }
     public Dictionary<string, object> Metadata { get; set; } = [];
+    public int? AuditRetentionDays { get; set; }
     public Guid? CreatedBy { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }

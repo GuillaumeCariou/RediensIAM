@@ -9,6 +9,7 @@ using OtpNet;
 using RediensIAM.Config;
 using RediensIAM.Data;
 using RediensIAM.Data.Entities;
+using RediensIAM.Middleware;
 using RediensIAM.Services;
 
 namespace RediensIAM.Controllers;
@@ -27,6 +28,8 @@ public class AuthController(
     IFido2 fido2,
     SocialLoginService socialLogin,
     AppConfig appConfig,
+    BreachCheckService breachCheck,
+    Microsoft.Extensions.Caching.Distributed.IDistributedCache cache,
     ILogger<AuthController> logger) : ControllerBase
 {
     private string Ip => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
@@ -153,11 +156,15 @@ public class AuthController(
         if (user == null || !user.Active)
         {
             await rateLimiter.RecordFailureAsync(Ip, null);
+            IamMetrics.LoginAttempts.WithLabels("failure").Inc();
             return Unauthorized(new { error = "invalid_credentials" });
         }
 
         if (user.LockedUntil.HasValue && user.LockedUntil > DateTimeOffset.UtcNow)
+        {
+            IamMetrics.LoginAttempts.WithLabels("locked").Inc();
             return Unauthorized(new { error = "account_locked", locked_until = user.LockedUntil });
+        }
 
         if (!passwords.Verify(body.Password, user.PasswordHash))
         {
@@ -166,7 +173,20 @@ public class AuthController(
                 user.LockedUntil = DateTimeOffset.UtcNow.AddMinutes(appConfig.LockoutMinutes);
             await db.SaveChangesAsync();
             await rateLimiter.RecordFailureAsync(Ip, user.Id);
+            IamMetrics.LoginAttempts.WithLabels("failure").Inc();
             return Unauthorized(new { error = "invalid_credentials" });
+        }
+
+        // C6: IP allowlist check
+        if (project.IpAllowlist.Length > 0)
+        {
+            if (!System.Net.IPAddress.TryParse(Ip, out var clientIp) ||
+                !project.IpAllowlist.Any(cidr => IpInRange(clientIp, cidr)))
+            {
+                await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.failure");
+                IamMetrics.LoginAttempts.WithLabels("ip_blocked").Inc();
+                return Unauthorized(new { error = "ip_not_allowed" });
+            }
         }
 
         if (project.RequireRoleToLogin)
@@ -190,6 +210,7 @@ public class AuthController(
                 HttpContext.Session.SetString("mfa_pending_user",     user.Id.ToString());
                 HttpContext.Session.SetString("mfa_pending_project",  projectId);
                 HttpContext.Session.SetString("mfa_pending_challenge", body.LoginChallenge);
+                IamMetrics.LoginAttempts.WithLabels("mfa_setup_required").Inc();
                 return Ok(new { requires_mfa_setup = true });
             }
         }
@@ -239,6 +260,8 @@ public class AuthController(
 
         var redirectUrl = await hydra.AcceptLoginAsync(body.LoginChallenge, subject, context);
         await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login");
+        IamMetrics.LoginAttempts.WithLabels("success").Inc();
+        _ = Task.Run(() => CheckNewDeviceAsync(user, Ip, Request.Headers.UserAgent.ToString()));
         return Ok(new { redirect_to = redirectUrl });
     }
 
@@ -546,6 +569,13 @@ public class AuthController(
         if (project.PasswordRequireSpecial && !body.Password.Any(c => !char.IsLetterOrDigit(c)))
             return BadRequest(new { error = "password_requires_special" });
 
+        if (project.CheckBreachedPasswords)
+        {
+            var count = await breachCheck.GetBreachCountAsync(body.Password);
+            if (count > 0)
+                return BadRequest(new { error = "password_breached", count });
+        }
+
         var email = body.Email.ToLowerInvariant();
 
         if (project.AllowedEmailDomains.Length > 0)
@@ -672,6 +702,15 @@ public class AuthController(
 
         if (token == null || token.ExpiresAt < DateTimeOffset.UtcNow || token.UsedAt != null)
             return BadRequest(new { error = "invalid_or_expired_token" });
+
+        // Check breach database if the user's project requires it
+        var userList = await db.UserLists.Include(ul => ul.Projects).FirstOrDefaultAsync(ul => ul.Id == token.User.UserListId);
+        var inviteProject = userList?.Projects.FirstOrDefault();
+        if (inviteProject?.CheckBreachedPasswords == true)
+        {
+            var count = await breachCheck.GetBreachCountAsync(body.Password);
+            if (count > 0) return BadRequest(new { error = "password_breached", count });
+        }
 
         token.User.PasswordHash     = passwords.Hash(body.Password);
         token.User.Active           = true;
@@ -826,6 +865,81 @@ public class AuthController(
         return Ok(new { redirect_to = redirectUrl });
     }
 
+    private async Task CheckNewDeviceAsync(User user, string ip, string userAgent)
+    {
+        if (!user.NewDeviceAlertsEnabled) return;
+        try
+        {
+            // Fingerprint: HMAC-SHA256 of "userAgent + /24 subnet"
+            var subnet = ip.Contains('.') && System.Net.IPAddress.TryParse(ip, out var parsed)
+                ? string.Join(".", parsed.GetAddressBytes().Take(3)) + ".0"
+                : ip;
+            var raw = $"{userAgent}|{subnet}";
+            using var hmac = new HMACSHA256(Convert.FromHexString(appConfig.TotpSecretEncryptionKey)[..32]);
+            var fingerprint = Convert.ToHexString(hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(raw)));
+
+            var cacheKey = $"device:{user.Id}:{fingerprint}";
+            var known = await cache.GetAsync(cacheKey);
+            await cache.SetAsync(cacheKey, [1], new Microsoft.Extensions.Caching.Distributed.DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromDays(appConfig.NewDeviceCacheDays)
+            });
+
+            if (known == null)
+                await emailService.SendNewDeviceAlertAsync(user.Email, ip, userAgent, DateTimeOffset.UtcNow);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "New device check failed for user {UserId}", user.Id);
+        }
+    }
+
+    private static System.Net.IPAddress NormalizeIp(System.Net.IPAddress ip)
+    {
+        if (ip.IsIPv4MappedToIPv6) return ip.MapToIPv4();
+        if (ip.Equals(System.Net.IPAddress.IPv6Loopback)) return System.Net.IPAddress.Loopback;
+        return ip;
+    }
+
+    private static bool IpInRange(System.Net.IPAddress ip, string cidr)
+    {
+        ip = NormalizeIp(ip);
+        var parts = cidr.Split('/');
+        if (!System.Net.IPAddress.TryParse(parts[0], out var network)) return false;
+        network = NormalizeIp(network);
+
+        // Different address families can't match
+        if (ip.AddressFamily != network.AddressFamily) return false;
+
+        if (parts.Length == 1) return ip.Equals(network);
+        if (!int.TryParse(parts[1], out var prefixLen)) return false;
+
+        var ipBytes  = ip.GetAddressBytes();
+        var netBytes = network.GetAddressBytes();
+        if (ipBytes.Length != netBytes.Length) return false;
+
+        // IPv4
+        if (ipBytes.Length == 4)
+        {
+            var mask   = prefixLen == 0 ? 0u : ~((1u << (32 - prefixLen)) - 1);
+            var ipInt  = (uint)(ipBytes[0]  << 24 | ipBytes[1]  << 16 | ipBytes[2]  << 8 | ipBytes[3]);
+            var netInt = (uint)(netBytes[0] << 24 | netBytes[1] << 16 | netBytes[2] << 8 | netBytes[3]);
+            return (ipInt & mask) == (netInt & mask);
+        }
+
+        // IPv6: compare byte-by-byte with prefix mask
+        var fullBytes = prefixLen / 8;
+        var remBits   = prefixLen % 8;
+        for (var i = 0; i < fullBytes; i++)
+            if (ipBytes[i] != netBytes[i]) return false;
+        if (remBits > 0)
+        {
+            var byteMask = (byte)(0xFF << (8 - remBits));
+            if ((ipBytes[fullBytes] & byteMask) != (netBytes[fullBytes] & byteMask)) return false;
+        }
+        return true;
+    }
+
     private async Task<User> BuildUserAsync(Guid userListId, string email, string? username, string password)
     {
         var uname = username ?? email.Split('@')[0];
@@ -868,6 +982,35 @@ public class AuthController(
         return Redirect(url);
     }
 
+    // ── Link additional social provider to an already-authenticated user ──────
+
+    [HttpGet("/auth/oauth2/link/start")]
+    public async Task<IActionResult> OAuthLinkStart([FromQuery] string provider_id)
+    {
+        var claims = HttpContext.GetClaims();
+        if (claims == null) return Unauthorized();
+
+        var projectId = claims.ProjectId;
+        if (string.IsNullOrEmpty(projectId)) return BadRequest(new { error = "missing_project_id" });
+
+        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId) && p.Active);
+        if (project?.AssignedUserListId == null) return BadRequest(new { error = "project_not_ready" });
+
+        var providerCfg = GetProviderConfig(project.LoginTheme, provider_id);
+        if (providerCfg == null) return BadRequest(new { error = "provider_not_found" });
+        if (string.IsNullOrEmpty(providerCfg.ClientId)) return BadRequest(new { error = "provider_not_configured" });
+
+        // Already linked?
+        var alreadyLinked = await db.UserSocialAccounts.AnyAsync(s =>
+            s.UserId == claims.ParsedUserId && s.Provider == provider_id);
+        if (alreadyLinked) return BadRequest(new { error = "provider_already_linked" });
+
+        var stateData = new OAuthStateData("", projectId, provider_id,
+            LinkMode: true, LinkUserId: claims.UserId, LinkProjectId: projectId);
+        var (url, _) = await socialLogin.BuildLinkAuthorizationUrlAsync(providerCfg, stateData);
+        return Redirect(url);
+    }
+
     [HttpGet("/auth/oauth2/callback")]
     public async Task<IActionResult> OAuthCallback(
         [FromQuery] string? code,
@@ -898,6 +1041,36 @@ public class AuthController(
 
         var profile = await socialLogin.ExchangeAndGetProfileAsync(providerCfg, code);
         if (profile == null) return Redirect(errorRedirect);
+
+        // ── Link mode: attach social account to existing authenticated user ───
+        if (stateData.LinkMode && stateData.LinkUserId != null)
+        {
+            if (!Guid.TryParse(stateData.LinkUserId, out var linkUserId))
+                return Redirect("/account?link_error=invalid_user");
+
+            var existing = await db.UserSocialAccounts.AnyAsync(s =>
+                s.Provider == stateData.ProviderId && s.ProviderUserId == profile.ProviderUserId);
+            if (existing) return Redirect("/account?link_error=already_linked");
+
+            db.UserSocialAccounts.Add(new UserSocialAccount
+            {
+                UserId         = linkUserId,
+                Provider       = stateData.ProviderId,
+                ProviderUserId = profile.ProviderUserId,
+                Email          = profile.Email,
+                LinkedAt       = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync();
+
+            if (Guid.TryParse(stateData.LinkProjectId, out var lpId))
+            {
+                var lpProject = await db.Projects.FindAsync(lpId);
+                if (lpProject != null)
+                    await audit.RecordAsync(lpProject.OrgId, lpId, linkUserId,
+                        $"user.social_linked.{stateData.ProviderId}", "user", linkUserId.ToString());
+            }
+            return Redirect("/account?link_success=1");
+        }
 
         var user = await FindOrCreateSocialUserAsync(profile, stateData.ProviderId, project);
         if (user == null) return Redirect(errorRedirect);

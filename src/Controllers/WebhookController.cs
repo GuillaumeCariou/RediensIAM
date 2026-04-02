@@ -1,0 +1,216 @@
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using RediensIAM.Config;
+using RediensIAM.Data;
+using RediensIAM.Data.Entities;
+using RediensIAM.Filters;
+using RediensIAM.Middleware;
+using RediensIAM.Services;
+
+namespace RediensIAM.Controllers;
+
+[ApiController]
+[RequireManagementLevel(ManagementLevel.OrgAdmin)]
+public class WebhookController(
+    RediensIamDbContext db,
+    AppConfig appConfig,
+    AuditLogService audit,
+    WebhookService webhookService) : ControllerBase
+{
+    private TokenClaims Claims => HttpContext.GetClaims()!;
+    private Guid OrgId   => Guid.TryParse(Claims.OrgId, out var g) ? g : Guid.Empty;
+    private Guid ActorId => Claims.ParsedUserId;
+
+    // ── Org webhooks ──────────────────────────────────────────────────────────
+
+    [HttpGet("/org/webhooks")]
+    public async Task<IActionResult> ListWebhooks()
+    {
+        var webhooks = await db.Webhooks
+            .Where(w => w.OrgId == OrgId && w.ProjectId == null)
+            .Select(w => new { w.Id, w.Url, w.Events, w.Active, w.CreatedAt })
+            .ToListAsync();
+        return Ok(webhooks);
+    }
+
+    [HttpPost("/org/webhooks")]
+    public async Task<IActionResult> CreateWebhook([FromBody] CreateWebhookRequest body)
+    {
+        if (!body.Url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { error = "url_must_be_https" });
+
+        var invalidEvents = body.Events.Except(WebhookEvents.All).ToArray();
+        if (invalidEvents.Length > 0)
+            return BadRequest(new { error = "invalid_events", invalid = invalidEvents });
+
+        var encKey = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
+        var rawSecret = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        var secretEnc = TotpEncryption.EncryptString(encKey, rawSecret);
+
+        var wh = new Webhook
+        {
+            OrgId     = OrgId,
+            Url       = body.Url,
+            SecretEnc = secretEnc,
+            Events    = body.Events,
+            Active    = true,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        db.Webhooks.Add(wh);
+        await db.SaveChangesAsync();
+        await audit.RecordAsync(OrgId, null, ActorId, "webhook.created", "webhook", wh.Id.ToString());
+        return Created($"/org/webhooks/{wh.Id}", new
+        {
+            wh.Id, wh.Url, wh.Events, wh.Active,
+            secret = rawSecret,
+            message = "store_secret_shown_once"
+        });
+    }
+
+    [HttpGet("/org/webhooks/{id}")]
+    public async Task<IActionResult> GetWebhook(Guid id)
+    {
+        var wh = await db.Webhooks
+            .Include(w => w.Deliveries.OrderByDescending(d => d.CreatedAt).Take(10))
+            .FirstOrDefaultAsync(w => w.Id == id && w.OrgId == OrgId && w.ProjectId == null);
+        if (wh == null) return NotFound();
+        return Ok(new
+        {
+            wh.Id, wh.Url, wh.Events, wh.Active, wh.CreatedAt,
+            recent_deliveries = wh.Deliveries.Select(d => new
+            {
+                d.Id, d.Event, d.StatusCode, d.ErrorMessage, d.AttemptCount, d.DeliveredAt, d.CreatedAt
+            })
+        });
+    }
+
+    [HttpPatch("/org/webhooks/{id}")]
+    public async Task<IActionResult> UpdateWebhook(Guid id, [FromBody] UpdateWebhookRequest body)
+    {
+        var wh = await db.Webhooks.FirstOrDefaultAsync(w => w.Id == id && w.OrgId == OrgId && w.ProjectId == null);
+        if (wh == null) return NotFound();
+
+        if (body.Url != null)
+        {
+            if (!body.Url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(new { error = "url_must_be_https" });
+            wh.Url = body.Url;
+        }
+        if (body.Events != null)
+        {
+            var invalid = body.Events.Except(WebhookEvents.All).ToArray();
+            if (invalid.Length > 0) return BadRequest(new { error = "invalid_events", invalid });
+            wh.Events = body.Events;
+        }
+        if (body.Active.HasValue) wh.Active = body.Active.Value;
+
+        await db.SaveChangesAsync();
+        return Ok(new { wh.Id, wh.Url, wh.Events, wh.Active });
+    }
+
+    [HttpPost("/org/webhooks/{id}/rotate-secret")]
+    public async Task<IActionResult> RotateSecret(Guid id)
+    {
+        var wh = await db.Webhooks.FirstOrDefaultAsync(w => w.Id == id && w.OrgId == OrgId && w.ProjectId == null);
+        if (wh == null) return NotFound();
+        var encKey = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
+        var rawSecret = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        wh.SecretEnc = TotpEncryption.EncryptString(encKey, rawSecret);
+        await db.SaveChangesAsync();
+        return Ok(new { secret = rawSecret, message = "store_secret_shown_once" });
+    }
+
+    [HttpDelete("/org/webhooks/{id}")]
+    public async Task<IActionResult> DeleteWebhook(Guid id)
+    {
+        var wh = await db.Webhooks.FirstOrDefaultAsync(w => w.Id == id && w.OrgId == OrgId && w.ProjectId == null);
+        if (wh == null) return NotFound();
+        db.Webhooks.Remove(wh);
+        await db.SaveChangesAsync();
+        await audit.RecordAsync(OrgId, null, ActorId, "webhook.deleted", "webhook", id.ToString());
+        return NoContent();
+    }
+
+    [HttpPost("/org/webhooks/{id}/test")]
+    public async Task<IActionResult> TestWebhook(Guid id)
+    {
+        var wh = await db.Webhooks.FirstOrDefaultAsync(w => w.Id == id && w.OrgId == OrgId && w.ProjectId == null);
+        if (wh == null) return NotFound();
+        await webhookService.DispatchAsync("webhook.test", new { webhook_id = id, message = "test" }, OrgId, null);
+        return Ok(new { message = "test_dispatched" });
+    }
+
+    [HttpGet("/org/webhooks/{id}/deliveries")]
+    public async Task<IActionResult> ListDeliveries(Guid id, [FromQuery] int limit = 20, [FromQuery] int offset = 0)
+    {
+        if (!await db.Webhooks.AnyAsync(w => w.Id == id && w.OrgId == OrgId)) return NotFound();
+        var deliveries = await db.WebhookDeliveries
+            .Where(d => d.WebhookId == id)
+            .OrderByDescending(d => d.CreatedAt)
+            .Skip(offset).Take(limit)
+            .Select(d => new { d.Id, d.Event, d.StatusCode, d.ErrorMessage, d.AttemptCount, d.DeliveredAt, d.CreatedAt })
+            .ToListAsync();
+        return Ok(deliveries);
+    }
+
+    // ── Admin webhooks ────────────────────────────────────────────────────────
+
+    [HttpGet("/admin/webhooks")]
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
+    public async Task<IActionResult> AdminListWebhooks()
+    {
+        var webhooks = await db.Webhooks
+            .Select(w => new { w.Id, w.OrgId, w.ProjectId, w.Url, w.Events, w.Active, w.CreatedAt })
+            .ToListAsync();
+        return Ok(webhooks);
+    }
+
+    [HttpPost("/admin/webhooks")]
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
+    public async Task<IActionResult> AdminCreateWebhook([FromBody] CreateWebhookRequest body)
+    {
+        if (!body.Url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { error = "url_must_be_https" });
+
+        var invalidEvents = body.Events.Except(WebhookEvents.All).ToArray();
+        if (invalidEvents.Length > 0)
+            return BadRequest(new { error = "invalid_events", invalid = invalidEvents });
+
+        var encKey   = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
+        var rawSecret = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+
+        var wh = new Webhook
+        {
+            OrgId     = null,
+            Url       = body.Url,
+            SecretEnc = TotpEncryption.EncryptString(encKey, rawSecret),
+            Events    = body.Events,
+            Active    = true,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        db.Webhooks.Add(wh);
+        await db.SaveChangesAsync();
+        await audit.RecordAsync(null, null, ActorId, "webhook.created", "webhook", wh.Id.ToString());
+        return Created($"/admin/webhooks/{wh.Id}", new
+        {
+            wh.Id, wh.Url, wh.Events, wh.Active,
+            secret = rawSecret,
+            message = "store_secret_shown_once"
+        });
+    }
+
+    [HttpDelete("/admin/webhooks/{id}")]
+    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
+    public async Task<IActionResult> AdminDeleteWebhook(Guid id)
+    {
+        var wh = await db.Webhooks.FindAsync(id);
+        if (wh == null) return NotFound();
+        db.Webhooks.Remove(wh);
+        await db.SaveChangesAsync();
+        await audit.RecordAsync(null, null, ActorId, "webhook.deleted", "webhook", id.ToString());
+        return NoContent();
+    }
+}
+
+public record CreateWebhookRequest(string Url, string[] Events);
+public record UpdateWebhookRequest(string? Url, string[]? Events, bool? Active);

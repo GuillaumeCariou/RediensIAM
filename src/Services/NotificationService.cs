@@ -14,6 +14,7 @@ public interface IEmailService
 {
     Task SendOtpAsync(string to, string code, string purpose, Guid? orgId = null, Guid? projectId = null);
     Task SendInviteAsync(string to, string inviteUrl, string orgName, Guid? projectId = null);
+    Task SendNewDeviceAlertAsync(string to, string ipAddress, string userAgent, DateTimeOffset loginAt);
 }
 
 public class StubEmailService(ILogger<StubEmailService> logger) : IEmailService
@@ -27,6 +28,12 @@ public class StubEmailService(ILogger<StubEmailService> logger) : IEmailService
     public Task SendInviteAsync(string to, string inviteUrl, string orgName, Guid? projectId = null)
     {
         logger.LogWarning("[STUB EMAIL] Invite To={To} Org={Org} Url={Url}", to, orgName, inviteUrl);
+        return Task.CompletedTask;
+    }
+
+    public Task SendNewDeviceAlertAsync(string to, string ipAddress, string userAgent, DateTimeOffset loginAt)
+    {
+        logger.LogWarning("[STUB EMAIL] NewDevice To={To} Ip={Ip}", to, ipAddress);
         return Task.CompletedTask;
     }
 }
@@ -179,6 +186,28 @@ public class SmtpEmailService(
         if (!string.IsNullOrEmpty(username))
             await client.AuthenticateAsync(username, password);
 
+        await client.SendAsync(message);
+        await client.DisconnectAsync(true);
+    }
+
+    public async Task SendNewDeviceAlertAsync(string to, string ipAddress, string userAgent, DateTimeOffset loginAt)
+    {
+        if (string.IsNullOrEmpty(appConfig.SmtpHost)) return;
+
+        var message = new MimeMessage();
+        message.From.Add(new MailboxAddress(appConfig.SmtpFromName, appConfig.SmtpFromAddress));
+        message.To.Add(new MailboxAddress("", to));
+        message.Subject = "New device login detected";
+        message.Body = new TextPart("plain")
+        {
+            Text = $"A new device logged into your account at {loginAt:R}.\n\nIP address: {ipAddress}\nDevice: {userAgent}\n\nIf this was not you, please reset your password immediately."
+        };
+
+        using var client = new SmtpClient();
+        await client.ConnectAsync(appConfig.SmtpHost, appConfig.SmtpPort,
+            appConfig.SmtpStartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.Auto);
+        if (!string.IsNullOrEmpty(appConfig.SmtpUsername))
+            await client.AuthenticateAsync(appConfig.SmtpUsername, appConfig.SmtpPassword);
         await client.SendAsync(message);
         await client.DisconnectAsync(true);
     }

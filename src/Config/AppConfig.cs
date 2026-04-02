@@ -47,6 +47,21 @@ public class AppConfig(IConfiguration config)
     public int    ArgonParallelism        => config.GetValue<int>("Security:ArgonParallelism", 4);
     public string PatPrefix               => config["Security:PatPrefix"] ?? "rediens_pat_";
 
+    // ── Audit ─────────────────────────────────────────────────────────────────
+    public int AuditRetentionDays => config.GetValue<int>("Audit:RetentionDays", 365);
+
+    // ── Invitations ───────────────────────────────────────────────────────────
+    public int InviteExpiryHours => config.GetValue<int>("Invitations:ExpiryHours", 72);
+
+    // ── New device detection ──────────────────────────────────────────────────
+    public int NewDeviceCacheDays => config.GetValue<int>("Security:NewDeviceCacheDays", 90);
+
+    // ── Webhooks ──────────────────────────────────────────────────────────────
+    public int WebhookTimeoutSeconds => config.GetValue<int>("Webhooks:TimeoutSeconds", 10);
+
+    // ── Export ────────────────────────────────────────────────────────────────
+    public int ExportRateLimitMinutes => config.GetValue<int>("Export:RateLimitMinutes", 1);
+
     // ── External services ─────────────────────────────────────────────────────
     public string KetoReadUrl   => config["Keto:ReadUrl"]   ?? "http://keto-read:4466";
     public string KetoWriteUrl  => config["Keto:WriteUrl"]  ?? "http://keto-write:4467";

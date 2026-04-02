@@ -19,7 +19,10 @@ public record ProviderConfig(
 public record OAuthStateData(
     string LoginChallenge,
     string ProjectId,
-    string ProviderId
+    string ProviderId,
+    bool LinkMode = false,
+    string? LinkUserId = null,
+    string? LinkProjectId = null
 );
 
 public record SocialUserProfile(
@@ -101,6 +104,27 @@ public class SocialLoginService(
         var stateData = new OAuthStateData(loginChallenge, projectId, provider.Id);
         var state = await StoreStateAsync(stateData);
 
+        var (authEndpoint, scope) = await GetAuthEndpointAndScopeAsync(provider);
+
+        var query = new Dictionary<string, string>
+        {
+            ["response_type"] = "code",
+            ["client_id"]     = provider.ClientId,
+            ["redirect_uri"]  = CallbackUrl,
+            ["scope"]         = scope,
+            ["state"]         = state,
+        };
+
+        var qs = string.Join("&", query.Select(kv =>
+            $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
+
+        return ($"{authEndpoint}?{qs}", state);
+    }
+
+    public async Task<(string Url, string State)> BuildLinkAuthorizationUrlAsync(
+        ProviderConfig provider, OAuthStateData stateData)
+    {
+        var state = await StoreStateAsync(stateData);
         var (authEndpoint, scope) = await GetAuthEndpointAndScopeAsync(provider);
 
         var query = new Dictionary<string, string>

@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.HttpOverrides;
+using Prometheus;
 using Microsoft.EntityFrameworkCore;
 using StackExchange.Redis;
 using RediensIAM.Config;
@@ -58,6 +59,13 @@ builder.Services.AddScoped<LoginRateLimiter>();
 builder.Services.AddScoped<HydraService>();
 builder.Services.AddScoped<KetoService>();
 builder.Services.AddScoped<AuditLogService>();
+builder.Services.AddScoped<BreachCheckService>();
+builder.Services.AddScoped<SamlService>();
+builder.Services.AddSingleton(_ => System.Threading.Channels.Channel.CreateUnbounded<RediensIAM.Services.WebhookJob>());
+builder.Services.AddScoped<WebhookService>();
+builder.Services.AddHostedService<WebhookDispatcherService>();
+builder.Services.AddHostedService<AuditLogRetentionService>();
+builder.Services.AddHttpClient("webhook");
 builder.Services.AddScoped<PatService>();
 builder.Services.AddScoped<SocialLoginService>();
 builder.Services.AddHttpContextAccessor();
@@ -81,6 +89,40 @@ builder.Services.AddControllers()
         o.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
     });
 builder.Services.AddHealthChecks();
+
+// ── OpenAPI / Swagger (admin port only) ────────────────────────────────────
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
+    {
+        Title   = "RediensIAM API",
+        Version = "v1",
+        Description = "Identity & Access Management API"
+    });
+    c.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+    {
+        Name         = "Authorization",
+        Type         = Microsoft.OpenApi.Models.SecuritySchemeType.Http,
+        Scheme       = "bearer",
+        BearerFormat = "JWT",
+        In           = Microsoft.OpenApi.Models.ParameterLocation.Header
+    });
+    c.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
+    {
+        {
+            new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+            {
+                Reference = new Microsoft.OpenApi.Models.OpenApiReference
+                    { Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme, Id = "Bearer" }
+            },
+            Array.Empty<string>()
+        }
+    });
+    var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
+    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+    if (File.Exists(xmlPath)) c.IncludeXmlComments(xmlPath);
+});
 
 // ── CORS ───────────────────────────────────────────────────────────────────
 builder.Services.AddCors(options =>
@@ -127,6 +169,48 @@ var app = builder.Build();
                 );
                 ALTER TABLE projects ADD COLUMN IF NOT EXISTS ""EmailFromName"" TEXT;
                 ALTER TABLE projects ADD COLUMN IF NOT EXISTS ""RequireMfa"" BOOLEAN NOT NULL DEFAULT false;
+                ALTER TABLE projects ADD COLUMN IF NOT EXISTS ""IpAllowlist"" JSONB NOT NULL DEFAULT '[]';
+                ALTER TABLE projects ADD COLUMN IF NOT EXISTS ""CheckBreachedPasswords"" BOOLEAN NOT NULL DEFAULT false;
+                ALTER TABLE projects ADD COLUMN IF NOT EXISTS ""AllowedScopes"" TEXT[] NOT NULL DEFAULT '{}';
+                ALTER TABLE organisations ADD COLUMN IF NOT EXISTS ""AuditRetentionDays"" INTEGER;
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS ""NewDeviceAlertsEnabled"" BOOLEAN NOT NULL DEFAULT true;
+
+                CREATE TABLE IF NOT EXISTS saml_idp_configs (
+                    ""Id""                      UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+                    ""ProjectId""               UUID         NOT NULL REFERENCES projects(""Id"") ON DELETE CASCADE,
+                    ""EntityId""                TEXT         NOT NULL,
+                    ""MetadataUrl""             TEXT,
+                    ""SsoUrl""                  TEXT,
+                    ""CertificatePem""          TEXT,
+                    ""EmailAttributeName""      TEXT         NOT NULL DEFAULT 'email',
+                    ""DisplayNameAttributeName"" TEXT,
+                    ""JitProvisioning""         BOOLEAN      NOT NULL DEFAULT true,
+                    ""DefaultRoleId""           UUID         REFERENCES roles(""Id"") ON DELETE SET NULL,
+                    ""Active""                  BOOLEAN      NOT NULL DEFAULT true,
+                    ""CreatedAt""               TIMESTAMPTZ  NOT NULL DEFAULT now(),
+                    ""UpdatedAt""               TIMESTAMPTZ  NOT NULL DEFAULT now()
+                );
+                CREATE TABLE IF NOT EXISTS webhooks (
+                    ""Id""        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    ""OrgId""     UUID REFERENCES organisations(""Id"") ON DELETE CASCADE,
+                    ""ProjectId"" UUID REFERENCES projects(""Id"") ON DELETE CASCADE,
+                    ""Url""       TEXT NOT NULL,
+                    ""SecretEnc"" TEXT NOT NULL DEFAULT '',
+                    ""Events""    JSONB NOT NULL DEFAULT '[]',
+                    ""Active""    BOOLEAN NOT NULL DEFAULT true,
+                    ""CreatedAt"" TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+                CREATE TABLE IF NOT EXISTS webhook_deliveries (
+                    ""Id""           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    ""WebhookId""    UUID NOT NULL REFERENCES webhooks(""Id"") ON DELETE CASCADE,
+                    ""Event""        TEXT NOT NULL,
+                    ""Payload""      JSONB NOT NULL DEFAULT '{}',
+                    ""StatusCode""   INTEGER,
+                    ""ErrorMessage"" TEXT,
+                    ""AttemptCount"" INTEGER NOT NULL DEFAULT 0,
+                    ""DeliveredAt""  TIMESTAMPTZ,
+                    ""CreatedAt""    TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
             ");
             logger.LogInformation("Database schema ready");
             break;
@@ -215,6 +299,16 @@ app.Use(async (ctx, next) =>
     await next();
 });
 
+// ── Swagger UI — admin port only ───────────────────────────────────────────
+app.UseWhen(ctx => ctx.Connection.LocalPort == appConfig.AdminPort, branch =>
+{
+    branch.UseSwagger();
+    branch.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "RediensIAM v1"));
+});
+
+// ── Prometheus HTTP request metrics ───────────────────────────────────────
+app.UseHttpMetrics();
+
 app.UseSession();
 app.UseCors("AdminSpa");
 app.UseDefaultFiles();
@@ -255,6 +349,10 @@ app.MapGet("/admin/config", (AppConfig cfg) => Results.Json(
     new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower }));
 
 app.MapControllers();
+
+// ── Prometheus scrape endpoint — admin port only ───────────────────────────
+app.MapMetrics("/metrics")
+   .RequireHost($"*:{appConfig.AdminPort}");
 
 // Admin SPA fallback (client-side routing)
 app.MapFallback("/admin/{**path}", async ctx =>

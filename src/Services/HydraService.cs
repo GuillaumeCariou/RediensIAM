@@ -40,6 +40,7 @@ public class HydraClient
 public class HydraConsentSession
 {
     [JsonPropertyName("consent_request")] public HydraConsentSessionRequest? ConsentRequest { get; set; }
+    [JsonPropertyName("granted_scopes")]  public string[] GrantedScopes { get; set; } = [];
     [JsonPropertyName("granted_at")]      public DateTimeOffset? GrantedAt { get; set; }
     [JsonPropertyName("expires_at")]      public DateTimeOffset? ExpiresAt { get; set; }
 }
@@ -150,6 +151,17 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig)
         var resp = await Client.PostAsJsonAsync($"{_adminUrl}/admin/clients", client);
         resp.EnsureSuccessStatusCode();
         return await resp.Content.ReadFromJsonAsync<JsonElement>(_json);
+    }
+
+    public async Task UpdateOAuth2ClientScopeAsync(string clientId, string[] allowedScopes)
+    {
+        var scope = allowedScopes.Length > 0
+            ? string.Join(" ", new[] { "openid", "profile", "offline_access" }.Concat(allowedScopes).Distinct())
+            : "openid profile offline_access";
+        var resp = await Client.PatchAsJsonAsync(
+            $"{_adminUrl}/admin/clients/{Uri.EscapeDataString(clientId)}",
+            new { scope });
+        resp.EnsureSuccessStatusCode();
     }
 
     public async Task DeleteOAuth2ClientAsync(string clientId)

@@ -21,6 +21,9 @@ public class RediensIamDbContext(DbContextOptions<RediensIamDbContext> options) 
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<UserSocialAccount> UserSocialAccounts => Set<UserSocialAccount>();
     public DbSet<OrgSmtpConfig> OrgSmtpConfigs => Set<OrgSmtpConfig>();
+    public DbSet<Webhook> Webhooks => Set<Webhook>();
+    public DbSet<WebhookDelivery> WebhookDeliveries => Set<WebhookDelivery>();
+    public DbSet<SamlIdpConfig> SamlIdpConfigs => Set<SamlIdpConfig>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
