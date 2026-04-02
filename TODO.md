@@ -1,6 +1,6 @@
 # RediensIAM — Feature Completion TODO
 
-> Generated 2026-03-29. Based on a full codebase scan.
+> Generated 2026-03-29. Backend fully implemented as of 2026-04-02. Frontend work pending.
 >
 > **Confirmed already implemented** (removed from list after verification):
 > - Password policy per project ✅ (min length, uppercase, lowercase, digit, special — backend enforced in AuthController + ProjectController, frontend in Authentication.tsx Registration tab)
@@ -10,55 +10,71 @@
 
 ---
 
-## A — Security Vulnerabilities (fix before production)
+## Frontend Architecture Reference
 
-These are not feature gaps — they are security issues that could lead to data breaches or account compromise.
+> Read before touching any frontend file.
+
+### Two separate SPAs
+
+| | Admin SPA | Login SPA |
+|---|---|---|
+| **Root** | `frontend/admin/` | `frontend/login/` |
+| **Base path** | `/admin` | `/` |
+| **Auth** | OIDC via oidc-client-ts (Hydra AdminClientId, PKCE) | Stateless — Hydra login_challenge flow |
+| **UI library** | Shadcn/ui (Radix + Tailwind) | Custom CSS only |
+| **API** | `src/api.ts` — named async functions, Bearer token via `apiFetch()` | `src/api.ts` — raw `fetch()`, `credentials: 'include'`, `VITE_API_BASE_URL` |
+| **State** | useState + useEffect, AuthContext, no global store | useState + sessionStorage for multi-step flows |
+| **Notifications** | Inline `<Alert>` components, `setTimeout` auto-hide for success | Inline `.alert.alert-error` divs |
+| **Forms** | Controlled inputs, manual validation, no form library | Controlled inputs, HTML validation attributes |
+
+### Admin SPA — three access contexts
+
+The same feature is often accessible at multiple privilege levels. The same page component renders in all contexts — `useOrgContext()` provides `orgBase`, `projectBase`, `isSystemCtx` to build correct API paths.
+
+```
+/system/organisations/:oid/projects/:pid/authentication  → super_admin browsing a project
+/project/authentication                                   → project_manager of own project
+```
+
+**Never duplicate a page for each context.** Use `useOrgContext()` to make the API calls context-aware.
+
+### Key reusable component
+
+`UserListMembersPanel.tsx` — renders in ProjectUsers, UserListDetail, OrgDetail, and SystemOrgDetail. Any user-row feature (badges, actions) added here appears everywhere automatically.
+
+### Login SPA flow
+
+Every page reads `?login_challenge=` from the URL. Multi-step state (current user ID, challenge, etc.) lives in `sessionStorage`. Pages redirect to `res.redirect_to` on success — this is the Hydra consent redirect, never change it.
+
+---
+
+## A — Security Vulnerabilities
 
 ---
 
 ### A1. Social Login Client Secrets Stored in Plaintext
 
-**Severity:** HIGH — DB compromise leaks all tenant OAuth2 client secrets
+**Backend:** ✅ Done — secrets encrypted with AES-256-GCM, stored as `client_secret_enc`, API never returns raw secret (returns `null` for `client_secret` field).
 
-**What:** `Project.LoginTheme` JSONB stores `providers[].client_secret` (Google, GitHub, GitLab, Facebook, custom OIDC) in plaintext. An attacker with read access to the `projects` table gets all OAuth2 client secrets, which can be used to impersonate tenants on those providers and steal users' linked accounts.
+**Frontend — `frontend/admin/src/pages/project/Authentication.tsx` (Providers tab)**
 
-**Backend — `src/Controllers/ProjectController.cs` and `src/Controllers/OrgController.cs`:**
-- Before saving `login_theme` to the DB, walk `providers[]` and encrypt every non-null `client_secret` using `TotpEncryption.Encrypt` (same AES-256-GCM key as SMTP passwords).
-- Store as `"client_secret_enc": "<hex>"` and clear the `client_secret` field.
-- When reading back from DB (GET /project/info, /org/projects/:id), decrypt for internal use (e.g. `SocialLoginService`) but **never** include `client_secret` or `client_secret_enc` in the API response. Return `"client_secret": null` so the frontend knows a secret is saved.
-- Add a helper method: `EncryptProviderSecrets(JsonNode providers, byte[] key)` / `DecryptProviderSecrets(...)`.
-- Same treatment in `SystemAdminController` for all project-level patch endpoints.
-- `SocialLoginService.GetProviderConfigAsync` must decrypt before using the secret.
+Each provider form (Google, GitHub, GitLab, Facebook, custom OIDC) has a `client_secret` input. The backend now returns `client_secret: null` when a secret is already saved.
 
-**Frontend — `Authentication.tsx` (Providers tab):**
-- The `client_secret` inputs already use `type="password"`. When the API returns `client_secret: null` for an existing provider, display `"••••••••• (saved)"` as placeholder and only send the secret if the field was changed (non-empty value in form).
-- Add a "Secret saved — enter a new one to replace" indicator.
+Changes needed:
+1. In the provider state type, add `secretSaved: boolean` — set to `true` when the loaded `client_secret === null` and the provider is otherwise configured (has a `client_id`).
+2. For the `client_secret` input on each provider:
+   - When `secretSaved` is `true` and the field is empty: set `placeholder="••••••••• (saved — enter new to replace)"` and render a small `<span className="text-xs text-muted-foreground">Secret is saved</span>` below it.
+   - Track a `secretChanged` boolean per provider — set to `true` when the user types in the secret field.
+   - When saving: only include `client_secret` in the payload if `secretChanged` is `true`; otherwise omit the field entirely (send `undefined`, not `null`).
+3. Apply this pattern consistently to all five provider forms — Google, GitHub, GitLab, Facebook, and the custom OIDC provider.
+
+No new API functions needed — existing `updateProject()` handles the save.
 
 ---
 
 ### A2. No Security Headers Middleware
 
-**Severity:** MEDIUM — Clickjacking, MIME-sniffing, referrer leaks on login pages
-
-**What:** The middleware pipeline has no HTTP security headers. The login SPA is particularly exposed because it handles credentials.
-
-**Backend — `src/Program.cs` or a new `SecurityHeadersMiddleware`:**
-Add before `app.UseStaticFiles()`:
-```csharp
-app.Use(async (ctx, next) => {
-    ctx.Response.Headers["X-Content-Type-Options"]  = "nosniff";
-    ctx.Response.Headers["X-Frame-Options"]         = "DENY";
-    ctx.Response.Headers["Referrer-Policy"]         = "strict-origin-when-cross-origin";
-    ctx.Response.Headers["X-XSS-Protection"]        = "0"; // modern browsers use CSP
-    ctx.Response.Headers["Permissions-Policy"]      = "geolocation=(), camera=(), microphone=()";
-    // CSP for login SPA — tighten as needed
-    if (!ctx.Request.Path.StartsWithSegments("/admin"))
-        ctx.Response.Headers["Content-Security-Policy"] =
-            "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; frame-ancestors 'none';";
-    await next();
-});
-```
-- Do **not** set `X-Frame-Options: DENY` on the `/preview` route (the admin SPA loads it in an iframe).
+**Backend:** ✅ Done — headers added in `Program.cs` middleware pipeline.
 
 **Frontend:** No changes needed.
 
@@ -66,595 +82,835 @@ app.Use(async (ctx, next) => {
 
 ### A3. Registration Endpoint Not Rate Limited
 
-**Severity:** MEDIUM — Mass account creation, email spam via OTP, enumeration
+**Backend:** ✅ Done — `POST /auth/register` and `POST /auth/password-reset/request` go through `LoginRateLimiter`.
 
-**What:** `POST /auth/register` and `POST /auth/password-reset/request` do not go through `LoginRateLimiter`. An attacker can flood registration or trigger thousands of password reset emails.
-
-**Backend — `src/Controllers/AuthController.cs`:**
-- At the start of `Register()`: call `await rateLimiter.IsBlockedAsync(Ip, null)` and return `429` if blocked. Call `RecordFailureAsync` if registration fails (invalid domain, duplicate email).
-- At the start of `RequestPasswordReset()`: same IP-based rate check.
-- Consider a separate Redis key prefix for registration attempts so it doesn't share the login lockout bucket.
-
-**Frontend:** No changes needed. The 429 response should be surfaced as "Too many attempts, try again later."
+**Frontend:** No changes needed. The existing 429 error path in `Register.tsx` and `PasswordReset.tsx` already shows the generic error message — confirm it reads as "Too many attempts, try again later" (the `res.error` field will be `"too_many_attempts"`).
 
 ---
 
 ### A4. OTP Comparison Not Constant-Time
 
-**Severity:** LOW-MEDIUM — Theoretical timing attack on OTP codes
+**Backend:** ✅ Done — `CryptographicOperations.FixedTimeEquals` in `OtpCacheService`.
 
-**What:** OTP codes are compared with `==` string equality in `OtpCacheService`. Remote timing attacks on OTPs over HTTPS are extremely difficult in practice, but should be fixed for defence-in-depth.
-
-**Backend — `src/Services/OtpCacheService.cs`:**
-Replace `cached == code` with:
-```csharp
-CryptographicOperations.FixedTimeEquals(
-    System.Text.Encoding.UTF8.GetBytes(cached),
-    System.Text.Encoding.UTF8.GetBytes(code));
-```
+**Frontend:** No changes needed.
 
 ---
 
 ### A5. Email Enumeration via Timing Difference
 
-**Severity:** LOW — Allows attackers to discover which emails are registered
+**Backend:** ✅ Done — `RequestPasswordReset` always awaits the same operations and returns identical response regardless of whether the user exists.
 
-**What:** `POST /auth/password-reset/request` may respond faster when the email doesn't exist (short-circuits without hitting the email service). An attacker timing responses can enumerate registered emails.
-
-**Backend — `src/Controllers/AuthController.cs` (`RequestPasswordReset`):**
-- Always await the same set of operations regardless of whether the user is found.
-- Use a random artificial delay or ensure both code paths take equal time.
-- The endpoint should return `200 OK` with the same body (`"message": "if_registered_email_sent"`) whether the user exists or not — never reveal which branch was taken.
+**Frontend:** No changes needed.
 
 ---
 
-## B — Core Missing Features (High Priority)
+## B — Core Missing Features
 
 ---
 
 ### B1. User Invitation Flow
 
-**What:** When an admin creates a user via `POST /org/userlists/{id}/users`, the user is created but has no mechanism to set a password. They can't log in. There is no email invite → set-password token flow.
+**Backend:** ✅ Done — `POST /auth/invite/complete`, `POST /org/userlists/{id}/users/{uid}/resend-invite`, `invite_pending` field on user responses, `IEmailService.SendInviteAsync`.
 
-**Backend — `src/Controllers`:**
+**Frontend — Phase 1: Login SPA — new `SetPassword.tsx` page**
 
-1. **Invite token type:** Add `"invite"` as a valid `Kind` in `EmailToken`. It must be single-use and expire (72 hours recommended).
+File to create: `frontend/login/src/pages/SetPassword.tsx`
 
-2. **Trigger on user creation:** In `OrgController.AddUserToList()` and `SystemAdminController.AddUserToList()`:
-   - If the user is newly created and has no password (or a placeholder hash), generate an invite token.
-   - Store `EmailToken { Kind = "invite", UserId = ..., TokenHash = SHA256(token), ExpiresAt = now + 72h }`.
-   - Send via `IEmailService.SendInviteAsync(email, inviteUrl, orgName)` — add this method to the interface.
-   - Mark user with `Active = false` until invite is accepted.
+Route to add in `frontend/login/src/App.tsx`:
+```tsx
+<Route path="/set-password" element={<SetPassword />} />
+```
 
-3. **New endpoint** `POST /auth/invite/complete`:
+Page flow:
+1. On mount, read `?token=` and `?project_id=` from URL. If either is missing, show an error card ("Invalid or expired invite link").
+2. Fetch `/auth/login/theme?project_id=<project_id>` to get theme config and password policy — inject CSS vars exactly as `Login.tsx` does (lines 69–79 of Login.tsx).
+3. Render a form with two fields: "New password" and "Confirm password" (both `type="password"`, with visibility toggle button — match PasswordReset.tsx style).
+4. Below the fields, display the password policy requirements from the theme response (min length, uppercase required, etc.) — render the same requirement checklist that `Register.tsx` uses.
+5. On submit:
+   - Validate passwords match client-side.
+   - Call `POST /auth/invite/complete` with body `{ token, password }`.
+   - On `res.error === "password_breached"`: show error "This password has appeared in a data breach. Please choose a different password."
+   - On `res.error === "token_expired"` or `"token_not_found"`: show error "This invite link has expired. Ask your administrator to resend the invite."
+   - On `res.error === "password_policy"`: show policy violation details from `res.detail`.
+   - On success (`res.message === "invite_complete"`): show success card "Password set! You can now log in." with a "Go to login" link back to the project login URL (use `res.login_url` if returned, otherwise `/login`).
+6. Loading state: disable button + show "Setting password…" text.
+
+API function to add in `frontend/login/src/api.ts`:
+```ts
+export async function completeInvite(token: string, password: string) {
+  const res = await fetch(`${BASE}/auth/invite/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ token, password }),
+  });
+  return res.json();
+}
+```
+
+---
+
+**Frontend — Phase 2: Admin SPA — `UserListMembersPanel.tsx`**
+
+File: `frontend/admin/src/components/UserListMembersPanel.tsx`
+
+The user row already has a 3-dot `DropdownMenu`. Add to the dropdown items:
+
+1. **Invite pending badge** — in the user row, after the username/email text, add:
+   ```tsx
+   {user.invite_pending && (
+     <Badge variant="outline" className="ml-2 text-amber-600 border-amber-400">
+       Invite pending
+     </Badge>
+   )}
    ```
-   Body: { "token": "...", "password": "..." }
+
+2. **Resend invite** — add to the 3-dot dropdown menu (visible only when `user.invite_pending === true`):
+   ```tsx
+   <DropdownMenuItem onClick={() => handleResendInvite(user.id)}>
+     Resend invite
+   </DropdownMenuItem>
    ```
-   - Validate token (hash lookup, not expired, not used).
-   - Enforce project password policy (look up project via UserList → Project FK).
-   - Set `User.PasswordHash`, `User.Active = true`, `User.EmailVerified = true`.
-   - Mark token `UsedAt = now()`.
-   - Complete the Hydra login if a `login_challenge` was passed (for inline onboarding).
-   - Return `200 OK`.
+   Handler:
+   - Call `await resendInvite(listId, user.id)` (API function below).
+   - On success: show inline success alert "Invite resent to {user.email}." (use the existing `setSuccess` / setTimeout pattern).
+   - On `res.error === "user_already_active"`: show error alert "This user has already accepted their invitation."
 
-4. **Resend invite:** `POST /org/userlists/{id}/users/{uid}/resend-invite` — invalidates previous invite tokens, generates a new one, re-sends email.
+API function to add in `frontend/admin/src/api.ts`:
+```ts
+export async function resendInvite(listId: string, userId: string) {
+  return apiFetch(`/org/userlists/${listId}/users/${userId}/resend-invite`, { method: 'POST' });
+}
+```
 
-5. **Expose invite status:** Add `invite_pending: bool` field to user responses (true when user has an unused invite token).
-
-**Backend — `src/Services/NotificationService.cs`:**
-- Add `SendInviteAsync(string to, string inviteUrl, string orgName, Guid? projectId)` to `IEmailService`.
-- Implement in `SmtpEmailService` with a proper invite email template.
-
-**Frontend Admin SPA:**
-
-- **`UserListDetail.tsx` / `ProjectUsers.tsx`:** Show a `Badge variant="outline"` "Invite pending" next to users with `invite_pending: true`. Add a "Resend invite" button (three-dot menu or direct).
-- **Error handling:** If `resend-invite` fails (user already active), show toast "User has already accepted the invitation."
-
-**Frontend Login SPA:**
-- New page `SetPasswordPage` (similar to `PasswordReset.tsx` but reads `?invite_token=` from URL).
-- Show password policy requirements (loaded via `/auth/login/theme?project_id=`).
-- On submit, call `POST /auth/invite/complete`.
-- On success, redirect to the project login page.
+For super_admin context (system routes), the same `UserListMembersPanel` is used — `listId` is already passed as a prop so no extra handling needed.
 
 ---
 
 ### B2. Admin Account Unlock
 
-**What:** When a user is locked (`LockedUntil > now`), the only way to unlock them is via self-service password reset. Admins have no direct unlock action. The `locked_until` and `failed_login_count` fields are already returned in user responses.
+**Backend:** ✅ Done — `POST /admin/users/{id}/unlock` and `POST /org/userlists/{id}/users/{uid}/unlock`.
 
-**Backend — new endpoints:**
+**Frontend — `frontend/admin/src/components/UserListMembersPanel.tsx`**
 
-`POST /admin/users/{id}/unlock`:
-```csharp
-user.LockedUntil = null;
-user.FailedLoginCount = 0;
-await auditLog.LogAsync("user.unlocked", ...);
-await db.SaveChangesAsync();
+1. **Locked badge** — in the user row, after the existing invite_pending badge:
+   ```tsx
+   {user.locked_until && new Date(user.locked_until) > new Date() && (
+     <Badge variant="destructive" className="ml-2">
+       Locked
+     </Badge>
+   )}
+   ```
+   Add a `Tooltip` on hover showing "Locked until {fmtDate(user.locked_until)}".
+
+2. **Unlock button** — add to the 3-dot dropdown (visible only when user is currently locked):
+   ```tsx
+   <DropdownMenuItem onClick={() => handleUnlock(user.id)} className="text-amber-600">
+     Unlock account
+   </DropdownMenuItem>
+   ```
+   Handler:
+   - Call `await unlockUser(listId, user.id)` (API function below).
+   - On success: refresh the user list and show "Account unlocked." success alert.
+
+API function to add in `frontend/admin/src/api.ts`:
+```ts
+// listId = null means system-level unlock (/admin/users/:id/unlock)
+export async function unlockUser(listId: string | null, userId: string) {
+  const path = listId
+    ? `/org/userlists/${listId}/users/${userId}/unlock`
+    : `/admin/users/${userId}/unlock`;
+  return apiFetch(path, { method: 'POST' });
+}
 ```
 
-`POST /org/userlists/{id}/users/{uid}/unlock` — same, accessible to org admins.
-
-Both must validate the caller has management rights over that user.
-
-**Frontend Admin SPA:**
-- In user detail views (system and org level): when `locked_until` is set and in the future, show an amber "Account locked" badge + unlock timestamp.
-- Add an "Unlock Account" button that calls the unlock endpoint. Show confirmation toast on success.
-- In user list tables: consider showing a lock icon next to locked users for quick visibility.
+In `UserListMembersPanel`, pass `listId` (already a prop) to this function. The panel already distinguishes system vs org context via the existing `isSystem` prop — use that to pass `null` vs the actual listId.
 
 ---
 
 ### B3. Mandatory MFA Enforcement Per Project
 
-**What:** A project admin can require all users to have at least one MFA method before they can complete a login. Currently, MFA is always optional — there is no per-project `require_mfa` flag.
+**Backend:** ✅ Done — `Project.RequireMfa` flag; login returns `{ requires_mfa_setup: true }` when user has no MFA; MFA setup completes the Hydra login.
 
-**Backend:**
+**Frontend — Part 1: Admin SPA — `Authentication.tsx` (Registration tab)**
 
-1. **Entity:** Add `RequireMfa bool` to `Project` entity. Add raw SQL to `Program.cs` startup block:
-   ```sql
-   ALTER TABLE projects ADD COLUMN IF NOT EXISTS "RequireMfa" BOOLEAN NOT NULL DEFAULT false;
-   ```
+In the Registration tab, after the "Allow self-registration" Switch, add a new Switch row:
 
-2. **`ProjectController` + `SystemAdminController`:** Expose `RequireMfa` in PATCH endpoints and GET responses.
+```tsx
+<div className="flex items-center justify-between">
+  <div>
+    <p className="font-medium text-sm">Require MFA</p>
+    <p className="text-xs text-muted-foreground">
+      Users without a second factor cannot complete login until they enroll one.
+    </p>
+  </div>
+  <Switch
+    checked={form.require_mfa ?? false}
+    onCheckedChange={(v) => setForm(f => ({ ...f, require_mfa: v }))}
+  />
+</div>
+```
 
-3. **`AuthController` — `POST /auth/login`:** After password validation succeeds (and before existing MFA check), add:
-   ```csharp
-   bool hasMfa = user.TotpEnabled || user.PhoneVerified || (await db.WebAuthnCredentials.AnyAsync(w => w.UserId == user.Id));
-   if (project.RequireMfa && !hasMfa) {
-       HttpContext.Session.SetString("mfa_setup_required", "true");
-       HttpContext.Session.SetString("mfa_pending_user", user.Id.ToString());
-       HttpContext.Session.SetString("mfa_pending_project", projectId);
-       return Ok(new { requires_mfa_setup = true });
-   }
-   ```
-4. **Resume login after MFA setup:** After `POST /account/mfa/totp/confirm` or `POST /account/mfa/webauthn/register/complete`, check if `mfa_setup_required` is in session. If yes, complete the Hydra accept login flow.
+Include `require_mfa` in the `updateProject()` payload when saving. The field is already returned by `GET /project/info`.
 
-**Frontend — `Authentication.tsx` (Registration tab):**
-- Add a "Require MFA" toggle below "Allow self-registration".
-- Description: "Users without a second factor cannot complete login until they enroll."
+---
 
-**Frontend Login SPA:**
-- Handle the new `requires_mfa_setup: true` response from the login endpoint.
-- Redirect user to an MFA setup wizard (subset of the account MFA setup pages, but inline in the login flow).
-- After setup is complete, resume the Hydra login flow.
+**Frontend — Part 2: Login SPA — `Login.tsx` modification**
+
+In `Login.tsx`, in the `handleSubmit` function, after handling `mfa_required` (existing check), add:
+
+```tsx
+if (res.requires_mfa_setup) {
+  sessionStorage.setItem('mfa_setup_challenge', challenge);
+  sessionStorage.setItem('mfa_setup_user', res.user_id);
+  navigate('/mfa-setup');
+  return;
+}
+```
+
+Route to add in `frontend/login/src/App.tsx`:
+```tsx
+<Route path="/mfa-setup" element={<MfaSetup />} />
+```
+
+---
+
+**Frontend — Part 3: Login SPA — new `MfaSetup.tsx` page**
+
+File to create: `frontend/login/src/pages/MfaSetup.tsx`
+
+Page flow:
+1. On mount, read `mfa_setup_challenge` and `mfa_setup_user` from `sessionStorage`. If missing, redirect to `/login`.
+2. Fetch theme via `?login_challenge=<challenge>` stored challenge — inject CSS vars same as Login.tsx.
+3. Show a step-by-step MFA enrollment UI. Present only TOTP (simplest, no dependency on SMS config). If project has WebAuthn enabled show it as an option too.
+4. **TOTP step:**
+   - Call `POST /account/mfa/totp/setup` (requires the session cookie set during login) to get `otpauth_url` and `secret`.
+   - Show QR code: render a `<img src={\`https://api.qrserver.com/v1/create-qr-code/?data=\${encodeURIComponent(otpauth_url)}\`} />` (or use a JS QR library if one is already in package.json — check first).
+   - Show the base32 secret as a copyable text field for manual entry.
+   - Input for 6-digit verification code.
+   - On submit: call `POST /account/mfa/totp/confirm` with the code.
+   - On success: the backend completes the Hydra login — follow `res.redirect_to`.
+   - Show backup codes from the confirm response in a copy-friendly list with a "I've saved these" checkbox before allowing continue.
+5. If TOTP confirm fails (`invalid_code`): show error "Incorrect code. Try again." — do not clear the QR.
+6. Loading states: disable all buttons during API calls.
+
+Note: This page calls `/account/mfa/totp/setup` and `/account/mfa/totp/confirm` which require the session cookie established during the login step. The session is already present because the login endpoint set it before returning `requires_mfa_setup: true`.
+
+API functions to add in `frontend/login/src/api.ts`:
+```ts
+export async function setupTotp() {
+  const res = await fetch(`${BASE}/account/mfa/totp/setup`, {
+    method: 'POST', credentials: 'include',
+  });
+  return res.json();
+}
+
+export async function confirmTotp(code: string) {
+  const res = await fetch(`${BASE}/account/mfa/totp/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ code }),
+  });
+  return res.json();
+}
+```
 
 ---
 
 ### B4. System Service Accounts (CRUD + PAT + Roles)
 
-**What:** System-level service accounts exist in the DB (root UserList with `OrgId = null`) and are listed by `GET /admin/service-accounts`, but there are no endpoints to create, delete, manage PATs, or assign roles for them. The admin SPA has no detail page for system SAs.
+**Backend:** ✅ Done — full CRUD at `/admin/service-accounts`, PAT endpoints, role endpoints.
 
-**Backend — `src/Controllers/SystemAdminController.cs`:**
+**Frontend:** The pages `SystemServiceAccounts.tsx` and `ServiceAccountDetail.tsx` already exist and appear substantially implemented from the codebase scan (create dialog, PAT generation with one-time display, role assignment). Verify the following gaps and fill them:
 
-1. **`POST /admin/service-accounts`** — create SA in the root UserList (`GetOrCreateRootListAsync` helper). Required fields: `name`, optional `description`. Return `{ id, name, description }`.
+**`frontend/admin/src/pages/system/SystemServiceAccounts.tsx`:**
+- Confirm `POST /admin/service-accounts` is called on creation with `{ name, description }`.
+- Confirm row click navigates to `/system/service-accounts/:id`.
+- Confirm delete calls `DELETE /admin/service-accounts/:id`.
+- Confirm the `Active`/inactive status badge reflects `sa.Active`.
+- If `Description` column is missing from the table, add it.
 
-2. **`GET /admin/service-accounts/{id}`** — get SA with PAT list and assigned roles. Filter: SA's UserList must have `OrgId == null`.
+**`frontend/admin/src/pages/ServiceAccountDetail.tsx`:**
+- Confirm PAT generation calls `POST /admin/service-accounts/:id/pat` and shows the raw token exactly once in a dialog (copy button + "This token will not be shown again" warning).
+- Confirm PAT revoke calls `DELETE /admin/service-accounts/:id/pat/:patId`.
+- Confirm role assignment calls `POST /admin/service-accounts/:id/roles` with `{ role: "super_admin" }`.
+- Confirm role removal calls `DELETE /admin/service-accounts/:id/roles/:roleId`.
+- Add a "Disable / Enable" toggle that calls `PATCH /admin/service-accounts/:id` with `{ active: false/true }` if the endpoint exists; otherwise call `DELETE` only for full deletion.
 
-3. **`DELETE /admin/service-accounts/{id}`** — delete SA (cascade removes PATs via EF config). Audit log.
-
-4. **PAT endpoints:**
-   - `POST /admin/service-accounts/{id}/pat` — generate PAT. Token format: `rediens_pat_<32 random bytes hex>`. Store SHA-256 hash only. Return raw token **once**.
-   - `GET /admin/service-accounts/{id}/pat` — list PATs (name + expiry only, never hash or raw token).
-   - `DELETE /admin/service-accounts/{id}/pat/{patId}` — revoke.
-
-5. **Role endpoints:**
-   - Before implementing: read `src/Data/Entities/OrgRole.cs` and `RediensIamDbContext.cs` to check whether `OrgRole.UserId` has a FK constraint to `users` only. If yes, a `ServiceAccountOrgRole` table is needed. If no FK, reuse `OrgRole` with `UserId = sa.Id` and `OrgId = null`.
-   - `POST /admin/service-accounts/{id}/roles` — assign role (`super_admin` is the only valid option for system SAs, `OrgId = null`).
-   - `DELETE /admin/service-accounts/{id}/roles/{roleId}` — revoke.
-   - `GET /admin/service-accounts/{id}/roles` — list.
-
-6. **PAT introspection** — verify `src/Controllers/InternalController.cs` correctly resolves system SA PATs and returns `org_id: null`, `project_id: null`, `roles: ["super_admin"]`, `is_service_account: true`. Fix if it doesn't.
-
-**Frontend — `src/pages/system/SystemServiceAccounts.tsx` (rewrite):**
-- Table: Name, Description, Status, Last used.
-- `[+ New Service Account]` button → dialog.
-- Row click → navigate to `/system/service-accounts/:id`.
-
-**Frontend — new `src/pages/system/SystemServiceAccountDetail.tsx`:**
-- SA info card (name, status, created_at) + disable/enable toggle + delete.
-- "Assigned Roles" section: table + assign/revoke (`super_admin` only).
-- "Personal Access Tokens" section: table + generate PAT dialog (show raw token once with copy button + warning) + revoke.
-
-**Frontend — `App.tsx`:**
-- Add `<Route path="system/service-accounts/:id" element={<SystemServiceAccountDetail />} />`.
+**`frontend/admin/src/api.ts`** — verify these functions exist, add any missing:
+```ts
+// System service accounts
+getSystemServiceAccounts()                          // GET /admin/service-accounts
+createSystemServiceAccount(name, description)       // POST /admin/service-accounts
+getSystemServiceAccount(id)                         // GET /admin/service-accounts/:id
+deleteSystemServiceAccount(id)                      // DELETE /admin/service-accounts/:id
+// PATs
+createSystemSAPat(saId, name?)                      // POST /admin/service-accounts/:id/pat
+listSystemSAPats(saId)                              // GET /admin/service-accounts/:id/pat
+revokeSystemSAPat(saId, patId)                      // DELETE /admin/service-accounts/:id/pat/:patId
+// Roles
+listSystemSARoles(saId)                             // GET /admin/service-accounts/:id/roles
+assignSystemSARole(saId, role)                      // POST /admin/service-accounts/:id/roles
+revokeSystemSARole(saId, roleId)                    // DELETE /admin/service-accounts/:id/roles/:roleId
+```
 
 ---
 
 ### B5. Webhooks
 
-**What:** External systems need to react to IAM events (user created, role assigned, session revoked, etc.) without polling. Webhooks deliver signed HTTP POST payloads to a configured URL.
+**Backend:** ✅ Done — full CRUD at `/org/webhooks`, test endpoint, delivery log.
 
-**Events to support:** `user.created`, `user.updated`, `user.deleted`, `user.locked`, `user.login.success`, `user.login.failure`, `role.assigned`, `role.revoked`, `session.revoked`, `project.updated`
+**Frontend — new `frontend/admin/src/pages/org/OrgWebhooks.tsx`**
 
-**Backend — new entities:**
+This is an org-level page. It must also render correctly when accessed from the system context (`/system/organisations/:id/webhooks`) — use `useOrgContext()` to get the correct `orgId` and `apiBase`.
 
-`src/Data/Entities/Webhook.cs`:
-```csharp
-public class Webhook {
-    public Guid Id { get; set; }
-    public Guid? OrgId { get; set; }      // null = system-level
-    public Guid? ProjectId { get; set; }  // null = org-level
-    public string Url { get; set; } = "";
-    public string SecretEnc { get; set; } = ""; // AES-256-GCM encrypted
-    public string[] Events { get; set; } = [];   // JSONB
-    public bool Active { get; set; } = true;
-    public DateTimeOffset CreatedAt { get; set; }
-}
+**Route additions in `frontend/admin/src/App.tsx`:**
+```tsx
+// Under org routes:
+<Route path="webhooks" element={<OrgWebhooks />} />
+
+// Under system org detail routes:
+<Route path="webhooks" element={<OrgWebhooks />} />
 ```
 
-`src/Data/Entities/WebhookDelivery.cs`:
-```csharp
-public class WebhookDelivery {
-    public Guid Id { get; set; }
-    public Guid WebhookId { get; set; }
-    public string Event { get; set; } = "";
-    public string Payload { get; set; } = "";   // JSONB
-    public int? StatusCode { get; set; }
-    public string? ErrorMessage { get; set; }
-    public int AttemptCount { get; set; }
-    public DateTimeOffset? DeliveredAt { get; set; }
-    public DateTimeOffset CreatedAt { get; set; }
-}
+**Sidebar addition in `frontend/admin/src/components/Sidebar.tsx`:**
+- Org section: add "Webhooks" nav item linking to `${orgBase}/webhooks` with a `Webhook` or `Zap` icon from lucide-react.
+- System org detail section: add the same link (already follows the same pattern for audit-log, email, etc.).
+
+**Page structure:**
+
+*Main table view:*
+- Card with title "Webhooks" and `[+ Add Webhook]` button top-right.
+- Table columns: URL, Events (comma-joined or badge list), Active (Switch), Last delivery status, Created.
+- Row actions (3-dot menu): Test, View deliveries, Delete.
+- Empty state: "No webhooks configured. Add one to receive event notifications."
+
+*Create webhook dialog:*
+- URL input (required, validates `https://` prefix client-side — show "URL must use HTTPS" if not).
+- Events: checkbox group for all supported events (`user.created`, `user.updated`, `user.deleted`, `user.locked`, `user.login.success`, `user.login.failure`, `role.assigned`, `role.revoked`, `session.revoked`, `project.updated`). Group them visually: "User events", "Role events", "Session events", "Project events".
+- On create: call `POST /org/webhooks` with `{ url, events }`. Response includes `secret` (shown once). Display the secret in a modal: "Webhook secret — copy this now, it won't be shown again." with copy button. Dismiss reveals the webhook in the table.
+
+*Deliveries dialog (per webhook):*
+- Triggered from "View deliveries" menu item.
+- Shows last 25 deliveries from `GET /org/webhooks/:id/deliveries`.
+- Columns: Event, Status code (green ≥200 <300, red otherwise), Attempt count, Delivered at.
+- Row expandable to show the full payload JSON in a `<pre>` block.
+
+*Test webhook:*
+- "Test" menu item calls `POST /org/webhooks/:id/test`.
+- Show toast-style inline alert: "Test payload sent." or "Test failed: {error}".
+
+*Active toggle:*
+- Switch in the table row calls `PATCH /org/webhooks/:id` with `{ active: !current }`.
+
+API functions to add in `frontend/admin/src/api.ts`:
+```ts
+listWebhooks(orgId)                                 // GET /org/webhooks
+createWebhook(orgId, url, events)                   // POST /org/webhooks
+getWebhook(orgId, id)                               // GET /org/webhooks/:id
+updateWebhook(orgId, id, patch)                     // PATCH /org/webhooks/:id
+deleteWebhook(orgId, id)                            // DELETE /org/webhooks/:id
+testWebhook(orgId, id)                              // POST /org/webhooks/:id/test
+listWebhookDeliveries(orgId, id)                    // GET /org/webhooks/:id/deliveries
 ```
 
-**Backend — `src/Services/WebhookService.cs`:**
-- `DispatchAsync(string eventType, object payload, Guid? orgId, Guid? projectId)` — finds matching active webhooks, signs payload with HMAC-SHA256, sends HTTP POST.
-- Signature: `X-RediensIAM-Signature: sha256=<hex(HMAC-SHA256(secret, payload_bytes))>` — matches GitHub/Stripe convention.
-- Retry: 3 attempts with exponential backoff (2s, 8s, 32s) using `IHostedService` or `BackgroundService` with a Redis queue. Do NOT retry synchronously in the request path.
-- Log each attempt to `WebhookDelivery`.
-- Timeout: 10 seconds per attempt. Do not let slow webhook targets block the IAM.
-
-**Backend — API endpoints (`OrgController` + `ProjectController`):**
-```
-GET    /org/webhooks                  — list org webhooks
-POST   /org/webhooks                  — create (validate URL is HTTPS)
-GET    /org/webhooks/{id}             — get details + recent deliveries
-DELETE /org/webhooks/{id}             — delete
-POST   /org/webhooks/{id}/test        — send test payload
-GET    /org/webhooks/{id}/deliveries  — list recent delivery attempts
-
-GET    /project/webhooks              — list project webhooks
-POST   /project/webhooks              — create
-DELETE /project/webhooks/{id}         — delete
-POST   /project/webhooks/{id}/test    — send test payload
-```
-
-**Security:** Validate that `url` is HTTPS only. Never expose the raw secret — show it exactly once on creation; store encrypted. Provide a "Rotate secret" endpoint.
-
-**Backend — inject dispatch calls:**
-- In `AuditLogService.LogAsync()`: after writing the audit record, call `WebhookService.DispatchAsync(...)` for supported event types.
-- Keep the webhook dispatch async/fire-and-forget — it must not affect the response latency.
-
-**Frontend Admin SPA — new pages:**
-
-`OrgWebhooks.tsx`:
-- List table: URL, events subscribed, active/inactive, last delivery status.
-- Create dialog: URL input (HTTPS enforced client-side), event type checkboxes, secret shown once.
-- Delivery log: accordion per webhook showing last 10 deliveries with status code, timestamp, payload preview.
-
-`ProjectWebhooks.tsx` — same, project-scoped. Can be a tab in Project Settings.
-
-Add to sidebar/routing:
-- `/org/webhooks` → `OrgWebhooks`
-- `/project/webhooks` → (tab in ProjectSettings or separate page)
+Note: `orgId` is extracted from `useOrgContext()` — pass it into API calls, not hardcoded.
 
 ---
 
-## C — Integration & Developer Experience (Medium Priority)
+## C — Integration & Developer Experience
 
 ---
 
 ### C1. OpenAPI / Swagger Specification
 
-**What:** No machine-readable API spec exists. Required for generating SDKs, documenting the API for integrators, and Postman collections.
+**Backend:** ✅ Done — Swashbuckle configured, exposed on admin port only at `/swagger`.
 
-**Backend:**
-1. Add NuGet: `Swashbuckle.AspNetCore`
-2. In `Program.cs`:
-   ```csharp
-   builder.Services.AddEndpointsApiExplorer();
-   builder.Services.AddSwaggerGen(c => {
-       c.SwaggerDoc("v1", new() { Title = "RediensIAM API", Version = "v1" });
-       c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme { ... });
-       c.AddSecurityRequirement(...);
-       var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
-       c.IncludeXmlComments(Path.Combine(AppContext.BaseDirectory, xmlFile));
-   });
-   // Expose only on admin port:
-   app.UseWhen(ctx => ctx.Connection.LocalPort == appConfig.AdminPort, branch => {
-       branch.UseSwagger();
-       branch.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "RediensIAM v1"));
-   });
-   ```
-3. Add `<GenerateDocumentationFile>true</GenerateDocumentationFile>` to the `.csproj`.
-4. Add `/// <summary>` XML doc comments to all controller action methods.
-5. Add `[ProducesResponseType(200)]`, `[ProducesResponseType(401)]`, `[ProducesResponseType(403)]` attributes to key endpoints.
-
-**Frontend:** None.
+**Frontend:** No changes needed.
 
 ---
 
 ### C2. Account Linking (Social Provider Linking Post-Login)
 
-**What:** `UserSocialAccount` entity exists and social login works, but a logged-in user cannot link an additional social provider to their account. If they registered with email/password, they can't add Google sign-in. `GET /account/mfa` shows MFA but not linked social accounts.
+**Backend:** ✅ Done — `GET /account/social-accounts`, `DELETE /account/social-accounts/:id`, `GET /auth/oauth2/link/start`.
 
-**Backend — `src/Controllers/AccountController.cs`:**
+**Frontend — `frontend/admin/src/pages/account/AccountPage.tsx` (Security tab)**
 
-1. **`GET /account/social-accounts`** — returns list of `UserSocialAccount` records for current user (provider, linked_at, provider email — never access tokens).
+The Security tab currently has password change. Add a "Linked Accounts" section below it.
 
-2. **`DELETE /account/social-accounts/{id}`** — unlinks a provider.
-   - Guard: if this is the user's only auth method (no password AND no other social account), refuse with `{ "error": "cannot_remove_last_auth_method" }`.
+Section structure:
+1. **Heading:** "Linked Accounts" with `<Separator />` above it.
+2. **Load on tab open:** call `GET /account/social-accounts` → list `{ id, provider, email, linked_at }`.
+3. **For each linked account:** show a row with provider icon (reuse the social provider SVG icons from the login SPA or inline SVGs), provider name, the linked email as muted text, linked date, and an "Unlink" button.
+4. **Unlink handler:**
+   - Calls `DELETE /account/social-accounts/:id`.
+   - On `res.error === "cannot_remove_last_auth_method"`: show error alert "Cannot unlink — this is your only login method. Set a password first."
+   - On success: refresh the list.
+5. **Connect new provider** — below the list, show "Connect a provider" with icon buttons for each provider that is NOT yet linked. Clicking opens the OAuth2 link flow:
+   ```tsx
+   window.location.href = `/auth/oauth2/link/start?provider=${provider}`;
+   ```
+   After the flow completes, the user is redirected back to `/account` — the list auto-refreshes on mount.
+6. The list of available providers comes from the project config already loaded in the page (it's in `accountInfo.project_id` — fetch `/project/info` with that ID to get the enabled providers list, or simply hardcode the four standard ones: google, github, gitlab, facebook).
 
-3. **Link flow** — reuse the existing `SocialLoginService` OAuth2 flow with a `link_mode` flag:
-   - `GET /auth/oauth2/start?provider=google&link_mode=true` — set `link_mode` in the Redis state blob. User must be authenticated (check session cookie).
-   - In `GET /auth/oauth2/callback`: if `state.link_mode == true` and user is authenticated, create `UserSocialAccount` instead of logging in. Return redirect to `/account`.
-
-**Frontend — `AccountPage.tsx`:**
-- Add "Linked Accounts" section listing connected providers (icon + provider name + "Unlink" button).
-- Show "Connect [Google] [GitHub] [GitLab] [Facebook]" buttons for unlinked providers.
-- Clicking "Connect" opens OAuth2 flow in current window (`window.location.href = /auth/oauth2/start?provider=X&link_mode=true`).
+API function to add in `frontend/admin/src/api.ts`:
+```ts
+getSocialAccounts()                                 // GET /account/social-accounts
+unlinkSocialAccount(id)                             // DELETE /account/social-accounts/:id
+```
 
 ---
 
 ### C3. Session Visibility for Admins
 
-**What:** `DELETE /admin/users/{id}/sessions` exists (force logout) but there is no `GET` counterpart — admins cannot see what sessions a user has active. Hydra has admin APIs to list consent sessions.
+**Backend:** ✅ Done — `GET /admin/users/:id/sessions`, `GET /org/userlists/:lid/users/:uid/sessions`, `DELETE` variants for revoke.
 
-**Backend — `src/Controllers/SystemAdminController.cs`:**
-```
-GET /admin/users/{id}/sessions
-```
-- Call `GET {hydra-admin}/admin/oauth2/consent/sessions?subject={userId}` (Hydra admin API).
-- Return: client name, client ID, granted scopes, created_at, last access.
-- Similarly expose for org admins: `GET /org/userlists/{id}/users/{uid}/sessions`.
+**Frontend — `frontend/admin/src/components/UserListMembersPanel.tsx`**
 
-**Frontend Admin SPA:**
-- In user detail views (system + org level): add "Active Sessions" tab/section.
-- Table: App name, scopes granted, login date, "Revoke" button per session.
-- "Revoke All" button.
+Add a "Sessions" option to the 3-dot dropdown menu for each user row:
+
+```tsx
+<DropdownMenuItem onClick={() => openSessionsDialog(user)}>
+  View sessions
+</DropdownMenuItem>
+```
+
+Sessions dialog (controlled by `sessionsUser` state + Dialog component):
+- Title: "Active sessions — {user.email}"
+- On open: call `getUserSessions(listId, user.id)` (API function below).
+- Table columns: App name (`client_name`), Granted at, Expires at, "Revoke" button.
+- "Revoke all" button at the bottom of the dialog → calls `revokeAllUserSessions(listId, user.id)` → refreshes the session list → show "All sessions revoked."
+- Per-session revoke: calls `revokeUserSession(listId, user.id, clientId)`.
+- Empty state: "No active sessions."
+
+API functions to add in `frontend/admin/src/api.ts`:
+```ts
+// listId = null → system-level (/admin/users/:uid/sessions)
+getUserSessions(listId: string | null, userId: string)
+revokeUserSession(listId: string | null, userId: string, clientId: string)
+revokeAllUserSessions(listId: string | null, userId: string)
+```
 
 ---
 
 ### C4. Prometheus Metrics Endpoint
 
-**What:** The `/admin/metrics` endpoint returns JSON stats for the admin SPA but there is no Prometheus-format scraping endpoint for infrastructure monitoring.
+**Backend:** ✅ Done — `/metrics` on admin port, `UseHttpMetrics()`.
 
-**Backend:**
-1. Add NuGet: `prometheus-net.AspNetCore`
-2. In `Program.cs`:
-   ```csharp
-   // Before MapControllers:
-   app.UseHttpMetrics();
-
-   // Restrict scrape endpoint to admin port:
-   app.UseWhen(ctx => ctx.Connection.LocalPort == appConfig.AdminPort,
-       branch => branch.MapMetrics("/metrics"));
-   ```
-3. Add custom IAM-specific metrics in relevant services:
-   ```csharp
-   // In AuthController:
-   private static readonly Counter LoginAttempts = Metrics.CreateCounter(
-       "iam_login_attempts_total", "Login attempts", new[] { "result", "project_id" });
-   // result: success | failure | locked | mfa_required
-
-   // In AuditLogService:
-   private static readonly Counter AuditEvents = Metrics.CreateCounter(
-       "iam_audit_events_total", "Audit events", new[] { "action" });
-
-   // As gauges populated by /admin/metrics query:
-   private static readonly Gauge RegisteredUsers = Metrics.CreateGauge(
-       "iam_registered_users_total", "Total registered users");
-   ```
-4. **Helm** — add Prometheus scrape annotations to `templates/deployment.yaml`:
-   ```yaml
-   annotations:
-     prometheus.io/scrape: "true"
-     prometheus.io/port: "{{ .Values.app.adminPort }}"
-     prometheus.io/path: "/metrics"
-   ```
-
-**Frontend:** None (ops tooling — Grafana reads from Prometheus).
+**Frontend:** No changes needed.
 
 ---
 
 ### C5. Breach Password Check (HaveIBeenPwned)
 
-**What:** Passwords are not checked against known breach databases at registration or change time. This is a recommended NIST 800-63B control.
+**Backend:** ✅ Done — `BreachCheckService`, `Project.CheckBreachedPasswords`, integrated into register/password-change/invite-complete.
 
-**Implementation uses k-Anonymity** — only the first 5 characters of the SHA-1 hash are sent to HIBP, never the actual password.
+**Frontend — Part 1: Admin SPA — `Authentication.tsx` (Registration tab)**
 
-**Backend — `src/Services/BreachCheckService.cs`:**
-```csharp
-public class BreachCheckService(IHttpClientFactory http) {
-    public async Task<int> GetBreachCountAsync(string password) {
-        var sha1 = SHA1.HashData(Encoding.UTF8.GetBytes(password));
-        var hex = Convert.ToHexString(sha1);          // "3D4F2..."
-        var prefix = hex[..5];                         // "3D4F2"
-        var suffix = hex[5..].ToUpperInvariant();      // rest
+After the password policy section, add a Switch row:
 
-        using var client = http.CreateClient();
-        var resp = await client.GetStringAsync(
-            $"https://api.pwnedpasswords.com/range/{prefix}");
+```tsx
+<div className="flex items-center justify-between">
+  <div>
+    <p className="font-medium text-sm">Reject breached passwords</p>
+    <p className="text-xs text-muted-foreground">
+      Passwords found in known data breaches are rejected at registration and password change.
+      Uses the HaveIBeenPwned k-anonymity API — no password is ever transmitted.
+    </p>
+  </div>
+  <Switch
+    checked={form.check_breached_passwords ?? false}
+    onCheckedChange={(v) => setForm(f => ({ ...f, check_breached_passwords: v }))}
+  />
+</div>
+```
 
-        // Response: "SUFFIX:count\nSUFFIX:count\n..."
-        foreach (var line in resp.Split('\n')) {
-            var parts = line.Split(':');
-            if (parts[0].TrimEnd() == suffix)
-                return int.Parse(parts[1].Trim());
-        }
-        return 0; // not found
-    }
+Include `check_breached_passwords` in the `updateProject()` save payload. The field is returned by `GET /project/info`.
+
+---
+
+**Frontend — Part 2: Login SPA — `Register.tsx`**
+
+In the registration submit handler, add a case for `password_breached` in the error check:
+
+```tsx
+if (res.error === 'password_breached') {
+  setError(`This password has been found in ${res.count?.toLocaleString() ?? 'multiple'} data breaches. Please choose a different password.`);
+  return;
 }
 ```
 
-**Backend — integrate into `AuthController` and `AccountController`:**
-- On `POST /auth/register` and `POST /account/password` and `POST /auth/invite/complete`:
-  - If `project.CheckBreachedPasswords == true`, call `BreachCheckService`.
-  - Return `400 { "error": "password_breached", "count": 12345 }` if found in breaches.
+---
 
-**Backend — add `CheckBreachedPasswords bool` to `Project` entity.**
+**Frontend — Part 3: Login SPA — `PasswordReset.tsx`**
 
-**Frontend — `Authentication.tsx` (Registration tab):**
-- Toggle: "Reject passwords found in data breaches".
-- Link to HIBP for user education.
+In the password confirm handler (the step where the new password is submitted), add the same check:
 
-**Frontend Login SPA:**
-- Handle `password_breached` error code on register/reset forms with a meaningful message.
+```tsx
+if (res.error === 'password_breached') {
+  setError(`This password has been found in ${res.count?.toLocaleString() ?? 'multiple'} data breaches. Please choose a different password.`);
+  return;
+}
+```
+
+---
+
+**Frontend — Part 4: Login SPA — `SetPassword.tsx` (invite completion)**
+
+Already specified in B1 above — the `password_breached` error case is included there.
 
 ---
 
 ### C6. IP Allowlist Per Project
 
-**What:** Organisations with corporate security requirements need to restrict project access to specific IP ranges (e.g. `10.0.0.0/8` for VPN-only apps).
+**Backend:** ✅ Done — `Project.IpAllowlist`, enforced in `POST /auth/login`.
 
-**Backend:**
-1. Add `IpAllowlist string[]` JSONB to `Project` entity. Add column via startup SQL.
-2. In `AuthController POST /auth/login`:
-   ```csharp
-   if (project.IpAllowlist?.Length > 0) {
-       var clientIp = IPAddress.Parse(Ip);
-       bool allowed = project.IpAllowlist.Any(cidr => IsInRange(clientIp, cidr));
-       if (!allowed) {
-           await auditLog.LogAsync("login.ip_blocked", ...);
-           return Unauthorized(new { error = "ip_not_allowed" });
-       }
-   }
-   ```
-   Use `System.Net.IPNetwork` or a small CIDR parsing helper.
-3. Expose in `ProjectController` and `SystemAdminController` PATCH endpoints.
+**Frontend — `frontend/admin/src/pages/project/Authentication.tsx`**
 
-**Frontend — `Authentication.tsx` (new "Security" tab or in Registration tab):**
-- Textarea: "Allowed IP ranges (CIDR, one per line)".
-- Client-side CIDR validation with format hint.
-- Warning: "Leaving blank allows all IPs."
+Add a new **"Security"** tab to the Tabs component (after "Verification", before a future SAML/enterprise tab).
+
+Tab content — "IP Allowlist" section:
+
+```tsx
+<Card>
+  <CardHeader>
+    <CardTitle>IP Allowlist</CardTitle>
+    <CardDescription>
+      Restrict logins to specific IP ranges. Leave empty to allow all IPs.
+      Enter one CIDR range per line (e.g. 10.0.0.0/8, 192.168.1.0/24).
+    </CardDescription>
+  </CardHeader>
+  <CardContent className="space-y-3">
+    <Textarea
+      value={ipAllowlist}
+      onChange={(e) => setIpAllowlist(e.target.value)}
+      placeholder={"10.0.0.0/8\n192.168.1.0/24"}
+      rows={5}
+      className="font-mono text-sm"
+    />
+    {ipAllowlistError && (
+      <Alert variant="destructive"><AlertDescription>{ipAllowlistError}</AlertDescription></Alert>
+    )}
+    <p className="text-xs text-muted-foreground text-amber-600">
+      ⚠ If you misconfigure this, you will lock yourself out. Verify your IP before saving.
+    </p>
+  </CardContent>
+</Card>
+```
+
+State: `ipAllowlist` (string — newline-joined from the array), `ipAllowlistError`.
+
+Client-side validation on save: split by newline, trim each, skip empty lines, validate each entry matches `/^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$|^[0-9a-fA-F:]+\/\d{1,3}$/` — show error if any entry is invalid.
+
+Save: convert to string array, include `ip_allowlist` in the `updateProject()` payload. Load: join the array with `\n` into the textarea value.
 
 ---
 
 ### C7. Custom OAuth2 Scopes Per Project
 
-**What:** All Hydra clients are created with `scope: "openid offline"`. Projects should be able to define custom scopes (e.g. `read:orders`, `write:inventory`) that appear in the consent screen and can be validated by downstream APIs.
+**Backend:** ✅ Done — `Project.AllowedScopes`, `PUT /project/scopes`, Hydra client updated on scope change.
 
-**Backend:**
-1. Add `AllowedScopes string[]` JSONB to `Project` entity.
-2. In `HydraService.CreateClientAsync()` and any client update path: use `project.AllowedScopes ?? ["openid", "offline"]` when setting the Hydra client scope list.
-3. New endpoints in `ProjectController` and `SystemAdminController`:
-   - `PUT /project/scopes` — replace scope list, triggers Hydra client update.
-4. Scope names must be validated: lowercase, colon-delimited, no spaces.
+**Frontend — `frontend/admin/src/pages/project/Authentication.tsx` (Providers tab)**
 
-**Frontend — `Authentication.tsx` (new "Scopes" tab):**
-- Tag-style input to add/remove custom scopes.
-- Built-in scopes (`openid`, `offline`) shown as non-removable pills.
-- Warning about the implications of scope changes for existing tokens.
+Add a "Custom Scopes" section at the bottom of the Providers tab, after all provider configurations.
+
+```tsx
+<Card>
+  <CardHeader>
+    <CardTitle>OAuth2 Scopes</CardTitle>
+    <CardDescription>
+      Define custom scopes available to this project's OAuth2 clients.
+      The built-in scopes <code>openid</code> and <code>offline</code> are always included.
+    </CardDescription>
+  </CardHeader>
+  <CardContent className="space-y-3">
+    {/* Non-removable built-in pills */}
+    <div className="flex flex-wrap gap-2">
+      <Badge variant="secondary">openid</Badge>
+      <Badge variant="secondary">offline</Badge>
+      {customScopes.map(scope => (
+        <Badge key={scope} variant="outline" className="gap-1">
+          {scope}
+          <button onClick={() => removeScope(scope)} className="ml-1 hover:text-destructive">×</button>
+        </Badge>
+      ))}
+    </div>
+    {/* Add scope input */}
+    <div className="flex gap-2">
+      <Input
+        value={newScope}
+        onChange={(e) => setNewScope(e.target.value.toLowerCase().replace(/[^a-z0-9:_-]/g, ''))}
+        placeholder="read:orders"
+        className="font-mono"
+        onKeyDown={(e) => e.key === 'Enter' && addScope()}
+      />
+      <Button variant="outline" onClick={addScope}>Add</Button>
+    </div>
+    {scopeError && <p className="text-xs text-destructive">{scopeError}</p>}
+  </CardContent>
+</Card>
+```
+
+State: `customScopes: string[]` (loaded from project's `allowed_scopes`, minus `openid`/`offline`).
+
+Validation: scope must match `/^[a-z][a-z0-9:_-]*$/` and not duplicate an existing one.
+
+Save: call `PUT /project/scopes` with `{ scopes: ['openid', 'offline', ...customScopes] }` when the tab's save button is clicked. Alternatively, include in the main `updateProject()` call as `allowed_scopes`.
+
+API function to add in `frontend/admin/src/api.ts`:
+```ts
+updateProjectScopes(projectId: string, scopes: string[])  // PUT /project/scopes
+```
 
 ---
 
-## D — Operational Excellence (Medium Priority)
+## D — Operational Excellence
 
 ---
 
 ### D1. Audit Log Retention Policy
 
-**What:** Audit logs grow forever. Compliance requirements typically mandate 90 days to 1 year retention, after which old logs must be purged.
+**Backend:** ✅ Done — `Organisation.AuditRetentionDays`, `AuditLogRetentionService` background service.
 
-**Backend:**
-1. Add `AuditRetentionDays int?` to `Organisation` entity (null = global default). Add column via startup SQL.
-2. Add `AuditRetentionDays int` to `AppConfig` (default: 365) via env var `Audit__RetentionDays`.
-3. Add `src/Services/AuditLogRetentionService.cs` as a `BackgroundService`:
-   ```csharp
-   protected override async Task ExecuteAsync(CancellationToken ct) {
-       while (!ct.IsCancellationRequested) {
-           await PurgeExpiredLogsAsync(ct);
-           await Task.Delay(TimeSpan.FromHours(24), ct);
-       }
-   }
-   ```
-   The purge runs a single parameterized SQL DELETE per org (or global for system logs).
-4. Register in `Program.cs`: `builder.Services.AddHostedService<AuditLogRetentionService>()`.
+**Frontend — new `frontend/admin/src/pages/org/OrgSettings.tsx`**
 
-**Frontend Admin SPA:**
-- Org settings area (currently no dedicated "Org settings" page exists for org admins — add one): "Audit log retention" dropdown: 30 / 60 / 90 / 180 / 365 days / Forever.
-- Super admin can also set the global default in the System Email/Settings area.
+This is a new org-level settings page (no equivalent currently exists for org admins).
+
+Route to add in `frontend/admin/src/App.tsx`:
+```tsx
+// Under org routes:
+<Route path="settings" element={<OrgSettings />} />
+
+// Under system org detail routes (super_admin browsing an org):
+<Route path="settings" element={<OrgSettings />} />
+```
+
+Sidebar addition in `frontend/admin/src/components/Sidebar.tsx`:
+- Org section: add "Settings" nav item linking to `${orgBase}/settings` (use a `Settings` icon from lucide-react).
+- System org section: add the same link.
+
+Page structure — `OrgSettings.tsx`:
+
+```tsx
+<Card>
+  <CardHeader>
+    <CardTitle>Audit Log Retention</CardTitle>
+    <CardDescription>
+      Audit logs older than the retention period are automatically deleted.
+      Set to "Forever" to disable automatic deletion.
+    </CardDescription>
+  </CardHeader>
+  <CardContent>
+    <Select value={String(retentionDays ?? '')} onValueChange={...}>
+      <SelectTrigger className="w-48">
+        <SelectValue placeholder="Select period" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="30">30 days</SelectItem>
+        <SelectItem value="60">60 days</SelectItem>
+        <SelectItem value="90">90 days</SelectItem>
+        <SelectItem value="180">180 days</SelectItem>
+        <SelectItem value="365">1 year</SelectItem>
+        <SelectItem value="">Forever</SelectItem>
+      </SelectContent>
+    </Select>
+  </CardContent>
+  <CardFooter>
+    <Button onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
+    {saved && <span className="ml-3 text-sm text-green-600">Saved!</span>}
+  </CardFooter>
+</Card>
+```
+
+Load: `GET /org/info` (already exists, returns `audit_retention_days`).
+Save: `PATCH /org/info` with `{ audit_retention_days: retentionDays }` (or `null` for Forever).
+
+API function to verify/add in `frontend/admin/src/api.ts`:
+```ts
+getOrgInfo()                                        // GET /org/info — verify returns audit_retention_days
+updateOrgInfo(patch)                                // PATCH /org/info — verify accepts audit_retention_days
+```
+
+For super_admin context, `useOrgContext()` provides the org-scoped API paths.
 
 ---
 
 ### D2. Data Export
 
-**What:** Compliance teams need to export user lists and audit logs. No export endpoints exist.
+**Backend:** ✅ Done — `GET /org/userlists/:id/export?format=csv`, `GET /admin/organizations/:id/export/audit-log?format=csv`.
 
-**Backend — streaming CSV responses:**
-```csharp
-// GET /admin/organizations/{id}/export/users?format=csv
-// GET /admin/organizations/{id}/export/audit-log?format=csv&from=2026-01-01&to=2026-03-31
-// GET /org/userlists/{id}/export?format=csv
+**Frontend — `frontend/admin/src/pages/org/OrgAuditLog.tsx` and `frontend/admin/src/pages/system/AuditLog.tsx`**
+
+Add an export button in the top-right of the audit log Card header, next to any existing controls:
+
+```tsx
+<Button variant="outline" size="sm" onClick={handleExport} disabled={exporting}>
+  <Download className="h-4 w-4 mr-2" />
+  {exporting ? 'Exporting…' : 'Export CSV'}
+</Button>
 ```
-- Use `Response.Headers["Content-Disposition"] = "attachment; filename=users.csv"`.
-- Stream rows directly from the DB query to avoid loading large datasets into memory (`yield return` / `IAsyncEnumerable`).
-- Rate-limit: max 1 export per minute per caller.
-- Audit log the export action.
-- Never include password hashes, TOTP secrets, or encrypted fields in exports.
 
-**Frontend Admin SPA:**
-- Export button (with download icon) on user list pages and audit log pages.
-- Dropdown: CSV / JSON format selector.
+Handler — trigger a browser download (not a fetch-to-state, since the backend streams CSV):
+```ts
+async function handleExport() {
+  setExporting(true);
+  const token = getAccessToken(); // from auth.ts
+  const url = orgId
+    ? `/admin/organizations/${orgId}/export/audit-log?format=csv`
+    : `/admin/organizations/export/audit-log?format=csv`; // adjust to actual endpoint
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  const blob = await res.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `audit-log-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  setExporting(false);
+}
+```
+
+Add date-range inputs (optional, low priority): two date inputs (`from`, `to`) that append `&from=<ISO>&to=<ISO>` to the export URL when set.
 
 ---
 
-## E — Enterprise Features (Lower Priority / Future)
+**Frontend — `frontend/admin/src/pages/UserListDetail.tsx`**
+
+Add the same Export CSV button to the UserListDetail card header:
+
+```tsx
+<Button variant="outline" size="sm" onClick={handleExport} disabled={exporting}>
+  <Download className="h-4 w-4 mr-2" />
+  Export CSV
+</Button>
+```
+
+Handler calls `GET /org/userlists/:id/export?format=csv` and triggers download the same way as above.
+
+API function to add in `frontend/admin/src/api.ts` (returns a Blob, not JSON):
+```ts
+export async function exportUserList(listId: string, format = 'csv'): Promise<Blob> {
+  const res = await apiFetch(`/org/userlists/${listId}/export?format=${format}`, {}, true /* raw */);
+  return res.blob();
+}
+```
+(Requires a minor `apiFetch` wrapper extension to support returning raw `Response` — or use `fetch` directly with the Bearer token.)
+
+---
+
+## E — Enterprise Features
 
 ---
 
 ### E1. SAML 2.0 Enterprise Federation
 
-**What:** Allow enterprises to log in via their corporate IdP (Okta, Azure AD, ADFS) using SAML 2.0 assertions. This is required for enterprises that have centralised IAM and cannot use per-user credentials.
+**Backend:** ✅ Done — `SamlIdpConfig` entity, `/auth/saml/start`, `/auth/saml/acs`, `/admin/projects/:id/saml/metadata`, `/admin/projects/:id/saml-providers` CRUD.
 
-**Library:** `Sustainsys.Saml2.AspNetCore2` (open source, MIT)
+**Frontend — `frontend/admin/src/pages/project/Authentication.tsx` (Providers tab)**
 
-**Backend — new entity `SamlIdpConfig`:**
-```csharp
-public class SamlIdpConfig {
-    public Guid Id { get; set; }
-    public Guid ProjectId { get; set; }
-    public string EntityId { get; set; } = "";         // IdP entity ID
-    public string MetadataUrl { get; set; } = "";      // or inline XML
-    public string? CertificatePem { get; set; }        // IdP signing cert
-    public string EmailAttributeName { get; set; } = "email"; // SAML attribute → user email
-    public string? NameAttributeName { get; set; }     // SAML attribute → display name
-    public bool JitProvisioning { get; set; } = true;  // create user on first login
-    public Guid? DefaultRoleId { get; set; }
-    public bool Active { get; set; } = true;
-}
+Add a "SAML 2.0" section at the bottom of the Providers tab, below custom OIDC and custom scopes.
+
+Section structure:
+
+```tsx
+<Card>
+  <CardHeader className="flex flex-row items-center justify-between">
+    <div>
+      <CardTitle>SAML 2.0 Identity Providers</CardTitle>
+      <CardDescription>
+        Allow users to log in via a corporate IdP (Okta, Azure AD, ADFS).
+      </CardDescription>
+    </div>
+    <Button size="sm" onClick={() => setAddSamlOpen(true)}>+ Add IdP</Button>
+  </CardHeader>
+  <CardContent>
+    {/* List of configured IdPs */}
+    {samlProviders.map(idp => (
+      <div key={idp.id} className="flex items-center justify-between py-2 border-b last:border-0">
+        <div>
+          <p className="font-medium text-sm">{idp.entity_id}</p>
+          <p className="text-xs text-muted-foreground">{idp.metadata_url ?? 'Manual config'}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge variant={idp.active ? 'default' : 'secondary'}>
+            {idp.active ? 'Active' : 'Inactive'}
+          </Badge>
+          <Button variant="ghost" size="icon" onClick={() => deleteSamlProvider(idp.id)}>
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+    ))}
+    {samlProviders.length === 0 && (
+      <p className="text-sm text-muted-foreground">No SAML providers configured.</p>
+    )}
+  </CardContent>
+</Card>
 ```
 
-**Backend — authentication flow:**
-1. `GET /auth/saml/start?project_id=X&idp_id=Y` — generate AuthnRequest, redirect to IdP.
-2. `POST /auth/saml/acs` — Assertion Consumer Service. Validates assertion signature, extracts user attributes, performs JIT provisioning if enabled, completes Hydra login accept.
-3. `GET /admin/projects/{id}/saml/metadata` — serves SP metadata XML for the IdP to register.
+Add SAML IdP dialog (`addSamlOpen` state):
+- Fields: Entity ID (required text input), Metadata URL (optional, `https://` only), SSO URL (optional, shown when no metadata URL), Certificate PEM (optional, textarea), Email attribute name (default `email`), Display name attribute (optional), JIT provisioning (Switch, default on), Default role (Select from project roles).
+- On save: call `POST /admin/projects/:id/saml-providers` with the form values.
+- On success: refresh the providers list and show the SP metadata URL in a copy-friendly callout: "Give this URL to your IdP:" + copyable `GET /admin/projects/:id/saml/metadata` URL.
 
-**Backend — CRUD endpoints:**
-- `GET/POST/DELETE /project/saml-providers` — manage SAML IdP configs.
-- Same under `/admin/organizations/:oid/projects/:pid/saml-providers` for super admin.
+SP Metadata URL display — also show it as a persistent copyable field above the provider list, so the admin always has it:
+```tsx
+<div className="flex items-center gap-2 p-3 bg-muted rounded text-sm font-mono">
+  <span className="truncate">{spMetadataUrl}</span>
+  <Button variant="ghost" size="icon" onClick={() => navigator.clipboard.writeText(spMetadataUrl)}>
+    <Copy className="h-4 w-4" />
+  </Button>
+</div>
+```
+Where `spMetadataUrl` = `${window.location.origin}/admin/projects/${projectId}/saml/metadata`.
 
-**Frontend — `Authentication.tsx` (Providers tab):**
-- "SAML 2.0 Identity Provider" section below custom OIDC.
-- Fields: IdP metadata URL, email attribute name, display name attribute, JIT provisioning toggle, default role.
-- Show "SP Metadata URL" (copyable) for the admin to give to their IdP.
+Login SPA — `Login.tsx`:
+- If the project theme contains SAML providers (check `theme.saml_providers?.length > 0`), render a "Sign in with [entity_id]" button for each active one.
+- Click handler: `window.location.href = \`/auth/saml/start?project_id=${projectId}&idp_id=${idp.id}&login_challenge=${challenge}\``.
+- Style consistent with the existing social provider buttons.
+
+API functions to add in `frontend/admin/src/api.ts`:
+```ts
+listSamlProviders(projectId)                        // GET /admin/projects/:id/saml-providers
+createSamlProvider(projectId, config)               // POST /admin/projects/:id/saml-providers
+deleteSamlProvider(projectId, idpId)                // DELETE /admin/projects/:id/saml-providers/:idpId
+```
 
 ---
 
 ### E2. Suspicious Login / New Device Detection
 
-**What:** Email a user when they log in from a device or IP subnet they have never used before.
+**Backend:** ✅ Done — device fingerprinting, `User.NewDeviceAlertsEnabled`, `PATCH /account/me` accepts `new_device_alerts_enabled`.
 
-**Backend:**
-1. Track device fingerprints (HMAC of `user-agent + IP /24 subnet`) per user in Redis with a 90-day TTL.
-2. On successful login in `AuthController`: check if fingerprint is new.
-3. If new: add `IEmailService.SendNewDeviceAlertAsync(...)` and dispatch it.
-4. Add `User.NewDeviceAlertsEnabled bool` (default: true).
+**Frontend — `frontend/admin/src/pages/account/AccountPage.tsx` (Profile tab)**
 
-**Backend — `AccountController`:**
-- `PATCH /account/me`: allow toggling `new_device_alerts_enabled`.
+In the Profile tab, at the bottom (below display name), add a notification preference row:
 
-**Frontend — `AccountPage.tsx`:**
-- Toggle "Email me on login from a new device."
+```tsx
+<div className="flex items-center justify-between pt-4 border-t">
+  <div>
+    <p className="font-medium text-sm">New device login alerts</p>
+    <p className="text-xs text-muted-foreground">
+      Receive an email when you log in from a device or location not seen in the last 90 days.
+    </p>
+  </div>
+  <Switch
+    checked={newDeviceAlertsEnabled}
+    onCheckedChange={handleToggleNewDeviceAlerts}
+  />
+</div>
+```
+
+Handler:
+```tsx
+async function handleToggleNewDeviceAlerts(value: boolean) {
+  setNewDeviceAlertsEnabled(value);
+  await updateMe({ new_device_alerts_enabled: value });
+}
+```
+
+Load the current value from `GET /account/me` which already returns `new_device_alerts_enabled`. The field is already part of the `accountInfo` loaded on page mount.
+
+No new API function needed — `updateMe()` already calls `PATCH /account/me` and is used by the display name field.
 
 ---
 
@@ -662,24 +918,61 @@ public class SamlIdpConfig {
 
 | ID  | Item                                 | Priority | Backend | Frontend |
 |-----|--------------------------------------|----------|---------|----------|
-| A1  | Encrypt social login client_secrets  | 🔴 CRIT  | ✎       | ✎        |
-| A2  | Security headers middleware           | 🔴 HIGH  | ✎       | —        |
-| A3  | Rate limit registration endpoints     | 🔴 HIGH  | ✎       | —        |
-| A4  | Constant-time OTP comparison          | 🟡 MED   | ✎       | —        |
-| A5  | Email enumeration fix                 | 🟡 MED   | ✎       | —        |
-| B1  | User invitation flow                  | 🔴 HIGH  | ✎       | ✎        |
-| B2  | Admin account unlock                  | 🔴 HIGH  | ✎       | ✎        |
-| B3  | Mandatory MFA per project             | 🔴 HIGH  | ✎       | ✎        |
-| B4  | System service accounts CRUD + PATs   | 🔴 HIGH  | ✎       | ✎        |
-| B5  | Webhooks                              | 🔴 HIGH  | ✎       | ✎        |
-| C1  | OpenAPI / Swagger                     | 🟡 MED   | ✎       | —        |
-| C2  | Account linking (social providers)    | 🟡 MED   | ✎       | ✎        |
-| C3  | Session visibility for admins         | 🟡 MED   | ✎       | ✎        |
-| C4  | Prometheus metrics endpoint           | 🟡 MED   | ✎       | —        |
-| C5  | Breach password check (HIBP)          | 🟡 MED   | ✎       | ✎        |
-| C6  | IP allowlist per project              | 🟡 MED   | ✎       | ✎        |
-| C7  | Custom OAuth2 scopes per project      | 🟡 MED   | ✎       | ✎        |
-| D1  | Audit log retention policy            | 🟡 MED   | ✎       | ✎        |
-| D2  | Data export (CSV/JSON)                | 🟢 LOW   | ✎       | ✎        |
-| E1  | SAML 2.0 enterprise federation        | 🟢 LOW   | ✎       | ✎        |
-| E2  | Suspicious login / new device alert   | 🟢 LOW   | ✎       | ✎        |
+| A1  | Encrypt social login client_secrets  | 🔴 CRIT  | ✅      | ✎ Authentication.tsx — providers secret placeholder |
+| A2  | Security headers middleware           | 🔴 HIGH  | ✅      | —        |
+| A3  | Rate limit registration endpoints     | 🔴 HIGH  | ✅      | —        |
+| A4  | Constant-time OTP comparison          | 🟡 MED   | ✅      | —        |
+| A5  | Email enumeration fix                 | 🟡 MED   | ✅      | —        |
+| B1  | User invitation flow                  | 🔴 HIGH  | ✅      | ✎ Login SPA: SetPassword.tsx (new) · Admin SPA: UserListMembersPanel badge + resend |
+| B2  | Admin account unlock                  | 🔴 HIGH  | ✅      | ✎ UserListMembersPanel: locked badge + unlock button |
+| B3  | Mandatory MFA per project             | 🔴 HIGH  | ✅      | ✎ Authentication.tsx toggle · Login SPA: Login.tsx + MfaSetup.tsx (new) |
+| B4  | System service accounts CRUD + PATs   | 🔴 HIGH  | ✅      | ✎ Verify/complete SystemServiceAccounts.tsx + ServiceAccountDetail.tsx |
+| B5  | Webhooks                              | 🔴 HIGH  | ✅      | ✎ OrgWebhooks.tsx (new) + routing + sidebar |
+| C1  | OpenAPI / Swagger                     | 🟡 MED   | ✅      | —        |
+| C2  | Account linking (social providers)    | 🟡 MED   | ✅      | ✎ AccountPage.tsx Security tab: Linked Accounts section |
+| C3  | Session visibility for admins         | 🟡 MED   | ✅      | ✎ UserListMembersPanel: Sessions dialog |
+| C4  | Prometheus metrics endpoint           | 🟡 MED   | ✅      | —        |
+| C5  | Breach password check (HIBP)          | 🟡 MED   | ✅      | ✎ Authentication.tsx toggle · Login SPA: Register.tsx + PasswordReset.tsx error handling |
+| C6  | IP allowlist per project              | 🟡 MED   | ✅      | ✎ Authentication.tsx: new Security tab with CIDR textarea |
+| C7  | Custom OAuth2 scopes per project      | 🟡 MED   | ✅      | ✎ Authentication.tsx Providers tab: custom scopes tag input |
+| D1  | Audit log retention policy            | 🟡 MED   | ✅      | ✎ OrgSettings.tsx (new) + routing + sidebar |
+| D2  | Data export (CSV/JSON)                | 🟢 LOW   | ✅      | ✎ OrgAuditLog.tsx + AuditLog.tsx + UserListDetail.tsx: export buttons |
+| E1  | SAML 2.0 enterprise federation        | 🟢 LOW   | ✅      | ✎ Authentication.tsx Providers tab: SAML section · Login SPA: Login.tsx SAML buttons |
+| E2  | Suspicious login / new device alert   | 🟢 LOW   | ✅      | ✎ AccountPage.tsx Profile tab: toggle |
+
+---
+
+## Frontend Execution Order
+
+### Phase 1 — Unblock end-users (Login SPA, no admin dependency)
+1. **B1** — `SetPassword.tsx` (new page) + route + `api.ts` addition
+2. **B3** — `Login.tsx` modification + `MfaSetup.tsx` (new page) + route + `api.ts` additions
+3. **C5** — `Register.tsx` + `PasswordReset.tsx` breach error handling (3-line additions each)
+
+### Phase 2 — Admin SPA user management (single component, all contexts)
+4. **B1** — `UserListMembersPanel.tsx`: invite pending badge + resend invite menu item
+5. **B2** — `UserListMembersPanel.tsx`: locked badge + unlock menu item
+6. **C3** — `UserListMembersPanel.tsx`: sessions menu item + sessions dialog
+7. `api.ts`: `resendInvite`, `unlockUser`, `getUserSessions`, `revokeUserSession`, `revokeAllUserSessions`
+
+### Phase 3 — Project auth settings (Authentication.tsx)
+8. **A1** — providers secret placeholder + change detection
+9. **B3** — Require MFA toggle (Registration tab)
+10. **C5** — Breach check toggle (Registration tab)
+11. **C6** — IP allowlist (new Security tab)
+12. **C7** — Custom scopes section (Providers tab)
+13. **E1** — SAML section (Providers tab) + Login.tsx SAML buttons
+14. `api.ts`: `listSamlProviders`, `createSamlProvider`, `deleteSamlProvider`, `updateProjectScopes`
+
+### Phase 4 — Account page (AccountPage.tsx)
+15. **C2** — Linked accounts section (Security tab)
+16. **E2** — New device alerts toggle (Profile tab)
+17. `api.ts`: `getSocialAccounts`, `unlinkSocialAccount`
+
+### Phase 5 — New admin pages
+18. **B5** — `OrgWebhooks.tsx` + `App.tsx` route + sidebar link + `api.ts` webhook functions
+19. **D1** — `OrgSettings.tsx` + `App.tsx` route + sidebar link
+20. **D2** — Export buttons on `OrgAuditLog.tsx`, `AuditLog.tsx`, `UserListDetail.tsx`
+
+### Phase 6 — Verify existing pages
+21. **B4** — Audit `SystemServiceAccounts.tsx` + `ServiceAccountDetail.tsx` against spec above
