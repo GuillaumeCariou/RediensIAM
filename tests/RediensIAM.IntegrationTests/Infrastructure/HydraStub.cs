@@ -142,7 +142,7 @@ public sealed class HydraStub : IDisposable
     /// <summary>
     /// Configures a login challenge response for the given challenge string.
     /// </summary>
-    public void SetupLoginChallenge(string challenge, string clientId, bool skip = false, string subject = "")
+    public void SetupLoginChallenge(string challenge, string? clientId, bool skip = false, string subject = "")
     {
         _server
             .Given(Request.Create()
@@ -165,7 +165,7 @@ public sealed class HydraStub : IDisposable
     /// <summary>
     /// Sets up a login challenge that carries a specific project_id in context.
     /// </summary>
-    public void SetupLoginChallengeWithProject(string challenge, string clientId, string projectId, string orgId, bool skip = false, string subject = "")
+    public void SetupLoginChallengeWithProject(string challenge, string? clientId, string projectId, string orgId, bool skip = false, string subject = "")
     {
         _server
             .Given(Request.Create()
@@ -194,7 +194,7 @@ public sealed class HydraStub : IDisposable
 
     // ── Consent challenge helpers ─────────────────────────────────────────────
 
-    public void SetupConsentChallenge(string challenge, string subject, string clientId,
+    public void SetupConsentChallenge(string challenge, string subject, string? clientId,
         string? projectId = null, string? orgId = null)
     {
         var ctx = new Dictionary<string, object> { ["user_id"] = subject };

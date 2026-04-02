@@ -165,7 +165,7 @@ public class InviteFlowTests(TestFixture fixture)
         invited.Should().NotBeNull("invited user should appear in list");
         invited.GetProperty("invite_pending").GetBoolean().Should().BeTrue();
 
-        var direct = users.FirstOrDefault(u => u.GetProperty("email").GetString() == directEmail);
+        var direct = users!.FirstOrDefault(u => u.GetProperty("email").GetString() == directEmail);
         direct.Should().NotBeNull("direct user should appear in list");
         direct.GetProperty("invite_pending").GetBoolean().Should().BeFalse();
     }
