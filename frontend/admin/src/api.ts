@@ -343,6 +343,29 @@ export async function adminDeleteProject(projectId: string) {
   return apiFetch(`/admin/projects/${projectId}`, { method: 'DELETE' });
 }
 
+// ── User management actions ───────────────────────────────────────
+export async function resendInvite(listId: string, userId: string) {
+  return (await apiFetch(`/org/userlists/${listId}/users/${userId}/resend-invite`, { method: 'POST' })).json();
+}
+export async function unlockUser(listId: string | null, userId: string) {
+  const path = listId
+    ? `/org/userlists/${listId}/users/${userId}/unlock`
+    : `/admin/users/${userId}/unlock`;
+  return (await apiFetch(path, { method: 'POST' })).json();
+}
+export async function getUserSessions(listId: string | null, userId: string) {
+  const path = listId
+    ? `/org/userlists/${listId}/users/${userId}/sessions`
+    : `/admin/users/${userId}/sessions`;
+  return (await apiFetch(path)).json();
+}
+export async function revokeAllUserSessions(listId: string | null, userId: string) {
+  const path = listId
+    ? `/org/userlists/${listId}/users/${userId}/sessions`
+    : `/admin/users/${userId}/sessions`;
+  return apiFetch(path, { method: 'DELETE' });
+}
+
 // ── Email overview (super admin) ─────────────────────────────────
 export async function getEmailOverview() {
   return (await apiFetch('/admin/email/overview')).json();

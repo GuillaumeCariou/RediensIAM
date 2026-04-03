@@ -1,27 +1,35 @@
 import { useEffect, useState } from 'react';
-import { UserPlus, Trash2, CheckCircle, XCircle, Plus } from 'lucide-react';
+import { UserPlus, Trash2, CheckCircle, XCircle, Plus, MoreHorizontal, LockOpen, Mail, Monitor } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   listSystemUserListMembers, listUserListMembers,
   addUserToList, removeSystemUserFromList, removeUserFromList,
   adminGetUser, adminUpdateUser,
   listProjectUsers, listRoles, assignRole, removeRole,
+  resendInvite, unlockUser, getUserSessions, revokeAllUserSessions,
 } from '@/api';
 import { fmtDate } from '@/lib/utils';
 
 interface Member {
   id: string; email: string; username: string; discriminator: string;
   display_name: string | null; active: boolean; last_login_at: string | null;
+  invite_pending?: boolean; locked_until?: string | null;
+}
+
+interface Session {
+  client_id: string; client_name?: string; granted_at?: string; expires_at?: string;
 }
 
 interface Role { id: string; name: string; }
@@ -42,7 +50,10 @@ export default function UserListMembersPanel({
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // ── Role state (only when projectId provided) ──────────────────
+  // ── Feedback banner ────────────────────────────────────────────
+  const [actionMsg, setActionMsg] = useState<{ text: string; error?: boolean } | null>(null);
+
+  // ── Role state ─────────────────────────────────────────────────
   const [memberRoles, setMemberRoles] = useState<Map<string, Role[]>>(new Map());
   const [availableRoles, setAvailableRoles] = useState<Role[]>([]);
   const [selectedRole, setSelectedRole] = useState('');
@@ -62,6 +73,23 @@ export default function UserListMembersPanel({
   const [editLoading, setEditLoading] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState('');
+
+  // ── Sessions dialog ────────────────────────────────────────────
+  const [sessionsUser, setSessionsUser] = useState<Member | null>(null);
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [revokeAllLoading, setRevokeAllLoading] = useState(false);
+
+  // ── Helpers ────────────────────────────────────────────────────
+  const ctxListId = isSystemCtx ? null : listId;
+
+  function flash(text: string, error = false) {
+    setActionMsg({ text, error });
+    setTimeout(() => setActionMsg(null), 3500);
+  }
+
+  const isLocked = (m: Member) =>
+    !!m.locked_until && new Date(m.locked_until) > new Date();
 
   const loadMembers = async () => {
     const res = isSystemCtx
@@ -91,6 +119,8 @@ export default function UserListMembersPanel({
     setLoading(true);
     load().catch(console.error).finally(() => setLoading(false));
   }, [listId, projectId]);
+
+  // ── Handlers ───────────────────────────────────────────────────
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -167,12 +197,60 @@ export default function UserListMembersPanel({
     });
   };
 
+  const handleResendInvite = async (m: Member) => {
+    try {
+      const res = await resendInvite(listId, m.id);
+      if (res.error === 'user_already_active') {
+        flash('This user has already accepted their invitation.', true);
+      } else {
+        flash(`Invite resent to ${m.email}.`);
+      }
+    } catch { flash('Failed to resend invite.', true); }
+  };
+
+  const handleUnlock = async (m: Member) => {
+    try {
+      await unlockUser(ctxListId, m.id);
+      flash('Account unlocked.');
+      await loadMembers();
+    } catch { flash('Failed to unlock account.', true); }
+  };
+
+  const openSessions = async (m: Member) => {
+    setSessionsUser(m);
+    setSessions([]);
+    setSessionsLoading(true);
+    try {
+      const res = await getUserSessions(ctxListId, m.id);
+      setSessions(res.sessions ?? res ?? []);
+    } catch { setSessions([]); }
+    finally { setSessionsLoading(false); }
+  };
+
+  const handleRevokeAllSessions = async () => {
+    if (!sessionsUser) return;
+    setRevokeAllLoading(true);
+    try {
+      await revokeAllUserSessions(ctxListId, sessionsUser.id);
+      setSessions([]);
+      flash('All sessions revoked.');
+    } catch { flash('Failed to revoke sessions.', true); }
+    finally { setRevokeAllLoading(false); }
+  };
+
   const userRoles = (userId: string) => memberRoles.get(userId) ?? [];
   const unassignedRoles = (userId: string) =>
     availableRoles.filter(r => !userRoles(userId).some(ur => ur.id === r.id));
 
   return (
     <>
+      {/* ── Feedback banner ── */}
+      {actionMsg && (
+        <Alert variant={actionMsg.error ? 'destructive' : 'default'} className="mb-3">
+          <AlertDescription>{actionMsg.text}</AlertDescription>
+        </Alert>
+      )}
+
       <Card>
         <CardHeader className="pb-3 flex flex-row items-center justify-between">
           <CardTitle className="text-sm font-medium">{title}</CardTitle>
@@ -205,8 +283,22 @@ export default function UserListMembersPanel({
                       onClick={() => openEdit(m)}
                     >
                       <TableCell>
-                        <p className="font-medium text-sm">{m.display_name ?? m.username}#{m.discriminator}</p>
-                        <p className="text-xs text-muted-foreground">{m.email}</p>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <div>
+                            <p className="font-medium text-sm">{m.display_name ?? m.username}#{m.discriminator}</p>
+                            <p className="text-xs text-muted-foreground">{m.email}</p>
+                          </div>
+                          {m.invite_pending && (
+                            <Badge variant="outline" className="text-amber-600 border-amber-400 text-[10px]">
+                              Invite pending
+                            </Badge>
+                          )}
+                          {isLocked(m) && (
+                            <Badge variant="destructive" className="text-[10px]">
+                              Locked
+                            </Badge>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>
                         {m.active
@@ -237,9 +329,38 @@ export default function UserListMembersPanel({
                       )}
                       <TableCell className="text-sm text-muted-foreground">{fmtDate(m.last_login_at)}</TableCell>
                       <TableCell onClick={e => e.stopPropagation()}>
-                        <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => setRemoveTarget(m)}>
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button size="sm" variant="ghost">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => openEdit(m)}>
+                              Edit
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openSessions(m)}>
+                              <Monitor className="h-4 w-4 mr-2" />View sessions
+                            </DropdownMenuItem>
+                            {m.invite_pending && (
+                              <DropdownMenuItem onClick={() => handleResendInvite(m)}>
+                                <Mail className="h-4 w-4 mr-2" />Resend invite
+                              </DropdownMenuItem>
+                            )}
+                            {isLocked(m) && (
+                              <DropdownMenuItem onClick={() => handleUnlock(m)} className="text-amber-600">
+                                <LockOpen className="h-4 w-4 mr-2" />Unlock account
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              onClick={() => setRemoveTarget(m)}
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />Remove
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </TableCell>
                     </TableRow>
                   ))
@@ -302,7 +423,7 @@ export default function UserListMembersPanel({
                   <div className="flex items-center justify-between"><Label>Clear account lock</Label><Switch checked={editForm.clear_lock} onCheckedChange={v => setEditForm(f => ({ ...f, clear_lock: v }))} /></div>
                 </div>
 
-                {/* ── Roles section (project context only) ── */}
+                {/* ── Roles section ── */}
                 {projectId && editTarget && (
                   <div className="space-y-2 pt-1 border-t">
                     <Label>Project Roles</Label>
@@ -354,6 +475,49 @@ export default function UserListMembersPanel({
               </form>
             )
           }
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Sessions dialog ── */}
+      <Dialog open={!!sessionsUser} onOpenChange={v => { if (!v) setSessionsUser(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Active sessions — {sessionsUser?.email}</DialogTitle>
+            <DialogDescription>OAuth2 applications this user has granted access to.</DialogDescription>
+          </DialogHeader>
+          {sessionsLoading
+            ? <div className="space-y-2 py-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
+            : sessions.length === 0
+            ? <p className="text-sm text-muted-foreground py-4 text-center">No active sessions.</p>
+            : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>App</TableHead>
+                    <TableHead>Granted</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sessions.map(s => (
+                    <TableRow key={s.client_id}>
+                      <TableCell className="text-sm font-medium">{s.client_name ?? s.client_id}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{fmtDate(s.granted_at ?? null)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )
+          }
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSessionsUser(null)}>Close</Button>
+            <Button
+              variant="destructive"
+              disabled={revokeAllLoading || sessions.length === 0}
+              onClick={handleRevokeAllSessions}
+            >
+              {revokeAllLoading ? 'Revoking…' : 'Revoke all sessions'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
