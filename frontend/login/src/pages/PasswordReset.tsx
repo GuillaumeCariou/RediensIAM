@@ -59,6 +59,10 @@ export default function PasswordReset() {
     setError('');
     try {
       const res = await confirmPasswordReset(resetToken, password);
+      if (res.error === 'password_breached') {
+        setError(`This password has appeared in ${res.count ? res.count.toLocaleString() : 'multiple'} data breaches. Please choose a different password.`);
+        return;
+      }
       if (res.error) { setError('Reset link expired. Please start over.'); return; }
       setStep('done');
     } catch {

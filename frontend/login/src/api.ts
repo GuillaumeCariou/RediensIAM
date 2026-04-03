@@ -133,3 +133,37 @@ export async function confirmPasswordReset(token: string, newPassword: string) {
   });
   return r.json();
 }
+
+export async function getThemeByProject(projectId: string) {
+  const r = await fetch(`${BASE}/auth/login/theme?project_id=${encodeURIComponent(projectId)}`);
+  if (!r.ok) throw new Error('Failed to load theme');
+  return r.json();
+}
+
+export async function completeInvite(token: string, password: string) {
+  const r = await fetch(`${BASE}/auth/invite/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ token, password }),
+  });
+  return r.json();
+}
+
+export async function setupTotp() {
+  const r = await fetch(`${BASE}/account/mfa/totp/setup`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  return r.json();
+}
+
+export async function confirmTotp(code: string) {
+  const r = await fetch(`${BASE}/account/mfa/totp/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ code }),
+  });
+  return r.json();
+}

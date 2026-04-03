@@ -1,9 +1,11 @@
 import { BrowserRouter, Routes, Route, Navigate, useSearchParams } from 'react-router-dom';
 import Login from './pages/Login';
 import MfaChallenge from './pages/MfaChallenge';
+import MfaSetup from './pages/MfaSetup';
 import PasswordReset from './pages/PasswordReset';
 import Preview from './pages/Preview';
 import Register from './pages/Register';
+import SetPassword from './pages/SetPassword';
 import './index.css';
 
 function OAuthError() {
@@ -28,9 +30,11 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/mfa" element={<MfaChallenge />} />
+        <Route path="/mfa-setup" element={<MfaSetup />} />
         <Route path="/password-reset" element={<PasswordReset />} />
         <Route path="/preview" element={<Preview />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/set-password" element={<SetPassword />} />
         <Route path="/auth/oauth2/error" element={<OAuthError />} />
         <Route path="*" element={<Navigate to="/login" />} />
       </Routes>

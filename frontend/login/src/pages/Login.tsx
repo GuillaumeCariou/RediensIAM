@@ -102,6 +102,12 @@ export default function Login() {
         navigate(`/mfa?login_challenge=${challenge}`);
         return;
       }
+      if (res.requires_mfa_setup) {
+        sessionStorage.setItem('mfa_setup_challenge', challenge);
+        if (res.user_id) sessionStorage.setItem('mfa_setup_user', res.user_id);
+        navigate('/mfa-setup');
+        return;
+      }
       if (res.redirect_to) { window.location.href = res.redirect_to; }
     } catch {
       setError('Something went wrong. Please try again.');

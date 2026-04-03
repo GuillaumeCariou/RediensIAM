@@ -27,6 +27,10 @@ export default function Register() {
     setError('');
     try {
       const res = await registerUser({ login_challenge: challenge, email, password, username: username || undefined });
+      if (res.error === 'password_breached') {
+        setError(`This password has appeared in ${res.count ? res.count.toLocaleString() : 'multiple'} data breaches. Please choose a different password.`);
+        return;
+      }
       if (res.error) { setError(res.error_description ?? 'Registration failed.'); return; }
       if (res.requires_verification) { setSessionId(res.session_id); setStep('otp'); return; }
       if (res.redirect_to) window.location.href = res.redirect_to;
