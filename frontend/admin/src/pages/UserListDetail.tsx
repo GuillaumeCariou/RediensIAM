@@ -47,10 +47,12 @@ export default function UserListDetail() {
     setExporting(true);
     try {
       const blob = await exportUserList(resolvedId);
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
+      a.href = url;
       a.download = `userlist-${resolvedId.slice(0, 8)}-${new Date().toISOString().slice(0, 10)}.csv`;
       a.click();
+      URL.revokeObjectURL(url);
     } finally { setExporting(false); }
   };
 

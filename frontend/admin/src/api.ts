@@ -250,7 +250,7 @@ export async function removePhone() {
 export async function beginWebAuthnRegistration() {
   return (await apiFetch('/account/mfa/webauthn/register/begin', { method: 'POST' })).json();
 }
-export async function completeWebAuthnRegistration(body: object) {
+export async function completeWebAuthnRegistration(body: Record<string, unknown>) {
   return (await apiFetch('/account/mfa/webauthn/register/complete', { method: 'POST', body: JSON.stringify(body) })).json();
 }
 export async function listWebAuthnCredentials() {
@@ -264,7 +264,7 @@ export async function deleteWebAuthnCredential(id: string) {
 export async function getSaApiKeys(saId: string) {
   return (await apiFetch(`/service-accounts/${saId}/api-keys`)).json();
 }
-export async function addSaApiKey(saId: string, jwk: object) {
+export async function addSaApiKey(saId: string, jwk: JsonWebKey) {
   return (await apiFetch(`/service-accounts/${saId}/api-keys`, { method: 'POST', body: JSON.stringify({ jwk }) })).json();
 }
 export async function removeSaApiKey(saId: string) {
@@ -325,8 +325,16 @@ export async function listWebhookDeliveries(id: string) {
 
 // ── Data export ───────────────────────────────────────────────────
 export async function exportUserList(listId: string): Promise<Blob> {
-  const res = await apiFetch(`/org/userlists/${listId}/export?format=csv`);
-  return res.blob();
+  return (await apiFetch(`/org/userlists/${listId}/export?format=csv`)).blob();
+}
+export async function exportOrgAuditLog(orgId: string, isSystemCtx: boolean): Promise<Blob> {
+  const path = isSystemCtx
+    ? `/admin/organizations/${orgId}/export/audit-log?format=csv`
+    : `/org/export/audit-log?format=csv`;
+  return (await apiFetch(path)).blob();
+}
+export async function exportSystemAuditLog(): Promise<Blob> {
+  return (await apiFetch('/admin/export/audit-log?format=csv')).blob();
 }
 
 // ── Org-list manager (org-scoped) ─────────────────────────────────

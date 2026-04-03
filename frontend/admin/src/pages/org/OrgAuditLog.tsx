@@ -4,8 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getAuditLog } from '@/api';
-import { getToken } from '@/auth';
+import { getAuditLog, exportOrgAuditLog } from '@/api';
 import { useOrgContext } from '@/hooks/useOrgContext';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
@@ -28,16 +27,13 @@ export default function OrgAuditLog() {
   const handleExport = async () => {
     setExporting(true);
     try {
-      const token = getToken();
-      const url = isSystemCtx
-        ? `/admin/organizations/${orgId}/export/audit-log?format=csv`
-        : `/org/export/audit-log?format=csv`;
-      const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-      const blob = await res.blob();
+      const blob = await exportOrgAuditLog(orgId ?? '', isSystemCtx);
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
+      a.href = url;
       a.download = `audit-log-${new Date().toISOString().slice(0, 10)}.csv`;
       a.click();
+      URL.revokeObjectURL(url);
     } finally { setExporting(false); }
   };
 
