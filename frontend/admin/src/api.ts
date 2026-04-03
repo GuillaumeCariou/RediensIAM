@@ -224,8 +224,14 @@ export async function revokeAllSessions() {
 export async function getMe() {
   return (await apiFetch('/account/me')).json();
 }
-export async function updateMe(body: { display_name?: string }) {
+export async function updateMe(body: { display_name?: string; new_device_alerts_enabled?: boolean }) {
   return (await apiFetch('/account/me', { method: 'PATCH', body: JSON.stringify(body) })).json();
+}
+export async function getSocialAccounts() {
+  return (await apiFetch('/account/social-accounts')).json();
+}
+export async function unlinkSocialAccount(id: string) {
+  return (await apiFetch(`/account/social-accounts/${id}`, { method: 'DELETE' })).json();
 }
 export async function changePassword(body: { current_password: string; new_password: string }) {
   return (await apiFetch('/account/password', { method: 'PATCH', body: JSON.stringify(body) })).json();

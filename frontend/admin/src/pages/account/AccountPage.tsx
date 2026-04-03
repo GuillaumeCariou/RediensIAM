@@ -9,8 +9,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
+import { Switch } from '@/components/ui/switch';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { getMe, updateMe, changePassword, getMfaStatus, setupTotp, confirmTotp, regenerateBackupCodes, getSessions, revokeSession, revokeAllSessions, setupPhone, verifyPhone, removePhone, beginWebAuthnRegistration, completeWebAuthnRegistration, listWebAuthnCredentials, deleteWebAuthnCredential } from '@/api';
+import { getMe, updateMe, changePassword, getMfaStatus, setupTotp, confirmTotp, regenerateBackupCodes, getSessions, revokeSession, revokeAllSessions, setupPhone, verifyPhone, removePhone, beginWebAuthnRegistration, completeWebAuthnRegistration, listWebAuthnCredentials, deleteWebAuthnCredential, getSocialAccounts, unlinkSocialAccount } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
 
@@ -18,6 +19,7 @@ interface Me {
   id: string; username: string; discriminator: string; email: string;
   display_name: string | null; email_verified: boolean; totp_enabled: boolean;
   last_login_at: string | null; roles: string[]; org_id: string; project_id: string;
+  new_device_alerts_enabled: boolean;
 }
 interface MfaStatus { totp_enabled: boolean; backup_codes_remaining: number; phone_verified: boolean; }
 
@@ -35,6 +37,7 @@ function ProfileTab({ me, onUpdated }: { me: Me; onUpdated: () => void }) {
   const [displayName, setDisplayName] = useState(me.display_name ?? '');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [newDeviceAlerts, setNewDeviceAlerts] = useState(me.new_device_alerts_enabled);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,6 +48,11 @@ function ProfileTab({ me, onUpdated }: { me: Me; onUpdated: () => void }) {
       setTimeout(() => setSaved(false), 2000);
       onUpdated();
     } finally { setSaving(false); }
+  };
+
+  const handleToggleNewDeviceAlerts = async (value: boolean) => {
+    setNewDeviceAlerts(value);
+    await updateMe({ new_device_alerts_enabled: value });
   };
 
   return (
@@ -98,7 +106,7 @@ function ProfileTab({ me, onUpdated }: { me: Me; onUpdated: () => void }) {
           <CardTitle className="text-base">Display Name</CardTitle>
           <CardDescription>Shown instead of your username in some views.</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           <form onSubmit={handleSave} className="flex gap-3 items-end">
             <div className="flex-1 space-y-2">
               <Label htmlFor="display-name">Display name</Label>
@@ -113,6 +121,15 @@ function ProfileTab({ me, onUpdated }: { me: Me; onUpdated: () => void }) {
               {saved ? <><Check className="h-4 w-4" />Saved</> : saving ? 'Saving…' : 'Save'}
             </Button>
           </form>
+          <div className="flex items-center justify-between pt-4 border-t">
+            <div>
+              <p className="font-medium text-sm">New device login alerts</p>
+              <p className="text-xs text-muted-foreground">
+                Receive an email when you log in from a device or location not seen in the last 90 days.
+              </p>
+            </div>
+            <Switch checked={newDeviceAlerts} onCheckedChange={handleToggleNewDeviceAlerts} />
+          </div>
         </CardContent>
       </Card>
     </div>
@@ -120,6 +137,12 @@ function ProfileTab({ me, onUpdated }: { me: Me; onUpdated: () => void }) {
 }
 
 // ── Security tab ──────────────────────────────────────────────────
+interface SocialAccount { id: string; provider: string; email: string | null; linked_at: string; }
+
+const PROVIDER_LABELS: Record<string, string> = {
+  google: 'Google', github: 'GitHub', gitlab: 'GitLab', facebook: 'Facebook',
+};
+
 function SecurityTab() {
   const [form, setForm] = useState({ current: '', next: '', confirm: '' });
   const [saving, setSaving] = useState(false);
@@ -127,6 +150,18 @@ function SecurityTab() {
   const [success, setSuccess] = useState(false);
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNext, setShowNext] = useState(false);
+
+  // Linked accounts
+  const [linked, setLinked] = useState<SocialAccount[]>([]);
+  const [linkedLoading, setLinkedLoading] = useState(true);
+  const [unlinkError, setUnlinkError] = useState('');
+  const [unlinking, setUnlinking] = useState<string | null>(null);
+
+  const loadLinked = () => {
+    setLinkedLoading(true);
+    getSocialAccounts().then((d: SocialAccount[]) => setLinked(Array.isArray(d) ? d : [])).catch(console.error).finally(() => setLinkedLoading(false));
+  };
+  useEffect(loadLinked, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -144,42 +179,115 @@ function SecurityTab() {
     finally { setSaving(false); }
   };
 
+  const handleUnlink = async (id: string) => {
+    setUnlinkError('');
+    setUnlinking(id);
+    try {
+      const res = await unlinkSocialAccount(id);
+      if (res.error === 'cannot_remove_last_auth_method') {
+        setUnlinkError('Cannot unlink — this is your only login method. Set a password first.');
+        return;
+      }
+      loadLinked();
+    } finally { setUnlinking(null); }
+  };
+
+  const linkedProviders = new Set(linked.map(l => l.provider));
+  const availableToConnect = Object.keys(PROVIDER_LABELS).filter(p => !linkedProviders.has(p));
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Change Password</CardTitle>
-        <CardDescription>Your password must be at least 8 characters.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4 max-w-sm">
-          {error && <Alert variant="destructive" className="text-sm py-2 px-3">{error}</Alert>}
-          {success && <Alert className="text-sm py-2 px-3 border-green-500 text-green-700">Password changed successfully.</Alert>}
-          <div className="space-y-2">
-            <Label>Current password</Label>
-            <div className="relative">
-              <Input type={showCurrent ? 'text' : 'password'} value={form.current} onChange={e => setForm(f => ({ ...f, current: e.target.value }))} required />
-              <Button type="button" variant="ghost" size="icon" className="absolute right-0 top-0 h-full px-3" onClick={() => setShowCurrent(v => !v)}>
-                {showCurrent ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </Button>
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Change Password</CardTitle>
+          <CardDescription>Your password must be at least 8 characters.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4 max-w-sm">
+            {error && <Alert variant="destructive" className="text-sm py-2 px-3">{error}</Alert>}
+            {success && <Alert className="text-sm py-2 px-3 border-green-500 text-green-700">Password changed successfully.</Alert>}
+            <div className="space-y-2">
+              <Label>Current password</Label>
+              <div className="relative">
+                <Input type={showCurrent ? 'text' : 'password'} value={form.current} onChange={e => setForm(f => ({ ...f, current: e.target.value }))} required />
+                <Button type="button" variant="ghost" size="icon" className="absolute right-0 top-0 h-full px-3" onClick={() => setShowCurrent(v => !v)}>
+                  {showCurrent ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+              </div>
             </div>
-          </div>
-          <div className="space-y-2">
-            <Label>New password</Label>
-            <div className="relative">
-              <Input type={showNext ? 'text' : 'password'} value={form.next} onChange={e => setForm(f => ({ ...f, next: e.target.value }))} required />
-              <Button type="button" variant="ghost" size="icon" className="absolute right-0 top-0 h-full px-3" onClick={() => setShowNext(v => !v)}>
-                {showNext ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </Button>
+            <div className="space-y-2">
+              <Label>New password</Label>
+              <div className="relative">
+                <Input type={showNext ? 'text' : 'password'} value={form.next} onChange={e => setForm(f => ({ ...f, next: e.target.value }))} required />
+                <Button type="button" variant="ghost" size="icon" className="absolute right-0 top-0 h-full px-3" onClick={() => setShowNext(v => !v)}>
+                  {showNext ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+              </div>
             </div>
-          </div>
-          <div className="space-y-2">
-            <Label>Confirm new password</Label>
-            <Input type="password" value={form.confirm} onChange={e => setForm(f => ({ ...f, confirm: e.target.value }))} required />
-          </div>
-          <Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Change Password'}</Button>
-        </form>
-      </CardContent>
-    </Card>
+            <div className="space-y-2">
+              <Label>Confirm new password</Label>
+              <Input type="password" value={form.confirm} onChange={e => setForm(f => ({ ...f, confirm: e.target.value }))} required />
+            </div>
+            <Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Change Password'}</Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Linked Accounts</CardTitle>
+          <CardDescription>Social accounts connected to your profile for sign-in.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {unlinkError && <Alert variant="destructive" className="text-sm py-2 px-3">{unlinkError}</Alert>}
+          {linkedLoading ? (
+            <Skeleton className="h-12 w-full" />
+          ) : linked.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No linked accounts.</p>
+          ) : (
+            <div className="space-y-2">
+              {linked.map(acc => (
+                <div key={acc.id} className="flex items-center justify-between rounded-lg border px-4 py-3">
+                  <div className="space-y-0.5">
+                    <p className="text-sm font-medium">{PROVIDER_LABELS[acc.provider] ?? acc.provider}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {acc.email ? `${acc.email} · ` : ''}Linked {fmtDate(acc.linked_at)}
+                    </p>
+                  </div>
+                  <Button
+                    variant="ghost" size="sm"
+                    className="text-destructive hover:text-destructive"
+                    disabled={unlinking === acc.id}
+                    onClick={() => handleUnlink(acc.id)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    {unlinking === acc.id ? 'Unlinking…' : 'Unlink'}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {availableToConnect.length > 0 && (
+            <div className="space-y-2 pt-2 border-t">
+              <p className="text-sm text-muted-foreground">Connect a provider</p>
+              <div className="flex flex-wrap gap-2">
+                {availableToConnect.map(provider => (
+                  <Button
+                    key={provider}
+                    variant="outline"
+                    size="sm"
+                    onClick={() => { window.location.href = `/auth/oauth2/link/start?provider=${provider}`; }}
+                  >
+                    {PROVIDER_LABELS[provider]}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
