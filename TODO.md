@@ -918,27 +918,27 @@ No new API function needed — `updateMe()` already calls `PATCH /account/me` an
 
 | ID  | Item                                 | Priority | Backend | Frontend |
 |-----|--------------------------------------|----------|---------|----------|
-| A1  | Encrypt social login client_secrets  | 🔴 CRIT  | ✅      | ✎ Authentication.tsx — providers secret placeholder |
+| A1  | Encrypt social login client_secrets  | 🔴 CRIT  | ✅      | ✅ Authentication.tsx — providers secret placeholder |
 | A2  | Security headers middleware           | 🔴 HIGH  | ✅      | —        |
 | A3  | Rate limit registration endpoints     | 🔴 HIGH  | ✅      | —        |
 | A4  | Constant-time OTP comparison          | 🟡 MED   | ✅      | —        |
 | A5  | Email enumeration fix                 | 🟡 MED   | ✅      | —        |
-| B1  | User invitation flow                  | 🔴 HIGH  | ✅      | ✎ Login SPA: SetPassword.tsx (new) · Admin SPA: UserListMembersPanel badge + resend |
-| B2  | Admin account unlock                  | 🔴 HIGH  | ✅      | ✎ UserListMembersPanel: locked badge + unlock button |
-| B3  | Mandatory MFA per project             | 🔴 HIGH  | ✅      | ✎ Authentication.tsx toggle · Login SPA: Login.tsx + MfaSetup.tsx (new) |
-| B4  | System service accounts CRUD + PATs   | 🔴 HIGH  | ✅      | ✎ Verify/complete SystemServiceAccounts.tsx + ServiceAccountDetail.tsx |
-| B5  | Webhooks                              | 🔴 HIGH  | ✅      | ✎ OrgWebhooks.tsx (new) + routing + sidebar |
+| B1  | User invitation flow                  | 🔴 HIGH  | ✅      | ✅ Login SPA: SetPassword.tsx (new) · Admin SPA: UserListMembersPanel badge + resend |
+| B2  | Admin account unlock                  | 🔴 HIGH  | ✅      | ✅ UserListMembersPanel: locked badge + unlock button |
+| B3  | Mandatory MFA per project             | 🔴 HIGH  | ✅      | ✅ Authentication.tsx toggle · Login SPA: Login.tsx + MfaSetup.tsx (new) |
+| B4  | System service accounts CRUD + PATs   | 🔴 HIGH  | ✅      | ✅ Verify/complete SystemServiceAccounts.tsx + ServiceAccountDetail.tsx |
+| B5  | Webhooks                              | 🔴 HIGH  | ✅      | ✅ OrgWebhooks.tsx (new) + routing + sidebar |
 | C1  | OpenAPI / Swagger                     | 🟡 MED   | ✅      | —        |
-| C2  | Account linking (social providers)    | 🟡 MED   | ✅      | ✎ AccountPage.tsx Security tab: Linked Accounts section |
-| C3  | Session visibility for admins         | 🟡 MED   | ✅      | ✎ UserListMembersPanel: Sessions dialog |
+| C2  | Account linking (social providers)    | 🟡 MED   | ✅      | ✅ AccountPage.tsx Security tab: Linked Accounts section |
+| C3  | Session visibility for admins         | 🟡 MED   | ✅      | ✅ UserListMembersPanel: Sessions dialog |
 | C4  | Prometheus metrics endpoint           | 🟡 MED   | ✅      | —        |
-| C5  | Breach password check (HIBP)          | 🟡 MED   | ✅      | ✎ Authentication.tsx toggle · Login SPA: Register.tsx + PasswordReset.tsx error handling |
-| C6  | IP allowlist per project              | 🟡 MED   | ✅      | ✎ Authentication.tsx: new Security tab with CIDR textarea |
-| C7  | Custom OAuth2 scopes per project      | 🟡 MED   | ✅      | ✎ Authentication.tsx Providers tab: custom scopes tag input |
-| D1  | Audit log retention policy            | 🟡 MED   | ✅      | ✎ OrgSettings.tsx (new) + routing + sidebar |
-| D2  | Data export (CSV/JSON)                | 🟢 LOW   | ✅      | ✎ OrgAuditLog.tsx + AuditLog.tsx + UserListDetail.tsx: export buttons |
-| E1  | SAML 2.0 enterprise federation        | 🟢 LOW   | ✅      | ✎ Authentication.tsx Providers tab: SAML section · Login SPA: Login.tsx SAML buttons |
-| E2  | Suspicious login / new device alert   | 🟢 LOW   | ✅      | ✎ AccountPage.tsx Profile tab: toggle |
+| C5  | Breach password check (HIBP)          | 🟡 MED   | ✅      | ✅ Authentication.tsx toggle · Login SPA: Register.tsx + PasswordReset.tsx error handling |
+| C6  | IP allowlist per project              | 🟡 MED   | ✅      | ✅ Authentication.tsx: new Security tab with CIDR textarea |
+| C7  | Custom OAuth2 scopes per project      | 🟡 MED   | ✅      | ✅ Authentication.tsx Providers tab: custom scopes tag input |
+| D1  | Audit log retention policy            | 🟡 MED   | ✅      | ✅ OrgSettings.tsx (new) + routing + sidebar |
+| D2  | Data export (CSV/JSON)                | 🟢 LOW   | ✅      | ✅ OrgAuditLog.tsx + AuditLog.tsx + UserListDetail.tsx: export buttons |
+| E1  | SAML 2.0 enterprise federation        | 🟢 LOW   | ✅      | ✅ Authentication.tsx Providers tab: SAML section · Login SPA: Login.tsx SAML buttons |
+| E2  | Suspicious login / new device alert   | 🟢 LOW   | ✅      | ✅ AccountPage.tsx Profile tab: toggle |
 
 ---
 
