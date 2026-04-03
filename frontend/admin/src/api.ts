@@ -298,6 +298,37 @@ export async function getMetrics() {
   return (await apiFetch('/admin/metrics')).json();
 }
 
+// ── Org info (update) ─────────────────────────────────────────────
+export async function updateOrgInfo(patch: { audit_retention_days?: number | null }) {
+  return (await apiFetch('/org/info', { method: 'PATCH', body: JSON.stringify(patch) })).json();
+}
+
+// ── Webhooks ──────────────────────────────────────────────────────
+export async function listWebhooks() {
+  return (await apiFetch('/org/webhooks')).json();
+}
+export async function createWebhook(body: { url: string; events: string[] }) {
+  return (await apiFetch('/org/webhooks', { method: 'POST', body: JSON.stringify(body) })).json();
+}
+export async function updateWebhook(id: string, patch: { active?: boolean; url?: string; events?: string[] }) {
+  return (await apiFetch(`/org/webhooks/${id}`, { method: 'PATCH', body: JSON.stringify(patch) })).json();
+}
+export async function deleteWebhook(id: string) {
+  return apiFetch(`/org/webhooks/${id}`, { method: 'DELETE' });
+}
+export async function testWebhook(id: string) {
+  return (await apiFetch(`/org/webhooks/${id}/test`, { method: 'POST' })).json();
+}
+export async function listWebhookDeliveries(id: string) {
+  return (await apiFetch(`/org/webhooks/${id}/deliveries`)).json();
+}
+
+// ── Data export ───────────────────────────────────────────────────
+export async function exportUserList(listId: string): Promise<Blob> {
+  const res = await apiFetch(`/org/userlists/${listId}/export?format=csv`);
+  return res.blob();
+}
+
 // ── Org-list manager (org-scoped) ─────────────────────────────────
 export async function listOrgListManagers() {
   return (await apiFetch('/org/admins')).json();

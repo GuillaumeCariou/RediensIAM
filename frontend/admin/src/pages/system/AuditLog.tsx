@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { ScrollText, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ScrollText, ChevronLeft, ChevronRight, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getAuditLog } from '@/api';
+import { getToken } from '@/auth';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
 
@@ -43,6 +44,20 @@ export default function AuditLog() {
   const [loading, setLoading] = useState(true);
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const token = getToken();
+      const res = await fetch('/admin/export/audit-log?format=csv', { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `audit-log-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+    } finally { setExporting(false); }
+  };
 
   const load = (off: number) => {
     setLoading(true);
@@ -63,7 +78,15 @@ export default function AuditLog() {
 
   return (
     <div>
-      <PageHeader title="Audit Log" description="Complete history of all administrative actions" />
+      <PageHeader
+        title="Audit Log"
+        description="Complete history of all administrative actions"
+        action={
+          <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting}>
+            <Download className="h-4 w-4" />{exporting ? 'Exporting…' : 'Export CSV'}
+          </Button>
+        }
+      />
       <div className="p-6 space-y-4">
         <div className="rounded-xl border bg-card overflow-hidden">
           <Table>

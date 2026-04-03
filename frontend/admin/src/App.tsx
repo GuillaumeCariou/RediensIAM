@@ -29,6 +29,8 @@ import Projects from './pages/org/Projects';
 import OrgServiceAccounts from './pages/org/OrgServiceAccounts';
 import OrgAuditLog from './pages/org/OrgAuditLog';
 import OrgEmail from './pages/org/OrgEmail';
+import OrgWebhooks from './pages/org/OrgWebhooks';
+import OrgSettings from './pages/org/OrgSettings';
 
 // Project pages
 import ProjectDashboard from './pages/project/ProjectDashboard';
@@ -82,6 +84,8 @@ function AppRoutes() {
           <Route path="system/organisations/:id/service-accounts/:saId" element={<ServiceAccountDetail />} />
           <Route path="system/organisations/:id/audit-log" element={<OrgAuditLog />} />
           <Route path="system/organisations/:id/email" element={<OrgEmail />} />
+          <Route path="system/organisations/:id/webhooks" element={<OrgWebhooks />} />
+          <Route path="system/organisations/:id/settings" element={<OrgSettings />} />
           <Route path="system/organisations/:oid/projects/:pid" element={<SystemProjectDetail />} />
           <Route path="system/organisations/:oid/projects/:pid/users" element={<ProjectUsers />} />
           <Route path="system/organisations/:oid/projects/:pid/roles" element={<ProjectRoles />} />
@@ -110,6 +114,8 @@ function AppRoutes() {
           <Route path="org/service-accounts/:saId" element={<ServiceAccountDetail />} />
           <Route path="org/audit-log" element={<OrgAuditLog />} />
           <Route path="org/email" element={<OrgEmail />} />
+          <Route path="org/webhooks" element={<OrgWebhooks />} />
+          <Route path="org/settings" element={<OrgSettings />} />
         </Route>
 
         {/* Project — project_manager (and above) */}

@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Building2, Users, List, FolderKanban,
   Shield, Bot, ScrollText, BarChart3, LogOut, ChevronRight,
-  Sun, Moon, Monitor, KeyRound, Settings, UserCog, User, ChevronDown, Mail,
+  Sun, Moon, Monitor, KeyRound, Settings, UserCog, User, ChevronDown, Mail, Zap,
 } from 'lucide-react';
 import { useTheme, type Theme } from '@/context/ThemeContext';
 import { cn } from '@/lib/utils';
@@ -45,6 +45,8 @@ const orgNav: NavItem[] = [
   { label: 'Service Accounts', to: '/org/service-accounts',  icon: <Bot className="h-4 w-4" /> },
   { label: 'Email',            to: '/org/email',             icon: <Mail className="h-4 w-4" /> },
   { label: 'Audit Log',        to: '/org/audit-log',         icon: <ScrollText className="h-4 w-4" /> },
+  { label: 'Webhooks',         to: '/org/webhooks',          icon: <Zap className="h-4 w-4" /> },
+  { label: 'Settings',         to: '/org/settings',          icon: <Settings className="h-4 w-4" /> },
 ];
 
 const projectNav: NavItem[] = [
@@ -129,6 +131,8 @@ export default function Sidebar() {
     { label: 'Service Accounts', to: `${sysOrgBase}/service-accounts`,   icon: <Bot           className="h-4 w-4" /> },
     { label: 'Email',            to: `${sysOrgBase}/email`,              icon: <Mail          className="h-4 w-4" /> },
     { label: 'Audit Log',        to: `${sysOrgBase}/audit-log`,          icon: <ScrollText    className="h-4 w-4" /> },
+    { label: 'Webhooks',         to: `${sysOrgBase}/webhooks`,           icon: <Zap           className="h-4 w-4" /> },
+    { label: 'Settings',         to: `${sysOrgBase}/settings`,           icon: <Settings      className="h-4 w-4" /> },
   ] : [];
 
   const sysProjNav: NavItem[] = sysProjBase ? [

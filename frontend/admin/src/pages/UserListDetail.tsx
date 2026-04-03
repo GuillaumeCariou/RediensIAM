@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Sparkles } from 'lucide-react';
+import { ArrowLeft, Sparkles, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getUserList, getSystemUserList, cleanupUserList } from '@/api';
+import { getUserList, getSystemUserList, cleanupUserList, exportUserList } from '@/api';
 import { useOrgContext } from '@/hooks/useOrgContext';
 import PageHeader from '@/components/layout/PageHeader';
 import UserListMembersPanel from '@/components/UserListMembersPanel';
@@ -25,6 +25,7 @@ export default function UserListDetail() {
   const [list, setList] = useState<UserList | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const [exporting, setExporting] = useState(false);
   const [cleanupOpen, setCleanupOpen]         = useState(false);
   const [cleanupDryRun, setCleanupDryRun]     = useState(true);
   const [cleanupInactive, setCleanupInactive] = useState(false);
@@ -40,6 +41,18 @@ export default function UserListDetail() {
     const fetch = isSystemCtx ? getSystemUserList(resolvedId) : getUserList(resolvedId);
     fetch.then(setList).catch(console.error).finally(() => setLoading(false));
   }, [resolvedId, isSystemCtx]);
+
+  const handleExport = async () => {
+    if (!resolvedId) return;
+    setExporting(true);
+    try {
+      const blob = await exportUserList(resolvedId);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `userlist-${resolvedId.slice(0, 8)}-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+    } finally { setExporting(false); }
+  };
 
   const handleCleanup = async () => {
     if (!resolvedId) return;
@@ -66,6 +79,9 @@ export default function UserListDetail() {
               ? <Badge variant="secondary">Immovable</Badge>
               : <Badge variant="outline">Movable</Badge>
             )}
+            <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting}>
+              <Download className="h-4 w-4" />{exporting ? 'Exporting…' : 'Export CSV'}
+            </Button>
             <Button variant="outline" onClick={() => { setCleanupResult(null); setCleanupOpen(true); }}>
               <Sparkles className="h-4 w-4" />Cleanup
             </Button>

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getAuditLog } from '@/api';
+import { getToken } from '@/auth';
 import { useOrgContext } from '@/hooks/useOrgContext';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
@@ -17,11 +18,28 @@ interface AuditEntry {
 const PAGE_SIZE = 50;
 
 export default function OrgAuditLog() {
-  const { orgId } = useOrgContext();
+  const { orgId, isSystemCtx } = useOrgContext();
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const token = getToken();
+      const url = isSystemCtx
+        ? `/admin/organizations/${orgId}/export/audit-log?format=csv`
+        : `/org/export/audit-log?format=csv`;
+      const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `audit-log-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+    } finally { setExporting(false); }
+  };
 
   const load = (off: number) => {
     setLoading(true);
@@ -36,7 +54,15 @@ export default function OrgAuditLog() {
 
   return (
     <div>
-      <PageHeader title="Audit Log" description="Actions performed within this organisation" />
+      <PageHeader
+        title="Audit Log"
+        description="Actions performed within this organisation"
+        action={
+          <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting}>
+            <Download className="h-4 w-4" />{exporting ? 'Exporting…' : 'Export CSV'}
+          </Button>
+        }
+      />
       <div className="p-6 space-y-4">
         <div className="rounded-xl border bg-card overflow-hidden">
           <Table>
