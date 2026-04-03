@@ -119,8 +119,24 @@ export async function updateProject(id: string, body: {
   password_require_uppercase?: boolean; password_require_lowercase?: boolean;
   password_require_digit?: boolean; password_require_special?: boolean;
   email_from_name?: string; clear_email_from_name?: boolean;
+  require_mfa?: boolean; check_breached_passwords?: boolean;
+  ip_allowlist?: string[]; allowed_scopes?: string[];
 }) {
   return (await apiFetch(`/project/info?project_id=${id}`, { method: 'PATCH', body: JSON.stringify(body) })).json();
+}
+
+// ── SAML providers ────────────────────────────────────────────────
+export async function listSamlProviders(projectId: string) {
+  return (await apiFetch(`/admin/projects/${projectId}/saml-providers`)).json();
+}
+export async function createSamlProvider(projectId: string, body: {
+  entity_id: string; metadata_url?: string; email_attribute_name?: string;
+  name_attribute_name?: string; jit_provisioning?: boolean; active?: boolean;
+}) {
+  return (await apiFetch(`/admin/projects/${projectId}/saml-providers`, { method: 'POST', body: JSON.stringify(body) })).json();
+}
+export async function deleteSamlProvider(projectId: string, idpId: string) {
+  return apiFetch(`/admin/projects/${projectId}/saml-providers/${idpId}`, { method: 'DELETE' });
 }
 export async function deleteProject(id: string) {
   return apiFetch(`/org/projects/${id}`, { method: 'DELETE' });
