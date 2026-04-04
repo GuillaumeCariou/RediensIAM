@@ -39,8 +39,7 @@ public sealed record WebhookJob(
 public class WebhookService(
     RediensIamDbContext db,
     AppConfig appConfig,
-    Channel<WebhookJob> channel,
-    ILogger<WebhookService> logger)
+    Channel<WebhookJob> channel)
 {
     private static readonly JsonSerializerOptions JsonOpts = new()
         { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };

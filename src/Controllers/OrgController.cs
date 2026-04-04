@@ -127,7 +127,7 @@ public class OrgController(
             .FirstOrDefaultAsync(p => p.Id == id && (isSuperAdmin || p.OrgId == OrgId));
         if (project == null) return NotFound();
         // Strip client secrets before exposing to caller
-        project.LoginTheme = TotpEncryption.StripSecretsFromTheme(project.LoginTheme);
+        project.LoginTheme = TotpEncryption.StripSecretsFromTheme(project.LoginTheme) ?? project.LoginTheme;
         return Ok(project);
     }
 

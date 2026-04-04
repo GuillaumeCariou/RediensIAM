@@ -38,8 +38,6 @@ const EVENT_GROUPS: { label: string; events: string[] }[] = [
   { label: 'Session events', events: ['session.revoked'] },
   { label: 'Project events', events: ['project.updated'] },
 ];
-const ALL_EVENTS = EVENT_GROUPS.flatMap(g => g.events);
-
 export default function OrgWebhooks() {
   const [webhooks, setWebhooks] = useState<Webhook[]>([]);
   const [loading, setLoading] = useState(true);
@@ -57,7 +55,6 @@ export default function OrgWebhooks() {
 
   // Deliveries dialog
   const [deliveriesOpen, setDeliveriesOpen] = useState(false);
-  const [deliveriesFor, setDeliveriesFor] = useState<string>('');
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [deliveriesLoading, setDeliveriesLoading] = useState(false);
   const [expandedDelivery, setExpandedDelivery] = useState<string | null>(null);
@@ -111,7 +108,6 @@ export default function OrgWebhooks() {
   };
 
   const openDeliveries = (id: string) => {
-    setDeliveriesFor(id);
     setDeliveriesOpen(true);
     setExpandedDelivery(null);
     setDeliveriesLoading(true);
