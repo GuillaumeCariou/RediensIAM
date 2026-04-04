@@ -15,6 +15,8 @@ public interface IEmailService
     Task SendOtpAsync(string to, string code, string purpose, Guid? orgId = null, Guid? projectId = null);
     Task SendInviteAsync(string to, string inviteUrl, string orgName, Guid? projectId = null);
     Task SendNewDeviceAlertAsync(string to, string ipAddress, string userAgent, DateTimeOffset loginAt);
+    /// <summary>Connect, optionally authenticate, then disconnect. Throws on failure.</summary>
+    Task CheckConnectivityAsync();
 }
 
 public class StubEmailService(ILogger<StubEmailService> logger) : IEmailService
@@ -36,6 +38,8 @@ public class StubEmailService(ILogger<StubEmailService> logger) : IEmailService
         logger.LogWarning("[STUB EMAIL] NewDevice To={To} Ip={Ip}", to, ipAddress);
         return Task.CompletedTask;
     }
+
+    public Task CheckConnectivityAsync() => Task.CompletedTask;
 }
 
 public class SmtpEmailService(
@@ -209,6 +213,18 @@ public class SmtpEmailService(
         if (!string.IsNullOrEmpty(appConfig.SmtpUsername))
             await client.AuthenticateAsync(appConfig.SmtpUsername, appConfig.SmtpPassword);
         await client.SendAsync(message);
+        await client.DisconnectAsync(true);
+    }
+
+    public async Task CheckConnectivityAsync()
+    {
+        if (string.IsNullOrEmpty(appConfig.SmtpHost))
+            throw new InvalidOperationException("SMTP not configured");
+        using var client = new SmtpClient();
+        await client.ConnectAsync(appConfig.SmtpHost, appConfig.SmtpPort,
+            appConfig.SmtpStartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.Auto);
+        if (!string.IsNullOrEmpty(appConfig.SmtpUsername))
+            await client.AuthenticateAsync(appConfig.SmtpUsername, appConfig.SmtpPassword);
         await client.DisconnectAsync(true);
     }
 }

@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Building2, Users, List, FolderKanban,
   Shield, Bot, ScrollText, BarChart3, LogOut, ChevronRight,
-  Sun, Moon, Monitor, KeyRound, Settings, UserCog, User, ChevronDown, Mail, Zap,
+  Sun, Moon, Monitor, KeyRound, Settings, UserCog, User, ChevronDown, Mail, Zap, HeartPulse,
 } from 'lucide-react';
 import { useTheme, type Theme } from '@/context/ThemeContext';
 import { cn } from '@/lib/utils';
@@ -34,7 +34,8 @@ const systemNav: NavItem[] = [
   { label: 'Service Accounts', to: '/system/service-accounts', icon: <Bot className="h-4 w-4" />,         superOnly: true },
   { label: 'Email',            to: '/system/email',            icon: <Mail className="h-4 w-4" />,        superOnly: true },
   { label: 'Audit Log',        to: '/system/audit-log',        icon: <ScrollText className="h-4 w-4" /> },
-  { label: 'Metrics',          to: '/system/metrics',          icon: <BarChart3 className="h-4 w-4" /> },
+  { label: 'Metrics',          to: '/system/metrics',          icon: <BarChart3    className="h-4 w-4" /> },
+  { label: 'Health',           to: '/system/health',           icon: <HeartPulse  className="h-4 w-4" />, superOnly: true },
 ];
 
 const orgNav: NavItem[] = [

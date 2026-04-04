@@ -23,7 +23,9 @@ public class AppConfig(IConfiguration config)
     // ── App URLs ──────────────────────────────────────────────────────────────
     public string PublicUrl      => config["App:PublicUrl"] ?? "http://localhost";
     public string Domain         => config["App:Domain"] ?? throw new InvalidOperationException("App:Domain configuration is required");
-    public string AdminSpaOrigin => config["App:AdminSpaOrigin"] ?? "http://localhost:5001";
+    // External URL where the admin SPA is reachable (NodePort / SSH tunnel / private ingress).
+    // Used for redirect_uri and post_logout_redirect in the OIDC flow.
+    public string AdminSpaOrigin => config["App:AdminSpaOrigin"] ?? $"{PublicUrl}";
 
     // ── SMTP ──────────────────────────────────────────────────────────────────
     public string? SmtpHost        => config["Smtp:Host"];
@@ -63,7 +65,11 @@ public class AppConfig(IConfiguration config)
     public int ExportRateLimitMinutes => config.GetValue<int>("Export:RateLimitMinutes", 1);
 
     // ── External services ─────────────────────────────────────────────────────
-    public string KetoReadUrl   => config["Keto:ReadUrl"]   ?? "http://keto-read:4466";
-    public string KetoWriteUrl  => config["Keto:WriteUrl"]  ?? "http://keto-write:4467";
-    public string HydraAdminUrl => config["Hydra:AdminUrl"] ?? "http://hydra:4445";
+    // Override these env vars to point at external (off-cluster) service instances:
+    //   Hydra__AdminUrl, Hydra__PublicUrl, Keto__ReadUrl, Keto__WriteUrl
+    //   ConnectionStrings__Default, Cache__ConnectionString
+    public string HydraAdminUrl  => config["Hydra:AdminUrl"]  ?? "http://rediensiam-hydra-admin:4445";
+    public string HydraPublicUrl => config["Hydra:PublicUrl"] ?? "http://rediensiam-hydra-public:4444";
+    public string KetoReadUrl    => config["Keto:ReadUrl"]    ?? "http://rediensiam-keto-read:4466";
+    public string KetoWriteUrl   => config["Keto:WriteUrl"]   ?? "http://rediensiam-keto-write:4467";
 }

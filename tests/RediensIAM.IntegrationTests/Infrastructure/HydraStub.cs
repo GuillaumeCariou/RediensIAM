@@ -25,6 +25,15 @@ public sealed class HydraStub : IDisposable
 
     private void SetupDefaults()
     {
+        // Health / version — used by SystemHealthController
+        _server
+            .Given(Request.Create().WithPath("/health/alive").UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { status = "ok" }));
+
+        _server
+            .Given(Request.Create().WithPath("/version").UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { version = "v2.0.0-stub" }));
+
         // Clients — return empty list and accept any create/delete
         _server
             .Given(Request.Create().WithPath("/admin/clients").UsingGet())

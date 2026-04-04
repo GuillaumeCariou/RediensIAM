@@ -33,6 +33,20 @@ public sealed class KetoStub : IDisposable
         _readServer.Reset();
         _writeServer.Reset();
 
+        // Health / version — used by SystemHealthController
+        _readServer
+            .Given(Request.Create().WithPath("/health/alive").UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { status = "ok" }));
+        _readServer
+            .Given(Request.Create().WithPath("/version").UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { version = "v0.12.0-stub" }));
+        _writeServer
+            .Given(Request.Create().WithPath("/health/alive").UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { status = "ok" }));
+        _writeServer
+            .Given(Request.Create().WithPath("/version").UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { version = "v0.12.0-stub" }));
+
         // Check: always allowed
         _readServer
             .Given(Request.Create().WithPath("/relation-tuples/check").UsingGet())

@@ -49,6 +49,7 @@ builder.Services.AddSession(o =>
 builder.Services.AddHttpClient("hydra-admin");
 builder.Services.AddHttpClient("keto-read");
 builder.Services.AddHttpClient("keto-write");
+builder.Services.AddHttpClient("health", c => c.Timeout = TimeSpan.FromSeconds(5));
 builder.Services.AddHttpClient();
 builder.Services.AddMemoryCache();
 
@@ -317,8 +318,9 @@ app.UseStaticFiles();
 app.UseRouting();
 app.MapHealthChecks("/health");
 
-// Protect account/project/org/internal routes — admin SPA loads without auth (handles PKCE itself)
-var protectedPrefixes = new[] { "/account", "/project", "/org", "/internal", "/service-accounts" };
+// Protect account/project/org/internal/manage/system routes — admin SPA loads without auth (handles PKCE itself)
+// /admin/system is always auth-gated (no browser SPA navigation hits it, only API calls)
+var protectedPrefixes = new[] { "/account", "/project", "/org", "/internal", "/service-accounts", "/api/manage", "/admin/system" };
 app.UseWhen(
     ctx => protectedPrefixes.Any(p => ctx.Request.Path.StartsWithSegments(p)),
     branch => branch.UseMiddleware<GatewayAuthMiddleware>());
@@ -332,21 +334,9 @@ app.UseWhen(
         && (ctx.Request.Headers.ContainsKey("Authorization") || ctx.Request.Method != HttpMethods.Get),
     branch => branch.UseMiddleware<GatewayAuthMiddleware>());
 
-// Block admin/internal on public port
-app.Use(async (ctx, next) =>
-{
-    var isAdminRoute = ctx.Request.Path.StartsWithSegments("/admin") || ctx.Request.Path.StartsWithSegments("/internal");
-    if (isAdminRoute && ctx.Connection.LocalPort == appConfig.PublicPort)
-    {
-        ctx.Response.StatusCode = 404;
-        return;
-    }
-    await next(ctx);
-});
-
 // Public — no auth required; must be a minimal endpoint to bypass [RequireManagementLevel] on SystemAdminController
 app.MapGet("/admin/config", (AppConfig cfg) => Results.Json(
-    new { hydra_url = cfg.PublicUrl, client_id = Roles.AdminClientId, redirect_uri = $"{cfg.PublicUrl}/admin/callback" },
+    new { hydra_url = cfg.PublicUrl, client_id = Roles.AdminClientId, redirect_uri = $"{cfg.AdminSpaOrigin}/admin/callback" },
     new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower }));
 
 app.MapControllers();

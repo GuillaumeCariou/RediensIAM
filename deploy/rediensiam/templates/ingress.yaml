@@ -12,20 +12,13 @@ spec:
     - host: {{ .Values.ingress.host }}
       http:
         paths:
-          - path: /admin
+          - path: /api/manage
             pathType: Prefix
             backend:
               service:
-                name: {{ .Release.Name }}-admin
+                name: {{ .Release.Name }}-public
                 port:
-                  number: {{ .Values.service.admin.port }}
-          - path: /internal
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ .Release.Name }}-admin
-                port:
-                  number: {{ .Values.service.admin.port }}
+                  number: 5000
           - path: /
             pathType: Prefix
             backend:

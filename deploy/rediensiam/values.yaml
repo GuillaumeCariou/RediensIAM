@@ -1,7 +1,12 @@
-# ── App URL (change this for each environment) ────────────────────────────────
+# ── Public URL (login SPA, Hydra issuer, user-facing endpoints) ──────────────
 # dev:  http://localhost
 # prod: https://auth.rediens.net
 appUrl: "http://localhost"
+
+# ── Admin SPA URL (NodePort / SSH tunnel / private ingress) ──────────────────
+# dev:  http://localhost:30501
+# prod: https://admin.rediens.net
+adminUrl: "http://localhost:30501"
 
 # ── RediensIAM ───────────────────────────────────────────────────────────────
 image:
@@ -25,13 +30,31 @@ ingress:
 
 env:
   IAM_ADMIN_PATH: "/admin"
+
+  # ── Ory stack — override to point at external (off-cluster) instances ───────
+  # To use external Hydra: set hydra.enabled=false and override these two.
   Hydra__AdminUrl: "http://rediensiam-hydra-admin:4445"
   Hydra__PublicUrl: "http://rediensiam-hydra-public:4444"
+  # To use external Keto: set keto.enabled=false and override these two.
   Keto__ReadUrl: "http://rediensiam-keto-read:4466"
   Keto__WriteUrl: "http://rediensiam-keto-write:4467"
+
+  # ── Database — override to point at an external PostgreSQL instance ─────────
+  # To use external DB: set postgres.enabled=false and set this in values.secret.yaml:
+  #   ConnectionStrings__Default: "Host=db.example.com;Database=rediensiam;Username=iam;Password=..."
+  # (the app uses EF Core and will auto-migrate on first start)
+
+  # ── Cache — override to point at an external Redis/Dragonfly instance ───────
+  # To use external cache: set dragonfly.enabled=false and set this in values.secret.yaml:
+  #   Cache__ConnectionString: "redis.example.com:6379,password=..."
+
+  # ── App ─────────────────────────────────────────────────────────────────────
   App__PublicUrl: "http://localhost"
+  # Must match adminUrl above; also update hydra.hydra.config.serve.public.cors.allowed_origins
+  App__AdminSpaOrigin: "http://localhost:30501"
   App__Domain: "localhost"
-  # SMTP — optional; if Smtp__Host is absent, per-org SMTP still works but global fallback is disabled
+
+  # ── SMTP — optional; per-org SMTP works without this ────────────────────────
   Smtp__Host: ""
   Smtp__Port: "587"
   Smtp__StartTls: "true"
@@ -70,7 +93,7 @@ hydra:
         login: "http://localhost/login"
         consent: "http://localhost/auth/consent"
         logout: "http://localhost/auth/logout"
-        post_logout_redirect: "http://localhost/admin/"
+        post_logout_redirect: "http://localhost:30501/admin/"  # keep in sync with adminUrl
       strategies:
         access_token: jwt
       secrets:
@@ -82,6 +105,20 @@ hydra:
         public:
           port: 4444
           host: "0.0.0.0"
+          cors:
+            enabled: true
+            allowed_origins:
+              - "http://localhost:30501"
+            allowed_methods:
+              - GET
+              - POST
+            allowed_headers:
+              - Authorization
+              - Content-Type
+            exposed_headers:
+              - Content-Type
+            allow_credentials: true
+            max_age: 300
         admin:
           port: 4445
           host: "0.0.0.0"

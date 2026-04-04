@@ -459,3 +459,7 @@ export async function adminDeleteOrgSmtp(orgId: string) {
 export async function adminTestOrgSmtp(orgId: string) {
   return (await apiFetch(`/admin/organizations/${orgId}/smtp/test`, { method: 'POST' })).json();
 }
+
+export async function getSystemHealth() {
+  return (await apiFetch('/admin/system/health')).json();
+}

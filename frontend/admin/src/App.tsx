@@ -18,6 +18,7 @@ import SystemServiceAccounts from './pages/system/SystemServiceAccounts';
 import OrgDetail from './pages/system/OrgDetail';
 import SystemProjectDetail from './pages/system/SystemProjectDetail';
 import SystemProjects from './pages/system/SystemProjects';
+import SystemHealth from './pages/system/SystemHealth';
 import ServiceAccountDetail from './pages/ServiceAccountDetail';
 import AdminsPage from './pages/AdminsPage';
 import UserListDetail from './pages/UserListDetail';
@@ -101,6 +102,7 @@ function AppRoutes() {
           <Route path="system/audit-log" element={<AuditLog />} />
           <Route path="system/metrics" element={<SystemMetrics />} />
           <Route path="system/email" element={<SystemEmail />} />
+          <Route path="system/health" element={<SystemHealth />} />
         </Route>
 
         {/* Org — org_admin (and super_admin) */}

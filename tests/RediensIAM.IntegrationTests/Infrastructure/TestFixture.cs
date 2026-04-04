@@ -97,6 +97,7 @@ public sealed class TestFixture : IAsyncLifetime
 
                         // Ory stubs
                         ["Hydra:AdminUrl"]                      = Hydra.Url,
+                        ["Hydra:PublicUrl"]                     = Hydra.Url,
                         ["Keto:ReadUrl"]                        = Keto.ReadUrl,
                         ["Keto:WriteUrl"]                       = Keto.WriteUrl,
 
@@ -220,6 +221,8 @@ public class StubEmailService : IEmailService
         NewDeviceAlerts.Add(new SentNewDeviceAlert(to, ipAddress));
         return Task.CompletedTask;
     }
+
+    public Task CheckConnectivityAsync() => Task.CompletedTask;
 
     public List<SentNewDeviceAlert> NewDeviceAlerts { get; } = [];
 }
