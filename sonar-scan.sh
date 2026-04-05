@@ -22,6 +22,10 @@ dotnet sonarscanner begin \
   /k:"RediensIAM" \
   /d:sonar.host.url="$SONAR_HOST" \
   /d:sonar.token="$SONAR_TOKEN" \
+  /d:sonar.projectBaseDir="$(pwd)" \
+  /d:sonar.sources="src" \
+  /d:sonar.tests="tests" \
+  /d:sonar.exclusions="**/obj/**,**/bin/**,**/Migrations/**" \
   /d:sonar.cs.opencover.reportsPaths="tests/**/TestResults/**/coverage.opencover.xml"
 
 dotnet build RediensIAM.slnx --no-incremental
