@@ -50,7 +50,7 @@ export default function SystemServiceAccounts() {
 
   useEffect(() => { load(); }, [load]);
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const handleCreate = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!systemListId) return;
     setCreateSaving(true);

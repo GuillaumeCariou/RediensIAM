@@ -83,7 +83,7 @@ const DEFAULT_THEME: Theme = {
 
 function nanoid() { return Math.random().toString(36).slice(2, 10); }
 
-function ColorRow({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+function ColorRow({ label, value, onChange }: Readonly<{ label: string; value: string; onChange: (v: string) => void }>) {
   return (
     <div className="space-y-2">
       <Label>{label}</Label>
@@ -96,7 +96,7 @@ function ColorRow({ label, value, onChange }: { label: string; value: string; on
   );
 }
 
-function LogoUpload({ value, onChange, label = 'Logo' }: { value?: string; onChange: (v: string) => void; label?: string }) {
+function LogoUpload({ value, onChange, label = 'Logo' }: Readonly<{ value?: string; onChange: (v: string) => void; label?: string }>) {
   const [dragOver, setDragOver] = useState(false);
   const handle = (file: File) => {
     if (!file.type.startsWith('image/')) return;
@@ -136,7 +136,7 @@ function LogoUpload({ value, onChange, label = 'Logo' }: { value?: string; onCha
   );
 }
 
-function CopyButton({ text }: { text: string }) {
+function CopyButton({ text }: Readonly<{ text: string }>) {
   const [copied, setCopied] = useState(false);
   return (
     <Button type="button" variant="ghost" size="icon" onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
@@ -254,7 +254,6 @@ export default function Authentication() {
         if (p.client_secret_saved && !p.client_secret) {
           // Secret saved server-side, user didn't change it — omit from payload
           const { client_secret: _cs, ...noSecret } = rest;
-          void _cs;
           return noSecret;
         }
         return rest;
@@ -344,9 +343,9 @@ export default function Authentication() {
   const removeScope = (s: string) => setCustomScopes(prev => prev.filter(x => x !== s));
 
   // ── SAML helpers ──────────────────────────────────────────────────
-  const spMetadataUrl = `${window.location.origin}/admin/projects/${projectId}/saml/metadata`;
+  const spMetadataUrl = `${globalThis.location.origin}/admin/projects/${projectId}/saml/metadata`;
 
-  const handleAddSaml = async (e: React.FormEvent) => {
+  const handleAddSaml = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSamlSaving(true); setSamlError('');
     try {
@@ -372,7 +371,7 @@ export default function Authentication() {
   };
 
   // ── Secret input helper ───────────────────────────────────────────
-  function SecretInput({ value, saved: secretSaved, onChange }: { value: string; saved?: boolean; onChange: (v: string) => void }) {
+  function SecretInput({ value, saved: secretSaved, onChange }: Readonly<{ value: string; saved?: boolean; onChange: (v: string) => void }>) {
     return (
       <div className="space-y-1">
         <Label className="text-xs">Client Secret</Label>
@@ -659,7 +658,7 @@ export default function Authentication() {
                   <div className="flex gap-2">
                     <Input
                       value={newScope}
-                      onChange={e => { setNewScope(e.target.value.toLowerCase().replace(/[^a-z0-9:_-]/g, '')); setScopeError(''); }}
+                      onChange={e => { setNewScope(e.target.value.toLowerCase().replaceAll(/[^a-z0-9:_-]/g, '')); setScopeError(''); }}
                       placeholder="read:orders"
                       className="font-mono"
                       onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addScope())}

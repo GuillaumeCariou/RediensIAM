@@ -11,7 +11,7 @@ function applyTheme(t: Theme) {
   else document.documentElement.setAttribute('data-theme', t);
 }
 
-export function ThemeProvider({ children }: { children: ReactNode }) {
+export function ThemeProvider({ children }: Readonly<{ children: ReactNode }>) {
   const [theme, setThemeState] = useState<Theme>(
     () => (localStorage.getItem('theme') as Theme) ?? 'system'
   );

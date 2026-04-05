@@ -23,7 +23,7 @@ interface Me {
 }
 interface MfaStatus { totp_enabled: boolean; backup_codes_remaining: number; phone_verified: boolean; }
 
-function CopyButton({ text }: { text: string }) {
+function CopyButton({ text }: Readonly<{ text: string }>) {
   const [copied, setCopied] = useState(false);
   return (
     <Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
@@ -33,13 +33,13 @@ function CopyButton({ text }: { text: string }) {
 }
 
 // ── Profile tab ───────────────────────────────────────────────────
-function ProfileTab({ me, onUpdated }: { me: Me; onUpdated: () => void }) {
+function ProfileTab({ me, onUpdated }: Readonly<{ me: Me; onUpdated: () => void }>) {
   const [displayName, setDisplayName] = useState(me.display_name ?? '');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [newDeviceAlerts, setNewDeviceAlerts] = useState(me.new_device_alerts_enabled);
 
-  const handleSave = async (e: React.FormEvent) => {
+  const handleSave = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSaving(true);
     try {
@@ -163,7 +163,7 @@ function SecurityTab() {
   };
   useEffect(loadLinked, []);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError('');
     if (form.next !== form.confirm) { setError('New passwords do not match.'); return; }
@@ -277,7 +277,7 @@ function SecurityTab() {
                     key={provider}
                     variant="outline"
                     size="sm"
-                    onClick={() => { window.location.href = `/auth/oauth2/link/start?provider=${provider}`; }}
+                    onClick={() => { globalThis.location.href = `/auth/oauth2/link/start?provider=${provider}`; }}
                   >
                     {PROVIDER_LABELS[provider]}
                   </Button>
@@ -415,16 +415,16 @@ function PasskeysCard() {
 }
 
 function base64urlToBuffer(b64: string): ArrayBuffer {
-  const bin = atob(b64.replace(/-/g, '+').replace(/_/g, '/'));
+  const bin = atob(b64.replaceAll('-', '+').replaceAll('_', '/'));
   const buf = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.codePointAt(i);
   return buf.buffer;
 }
 function bufferToBase64url(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
   let str = '';
-  for (const b of bytes) str += String.fromCharCode(b);
-  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  for (const b of bytes) str += String.fromCodePoint(b);
+  return btoa(str).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
 }
 
 // ── MFA tab ───────────────────────────────────────────────────────
@@ -463,7 +463,7 @@ function MfaTab() {
     setSetupData(data);
   };
 
-  const handleConfirmSetup = async (e: React.FormEvent) => {
+  const handleConfirmSetup = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSetupError('');
     setSetupSaving(true);
@@ -484,7 +484,7 @@ function MfaTab() {
     load();
   };
 
-  const handlePhoneSend = async (e: React.FormEvent) => {
+  const handlePhoneSend = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setPhoneError('');
     setPhoneSending(true);
@@ -495,7 +495,7 @@ function MfaTab() {
     finally { setPhoneSending(false); }
   };
 
-  const handlePhoneVerify = async (e: React.FormEvent) => {
+  const handlePhoneVerify = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setPhoneError('');
     setPhoneSending(true);
@@ -558,7 +558,7 @@ function MfaTab() {
                 <form onSubmit={handleConfirmSetup} className="flex gap-2">
                   <Input
                     value={setupCode}
-                    onChange={e => setSetupCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    onChange={e => setSetupCode(e.target.value.replaceAll(/\D/g, '').slice(0, 6))}
                     placeholder="000000"
                     maxLength={6}
                     className="font-mono w-32 text-center text-lg tracking-widest"
@@ -656,7 +656,7 @@ function MfaTab() {
               <p className="text-sm text-muted-foreground">Enter the 6-digit code sent to {phoneInput}.</p>
               <div className="flex gap-2 items-center">
                 <Input
-                  value={phoneOtp} onChange={e => setPhoneOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  value={phoneOtp} onChange={e => setPhoneOtp(e.target.value.replaceAll(/\D/g, '').slice(0, 6))}
                   placeholder="000000" maxLength={6} className="font-mono w-32 text-center text-lg tracking-widest"
                   required
                 />

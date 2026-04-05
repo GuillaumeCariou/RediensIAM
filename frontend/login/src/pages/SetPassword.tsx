@@ -51,7 +51,7 @@ export default function SetPassword() {
     </div>
   );
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
     if (password !== confirm) { setError('Passwords do not match.'); return; }
     setLoading(true);

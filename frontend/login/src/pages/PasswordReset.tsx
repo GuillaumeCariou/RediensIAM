@@ -20,7 +20,7 @@ export default function PasswordReset() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  async function handleEmail(e: React.FormEvent) {
+  async function handleEmail(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
     setError('');
@@ -36,7 +36,7 @@ export default function PasswordReset() {
     }
   }
 
-  async function handleOtp(e: React.FormEvent) {
+  async function handleOtp(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
     setError('');
@@ -52,7 +52,7 @@ export default function PasswordReset() {
     }
   }
 
-  async function handlePassword(e: React.FormEvent) {
+  async function handlePassword(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
     if (password !== confirm) { setError('Passwords do not match.'); return; }
     setLoading(true);
@@ -86,12 +86,12 @@ export default function PasswordReset() {
       {error && <div className="alert alert-error">{error}</div>}
       <form onSubmit={handlePassword}>
         <div className="form-group">
-          <label>New password</label>
-          <input type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={8} autoFocus placeholder="••••••••" />
+          <label htmlFor="pr-new-password">New password</label>
+          <input id="pr-new-password" type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={8} autoFocus placeholder="••••••••" />
         </div>
         <div className="form-group">
-          <label>Confirm password</label>
-          <input type="password" value={confirm} onChange={e => setConfirm(e.target.value)} required placeholder="••••••••" />
+          <label htmlFor="pr-confirm-password">Confirm password</label>
+          <input id="pr-confirm-password" type="password" value={confirm} onChange={e => setConfirm(e.target.value)} required placeholder="••••••••" />
         </div>
         <button className="btn" type="submit" disabled={loading}>{loading ? 'Saving…' : 'Set password'}</button>
       </form>
@@ -105,8 +105,8 @@ export default function PasswordReset() {
       {error && <div className="alert alert-error">{error}</div>}
       <form onSubmit={handleOtp}>
         <div className="form-group">
-          <label>Verification code</label>
-          <input type="text" inputMode="numeric" pattern="\d{6}" maxLength={6}
+          <label htmlFor="pr-otp-code">Verification code</label>
+          <input id="pr-otp-code" type="text" inputMode="numeric" pattern="\d{6}" maxLength={6}
             value={code} onChange={e => setCode(e.target.value)} required autoFocus placeholder="123456" />
         </div>
         <button className="btn" type="submit" disabled={loading}>{loading ? 'Verifying…' : 'Verify'}</button>
@@ -122,8 +122,8 @@ export default function PasswordReset() {
       {error && <div className="alert alert-error">{error}</div>}
       <form onSubmit={handleEmail}>
         <div className="form-group">
-          <label>Email</label>
-          <input type="email" value={email} onChange={e => setEmail(e.target.value)} required autoFocus placeholder="you@example.com" />
+          <label htmlFor="pr-email">Email</label>
+          <input id="pr-email" type="email" value={email} onChange={e => setEmail(e.target.value)} required autoFocus placeholder="you@example.com" />
         </div>
         <button className="btn" type="submit" disabled={loading}>{loading ? 'Sending…' : 'Send reset code'}</button>
       </form>

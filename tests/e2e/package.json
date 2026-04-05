@@ -1,0 +1,19 @@
+{
+  "name": "rediensiam-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui",
+    "test:login": "playwright test tests/login/",
+    "test:admin": "playwright test tests/admin/",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.51.0",
+    "@types/node": "^25.5.2",
+    "dotenv": "^16.4.7",
+    "typescript": "^6.0.2"
+  }
+}

@@ -26,6 +26,8 @@ public class OrgController(
     IDistributedCache cache,
     ILogger<OrgController> logger) : ControllerBase
 {
+    private static readonly string[] BuiltInScopes = ["openid", "profile", "offline_access"];
+
     private TokenClaims Claims => HttpContext.GetClaims() ?? throw new UnauthorizedException("Not authenticated");
     private Guid OrgId   => Guid.TryParse(Claims.OrgId, out var g) ? g : Guid.Empty;
     private Guid ActorId => Claims.ParsedUserId;
@@ -177,7 +179,7 @@ public class OrgController(
     {
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
         if (project == null) return NotFound();
-        return Ok(new { custom_scopes = project.AllowedScopes, built_in = new[] { "openid", "profile", "offline_access" } });
+        return Ok(new { custom_scopes = project.AllowedScopes, built_in = BuiltInScopes });
     }
 
     [HttpPut("/org/projects/{id}/scopes")]
@@ -821,11 +823,11 @@ public class OrgController(
         if (format == "json")
         {
             var data = await users.ToListAsync();
-            Response.Headers["Content-Disposition"] = $"attachment; filename=users-{id}.json";
+            Response.Headers.ContentDisposition = $"attachment; filename=users-{id}.json";
             return new JsonResult(data);
         }
 
-        Response.Headers["Content-Disposition"] = $"attachment; filename=users-{id}.csv";
+        Response.Headers.ContentDisposition = $"attachment; filename=users-{id}.csv";
         Response.ContentType = "text/csv";
         await Response.WriteAsync("id,email,username,display_name,phone,active,email_verified,totp_enabled,last_login_at,created_at\n");
         await foreach (var u in users.AsAsyncEnumerable())
@@ -858,11 +860,11 @@ public class OrgController(
         if (format == "json")
         {
             var data = await query.ToListAsync();
-            Response.Headers["Content-Disposition"] = $"attachment; filename=audit-log-{orgId}.json";
+            Response.Headers.ContentDisposition = $"attachment; filename=audit-log-{orgId}.json";
             return new JsonResult(data);
         }
 
-        Response.Headers["Content-Disposition"] = $"attachment; filename=audit-log-{orgId}.csv";
+        Response.Headers.ContentDisposition = $"attachment; filename=audit-log-{orgId}.csv";
         Response.ContentType = "text/csv";
         await Response.WriteAsync("id,action,project_id,actor_id,target_type,target_id,ip_address,created_at\n");
         await foreach (var l in query.AsAsyncEnumerable())

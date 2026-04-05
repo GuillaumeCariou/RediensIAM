@@ -55,7 +55,7 @@ export default function ProjectRoles() {
     finally { setSavingDefault(false); }
   };
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const handleCreate = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSaving(true);
     try {
@@ -161,7 +161,7 @@ export default function ProjectRoles() {
           <form onSubmit={handleCreate} className="space-y-4">
             <div className="space-y-2">
               <Label>Name</Label>
-              <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value.toLowerCase().replace(/\s+/g, '_') }))} required placeholder="admin, viewer, editor…" />
+              <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value.toLowerCase().replaceAll(/\s+/g, '_') }))} required placeholder="admin, viewer, editor…" />
             </div>
             <div className="space-y-2">
               <Label>Description (optional)</Label>

@@ -79,7 +79,7 @@ export default function Login() {
     }
   }, [loginTheme]);
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
     setError('');
@@ -108,7 +108,7 @@ export default function Login() {
         navigate('/mfa-setup');
         return;
       }
-      if (res.redirect_to) { window.location.href = res.redirect_to; }
+      if (res.redirect_to) { globalThis.location.href = res.redirect_to; }
     } catch {
       setError('Something went wrong. Please try again.');
     } finally {
@@ -143,7 +143,7 @@ export default function Login() {
               {providers.map(p => (
                 <button key={p.type + p.client_id} type="button"
                   onClick={() => {
-                    window.location.href = `/auth/oauth2/start?login_challenge=${encodeURIComponent(challenge)}&provider_id=${encodeURIComponent(p.id)}`;
+                    globalThis.location.href = `/auth/oauth2/start?login_challenge=${encodeURIComponent(challenge)}&provider_id=${encodeURIComponent(p.id)}`;
                   }}
                   style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', width: '100%', padding: '0.625rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--surface)', color: 'var(--text)', fontSize: '0.875rem', fontWeight: 500, cursor: 'pointer' }}>
                   {(p.logo_url || PROVIDER_ICONS[p.type]) && <img src={p.logo_url || PROVIDER_ICONS[p.type]} alt={p.type} style={{ height: '1rem', width: '1rem' }} />}

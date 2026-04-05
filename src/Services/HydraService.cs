@@ -54,6 +54,8 @@ public class HydraConsentSessionRequest
 
 public class HydraService(IHttpClientFactory http, AppConfig appConfig)
 {
+    private static readonly string[] BaseScopes = ["openid", "profile", "offline_access"];
+
     private readonly string _adminUrl = appConfig.HydraAdminUrl;
     private readonly JsonSerializerOptions _json = new() { PropertyNameCaseInsensitive = true };
     private readonly HttpClient _client = http.CreateClient("hydra-admin");
@@ -156,7 +158,7 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig)
     public async Task UpdateOAuth2ClientScopeAsync(string clientId, string[] allowedScopes)
     {
         var scope = allowedScopes.Length > 0
-            ? string.Join(" ", new[] { "openid", "profile", "offline_access" }.Concat(allowedScopes).Distinct())
+            ? string.Join(" ", BaseScopes.Concat(allowedScopes).Distinct())
             : "openid profile offline_access";
         var resp = await Client.PatchAsJsonAsync(
             $"{_adminUrl}/admin/clients/{Uri.EscapeDataString(clientId)}",

@@ -100,11 +100,11 @@ public class WebhookDispatcherService(
     // Retry delays: 2s, 8s, 32s
     private static readonly int[] RetryDelaysMs = [2_000, 8_000, 32_000];
 
-    protected override async Task ExecuteAsync(CancellationToken ct)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await foreach (var job in channel.Reader.ReadAllAsync(ct))
+        await foreach (var job in channel.Reader.ReadAllAsync(stoppingToken))
         {
-            _ = Task.Run(() => ProcessJobAsync(job, ct), ct);
+            _ = Task.Run(() => ProcessJobAsync(job, stoppingToken), stoppingToken);
         }
     }
 

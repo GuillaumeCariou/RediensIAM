@@ -119,7 +119,7 @@ export default function OrgDetail() {
     navigate('/system/organisations');
   };
 
-  const handleRename = async (e: React.FormEvent) => {
+  const handleRename = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!org) return;
     await updateOrg(org.id, { name: renameVal });
@@ -127,7 +127,7 @@ export default function OrgDetail() {
     load();
   };
 
-  const handleAddUser = async (e: React.FormEvent) => {
+  const handleAddUser = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!org) return;
     setAddUserSaving(true);
@@ -142,7 +142,7 @@ export default function OrgDetail() {
     } finally { setAddUserSaving(false); }
   };
 
-  const handleAssignRole = async (e: React.FormEvent) => {
+  const handleAssignRole = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!assignRoleTarget || !id) return;
     setAssignRoleSaving(true);
@@ -161,7 +161,7 @@ export default function OrgDetail() {
     load();
   };
 
-  const handleCreateList = async (e: React.FormEvent) => {
+  const handleCreateList = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!id) return;
     setCreateListSaving(true);
@@ -173,7 +173,7 @@ export default function OrgDetail() {
     } finally { setCreateListSaving(false); }
   };
 
-  const handleCreateProject = async (e: React.FormEvent) => {
+  const handleCreateProject = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!id) return;
     setCreateProjectSaving(true);
@@ -574,7 +574,7 @@ export default function OrgDetail() {
               <Label>Slug</Label>
               <Input
                 value={newProject.slug}
-                onChange={e => setNewProject(p => ({ ...p, slug: e.target.value.toLowerCase().replace(/\s+/g, '-') }))}
+                onChange={e => setNewProject(p => ({ ...p, slug: e.target.value.toLowerCase().replaceAll(/\s+/g, '-') }))}
                 required placeholder="main-app" pattern="[a-z0-9]+(-[a-z0-9]+)*"
               />
               <p className="text-xs text-muted-foreground">Lowercase letters, numbers and hyphens only.</p>

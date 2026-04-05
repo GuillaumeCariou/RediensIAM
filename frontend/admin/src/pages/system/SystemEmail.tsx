@@ -43,7 +43,7 @@ interface Overview {
   orgs: OrgRow[];
 }
 
-function StatusDot({ ok, label }: { ok: boolean; label: string }) {
+function StatusDot({ ok, label }: Readonly<{ ok: boolean; label: string }>) {
   return (
     <span className="flex items-center gap-1.5">
       {ok

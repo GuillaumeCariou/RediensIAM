@@ -40,7 +40,7 @@ export default function OrgServiceAccounts() {
   };
   useEffect(load, [orgId]);
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const handleCreate = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSaving(true);
     try {

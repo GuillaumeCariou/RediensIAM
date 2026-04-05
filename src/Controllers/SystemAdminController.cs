@@ -24,6 +24,10 @@ public class SystemAdminController(
     IDistributedCache cache,
     ILogger<SystemAdminController> logger) : ControllerBase
 {
+    private static readonly string[] OAuth2GrantTypes   = ["authorization_code", "refresh_token"];
+    private static readonly string[] OAuth2ResponseTypes = ["code"];
+    private static readonly string[] BuiltInScopes       = ["openid", "profile", "offline_access"];
+
     private TokenClaims Claims => HttpContext.GetClaims()!;
     private Guid GetActorId() => Claims.ParsedUserId;
 
@@ -458,8 +462,8 @@ var actorId = GetActorId();
                 client_id    = $"client_{project.Id}",
                 client_name  = $"Project: {project.Name}",
                 redirect_uris = body.RedirectUris ?? [],
-                grant_types  = new[] { "authorization_code", "refresh_token" },
-                response_types = new[] { "code" },
+                grant_types  = OAuth2GrantTypes,
+                response_types = OAuth2ResponseTypes,
                 scope        = "openid profile offline_access",
                 token_endpoint_auth_method = "none",
                 metadata     = new { project_id = project.Id.ToString(), org_id = id.ToString() }
@@ -518,7 +522,7 @@ var project = await db.Projects.FindAsync(id);
     {
         var project = await db.Projects.FindAsync(id);
         if (project == null) return NotFound();
-        return Ok(new { custom_scopes = project.AllowedScopes, built_in = new[] { "openid", "profile", "offline_access" } });
+        return Ok(new { custom_scopes = project.AllowedScopes, built_in = BuiltInScopes });
     }
 
     [HttpPut("/admin/projects/{id}/scopes")]
@@ -866,11 +870,11 @@ await hydra.DeleteOAuth2ClientAsync(id);
         if (format == "json")
         {
             var data = await users.ToListAsync();
-            Response.Headers["Content-Disposition"] = $"attachment; filename=users-org-{id}.json";
+            Response.Headers.ContentDisposition = $"attachment; filename=users-org-{id}.json";
             return new JsonResult(data);
         }
 
-        Response.Headers["Content-Disposition"] = $"attachment; filename=users-org-{id}.csv";
+        Response.Headers.ContentDisposition = $"attachment; filename=users-org-{id}.csv";
         Response.ContentType = "text/csv";
         await Response.WriteAsync("id,email,username,display_name,phone,active,email_verified,totp_enabled,user_list_id,last_login_at,created_at\n");
         await foreach (var u in users.AsAsyncEnumerable())
@@ -906,11 +910,11 @@ await hydra.DeleteOAuth2ClientAsync(id);
         if (format == "json")
         {
             var data = await query.ToListAsync();
-            Response.Headers["Content-Disposition"] = $"attachment; filename=audit-log-{id}.json";
+            Response.Headers.ContentDisposition = $"attachment; filename=audit-log-{id}.json";
             return new JsonResult(data);
         }
 
-        Response.Headers["Content-Disposition"] = $"attachment; filename=audit-log-{id}.csv";
+        Response.Headers.ContentDisposition = $"attachment; filename=audit-log-{id}.csv";
         Response.ContentType = "text/csv";
         await Response.WriteAsync("id,action,project_id,actor_id,target_type,target_id,ip_address,created_at\n");
         await foreach (var l in query.AsAsyncEnumerable())

@@ -24,8 +24,7 @@ interface UserList {
 
 export default function UserLists() {
   const navigate = useNavigate();
-  const location = useLocation();
-  const { orgId, isSystemCtx, userListBase } = useOrgContext();
+  const { orgId, userListBase } = useOrgContext();
 
   // System global route (/system/userlists) has no org param — orgId comes from token (null for super_admin)
   const isGlobal = !orgId;
@@ -54,7 +53,7 @@ export default function UserLists() {
       )
     : lists;
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const handleCreate = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSaving(true);
     try {

@@ -1,0 +1,26 @@
+Product projects
+---------------------------------------
+/home/guille/Desktop/Workspace/RediensIAM/src/RediensIAM.csproj
+
+
+Test projects
+---------------------------------------
+/home/guille/Desktop/Workspace/RediensIAM/tests/RediensIAM.IntegrationTests/RediensIAM.IntegrationTests.csproj
+
+
+Invalid projects
+---------------------------------------
+{none}
+
+
+Skipped projects
+---------------------------------------
+/home/guille/Desktop/Workspace/RediensIAM/src/RediensIAM.csproj
+/home/guille/Desktop/Workspace/RediensIAM/tests/RediensIAM.IntegrationTests/RediensIAM.IntegrationTests.csproj
+
+
+Excluded projects
+---------------------------------------
+{none}
+
+

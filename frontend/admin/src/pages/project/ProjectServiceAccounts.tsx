@@ -21,7 +21,7 @@ import { fmtDate } from '@/lib/utils';
 interface SA { id: string; name: string; description: string | null; active: boolean; last_used_at: string | null; }
 interface Pat { id: string; name: string; expires_at: string | null; last_used_at: string | null; created_at: string; }
 
-function CopyButton({ text }: { text: string }) {
+function CopyButton({ text }: Readonly<{ text: string }>) {
   const [copied, setCopied] = useState(false);
   const copy = () => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); };
   return (
@@ -56,7 +56,7 @@ export default function ProjectServiceAccounts() {
   };
   useEffect(load, [projectId]);
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const handleCreate = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!assignedListId) return;
     setSaving(true);
@@ -74,7 +74,7 @@ export default function ProjectServiceAccounts() {
     setPats(res.pats ?? res ?? []);
   };
 
-  const handleGenPat = async (e: React.FormEvent) => {
+  const handleGenPat = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!genPatOpen) return;
     setSaving(true);

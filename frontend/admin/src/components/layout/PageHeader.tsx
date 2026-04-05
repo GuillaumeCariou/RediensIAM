@@ -4,7 +4,7 @@ interface PageHeaderProps {
   action?: React.ReactNode;
 }
 
-export default function PageHeader({ title, description, action }: PageHeaderProps) {
+export default function PageHeader({ title, description, action }: Readonly<PageHeaderProps>) {
   return (
     <div className="flex items-start justify-between border-b bg-background px-6 py-4">
       <div>

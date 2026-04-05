@@ -40,6 +40,37 @@ interface PreviewCfg {
   password_require_special?: boolean;
 }
 
+interface ProvidersProps {
+  enabledProviders: PreviewProvider[];
+  showLocal: boolean;
+}
+
+function Providers({ enabledProviders, showLocal }: Readonly<ProvidersProps>) {
+  if (!enabledProviders.length) return null;
+  return (
+    <div style={{ marginBottom: '1rem' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+        {enabledProviders.map(p => {
+          const icon = p.logo_url || PROVIDER_ICONS[p.type];
+          return (
+            <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', width: '100%', padding: '0.625rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--surface)', color: 'var(--text)', fontSize: '0.875rem', fontWeight: 500 }}>
+              {icon && <img src={icon} alt={p.type} style={{ height: '1rem', width: '1rem' }} />}
+              {p.label}
+            </div>
+          );
+        })}
+      </div>
+      {showLocal && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '1rem 0' }}>
+          <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>or</span>
+          <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Preview() {
   const [params] = useSearchParams();
 
@@ -65,7 +96,7 @@ export default function Preview() {
 
   useEffect(() => {
     const el = document.documentElement;
-    el.setAttribute('data-theme', dark ? 'dark' : 'light');
+    el.dataset['theme'] = dark ? 'dark' : 'light';
     if (theme.primary_color)    el.style.setProperty('--primary', theme.primary_color);
     if (theme.background_color) el.style.setProperty('--background', theme.background_color);
     if (theme.surface_color)    el.style.setProperty('--surface', theme.surface_color);
@@ -84,47 +115,21 @@ export default function Preview() {
   if (password_require_digit)      policyRules.push('One number (0–9)');
   if (password_require_special)    policyRules.push('One special character (!@#$…)');
 
-  function Providers() {
-    if (!enabledProviders.length) return null;
-    return (
-      <div style={{ marginBottom: '1rem' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          {enabledProviders.map(p => {
-            const icon = p.logo_url || PROVIDER_ICONS[p.type];
-            return (
-              <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', width: '100%', padding: '0.625rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--surface)', color: 'var(--text)', fontSize: '0.875rem', fontWeight: 500 }}>
-                {icon && <img src={icon} alt={p.type} style={{ height: '1rem', width: '1rem' }} />}
-                {p.label}
-              </div>
-            );
-          })}
-        </div>
-        {showLocal && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '1rem 0' }}>
-            <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>or</span>
-            <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
-          </div>
-        )}
-      </div>
-    );
-  }
-
   if (mode === 'login') return (
     <div className="card">
       {theme.logo_url && <div className="card-logo"><img src={theme.logo_url} alt="Logo" /></div>}
       <h1 className="card-title">Sign in</h1>
       <p className="card-subtitle">Enter your credentials to continue</p>
-      <Providers />
+      <Providers enabledProviders={enabledProviders} showLocal={showLocal} />
       {showLocal && (
         <form>
           <div className="form-group">
-            <label>Email or username</label>
-            <input type="text" placeholder="you@example.com or username#1234" disabled />
+            <label htmlFor="preview-email">Email or username</label>
+            <input id="preview-email" type="text" placeholder="you@example.com or username#1234" disabled />
           </div>
           <div className="form-group">
-            <label>Password</label>
-            <input type="password" placeholder="••••••••" disabled />
+            <label htmlFor="preview-password">Password</label>
+            <input id="preview-password" type="password" placeholder="••••••••" disabled />
           </div>
           <button className="btn" disabled>Sign in</button>
         </form>
@@ -145,20 +150,20 @@ export default function Preview() {
       {theme.logo_url && <div className="card-logo"><img src={theme.logo_url} alt="Logo" /></div>}
       <h1 className="card-title">Create account</h1>
       <p className="card-subtitle">Fill in your details to get started</p>
-      <Providers />
+      <Providers enabledProviders={enabledProviders} showLocal={showLocal} />
       {showLocal && (
         <form>
           <div className="form-group">
-            <label>Email</label>
-            <input type="email" placeholder="you@example.com" disabled />
+            <label htmlFor="preview-reg-email">Email</label>
+            <input id="preview-reg-email" type="email" placeholder="you@example.com" disabled />
           </div>
           <div className="form-group">
-            <label>Username</label>
-            <input type="text" placeholder="alice (optional)" disabled />
+            <label htmlFor="preview-reg-username">Username</label>
+            <input id="preview-reg-username" type="text" placeholder="alice (optional)" disabled />
           </div>
           <div className="form-group">
-            <label>Password</label>
-            <input type="password" placeholder="••••••••" disabled />
+            <label htmlFor="preview-reg-password">Password</label>
+            <input id="preview-reg-password" type="password" placeholder="••••••••" disabled />
             {policyRules.length > 0 && (
               <ul style={{ marginTop: '0.5rem', paddingLeft: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
                 {policyRules.map(rule => (
@@ -171,8 +176,8 @@ export default function Preview() {
             )}
           </div>
           <div className="form-group">
-            <label>Confirm password</label>
-            <input type="password" placeholder="••••••••" disabled />
+            <label htmlFor="preview-reg-confirm">Confirm password</label>
+            <input id="preview-reg-confirm" type="password" placeholder="••••••••" disabled />
           </div>
           <button className="btn" disabled>Create account</button>
         </form>
@@ -184,7 +189,10 @@ export default function Preview() {
   );
 
   // verify
-  const channel = email_verification_enabled ? 'email' : sms_verification_enabled ? 'phone' : 'contact';
+  let channel = 'contact';
+  if (email_verification_enabled) channel = 'email';
+  else if (sms_verification_enabled) channel = 'phone';
+
   return (
     <div className="card">
       {theme.logo_url && <div className="card-logo"><img src={theme.logo_url} alt="Logo" /></div>}
@@ -192,8 +200,8 @@ export default function Preview() {
       <p className="card-subtitle">Enter the 6-digit code we sent to you</p>
       <form>
         <div className="form-group">
-          <label>Verification code</label>
-          <input type="text" className="otp-input" placeholder="123456" disabled />
+          <label htmlFor="preview-otp">Verification code</label>
+          <input id="preview-otp" type="text" className="otp-input" placeholder="123456" disabled />
         </div>
         <button className="btn" disabled>Verify</button>
       </form>

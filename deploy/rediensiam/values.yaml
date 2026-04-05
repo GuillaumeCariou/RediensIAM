@@ -21,7 +21,20 @@ service:
     port: 5000
   admin:
     port: 5001
+    # NodePort 30501 is the ONLY external access point for the admin SPA after TODO2.
+    # The public ingress no longer exposes /admin — access via:
+    #   dev:  http://localhost:30501/admin/  (direct NodePort)
+    #   ops:  kubectl port-forward svc/rediensiam-admin 30501:5001
+    #   prod: SSH tunnel or private ingress (see adminIngress below)
     nodePort: 30501
+
+# ── Optional private admin ingress (production only) ─────────────────────────
+# Set adminIngress.enabled=true in values.prod-admin.yaml to expose the admin SPA
+# via a private hostname (e.g. admin.rediens.net) with IP allowlist enforcement.
+# Disabled by default — NodePort is sufficient for dev/staging.
+adminIngress:
+  enabled: false
+  host: "admin.rediens.net"   # private DNS only — must not resolve on public internet
 
 ingress:
   enabled: true

@@ -19,9 +19,9 @@ interface Metrics {
   uptime_since?: string;
 }
 
-function StatCard({ label, value, sub, icon, trend }: {
+function StatCard({ label, value, sub, icon, trend }: Readonly<{
   label: string; value: number | string; sub?: string; icon: React.ReactNode; trend?: number;
-}) {
+}>) {
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between pb-2">

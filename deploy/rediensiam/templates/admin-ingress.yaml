@@ -1,0 +1,26 @@
+{{- if .Values.adminIngress.enabled }}
+# Private admin ingress — not internet-facing.
+# Only enable this in production with a private DNS entry and IP allowlist middleware.
+# For dev/staging use the NodePort directly: http://localhost:30501/admin/
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-admin-internal
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.middlewares: "default-ip-allowlist@kubernetescrd"
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ .Values.adminIngress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-admin
+                port:
+                  number: {{ .Values.service.admin.port }}
+{{- end }}

@@ -53,7 +53,7 @@ export default function MfaChallenge() {
       if (res.redirect_to) {
         sessionStorage.removeItem('mfa_type');
         sessionStorage.removeItem('mfa_phone_hint');
-        window.location.href = res.redirect_to;
+        globalThis.location.href = res.redirect_to;
       }
     } catch (e: unknown) {
       if (e instanceof Error && e.name === 'NotAllowedError') {
@@ -66,7 +66,7 @@ export default function MfaChallenge() {
     }
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
     setError('');
@@ -85,7 +85,7 @@ export default function MfaChallenge() {
       if (res.redirect_to) {
         sessionStorage.removeItem('mfa_type');
         sessionStorage.removeItem('mfa_phone_hint');
-        window.location.href = res.redirect_to;
+        globalThis.location.href = res.redirect_to;
       }
     } catch {
       setError('Something went wrong. Please try again.');
@@ -156,14 +156,14 @@ export default function MfaChallenge() {
             <input
               className="input" type="text" autoFocus required
               placeholder="XXXXXXXX" maxLength={8} autoComplete="off"
-              value={code} onChange={e => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+              value={code} onChange={e => setCode(e.target.value.toUpperCase().replaceAll(/[^A-Z0-9]/g, ''))}
             />
           ) : (
             <input
               className="otp-input" type="text" inputMode="numeric"
               pattern="\d{6}" maxLength={6} autoFocus required
               placeholder="000000"
-              value={code} onChange={e => setCode(e.target.value.replace(/\D/g, ''))}
+              value={code} onChange={e => setCode(e.target.value.replaceAll(/\D/g, ''))}
             />
           )}
         </div>
@@ -199,15 +199,15 @@ export default function MfaChallenge() {
 
 // ── WebAuthn buffer helpers ──────────────────────────────────────────────────
 function base64urlToBuffer(b64: string): ArrayBuffer {
-  const bin = atob(b64.replace(/-/g, '+').replace(/_/g, '/'));
+  const bin = atob(b64.replaceAll('-', '+').replaceAll('_', '/'));
   const buf = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.codePointAt(i);
   return buf.buffer;
 }
 
 function bufferToBase64url(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
   let str = '';
-  for (const b of bytes) str += String.fromCharCode(b);
-  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  for (const b of bytes) str += String.fromCodePoint(b);
+  return btoa(str).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
 }

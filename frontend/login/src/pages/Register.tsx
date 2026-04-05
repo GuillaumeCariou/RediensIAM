@@ -20,7 +20,7 @@ export default function Register() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
     if (password !== confirm) { setError('Passwords do not match.'); return; }
     setLoading(true);
@@ -33,7 +33,7 @@ export default function Register() {
       }
       if (res.error) { setError(res.error_description ?? 'Registration failed.'); return; }
       if (res.requires_verification) { setSessionId(res.session_id); setStep('otp'); return; }
-      if (res.redirect_to) window.location.href = res.redirect_to;
+      if (res.redirect_to) globalThis.location.href = res.redirect_to;
     } catch {
       setError('Something went wrong. Please try again.');
     } finally {
@@ -41,14 +41,14 @@ export default function Register() {
     }
   }
 
-  async function handleVerify(e: React.FormEvent) {
+  async function handleVerify(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
     setError('');
     try {
       const res = await verifyRegistrationOtp(sessionId, code);
       if (res.error) { setError('Invalid or expired code.'); return; }
-      if (res.redirect_to) window.location.href = res.redirect_to;
+      if (res.redirect_to) globalThis.location.href = res.redirect_to;
     } catch {
       setError('Something went wrong. Please try again.');
     } finally {

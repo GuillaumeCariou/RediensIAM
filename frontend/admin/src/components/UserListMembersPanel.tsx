@@ -46,7 +46,7 @@ interface Props {
 export default function UserListMembersPanel({
   listId, title = 'Members', isSystemCtx = false,
   projectId, defaultRoleId, onChanged,
-}: Props) {
+}: Readonly<Props>) {
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -122,7 +122,7 @@ export default function UserListMembersPanel({
 
   // ── Handlers ───────────────────────────────────────────────────
 
-  const handleAdd = async (e: React.FormEvent) => {
+  const handleAdd = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setAddSaving(true);
     try {
@@ -158,7 +158,7 @@ export default function UserListMembersPanel({
     finally { setEditLoading(false); }
   };
 
-  const handleEdit = async (e: React.FormEvent) => {
+  const handleEdit = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!editTarget) return;
     setEditSaving(true); setEditError('');

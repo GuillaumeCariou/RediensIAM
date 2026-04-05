@@ -70,7 +70,7 @@ export default function OrgAdminsPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const handleAssign = async (e: React.FormEvent) => {
+  const handleAssign = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setAssignSaving(true);
     try {
@@ -100,7 +100,7 @@ export default function OrgAdminsPage() {
     finally { setEditLoading(false); }
   };
 
-  const handleEdit = async (e: React.FormEvent) => {
+  const handleEdit = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!editTarget) return;
     setEditSaving(true); setEditError('');

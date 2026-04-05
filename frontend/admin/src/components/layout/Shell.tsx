@@ -1,6 +1,6 @@
 import Sidebar from './Sidebar';
 
-export default function Shell({ children }: { children: React.ReactNode }) {
+export default function Shell({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar />

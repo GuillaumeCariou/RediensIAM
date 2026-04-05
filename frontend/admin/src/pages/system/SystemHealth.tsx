@@ -35,7 +35,7 @@ const STATUS_BADGE: Record<HealthStatus, React.ReactNode> = {
   not_configured: <Badge variant="secondary"  className="text-xs">Not configured</Badge>,
 };
 
-function ComponentCard({ check }: { check: ComponentHealth }) {
+function ComponentCard({ check }: Readonly<{ check: ComponentHealth }>) {
   return (
     <div className={`rounded-lg border p-4 space-y-3 ${check.status === 'error' ? 'border-destructive/50 bg-destructive/5' : ''}`}>
       <div className="flex items-center justify-between gap-3">
@@ -61,7 +61,7 @@ function ComponentCard({ check }: { check: ComponentHealth }) {
         <div className="grid grid-cols-2 gap-x-4 gap-y-1 pt-1 border-t">
           {Object.entries(check.stats).map(([k, v]) => (
             <div key={k} className="flex justify-between items-center gap-2">
-              <span className="text-xs text-muted-foreground capitalize">{k.replace(/_/g, ' ')}</span>
+              <span className="text-xs text-muted-foreground capitalize">{k.replaceAll('_', ' ')}</span>
               <span className="text-xs font-mono font-medium truncate max-w-[12rem] text-right">{v}</span>
             </div>
           ))}

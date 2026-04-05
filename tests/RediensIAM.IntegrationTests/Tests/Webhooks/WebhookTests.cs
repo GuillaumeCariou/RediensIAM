@@ -263,6 +263,82 @@ public class WebhookTests(TestFixture fixture)
         res.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
+    // ── B5: Secret rotation — HMAC verification ───────────────────────────────
+
+    /// <summary>
+    /// After rotation the new secret produces a different HMAC for the same payload,
+    /// confirming old signatures would no longer pass verification.
+    /// </summary>
+    [Fact]
+    public async Task RotateSecret_OldSecretProducesDifferentHmac()
+    {
+        var (org, orgList) = await fixture.Seed.CreateOrgAsync();
+        var admin = await fixture.Seed.CreateUserAsync(orgList.Id);
+        var token = fixture.Seed.OrgAdminToken(admin.Id, org.Id);
+        fixture.Keto.AllowAll();
+        var client = fixture.ClientWithToken(token);
+
+        var createRes = await client.PostAsJsonAsync("/org/webhooks", new
+        {
+            url = "https://example.com/hook", events = new[] { "user.created" }
+        });
+        var created       = await createRes.Content.ReadFromJsonAsync<JsonElement>();
+        var webhookId     = created.GetProperty("id").GetString()!;
+        var originalSecret = created.GetProperty("secret").GetString()!;
+
+        var rotateRes = await client.PostAsJsonAsync($"/org/webhooks/{webhookId}/rotate-secret", new { });
+        rotateRes.StatusCode.Should().Be(HttpStatusCode.OK);
+        var newSecret = (await rotateRes.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("secret").GetString()!;
+
+        newSecret.Should().NotBe(originalSecret);
+
+        // Compute HMAC-SHA256 for the same payload using each secret
+        var payload = global::System.Text.Encoding.UTF8.GetBytes("""{"event":"user.created"}""");
+
+        static string Hmac(string secret, byte[] data)
+        {
+            var key  = global::System.Text.Encoding.UTF8.GetBytes(secret);
+            using var hmac = new global::System.Security.Cryptography.HMACSHA256(key);
+            return Convert.ToHexString(hmac.ComputeHash(data));
+        }
+
+        var sigWithOld = Hmac(originalSecret, payload);
+        var sigWithNew = Hmac(newSecret, payload);
+        sigWithOld.Should().NotBe(sigWithNew,
+            "HMAC computed with old secret must differ from one computed with new secret");
+    }
+
+    /// <summary>
+    /// After rotation the webhook's secret hash is updated in the database.
+    /// </summary>
+    [Fact]
+    public async Task RotateSecret_SecretEncUpdatedInDb()
+    {
+        var (org, orgList) = await fixture.Seed.CreateOrgAsync();
+        var admin = await fixture.Seed.CreateUserAsync(orgList.Id);
+        var token = fixture.Seed.OrgAdminToken(admin.Id, org.Id);
+        fixture.Keto.AllowAll();
+        var client = fixture.ClientWithToken(token);
+
+        var createRes = await client.PostAsJsonAsync("/org/webhooks", new
+        {
+            url = "https://example.com/hook", events = new[] { "user.created" }
+        });
+        var created   = await createRes.Content.ReadFromJsonAsync<JsonElement>();
+        var webhookId = Guid.Parse(created.GetProperty("id").GetString()!);
+
+        await fixture.RefreshDbAsync();
+        var before = (await fixture.Db.Webhooks.FindAsync(webhookId))!.SecretEnc;
+
+        await client.PostAsJsonAsync($"/org/webhooks/{webhookId}/rotate-secret", new { });
+
+        await fixture.RefreshDbAsync();
+        var after = (await fixture.Db.Webhooks.FindAsync(webhookId))!.SecretEnc;
+
+        after.Should().NotBe(before, "SecretEnc must be updated after rotation");
+    }
+
     // ── Supported events list ─────────────────────────────────────────────────
 
     [Fact]

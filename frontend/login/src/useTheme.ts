@@ -3,22 +3,22 @@ import { useEffect, useState } from 'react';
 export type Theme = 'light' | 'dark' | 'system';
 
 function apply(t: Theme) {
-  if (t === 'system') document.documentElement.removeAttribute('data-theme');
-  else document.documentElement.setAttribute('data-theme', t);
+  if (t === 'system') delete document.documentElement.dataset['theme'];
+  else document.documentElement.dataset['theme'] = t;
 }
 
 export function useTheme() {
-  const [theme, setThemeState] = useState<Theme>(
+  const [theme, setTheme] = useState<Theme>(
     () => (localStorage.getItem('theme') as Theme) ?? 'system'
   );
 
   useEffect(() => { apply(theme); }, [theme]);
 
-  const setTheme = (t: Theme) => {
+  const changeTheme = (t: Theme) => {
     localStorage.setItem('theme', t);
-    setThemeState(t);
+    setTheme(t);
     apply(t);
   };
 
-  return { theme, setTheme };
+  return { theme, setTheme: changeTheme };
 }

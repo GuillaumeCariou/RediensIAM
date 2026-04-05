@@ -48,7 +48,7 @@ export default function SystemProjectDetail() {
 
   useEffect(() => { load(); }, [load]);
 
-  const handleRename = async (e: React.FormEvent) => {
+  const handleRename = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!pid) return;
     await updateProject(pid, { name: renameVal });

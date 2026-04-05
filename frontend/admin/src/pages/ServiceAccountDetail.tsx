@@ -31,7 +31,7 @@ interface Pat { id: string; name: string; expires_at: string | null; last_used_a
 interface SaRole { id: string; role: string; org_id: string | null; project_id: string | null; granted_at: string; }
 
 // ── JWT Profile section ────────────────────────────────────────────────────────
-function JwtProfileSection({ saId }: { saId: string }) {
+function JwtProfileSection({ saId }: Readonly<{ saId: string }>) {
   type KeyInfo = { client_id: string | null; has_key: boolean; kid: string | null };
   const [keyInfo, setKeyInfo] = useState<KeyInfo | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -153,7 +153,7 @@ export default function ServiceAccountDetail() {
     navigate(`${orgBase}/service-accounts`);
   };
 
-  const handleGeneratePat = async (e: React.FormEvent) => {
+  const handleGeneratePat = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!saId) return;
     setPatSaving(true);
@@ -196,7 +196,7 @@ export default function ServiceAccountDetail() {
     if (org_id) listProjects(org_id).then(r => setProjects(r.projects ?? r ?? [])).catch(console.error);
   };
 
-  const handleAssignRole = async (e: React.FormEvent) => {
+  const handleAssignRole = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!saId || !roleForm.role) return;
     setRoleSaving(true);

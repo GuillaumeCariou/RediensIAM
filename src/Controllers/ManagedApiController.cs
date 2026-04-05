@@ -25,6 +25,9 @@ public class ManagedApiController(
     IEmailService emailService,
     ILogger<ManagedApiController> logger) : ControllerBase
 {
+    private static readonly string[] OAuth2GrantTypes = ["authorization_code", "refresh_token"];
+    private static readonly string[] OAuth2ResponseTypes = ["code"];
+
     private TokenClaims Claims => HttpContext.GetClaims()!;
     private Guid GetActorId() => Claims.ParsedUserId;
 
@@ -113,8 +116,8 @@ public class ManagedApiController(
                 client_id      = $"client_{project.Id}",
                 client_name    = $"Project: {project.Name}",
                 redirect_uris  = body.RedirectUris ?? [],
-                grant_types    = new[] { "authorization_code", "refresh_token" },
-                response_types = new[] { "code" },
+                grant_types    = OAuth2GrantTypes,
+                response_types = OAuth2ResponseTypes,
                 scope          = "openid profile offline_access",
                 token_endpoint_auth_method = "none",
                 metadata       = new { project_id = project.Id.ToString(), org_id = id.ToString() }
@@ -151,6 +154,10 @@ public class ManagedApiController(
     {
         var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(ul => ul.Id == id);
         if (ul == null) return NotFound();
+
+        var normalizedEmail = body.Email.ToLowerInvariant();
+        if (await db.Users.AnyAsync(u => u.UserListId == id && u.Email == normalizedEmail))
+            return Conflict(new { error = "email_already_exists" });
 
         var username = body.Username ?? body.Email.Split('@')[0];
         string discriminator;

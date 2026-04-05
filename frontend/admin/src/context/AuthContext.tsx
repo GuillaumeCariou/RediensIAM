@@ -28,7 +28,7 @@ interface ParsedToken {
 function parseToken(token: string | null): ParsedToken {
   if (!token) return { roles: [], orgId: '', projectId: '' };
   try {
-    const payload = JSON.parse(atob(token.split('.')[1]!.replace(/-/g, '+').replace(/_/g, '/')));
+    const payload = JSON.parse(atob(token.split('.')[1]!.replaceAll('-', '+').replaceAll('_', '/')));
     const raw = payload.roles ?? payload.ext?.roles ?? [];
     const roles: string[] = typeof raw === 'string' ? raw.split(',').filter(Boolean) : Array.isArray(raw) ? raw : [];
     const orgId: string = payload.org_id ?? payload.ext?.org_id ?? '';
@@ -37,7 +37,7 @@ function parseToken(token: string | null): ParsedToken {
   } catch { return { roles: [], orgId: '', projectId: '' }; }
 }
 
-export function AuthProvider({ children }: { children: ReactNode }) {
+export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
   const [ready, setReady] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
   const [roles, setRoles] = useState<string[]>([]);
@@ -46,7 +46,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     async function init() {
-      const url = new URL(window.location.href);
+      const url = new URL(globalThis.location.href);
       const code = url.searchParams.get('code');
       const state = url.searchParams.get('state');
 

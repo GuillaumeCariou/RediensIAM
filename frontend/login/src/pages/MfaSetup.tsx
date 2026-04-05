@@ -30,7 +30,7 @@ export default function MfaSetup() {
       .catch(() => navigate('/login'));
   }, [navigate]);
 
-  async function handleConfirm(e: React.FormEvent) {
+  async function handleConfirm(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
     setError('');
@@ -48,7 +48,7 @@ export default function MfaSetup() {
         setStep('backup');
         return;
       }
-      if (res.redirect_to) window.location.href = res.redirect_to;
+      if (res.redirect_to) globalThis.location.href = res.redirect_to;
     } catch {
       setError('Something went wrong. Please try again.');
     } finally {
@@ -99,7 +99,7 @@ export default function MfaSetup() {
       </div>
 
       <button className="btn" type="button" onClick={() => {
-        if (redirectTo) window.location.href = redirectTo;
+        if (redirectTo) globalThis.location.href = redirectTo;
         else navigate('/login');
       }}>
         I've saved my codes — continue
@@ -121,9 +121,9 @@ export default function MfaSetup() {
         </p>
 
         <div style={{ marginBottom: '0.625rem' }}>
-          <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.3rem' }}>
+          <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.3rem' }}>
             Secret key
-          </label>
+          </span>
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
             <code style={{ fontFamily: 'monospace', fontSize: '0.8rem', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '0.375rem 0.625rem', flex: 1, wordBreak: 'break-all' }}>
               {setupData?.secret}
@@ -155,7 +155,7 @@ export default function MfaSetup() {
             required
             placeholder="000000"
             value={code}
-            onChange={e => setCode(e.target.value.replace(/\D/g, ''))}
+            onChange={e => setCode(e.target.value.replaceAll(/\D/g, ''))}
           />
         </div>
         <button className="btn" type="submit" disabled={loading || code.length !== 6}>
