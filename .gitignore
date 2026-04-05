@@ -5,6 +5,8 @@ obj/
 *.suo
 .vs/
 *.DotSettings.user
+.sonarqube/
+tests/**/TestResults/
 
 # ── Node / Frontend ───────────────────────────────────────────────────────────
 node_modules/
