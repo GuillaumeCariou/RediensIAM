@@ -13,14 +13,14 @@ import SystemUsers from './pages/system/Users';
 import AuditLog from './pages/system/AuditLog';
 import SystemMetrics from './pages/system/Metrics';
 import SystemEmail from './pages/system/SystemEmail';
-import SystemUserLists from './pages/system/SystemUserLists';
+import SystemAdmins from './pages/system/SystemAdmins';
 import SystemServiceAccounts from './pages/system/SystemServiceAccounts';
 import OrgDetail from './pages/system/OrgDetail';
 import SystemProjectDetail from './pages/system/SystemProjectDetail';
 import SystemProjects from './pages/system/SystemProjects';
 import SystemHealth from './pages/system/SystemHealth';
 import ServiceAccountDetail from './pages/ServiceAccountDetail';
-import AdminsPage from './pages/AdminsPage';
+import OrgAdminsPage from './pages/OrgAdminsPage';
 import UserListDetail from './pages/UserListDetail';
 
 // Org pages
@@ -74,13 +74,13 @@ function AppRoutes() {
         {/* System — super_admin only */}
         <Route element={isSuperAdmin ? <Outlet /> : <Navigate to={home} replace />}>
           <Route path="system" element={<SystemDashboard />} />
-          <Route path="system/admins" element={<AdminsPage />} />
+          <Route path="system/admins" element={<SystemAdmins />} />
           <Route path="system/projects" element={<SystemProjects />} />
           <Route path="system/organisations" element={<Organisations />} />
           <Route path="system/organisations/:id" element={<OrgDetail />} />
           <Route path="system/organisations/:id/userlists" element={<UserLists />} />
           <Route path="system/organisations/:id/projects" element={<Projects />} />
-          <Route path="system/organisations/:id/admins" element={<AdminsPage />} />
+          <Route path="system/organisations/:id/admins" element={<OrgAdminsPage />} />
           <Route path="system/organisations/:id/service-accounts" element={<OrgServiceAccounts />} />
           <Route path="system/organisations/:id/service-accounts/:saId" element={<ServiceAccountDetail />} />
           <Route path="system/organisations/:id/audit-log" element={<OrgAuditLog />} />
@@ -94,7 +94,7 @@ function AppRoutes() {
           <Route path="system/organisations/:oid/projects/:pid/authentication" element={<Authentication />} />
           <Route path="system/organisations/:oid/projects/:pid/settings" element={<ProjectSettings />} />
           <Route path="system/users" element={<SystemUsers />} />
-          <Route path="system/userlists" element={<SystemUserLists />} />
+          <Route path="system/userlists" element={<UserLists />} />
           <Route path="system/userlists/:id" element={<UserListDetail />} />
           <Route path="system/organisations/:id/userlists/:listId" element={<UserListDetail />} />
           <Route path="system/service-accounts" element={<SystemServiceAccounts />} />
@@ -111,7 +111,7 @@ function AppRoutes() {
           <Route path="org/userlists" element={<UserLists />} />
           <Route path="org/userlists/:id" element={<UserListDetail />} />
           <Route path="org/projects" element={<Projects />} />
-          <Route path="org/admins" element={<AdminsPage />} />
+          <Route path="org/admins" element={<OrgAdminsPage />} />
           <Route path="org/service-accounts" element={<OrgServiceAccounts />} />
           <Route path="org/service-accounts/:saId" element={<ServiceAccountDetail />} />
           <Route path="org/audit-log" element={<OrgAuditLog />} />
