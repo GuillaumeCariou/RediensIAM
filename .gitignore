@@ -22,6 +22,7 @@ deploy/rediensiam/charts/
 *.key
 deploy/rediensiam/values.secret.yaml
 deploy/rediensiam/values.prod.secret.yaml
+.sonar.env
 
 # ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
