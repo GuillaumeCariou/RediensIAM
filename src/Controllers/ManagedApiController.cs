@@ -105,7 +105,7 @@ public class ManagedApiController(
         var project = new Project
         {
             OrgId = id, Name = body.Name, Slug = body.Slug,
-            RequireRoleToLogin = body.RequireRoleToLogin,
+            RequireRoleToLogin = body.RequireRoleToLogin ?? false,
             Active = true, CreatedBy = actorId,
             CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
         };

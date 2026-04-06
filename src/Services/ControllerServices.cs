@@ -4,19 +4,14 @@ using RediensIAM.Services;
 
 namespace RediensIAM.Services;
 
-/// <summary>Service bundle for AuthController — groups 11 dependencies to keep constructor ≤ 7 params (S107).</summary>
-public sealed class AuthControllerServices(
+/// <summary>Core auth dependencies (hydra, passwords, otp, rate limiter, audit, keto).</summary>
+public sealed class AuthCoreServices(
     HydraService hydra,
     PasswordService passwords,
     OtpCacheService otp,
     LoginRateLimiter rateLimiter,
     AuditLogService audit,
-    KetoService keto,
-    IEmailService email,
-    ISmsService sms,
-    IFido2 fido2,
-    SocialLoginService socialLogin,
-    BreachCheckService breachCheck)
+    KetoService keto)
 {
     public HydraService Hydra           => hydra;
     public PasswordService Passwords    => passwords;
@@ -24,11 +19,37 @@ public sealed class AuthControllerServices(
     public LoginRateLimiter RateLimiter => rateLimiter;
     public AuditLogService Audit        => audit;
     public KetoService Keto             => keto;
-    public IEmailService Email          => email;
-    public ISmsService Sms              => sms;
-    public IFido2 Fido2                 => fido2;
-    public SocialLoginService SocialLogin => socialLogin;
-    public BreachCheckService BreachCheck => breachCheck;
+}
+
+/// <summary>Extended auth dependencies (email, sms, fido2, social login, breach check).</summary>
+public sealed class AuthExtServices(
+    IEmailService email,
+    ISmsService sms,
+    IFido2 fido2,
+    SocialLoginService socialLogin,
+    BreachCheckService breachCheck)
+{
+    public IEmailService Email              => email;
+    public ISmsService Sms                  => sms;
+    public IFido2 Fido2                     => fido2;
+    public SocialLoginService SocialLogin   => socialLogin;
+    public BreachCheckService BreachCheck   => breachCheck;
+}
+
+/// <summary>Service bundle for AuthController — composes AuthCoreServices + AuthExtServices (S107).</summary>
+public sealed class AuthControllerServices(AuthCoreServices core, AuthExtServices ext)
+{
+    public HydraService Hydra             => core.Hydra;
+    public PasswordService Passwords      => core.Passwords;
+    public OtpCacheService Otp            => core.Otp;
+    public LoginRateLimiter RateLimiter   => core.RateLimiter;
+    public AuditLogService Audit          => core.Audit;
+    public KetoService Keto               => core.Keto;
+    public IEmailService Email            => ext.Email;
+    public ISmsService Sms                => ext.Sms;
+    public IFido2 Fido2                   => ext.Fido2;
+    public SocialLoginService SocialLogin => ext.SocialLogin;
+    public BreachCheckService BreachCheck => ext.BreachCheck;
 }
 
 /// <summary>Service bundle for AccountController — groups 5 dependencies to keep constructor ≤ 7 params (S107).</summary>

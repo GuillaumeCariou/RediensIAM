@@ -175,7 +175,7 @@ public class AuthController(
         var mfaResult = await InitiateMfaAsync(user, project, projectId, body.LoginChallenge);
         if (mfaResult != null) return mfaResult;
 
-        return await CompleteLoginAsync(user, project, projectId, body.LoginChallenge);
+        return await CompleteLoginAsync(user, project, body.LoginChallenge);
     }
 
     private async Task<User?> LookupUserByCredentialsAsync(Project project, LoginRequest body)
@@ -287,7 +287,7 @@ public class AuthController(
         HttpContext.Session.SetString(MfaPendingProject, projectId);
     }
 
-    private async Task<IActionResult> CompleteLoginAsync(User user, Project project, string projectId, string loginChallenge)
+    private async Task<IActionResult> CompleteLoginAsync(User user, Project project, string loginChallenge)
     {
         user.FailedLoginCount = 0;
         user.LastLoginAt = DateTimeOffset.UtcNow;
@@ -611,7 +611,7 @@ public class AuthController(
         var verificationEnabled = project.EmailVerificationEnabled || project.SmsVerificationEnabled;
 
         if (!verificationEnabled)
-            return await RegisterDirectAsync(project, projectId, email, body);
+            return await RegisterDirectAsync(project, email, body);
 
         return await RegisterWithVerificationAsync(project, projectId, email, body);
     }
@@ -657,7 +657,7 @@ public class AuthController(
         return null;
     }
 
-    private async Task<IActionResult> RegisterDirectAsync(Project project, string projectId, string email, RegisterRequest body)
+    private async Task<IActionResult> RegisterDirectAsync(Project project, string email, RegisterRequest body)
     {
         var user = await BuildUserAsync(project.AssignedUserListId!.Value, email, body.Username, body.Password);
         db.Users.Add(user);
@@ -971,9 +971,7 @@ public class AuthController(
         if (!System.Net.IPAddress.TryParse(parts[0], out var network)) return false;
         network = NormalizeIp(network);
 
-        // Different address families can't match
         if (ip.AddressFamily != network.AddressFamily) return false;
-
         if (parts.Length == 1) return ip.Equals(network);
         if (!int.TryParse(parts[1], out var prefixLen)) return false;
 
@@ -981,16 +979,21 @@ public class AuthController(
         var netBytes = network.GetAddressBytes();
         if (ipBytes.Length != netBytes.Length) return false;
 
-        // IPv4
-        if (ipBytes.Length == 4)
-        {
-            var mask   = prefixLen == 0 ? 0u : ~((1u << (32 - prefixLen)) - 1);
-            var ipInt  = (uint)(ipBytes[0]  << 24 | ipBytes[1]  << 16 | ipBytes[2]  << 8 | ipBytes[3]);
-            var netInt = (uint)(netBytes[0] << 24 | netBytes[1] << 16 | netBytes[2] << 8 | netBytes[3]);
-            return (ipInt & mask) == (netInt & mask);
-        }
+        return ipBytes.Length == 4
+            ? Ipv4InRange(ipBytes, netBytes, prefixLen)
+            : Ipv6InRange(ipBytes, netBytes, prefixLen);
+    }
 
-        // IPv6: compare byte-by-byte with prefix mask
+    private static bool Ipv4InRange(byte[] ipBytes, byte[] netBytes, int prefixLen)
+    {
+        var mask   = prefixLen == 0 ? 0u : ~((1u << (32 - prefixLen)) - 1);
+        var ipInt  = (uint)(ipBytes[0]  << 24 | ipBytes[1]  << 16 | ipBytes[2]  << 8 | ipBytes[3]);
+        var netInt = (uint)(netBytes[0] << 24 | netBytes[1] << 16 | netBytes[2] << 8 | netBytes[3]);
+        return (ipInt & mask) == (netInt & mask);
+    }
+
+    private static bool Ipv6InRange(byte[] ipBytes, byte[] netBytes, int prefixLen)
+    {
         var fullBytes = prefixLen / 8;
         var remBits   = prefixLen % 8;
         for (var i = 0; i < fullBytes; i++)
@@ -1249,20 +1252,23 @@ public class AuthController(
         if (raw is not JsonElement el || el.ValueKind != JsonValueKind.Array) return null;
 
         var encKey = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
-
         foreach (var p in el.EnumerateArray())
         {
-            if (!p.TryGetProperty("id", out var idProp) || idProp.GetString() != providerId) continue;
-            if (p.TryGetProperty("enabled", out var enProp) && !enProp.GetBoolean()) return null;
-
-            var type      = p.TryGetProperty("type",       out var t)  ? t.GetString()  ?? "" : "";
-            var clientId  = p.TryGetProperty("client_id",  out var ci) ? ci.GetString() ?? "" : "";
-            var issuerUrl = p.TryGetProperty("issuer_url", out var iu) ? iu.GetString() : null;
-            var clientSecret = ResolveProviderSecret(p, encKey);
-
-            return new ProviderConfig(providerId, type, clientId, clientSecret, issuerUrl);
+            var cfg = TryBuildProviderConfig(p, providerId, encKey);
+            if (cfg != null) return cfg;
         }
         return null;
+    }
+
+    private static ProviderConfig? TryBuildProviderConfig(JsonElement p, string providerId, byte[] encKey)
+    {
+        if (!p.TryGetProperty("id", out var idProp) || idProp.GetString() != providerId) return null;
+        if (p.TryGetProperty("enabled", out var enProp) && !enProp.GetBoolean()) return null;
+
+        var type      = p.TryGetProperty("type",       out var t)  ? t.GetString()  ?? "" : "";
+        var clientId  = p.TryGetProperty("client_id",  out var ci) ? ci.GetString() ?? "" : "";
+        var issuerUrl = p.TryGetProperty("issuer_url", out var iu) ? iu.GetString() : null;
+        return new ProviderConfig(providerId, type, clientId, ResolveProviderSecret(p, encKey), issuerUrl);
     }
 
     private static string ResolveProviderSecret(JsonElement p, byte[] encKey)

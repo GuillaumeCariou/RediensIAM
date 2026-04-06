@@ -72,6 +72,8 @@ builder.Services.AddScoped<SocialLoginService>();
 builder.Services.AddHttpContextAccessor();
 
 // ── Controller service bundles (reduce constructor param counts, S107) ────────
+builder.Services.AddScoped<AuthCoreServices>();
+builder.Services.AddScoped<AuthExtServices>();
 builder.Services.AddScoped<AuthControllerServices>();
 builder.Services.AddScoped<AccountControllerServices>();
 builder.Services.AddScoped<OrgAdminServices>();
@@ -240,49 +242,57 @@ static async Task EnsureDbSchemaAsync(WebApplication webApp)
 
 // ── Bootstrap super admin ──────────────────────────────────────────────────
 if (!string.IsNullOrEmpty(appConfig.BootstrapEmail) && !string.IsNullOrEmpty(appConfig.BootstrapPassword))
+    await BootstrapSuperAdminAsync(app, appConfig);
+
+static async Task BootstrapSuperAdminAsync(WebApplication webApp, AppConfig cfg)
 {
-    var blog = app.Services.GetRequiredService<ILogger<Program>>();
+    var log = webApp.Services.GetRequiredService<ILogger<Program>>();
     for (var attempt = 1; attempt <= 12; attempt++)
     {
         try
         {
-            using var bscope = app.Services.CreateScope();
-            var bdb    = bscope.ServiceProvider.GetRequiredService<RediensIamDbContext>();
-            var bketo  = bscope.ServiceProvider.GetRequiredService<KetoService>();
-            var bpwd   = bscope.ServiceProvider.GetRequiredService<PasswordService>();
-            var email  = appConfig.BootstrapEmail.ToLowerInvariant();
-
-            var systemList = await bdb.UserLists.FirstOrDefaultAsync(ul => ul.Name == "__system__");
-            if (systemList == null)
-            {
-                systemList = new UserList { Id = Guid.NewGuid(), Name = "__system__", Immovable = true, CreatedAt = DateTimeOffset.UtcNow };
-                bdb.UserLists.Add(systemList);
-                await bdb.SaveChangesAsync();
-            }
-
-            if (!await bdb.Users.AnyAsync(u => u.Email == email))
-            {
-                var user = new User
-                {
-                    Id = Guid.NewGuid(), UserListId = systemList.Id,
-                    Email = email, Username = email.Split('@')[0], Discriminator = "0000",
-                    EmailVerified = true, EmailVerifiedAt = DateTimeOffset.UtcNow,
-                    PasswordHash = bpwd.Hash(appConfig.BootstrapPassword),
-                    Active = true, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
-                };
-                bdb.Users.Add(user);
-                await bketo.WriteRelationTupleAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{user.Id}");
-                await bdb.SaveChangesAsync();
-                blog.LogInformation("Bootstrap super admin created: {Email}", email);
-            }
+            using var scope = webApp.Services.CreateScope();
+            var bdb   = scope.ServiceProvider.GetRequiredService<RediensIamDbContext>();
+            var bketo = scope.ServiceProvider.GetRequiredService<KetoService>();
+            var bpwd  = scope.ServiceProvider.GetRequiredService<PasswordService>();
+            await EnsureBootstrapAdminAsync(bdb, bketo, bpwd, cfg.BootstrapEmail!, cfg.BootstrapPassword!, log);
             break;
         }
         catch (Exception ex) when (attempt < 12)
         {
-            blog.LogWarning(ex, "Bootstrap attempt {Attempt}/12 failed, retrying in 5s", attempt);
+            log.LogWarning(ex, "Bootstrap attempt {Attempt}/12 failed, retrying in 5s", attempt);
             await Task.Delay(5000);
         }
-        catch (Exception ex) { blog.LogWarning(ex, "Bootstrap super admin failed"); }
+        catch (Exception ex) { log.LogWarning(ex, "Bootstrap super admin failed"); }
+    }
+}
+
+static async Task EnsureBootstrapAdminAsync(
+    RediensIamDbContext bdb, KetoService bketo, PasswordService bpwd,
+    string bootstrapEmail, string bootstrapPassword, ILogger log)
+{
+    var email = bootstrapEmail.ToLowerInvariant();
+    var systemList = await bdb.UserLists.FirstOrDefaultAsync(ul => ul.Name == "__system__");
+    if (systemList == null)
+    {
+        systemList = new UserList { Id = Guid.NewGuid(), Name = "__system__", Immovable = true, CreatedAt = DateTimeOffset.UtcNow };
+        bdb.UserLists.Add(systemList);
+        await bdb.SaveChangesAsync();
+    }
+    if (!await bdb.Users.AnyAsync(u => u.Email == email))
+    {
+        var user = new User
+        {
+            Id = Guid.NewGuid(), UserListId = systemList.Id,
+            Email = email, Username = email.Split('@')[0], Discriminator = "0000",
+            EmailVerified = true, EmailVerifiedAt = DateTimeOffset.UtcNow,
+            PasswordHash = bpwd.Hash(bootstrapPassword),
+            Active = true, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+        };
+        bdb.Users.Add(user);
+        await bketo.WriteRelationTupleAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{user.Id}");
+        await bdb.SaveChangesAsync();
+        log.LogInformation("Bootstrap super admin created: {Email}", email);
     }
 }
 

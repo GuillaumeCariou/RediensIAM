@@ -91,7 +91,7 @@ public class OrgController(
         var project = new Project
         {
             OrgId = orgId, Name = body.Name, Slug = body.Slug,
-            RequireRoleToLogin = body.RequireRoleToLogin,
+            RequireRoleToLogin = body.RequireRoleToLogin ?? false,
             Active = true, CreatedBy = ActorId,
             CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
         };
@@ -520,27 +520,28 @@ public class OrgController(
 
     private void MutateUserFields(User user, UpdateUserRequest body)
     {
-        if (body.Email != null)
-        {
-            user.Email = body.Email.ToLowerInvariant();
-            user.EmailVerified = false;
-            user.EmailVerifiedAt = null;
-        }
+        if (body.Email != null) { user.Email = body.Email.ToLowerInvariant(); user.EmailVerified = false; user.EmailVerifiedAt = null; }
         if (body.Username != null) user.Username = body.Username;
         if (body.DisplayName != null) user.DisplayName = body.DisplayName == "" ? null : body.DisplayName;
         if (body.Phone != null) user.Phone = body.Phone == "" ? null : body.Phone;
-        if (body.Active.HasValue)
-        {
-            user.Active = body.Active.Value;
-            user.DisabledAt = body.Active.Value ? null : DateTimeOffset.UtcNow;
-        }
-        if (body.EmailVerified.HasValue)
-        {
-            user.EmailVerified = body.EmailVerified.Value;
-            user.EmailVerifiedAt = body.EmailVerified.Value ? DateTimeOffset.UtcNow : null;
-        }
+        ApplyActiveState(user, body);
+        ApplyEmailVerifiedState(user, body);
         if (body.ClearLock == true) { user.LockedUntil = null; user.FailedLoginCount = 0; }
         if (!string.IsNullOrEmpty(body.NewPassword)) user.PasswordHash = passwords.Hash(body.NewPassword);
+    }
+
+    private static void ApplyActiveState(User user, UpdateUserRequest body)
+    {
+        if (!body.Active.HasValue) return;
+        user.Active = body.Active.Value;
+        user.DisabledAt = body.Active.Value ? null : DateTimeOffset.UtcNow;
+    }
+
+    private static void ApplyEmailVerifiedState(User user, UpdateUserRequest body)
+    {
+        if (!body.EmailVerified.HasValue) return;
+        user.EmailVerified = body.EmailVerified.Value;
+        user.EmailVerifiedAt = body.EmailVerified.Value ? DateTimeOffset.UtcNow : null;
     }
 
     [HttpGet("userlists/{id}/users/{uid}/sessions")]
@@ -927,7 +928,7 @@ public class OrgController(
     }
 }
 
-public record CreateProjectRequest(string Name, string Slug, [property: JsonRequired] bool RequireRoleToLogin, string[]? RedirectUris);
+public record CreateProjectRequest(string Name, string Slug, bool? RequireRoleToLogin, string[]? RedirectUris);
 public record UpdateProjectRequest(
     string? Name,
     bool? RequireRoleToLogin,
@@ -948,7 +949,7 @@ public record UpdateScopesRequest(string[] Scopes);
 public record CreateSamlProviderRequest(string EntityId, string? MetadataUrl, string? SsoUrl, string? CertificatePem, string? EmailAttributeName, string? DisplayNameAttributeName, bool? JitProvisioning, Guid? DefaultRoleId);
 public record UpdateSamlProviderRequest(string? EntityId, string? MetadataUrl, string? SsoUrl, string? CertificatePem, string? EmailAttributeName, string? DisplayNameAttributeName, bool? JitProvisioning, Guid? DefaultRoleId, bool? Active);
 public record UpdateOrgSettingsRequest(int? AuditRetentionDays);
-public record AssignUserListRequest(Guid UserListId);
+public record AssignUserListRequest([property: JsonRequired] Guid UserListId);
 public record CreateUserListRequest(string Name);
 public record CreateUserRequest(string Email, string? Password, string? Username);
 public record UpdateUserRequest(string? Email, string? Username, string? DisplayName, string? Phone, bool? Active, bool? EmailVerified, bool? ClearLock, string? NewPassword);

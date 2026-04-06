@@ -222,10 +222,24 @@ var user = await db.Users
         if (body.Username != null) user.Username = body.Username;
         if (body.DisplayName != null) user.DisplayName = body.DisplayName == "" ? null : body.DisplayName;
         if (body.Phone != null) user.Phone = body.Phone == "" ? null : body.Phone;
-        if (body.Active.HasValue) { user.Active = body.Active.Value; user.DisabledAt = body.Active.Value ? null : DateTimeOffset.UtcNow; }
-        if (body.EmailVerified.HasValue) { user.EmailVerified = body.EmailVerified.Value; user.EmailVerifiedAt = body.EmailVerified.Value ? DateTimeOffset.UtcNow : null; }
+        ApplyActiveState(user, body);
+        ApplyEmailVerifiedState(user, body);
         if (body.ClearLock == true) { user.LockedUntil = null; user.FailedLoginCount = 0; }
         if (!string.IsNullOrEmpty(body.NewPassword)) user.PasswordHash = passwords.Hash(body.NewPassword);
+    }
+
+    private static void ApplyActiveState(User user, AdminUpdateUserRequest body)
+    {
+        if (!body.Active.HasValue) return;
+        user.Active = body.Active.Value;
+        user.DisabledAt = body.Active.Value ? null : DateTimeOffset.UtcNow;
+    }
+
+    private static void ApplyEmailVerifiedState(User user, AdminUpdateUserRequest body)
+    {
+        if (!body.EmailVerified.HasValue) return;
+        user.EmailVerified = body.EmailVerified.Value;
+        user.EmailVerifiedAt = body.EmailVerified.Value ? DateTimeOffset.UtcNow : null;
     }
 
     [HttpPost("users/{id}/unlock")]
@@ -459,7 +473,7 @@ var actorId = GetActorId();
         var project = new Project
         {
             OrgId = id, Name = body.Name, Slug = body.Slug,
-            RequireRoleToLogin = body.RequireRoleToLogin,
+            RequireRoleToLogin = body.RequireRoleToLogin ?? false,
             Active = true, CreatedBy = actorId,
             CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
         };
@@ -1044,7 +1058,7 @@ public record UpdateOrgRequest(string? Name, int? AuditRetentionDays);
 public record AdminCreateUserRequest(string Email, string? Password, string? Username, bool? EmailVerified);
 public record AssignOrgAdminRequest([property: System.Text.Json.Serialization.JsonRequired] Guid UserId, string Role, Guid? ScopeId);
 public record AdminCreateUserListRequest(string Name, [property: System.Text.Json.Serialization.JsonRequired] Guid OrgId);
-public record AdminCreateProjectRequest(string Name, string Slug, [property: System.Text.Json.Serialization.JsonRequired] bool RequireRoleToLogin, string[]? RedirectUris);
+public record AdminCreateProjectRequest(string Name, string Slug, bool? RequireRoleToLogin, string[]? RedirectUris);
 public record AdminUpdateProjectRequest(string? Name, bool? RequireRoleToLogin, bool? RequireMfa, bool? AllowSelfRegistration, bool? EmailVerificationEnabled,
     bool? SmsVerificationEnabled, bool? Active, Guid? DefaultRoleId, bool? ClearDefaultRole, string[]? AllowedEmailDomains, Dictionary<string, object>? LoginTheme,
     string[]? IpAllowlist, bool? CheckBreachedPasswords);

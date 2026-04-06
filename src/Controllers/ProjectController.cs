@@ -32,7 +32,9 @@ public class ProjectController(
         {
             if (Claims.GetManagementLevel() <= ManagementLevel.OrgAdmin)
             {
-                var q = HttpContext.Request.Query["project_id"].FirstOrDefault(); // NOSONAR S6932 — property getter, model binding not applicable here
+#pragma warning disable S6932 // property getter — model binding is not applicable here
+                var q = HttpContext.Request.Query["project_id"].FirstOrDefault();
+#pragma warning restore S6932
                 if (q != null && Guid.TryParse(q, out var g)) return g;
             }
             return Guid.Parse(Claims.ProjectId);
