@@ -114,68 +114,73 @@ export default function Projects() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {loading
-                ? Array.from({ length: 4 }).map((_, i) => (
-                    <TableRow key={i}>{Array.from({ length: 7 }).map((__, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
-                  ))
-                : projects.length === 0
-                ? (
-                    <TableRow>
-                      <TableCell colSpan={7} className="text-center text-muted-foreground py-12">No projects yet</TableCell>
-                    </TableRow>
-                  )
-                : projects.map(p => (
-                    <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => navigate(projectUrl(p.id))}>
-                      <TableCell className="font-medium">{p.name}</TableCell>
-                      <TableCell className="font-mono text-sm text-muted-foreground">{p.slug}</TableCell>
-                      <TableCell>
-                        {p.active
-                          ? <Badge variant="success"><CheckCircle className="h-3 w-3 mr-1" />Active</Badge>
-                          : <Badge variant="secondary"><XCircle className="h-3 w-3 mr-1" />Inactive</Badge>
-                        }
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {p.assigned_user_list_name
-                          ? <Badge variant="default">{p.assigned_user_list_name}</Badge>
-                          : <span className="text-muted-foreground">None</span>
-                        }
-                      </TableCell>
-                      <TableCell>
-                        {p.require_role_to_login
-                          ? <Badge variant="warning">Required</Badge>
-                          : <Badge variant="secondary">Optional</Badge>
-                        }
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{fmtDateShort(p.created_at)}</TableCell>
-                      <TableCell onClick={e => e.stopPropagation()}>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent>
-                            <DropdownMenuItem asChild>
-                              <Link to={projectUrl(p.id)}>
-                                <ArrowRight className="h-4 w-4" />Open Project
-                              </Link>
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => { setAssignOpen(p); setSelectedList(p.assigned_user_list_id ?? ''); }}>
-                              <Link2 className="h-4 w-4" />Assign User List
-                            </DropdownMenuItem>
-                            {p.assigned_user_list_id && (
-                              <DropdownMenuItem onClick={() => { setAssignOpen(p); setSelectedList('__none__'); }}>
-                                <Link2Off className="h-4 w-4" />Unassign User List
+              {(() => {
+                if (loading) return (
+                  Array.from({ length: 4 }, (_, i) => `sk-row-${i}`).map(rowId => (
+                      <TableRow key={rowId}>{Array.from({ length: 7 }, (_, j) => `sk-cell-${j}`).map(cellId => <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
+                    ))
+                );
+                if (projects.length === 0) return (
+                  (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center text-muted-foreground py-12">No projects yet</TableCell>
+                      </TableRow>
+                    )
+                );
+                return (
+                  projects.map(p => (
+                      <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => navigate(projectUrl(p.id))}>
+                        <TableCell className="font-medium">{p.name}</TableCell>
+                        <TableCell className="font-mono text-sm text-muted-foreground">{p.slug}</TableCell>
+                        <TableCell>
+                          {p.active
+                            ? <Badge variant="success"><CheckCircle className="h-3 w-3 mr-1" />Active</Badge>
+                            : <Badge variant="secondary"><XCircle className="h-3 w-3 mr-1" />Inactive</Badge>
+                          }
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {p.assigned_user_list_name
+                            ? <Badge variant="default">{p.assigned_user_list_name}</Badge>
+                            : <span className="text-muted-foreground">None</span>
+                          }
+                        </TableCell>
+                        <TableCell>
+                          {p.require_role_to_login
+                            ? <Badge variant="warning">Required</Badge>
+                            : <Badge variant="secondary">Optional</Badge>
+                          }
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{fmtDateShort(p.created_at)}</TableCell>
+                        <TableCell onClick={e => e.stopPropagation()}>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent>
+                              <DropdownMenuItem asChild>
+                                <Link to={projectUrl(p.id)}>
+                                  <ArrowRight className="h-4 w-4" />Open Project
+                                </Link>
                               </DropdownMenuItem>
-                            )}
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteTarget(p)}>
-                              <Trash2 className="h-4 w-4" />Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  ))
-              }
+                              <DropdownMenuItem onClick={() => { setAssignOpen(p); setSelectedList(p.assigned_user_list_id ?? ''); }}>
+                                <Link2 className="h-4 w-4" />Assign User List
+                              </DropdownMenuItem>
+                              {p.assigned_user_list_id && (
+                                <DropdownMenuItem onClick={() => { setAssignOpen(p); setSelectedList('__none__'); }}>
+                                  <Link2Off className="h-4 w-4" />Unassign User List
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteTarget(p)}>
+                                <Trash2 className="h-4 w-4" />Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                );
+              })()}
             </TableBody>
           </Table>
         </div>

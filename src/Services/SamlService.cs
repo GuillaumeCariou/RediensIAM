@@ -43,9 +43,8 @@ public class SamlService(
                 config.SingleSignOnDestination =
                     descriptor.IdPSsoDescriptor.SingleSignOnServices.First().Location;
 
-                foreach (var cert in descriptor.IdPSsoDescriptor.SigningCertificates)
-                    if (cert.IsValidLocalTime())
-                        config.SignatureValidationCertificates.Add(cert);
+                foreach (var cert in descriptor.IdPSsoDescriptor.SigningCertificates.Where(c => c.IsValidLocalTime()))
+                    config.SignatureValidationCertificates.Add(cert);
 
                 if (config.SignatureValidationCertificates.Count == 0)
                     logger.LogWarning("SAML IdP {IdpId}: no valid signing certs in metadata", idp.Id);
@@ -53,7 +52,7 @@ public class SamlService(
             catch (Exception ex)
             {
                 logger.LogWarning(ex, "SAML IdP {IdpId}: failed to load metadata from {Url}", idp.Id, idp.MetadataUrl);
-                throw;
+                throw new InvalidOperationException($"SAML IdP {idp.Id}: failed to load metadata", ex);
             }
         }
         else

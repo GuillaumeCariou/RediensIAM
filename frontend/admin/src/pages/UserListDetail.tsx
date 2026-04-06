@@ -70,6 +70,11 @@ export default function UserListDetail() {
     } finally { setCleanupRunning(false); }
   };
 
+  let cleanupLabel: string;
+  if (cleanupRunning) cleanupLabel = 'Running…';
+  else if (cleanupDryRun) cleanupLabel = 'Preview';
+  else cleanupLabel = 'Run Cleanup';
+
   return (
     <div>
       <PageHeader
@@ -111,9 +116,9 @@ export default function UserListDetail() {
           <div className="space-y-4 py-2">
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={cleanupInactive} onChange={e => setCleanupInactive(e.target.checked)} />
-              Remove users inactive for more than
+              {' '}Remove users inactive for more than{' '}
               <input type="number" min={1} max={3650} value={cleanupDays} onChange={e => setCleanupDays(Number(e.target.value))} className="w-16 border rounded px-2 py-0.5 text-sm" />
-              days
+              {'  '} days
             </label>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={cleanupDryRun} onChange={e => setCleanupDryRun(e.target.checked)} />
@@ -130,7 +135,7 @@ export default function UserListDetail() {
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setCleanupOpen(false)}>Close</Button>
             <Button type="button" disabled={cleanupRunning} onClick={handleCleanup}>
-              {cleanupRunning ? 'Running…' : cleanupDryRun ? 'Preview' : 'Run Cleanup'}
+              {cleanupLabel}
             </Button>
           </DialogFooter>
         </DialogContent>

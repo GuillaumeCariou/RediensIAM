@@ -12,6 +12,7 @@ using RediensIAM.Services;
 namespace RediensIAM.Controllers;
 
 [ApiController]
+[Route("auth/saml")]
 public class SamlController(
     RediensIamDbContext db,
     HydraService hydra,
@@ -25,7 +26,7 @@ public class SamlController(
 
     // ── SP-initiated SSO: build AuthnRequest and redirect to IdP ─────────────
 
-    [HttpGet("/auth/saml/start")]
+    [HttpGet("start")]
     public async Task<IActionResult> Start(
         [FromQuery] string login_challenge,
         [FromQuery] Guid idp_id)
@@ -60,10 +61,10 @@ public class SamlController(
 
     // ── ACS: receive and validate SAMLResponse ────────────────────────────────
 
-    [HttpPost("/auth/saml/acs")]
+    [HttpPost("acs")]
     public async Task<IActionResult> AssertionConsumerService()
     {
-        var httpRequest = Request.ToGenericHttpRequest(validate: true);
+        var httpRequest = await Request.ToGenericHttpRequestAsync(validate: true);
         Saml2AuthnResponse? saml2AuthnResponse = null;
 
         Guid idpId;
@@ -155,7 +156,7 @@ public class SamlController(
 
     // ── SP Metadata ───────────────────────────────────────────────────────────
 
-    [HttpGet("/auth/saml/metadata")]
+    [HttpGet("metadata")]
     public IActionResult Metadata()
     {
         var entityId = System.Security.SecurityElement.Escape(SpEntity);

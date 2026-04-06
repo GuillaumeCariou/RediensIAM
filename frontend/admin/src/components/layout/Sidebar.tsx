@@ -67,6 +67,62 @@ const themeOptions: { value: Theme; icon: React.ReactNode; label: string }[] = [
 
 // ── Sidebar ────────────────────────────────────────────────────────
 
+interface NavLinkProps { item: NavItem; active: boolean; superAdmin: boolean; }
+function NavLink({ item, active, superAdmin }: Readonly<NavLinkProps>) {
+  if (item.superOnly && !superAdmin) return null;
+  return (
+    <Link
+      to={item.to}
+      className={cn(
+        'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+        active
+          ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+          : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground'
+      )}
+    >
+      {item.icon}
+      {item.label}
+      {active && <ChevronRight className="ml-auto h-3 w-3" />}
+    </Link>
+  );
+}
+
+interface AccordionSectionProps {
+  label: string;
+  icon: React.ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+  highlight?: boolean;
+}
+function AccordionSection({ label, icon, open, onToggle, children, highlight }: Readonly<AccordionSectionProps>) {
+  return (
+    <div className={cn(
+      'rounded-lg overflow-hidden',
+      highlight && 'border border-primary/20 bg-primary/5',
+    )}>
+      <button
+        onClick={onToggle}
+        className={cn(
+          'flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wider transition-colors',
+          highlight
+            ? 'text-primary/80 hover:text-primary'
+            : 'text-sidebar-foreground/40 hover:text-sidebar-foreground/70',
+        )}
+      >
+        {icon}
+        <span className="flex-1 text-left">{label}</span>
+        <ChevronDown className={cn('h-3 w-3 transition-transform duration-200', open && 'rotate-180')} />
+      </button>
+      {open && (
+        <nav className="space-y-0.5 px-1 pb-1">
+          {children}
+        </nav>
+      )}
+    </div>
+  );
+}
+
 export default function Sidebar() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
@@ -74,8 +130,8 @@ export default function Sidebar() {
   const { theme, setTheme } = useTheme();
 
   // ── Parse URL context for super_admin ─────────────────────────
-  const sysProjMatch  = pathname.match(/^\/system\/organisations\/([^/]+)\/projects\/([^/]+)/);
-  const sysOrgMatch   = pathname.match(/^\/system\/organisations\/([^/]+)/);
+  const sysProjMatch  = /^\/system\/organisations\/([^/]+)\/projects\/([^/]+)/.exec(pathname);
+  const sysOrgMatch   = /^\/system\/organisations\/([^/]+)/.exec(pathname);
   const urlOrgId      = sysOrgMatch?.[1]  ?? '';
   const urlProjectId  = sysProjMatch?.[2] ?? '';
   const urlOrgForProj = sysProjMatch?.[1] ?? '';
@@ -87,9 +143,10 @@ export default function Sidebar() {
   // ── Visibility rules ──────────────────────────────────────────
   const showSystem  = isSuperAdmin;
   const showOrg     = isSuperAdmin ? urlOrgId !== ''    : isOrgAdmin;
-  const showProject = isSuperAdmin
-    ? urlProjectId !== ''
-    : isOrgAdmin ? onProjectPath : isProjectManager;
+  let showProject: boolean;
+  if (isSuperAdmin) showProject = urlProjectId !== '';
+  else if (isOrgAdmin) showProject = onProjectPath;
+  else showProject = isProjectManager;
 
   // ── Accordion open state ──────────────────────────────────────
   const [systemOpen,  setSystemOpen]  = useState(pathname.startsWith('/system'));
@@ -101,10 +158,13 @@ export default function Sidebar() {
   );
 
   // Determine which top-level section the current path belongs to
-  const activeSection =
-    (isSuperAdmin ? urlProjectId !== '' : pathname.startsWith('/project')) ? 'project' :
-    (isSuperAdmin ? urlOrgId !== ''     : pathname.startsWith('/org'))     ? 'org'     :
-    pathname.startsWith('/system')                                          ? 'system'  : null;
+  const isOnProject = isSuperAdmin ? urlProjectId !== '' : pathname.startsWith('/project');
+  const isOnOrg     = isSuperAdmin ? urlOrgId !== ''     : pathname.startsWith('/org');
+  let activeSection: 'project' | 'org' | 'system' | null;
+  if (isOnProject) activeSection = 'project';
+  else if (isOnOrg) activeSection = 'org';
+  else if (pathname.startsWith('/system')) activeSection = 'system';
+  else activeSection = null;
 
   // On section transition: collapse the previous section, expand the new one.
   // Manual toggling in between is preserved (effect only fires when section changes).
@@ -152,60 +212,7 @@ export default function Sidebar() {
   const isActive = (item: NavItem) =>
     item.exact ? pathname === item.to : pathname.startsWith(item.to);
 
-  const NavLink = ({ item }: { item: NavItem }) => {
-    if (item.superOnly && !isSuperAdmin) return null;
-    const active = isActive(item);
-    return (
-      <Link
-        to={item.to}
-        className={cn(
-          'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-          active
-            ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-            : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground'
-        )}
-      >
-        {item.icon}
-        {item.label}
-        {active && <ChevronRight className="ml-auto h-3 w-3" />}
-      </Link>
-    );
-  };
 
-  const AccordionSection = ({
-    label, icon, open, onToggle, children, highlight,
-  }: {
-    label: string;
-    icon: React.ReactNode;
-    open: boolean;
-    onToggle: () => void;
-    children: React.ReactNode;
-    highlight?: boolean;
-  }) => (
-    <div className={cn(
-      'rounded-lg overflow-hidden',
-      highlight && 'border border-primary/20 bg-primary/5',
-    )}>
-      <button
-        onClick={onToggle}
-        className={cn(
-          'flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wider transition-colors',
-          highlight
-            ? 'text-primary/80 hover:text-primary'
-            : 'text-sidebar-foreground/40 hover:text-sidebar-foreground/70',
-        )}
-      >
-        {icon}
-        <span className="flex-1 text-left">{label}</span>
-        <ChevronDown className={cn('h-3 w-3 transition-transform duration-200', open && 'rotate-180')} />
-      </button>
-      {open && (
-        <nav className="space-y-0.5 px-1 pb-1">
-          {children}
-        </nav>
-      )}
-    </div>
-  );
 
   const currentTheme = themeOptions.find(o => o.value === theme) ?? themeOptions[0];
 
@@ -259,7 +266,7 @@ export default function Sidebar() {
             onToggle={() => setSystemOpen(o => !o)}
             highlight
           >
-            {systemNav.map(item => <NavLink key={item.to} item={item} />)}
+            {systemNav.map(item => <NavLink key={item.to} item={item} active={isActive(item)} superAdmin={isSuperAdmin} />)}
           </AccordionSection>
         )}
 
@@ -270,7 +277,7 @@ export default function Sidebar() {
             open={orgOpen}
             onToggle={() => setOrgOpen(o => !o)}
           >
-            {activeOrgNav.map(item => <NavLink key={item.to} item={item} />)}
+            {activeOrgNav.map(item => <NavLink key={item.to} item={item} active={isActive(item)} superAdmin={isSuperAdmin} />)}
           </AccordionSection>
         )}
 
@@ -281,7 +288,7 @@ export default function Sidebar() {
             open={projectOpen}
             onToggle={() => setProjectOpen(o => !o)}
           >
-            {activeProjectNav.map(item => <NavLink key={item.to} item={item} />)}
+            {activeProjectNav.map(item => <NavLink key={item.to} item={item} active={isActive(item)} superAdmin={isSuperAdmin} />)}
           </AccordionSection>
         )}
 

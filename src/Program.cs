@@ -219,7 +219,7 @@ var app = builder.Build();
         }
         catch (Exception ex) when (attempt < 12)
         {
-            logger.LogWarning("DB not ready (attempt {Attempt}/12), retrying in 5s: {Message}", attempt, ex.Message);
+            logger.LogWarning(ex, "DB not ready (attempt {Attempt}/12), retrying in 5s", attempt);
             await Task.Delay(5000);
         }
         catch (Exception ex)
@@ -270,7 +270,7 @@ if (!string.IsNullOrEmpty(appConfig.BootstrapEmail) && !string.IsNullOrEmpty(app
         }
         catch (Exception ex) when (attempt < 12)
         {
-            blog.LogWarning("Bootstrap attempt {Attempt}/12 failed, retrying in 5s: {Message}", attempt, ex.Message);
+            blog.LogWarning(ex, "Bootstrap attempt {Attempt}/12 failed, retrying in 5s", attempt);
             await Task.Delay(5000);
         }
         catch (Exception ex) { blog.LogWarning(ex, "Bootstrap super admin failed"); }
@@ -356,7 +356,10 @@ app.MapFallback("/admin/{**path}", async ctx =>
 // Login SPA fallback
 app.MapFallbackToFile("index.html");
 
-app.Run();
+await app.RunAsync();
 
 // Expose Program to integration test project
-public partial class Program { }
+public partial class Program
+{
+    protected Program() { }
+}

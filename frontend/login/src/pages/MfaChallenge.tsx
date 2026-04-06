@@ -186,7 +186,11 @@ export default function MfaChallenge() {
         )}
         {mode === 'backup' && initialMfaType !== 'backup' && (
           <button className="link" type="button" onClick={() => switchMode(initialMfaType)}>
-            Back to {initialMfaType === 'sms' ? 'SMS code' : initialMfaType === 'webauthn' ? 'passkey' : 'authenticator app'}
+            Back to {(() => {
+              if (initialMfaType === 'sms') return 'SMS code';
+              if (initialMfaType === 'webauthn') return 'passkey';
+              return 'authenticator app';
+            })()}
           </button>
         )}
         {initialMfaType === 'webauthn' && (

@@ -12,6 +12,7 @@ using RediensIAM.Services;
 namespace RediensIAM.Controllers;
 
 [ApiController]
+[Route("admin")]
 [RequireManagementLevel(ManagementLevel.SuperAdmin)]
 public class SystemAdminController(
     RediensIamDbContext db,
@@ -27,13 +28,15 @@ public class SystemAdminController(
     private static readonly string[] OAuth2GrantTypes   = ["authorization_code", "refresh_token"];
     private static readonly string[] OAuth2ResponseTypes = ["code"];
     private static readonly string[] BuiltInScopes       = ["openid", "profile", "offline_access"];
+    private const string AuditOrg = "organisation";
+    private const string KindInvite = "invite";
 
     private TokenClaims Claims => HttpContext.GetClaims()!;
     private Guid GetActorId() => Claims.ParsedUserId;
 
     // ── Organisations ─────────────────────────────────────────────────────────
 
-    [HttpGet("/admin/organizations")]
+    [HttpGet("organizations")]
     public async Task<IActionResult> ListOrgs()
     {
 var orgs = await db.Organisations
@@ -42,7 +45,7 @@ var orgs = await db.Organisations
         return Ok(orgs);
     }
 
-    [HttpGet("/admin/organizations/{id}")]
+    [HttpGet("organizations/{id}")]
     public async Task<IActionResult> GetOrg(Guid id)
     {
         var org = await db.Organisations
@@ -53,7 +56,7 @@ var orgs = await db.Organisations
         return Ok(org);
     }
 
-    [HttpPost("/admin/organizations")]
+    [HttpPost("organizations")]
     public async Task<IActionResult> CreateOrg([FromBody] CreateOrgRequest body)
     {
 var actorId = GetActorId();
@@ -75,11 +78,11 @@ var actorId = GetActorId();
         await db.SaveChangesAsync();
 
         await keto.WriteRelationTupleAsync(Roles.KetoOrgsNamespace, org.Id.ToString(), "org", $"{Roles.KetoSystemNamespace}:{Roles.KetoSystemObject}");
-        await audit.RecordAsync(org.Id, null, actorId, "org.created", "organisation", org.Id.ToString());
+        await audit.RecordAsync(org.Id, null, actorId, "org.created", AuditOrg, org.Id.ToString());
         return Created($"/admin/organizations/{org.Id}", new { org.Id, org.Name, org.Slug, org_list_id = orgList.Id });
     }
 
-    [HttpPatch("/admin/organizations/{id}")]
+    [HttpPatch("organizations/{id}")]
     public async Task<IActionResult> UpdateOrg(Guid id, [FromBody] UpdateOrgRequest body)
     {
 var org = await db.Organisations.FindAsync(id);
@@ -91,29 +94,29 @@ var org = await db.Organisations.FindAsync(id);
         return Ok(new { org.Id, org.Name, org.AuditRetentionDays });
     }
 
-    [HttpPost("/admin/organizations/{id}/suspend")]
+    [HttpPost("organizations/{id}/suspend")]
     public async Task<IActionResult> SuspendOrg(Guid id)
     {
 var org = await db.Organisations.FindAsync(id);
         if (org == null) return NotFound();
         org.Active = false; org.SuspendedAt = DateTimeOffset.UtcNow; org.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
-        await audit.RecordAsync(id, null, GetActorId(), "org.suspended", "organisation", id.ToString());
+        await audit.RecordAsync(id, null, GetActorId(), "org.suspended", AuditOrg, id.ToString());
         return Ok(new { message = "org_suspended" });
     }
 
-    [HttpPost("/admin/organizations/{id}/unsuspend")]
+    [HttpPost("organizations/{id}/unsuspend")]
     public async Task<IActionResult> UnsuspendOrg(Guid id)
     {
 var org = await db.Organisations.FindAsync(id);
         if (org == null) return NotFound();
         org.Active = true; org.SuspendedAt = null; org.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
-        await audit.RecordAsync(id, null, GetActorId(), "org.unsuspended", "organisation", id.ToString());
+        await audit.RecordAsync(id, null, GetActorId(), "org.unsuspended", AuditOrg, id.ToString());
         return Ok(new { message = "org_unsuspended" });
     }
 
-    [HttpDelete("/admin/organizations/{id}")]
+    [HttpDelete("organizations/{id}")]
     public async Task<IActionResult> DeleteOrg(Guid id)
     {
 var org = await db.Organisations.FindAsync(id);
@@ -157,7 +160,7 @@ var org = await db.Organisations.FindAsync(id);
 
     // ── Users ─────────────────────────────────────────────────────────────────
 
-    [HttpGet("/admin/users")]
+    [HttpGet("users")]
     public async Task<IActionResult> SearchUsers([FromQuery] string? q, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
 var query = db.Users.AsQueryable();
@@ -172,7 +175,7 @@ var query = db.Users.AsQueryable();
         return Ok(users);
     }
 
-    [HttpGet("/admin/users/{id}")]
+    [HttpGet("users/{id}")]
     public async Task<IActionResult> GetUser(Guid id)
     {
 var user = await db.Users
@@ -199,7 +202,7 @@ var user = await db.Users
         });
     }
 
-    [HttpPatch("/admin/users/{id}")]
+    [HttpPatch("users/{id}")]
     public async Task<IActionResult> UpdateUser(Guid id, [FromBody] AdminUpdateUserRequest body)
     {
 var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id == id);
@@ -218,7 +221,7 @@ var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id
         return Ok(new { user.Id, user.Email, user.Username, user.Discriminator, user.DisplayName, user.Phone, user.Active, user.EmailVerified, user.LockedUntil, user.FailedLoginCount });
     }
 
-    [HttpPost("/admin/users/{id}/unlock")]
+    [HttpPost("users/{id}/unlock")]
     public async Task<IActionResult> UnlockUser(Guid id)
     {
         var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id == id);
@@ -231,7 +234,7 @@ var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id
         return Ok(new { user.Id, message = "user_unlocked" });
     }
 
-    [HttpGet("/admin/users/{id}/sessions")]
+    [HttpGet("users/{id}/sessions")]
     public async Task<IActionResult> ListSessions(Guid id)
     {
         var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id == id);
@@ -248,7 +251,7 @@ var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id
         }));
     }
 
-    [HttpDelete("/admin/users/{id}/sessions")]
+    [HttpDelete("users/{id}/sessions")]
     public async Task<IActionResult> ForceLogout(Guid id)
     {
         var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id == id);
@@ -262,7 +265,7 @@ var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id
 
     // ── UserLists ─────────────────────────────────────────────────────────────
 
-    [HttpGet("/admin/userlists")]
+    [HttpGet("userlists")]
     public async Task<IActionResult> ListAllUserLists([FromQuery] Guid? org_id)
     {
 var query = db.UserLists.AsQueryable();
@@ -275,7 +278,7 @@ var query = db.UserLists.AsQueryable();
         return Ok(lists);
     }
 
-    [HttpGet("/admin/userlists/{id}")]
+    [HttpGet("userlists/{id}")]
     public async Task<IActionResult> GetUserList(Guid id)
     {
 var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(ul => ul.Id == id);
@@ -288,10 +291,10 @@ var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(u
         });
     }
 
-    [HttpGet("/admin/userlists/{id}/users")]
+    [HttpGet("userlists/{id}/users")]
     public async Task<IActionResult> ListUsersInList(Guid id)
     {
-if (!await db.UserLists.AnyAsync(ul => ul.Id == id)) return NotFound();
+        if (!await db.UserLists.AnyAsync(ul => ul.Id == id)) return NotFound();
         var users = await db.Users
             .Where(u => u.UserListId == id)
             .Select(u => new { u.Id, u.Username, u.Discriminator, u.Email, u.DisplayName, u.Active, u.LastLoginAt })
@@ -299,7 +302,7 @@ if (!await db.UserLists.AnyAsync(ul => ul.Id == id)) return NotFound();
         return Ok(users);
     }
 
-    [HttpPost("/admin/userlists/{id}/users")]
+    [HttpPost("userlists/{id}/users")]
     public async Task<IActionResult> AddUserToList(Guid id, [FromBody] AdminCreateUserRequest body)
     {
         var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(ul => ul.Id == id);
@@ -336,7 +339,7 @@ if (!await db.UserLists.AnyAsync(ul => ul.Id == id)) return NotFound();
             db.EmailTokens.Add(new EmailToken
             {
                 UserId    = user.Id,
-                Kind      = "invite",
+                Kind      = KindInvite,
                 TokenHash = hash,
                 ExpiresAt = DateTimeOffset.UtcNow.AddHours(appConfig.InviteExpiryHours),
                 CreatedAt = DateTimeOffset.UtcNow
@@ -354,7 +357,7 @@ if (!await db.UserLists.AnyAsync(ul => ul.Id == id)) return NotFound();
         });
     }
 
-    [HttpDelete("/admin/userlists/{id}/users/{uid}")]
+    [HttpDelete("userlists/{id}/users/{uid}")]
     public async Task<IActionResult> RemoveUserFromList(Guid id, Guid uid)
     {
 var ul   = await db.UserLists.FindAsync(id);
@@ -368,7 +371,7 @@ var ul   = await db.UserLists.FindAsync(id);
         return NoContent();
     }
 
-    [HttpPost("/admin/userlists")]
+    [HttpPost("userlists")]
     public async Task<IActionResult> AdminCreateUserList([FromBody] AdminCreateUserListRequest body)
     {
 var ul = new UserList { Name = body.Name, OrgId = body.OrgId, Immovable = false, CreatedAt = DateTimeOffset.UtcNow };
@@ -379,7 +382,7 @@ var ul = new UserList { Name = body.Name, OrgId = body.OrgId, Immovable = false,
 
     // ── Org Admins ────────────────────────────────────────────────────────────
 
-    [HttpGet("/admin/organizations/{id}/admins")]
+    [HttpGet("organizations/{id}/admins")]
     public async Task<IActionResult> ListOrgAdmins(Guid id)
     {
 var orgRoles = await db.OrgRoles.Where(r => r.OrgId == id).Include(r => r.User).ToListAsync();
@@ -394,7 +397,7 @@ var orgRoles = await db.OrgRoles.Where(r => r.OrgId == id).Include(r => r.User).
         }));
     }
 
-    [HttpPost("/admin/organizations/{id}/admins")]
+    [HttpPost("organizations/{id}/admins")]
     public async Task<IActionResult> AssignOrgAdmin(Guid id, [FromBody] AssignOrgAdminRequest body)
     {
 var existing = await db.OrgRoles.FirstOrDefaultAsync(r =>
@@ -412,7 +415,7 @@ var existing = await db.OrgRoles.FirstOrDefaultAsync(r =>
         return Created($"/admin/organizations/{id}/admins/{role.Id}", new { role.Id });
     }
 
-    [HttpDelete("/admin/organizations/{id}/admins/{roleId}")]
+    [HttpDelete("organizations/{id}/admins/{roleId}")]
     public async Task<IActionResult> RemoveOrgAdmin(Guid id, Guid roleId)
     {
 var role = await db.OrgRoles.FirstOrDefaultAsync(r => r.Id == roleId && r.OrgId == id);
@@ -427,7 +430,7 @@ var role = await db.OrgRoles.FirstOrDefaultAsync(r => r.Id == roleId && r.OrgId 
 
     // ── Projects (admin scope) ────────────────────────────────────────────────
 
-    [HttpGet("/admin/projects")]
+    [HttpGet("projects")]
     public async Task<IActionResult> AdminListAllProjects()
     {
 var projects = await db.Projects
@@ -442,7 +445,7 @@ var projects = await db.Projects
     }
 
 
-    [HttpPost("/admin/organizations/{id}/projects")]
+    [HttpPost("organizations/{id}/projects")]
     public async Task<IActionResult> AdminCreateProject(Guid id, [FromBody] AdminCreateProjectRequest body)
     {
 var actorId = GetActorId();
@@ -483,7 +486,7 @@ var actorId = GetActorId();
         return Created($"/admin/projects/{project.Id}", new { project.Id, project.Name, project.Slug });
     }
 
-    [HttpPatch("/admin/projects/{id}")]
+    [HttpPatch("projects/{id}")]
     public async Task<IActionResult> AdminUpdateProject(Guid id, [FromBody] AdminUpdateProjectRequest body)
     {
 var project = await db.Projects.FindAsync(id);
@@ -517,7 +520,7 @@ var project = await db.Projects.FindAsync(id);
         return Ok(new { project.Id, project.Name });
     }
 
-    [HttpGet("/admin/projects/{id}/scopes")]
+    [HttpGet("projects/{id}/scopes")]
     public async Task<IActionResult> AdminGetProjectScopes(Guid id)
     {
         var project = await db.Projects.FindAsync(id);
@@ -525,7 +528,7 @@ var project = await db.Projects.FindAsync(id);
         return Ok(new { custom_scopes = project.AllowedScopes, built_in = BuiltInScopes });
     }
 
-    [HttpPut("/admin/projects/{id}/scopes")]
+    [HttpPut("projects/{id}/scopes")]
     public async Task<IActionResult> AdminUpdateProjectScopes(Guid id, [FromBody] UpdateScopesRequest body)
     {
         var project = await db.Projects.FindAsync(id);
@@ -548,7 +551,7 @@ var project = await db.Projects.FindAsync(id);
         return Ok(new { project.Id, custom_scopes = project.AllowedScopes });
     }
 
-    [HttpDelete("/admin/projects/{id}")]
+    [HttpDelete("projects/{id}")]
     public async Task<IActionResult> AdminDeleteProject(Guid id)
     {
 var project = await db.Projects.FindAsync(id);
@@ -564,7 +567,7 @@ var project = await db.Projects.FindAsync(id);
         return NoContent();
     }
 
-    [HttpPut("/admin/projects/{id}/userlist")]
+    [HttpPut("projects/{id}/userlist")]
     public async Task<IActionResult> AdminAssignUserList(Guid id, [FromBody] AdminAssignUserListRequest body)
     {
 var project = await db.Projects.FindAsync(id);
@@ -577,7 +580,7 @@ var project = await db.Projects.FindAsync(id);
         return Ok(new { project.Id, project.AssignedUserListId });
     }
 
-    [HttpDelete("/admin/projects/{id}/userlist")]
+    [HttpDelete("projects/{id}/userlist")]
     public async Task<IActionResult> AdminUnassignUserList(Guid id)
     {
 var project = await db.Projects.FindAsync(id);
@@ -588,7 +591,7 @@ var project = await db.Projects.FindAsync(id);
         return Ok(new { project.Id, message = "userlist_unassigned" });
     }
 
-    [HttpGet("/admin/projects/{id}/stats")]
+    [HttpGet("projects/{id}/stats")]
     public async Task<IActionResult> AdminGetProjectStats(Guid id)
     {
 var project = await db.Projects.FindAsync(id);
@@ -608,7 +611,7 @@ var project = await db.Projects.FindAsync(id);
 
     // ── Roles (admin scope) ───────────────────────────────────────────────────
 
-    [HttpGet("/admin/projects/{id}/roles")]
+    [HttpGet("projects/{id}/roles")]
     public async Task<IActionResult> AdminListRoles(Guid id)
     {
 var roles = await db.Roles
@@ -618,10 +621,10 @@ var roles = await db.Roles
         return Ok(roles);
     }
 
-    [HttpPost("/admin/projects/{id}/roles")]
+    [HttpPost("projects/{id}/roles")]
     public async Task<IActionResult> AdminCreateRole(Guid id, [FromBody] AdminCreateRoleRequest body)
     {
-if (!await db.Projects.AnyAsync(p => p.Id == id)) return NotFound();
+        if (!await db.Projects.AnyAsync(p => p.Id == id)) return NotFound();
         var role = new Role
         {
             ProjectId = id, Name = body.Name, Description = body.Description,
@@ -632,7 +635,7 @@ if (!await db.Projects.AnyAsync(p => p.Id == id)) return NotFound();
         return Created($"/admin/projects/{id}/roles/{role.Id}", new { role.Id, role.Name, role.Rank });
     }
 
-    [HttpDelete("/admin/projects/{id}/roles/{rid}")]
+    [HttpDelete("projects/{id}/roles/{rid}")]
     public async Task<IActionResult> AdminDeleteRole(Guid id, Guid rid)
     {
 var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == rid && r.ProjectId == id);
@@ -644,7 +647,7 @@ var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == rid && r.ProjectId ==
 
     // ── Email overview ────────────────────────────────────────────────────────
 
-    [HttpGet("/admin/email/overview")]
+    [HttpGet("email/overview")]
     public async Task<IActionResult> GetEmailOverview()
     {
         var globalConfigured = !string.IsNullOrEmpty(appConfig.SmtpHost);
@@ -697,7 +700,7 @@ var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == rid && r.ProjectId ==
 
     // ── Org SMTP ──────────────────────────────────────────────────────────────
 
-    [HttpGet("/admin/organizations/{id}/smtp")]
+    [HttpGet("organizations/{id}/smtp")]
     public async Task<IActionResult> GetOrgSmtp(Guid id)
     {
         var config = await db.OrgSmtpConfigs.FirstOrDefaultAsync(c => c.OrgId == id);
@@ -715,7 +718,7 @@ var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == rid && r.ProjectId ==
         });
     }
 
-    [HttpPut("/admin/organizations/{id}/smtp")]
+    [HttpPut("organizations/{id}/smtp")]
     public async Task<IActionResult> UpsertOrgSmtp(Guid id, [FromBody] AdminUpsertSmtpRequest body)
     {
         if (!await db.Organisations.AnyAsync(o => o.Id == id)) return NotFound();
@@ -758,7 +761,7 @@ var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == rid && r.ProjectId ==
         return Ok(new { message = "smtp_config_saved" });
     }
 
-    [HttpDelete("/admin/organizations/{id}/smtp")]
+    [HttpDelete("organizations/{id}/smtp")]
     public async Task<IActionResult> DeleteOrgSmtp(Guid id)
     {
         var config = await db.OrgSmtpConfigs.FirstOrDefaultAsync(c => c.OrgId == id);
@@ -768,7 +771,7 @@ var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == rid && r.ProjectId ==
         return NoContent();
     }
 
-    [HttpPost("/admin/organizations/{id}/smtp/test")]
+    [HttpPost("organizations/{id}/smtp/test")]
     public async Task<IActionResult> TestOrgSmtp(Guid id)
     {
         var actor = await db.Users.FirstOrDefaultAsync(u => u.Id == Claims.ParsedUserId);
@@ -787,7 +790,7 @@ var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == rid && r.ProjectId ==
 
     // ── Audit + Metrics ────────────────────────────────────────────────────────
 
-    [HttpGet("/admin/audit-log")]
+    [HttpGet("audit-log")]
     public async Task<IActionResult> GetAuditLog([FromQuery] int limit = 50, [FromQuery] int offset = 0)
     {
 var logs = await db.AuditLogs
@@ -798,7 +801,7 @@ var logs = await db.AuditLogs
         return Ok(logs);
     }
 
-    [HttpGet("/admin/metrics")]
+    [HttpGet("metrics")]
     public async Task<IActionResult> GetMetrics()
     {
 return Ok(new
@@ -809,14 +812,14 @@ return Ok(new
         });
     }
 
-    [HttpGet("/admin/hydra/clients")]
+    [HttpGet("hydra/clients")]
     public async Task<IActionResult> ListHydraClients()
     {
 var clients = await hydra.ListOAuth2ClientsAsync();
         return Ok(clients);
     }
 
-    [HttpPost("/admin/hydra/clients")]
+    [HttpPost("hydra/clients")]
     public async Task<IActionResult> CreateHydraClient([FromBody] CreateHydraClientRequest body)
     {
 var client = await hydra.CreateOAuth2ClientAsync(new
@@ -830,7 +833,7 @@ var client = await hydra.CreateOAuth2ClientAsync(new
         return Ok(client);
     }
 
-    [HttpGet("/admin/hydra/clients/{id}")]
+    [HttpGet("hydra/clients/{id}")]
     public async Task<IActionResult> GetHydraClient(string id)
     {
 var client = await hydra.GetOAuth2ClientAsync(id);
@@ -838,7 +841,7 @@ var client = await hydra.GetOAuth2ClientAsync(id);
         return Ok(client);
     }
 
-    [HttpDelete("/admin/hydra/clients/{id}")]
+    [HttpDelete("hydra/clients/{id}")]
     public async Task<IActionResult> DeleteHydraClient(string id)
     {
 await hydra.DeleteOAuth2ClientAsync(id);
@@ -847,7 +850,7 @@ await hydra.DeleteOAuth2ClientAsync(id);
 
     // ── Export ────────────────────────────────────────────────────────────────
 
-    [HttpGet("/admin/organizations/{id}/export/users")]
+    [HttpGet("organizations/{id}/export/users")]
     public async Task<IActionResult> AdminExportUsers(Guid id, [FromQuery] string format = "csv")
     {
         var org = await db.Organisations.FindAsync(id);
@@ -858,7 +861,7 @@ await hydra.DeleteOAuth2ClientAsync(id);
             return StatusCode(429, new { error = "export_rate_limited", retry_after_seconds = appConfig.ExportRateLimitMinutes * 60 });
         await cache.SetAsync(rateLimitKey, [1], new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(appConfig.ExportRateLimitMinutes) });
 
-        await audit.RecordAsync(id, null, GetActorId(), "export.users", "organisation", id.ToString(),
+        await audit.RecordAsync(id, null, GetActorId(), "export.users", AuditOrg, id.ToString(),
             new Dictionary<string, object> { ["format"] = format });
 
         var userListIds = await db.UserLists.Where(ul => ul.OrgId == id).Select(ul => ul.Id).ToListAsync();
@@ -882,7 +885,7 @@ await hydra.DeleteOAuth2ClientAsync(id);
         return Empty;
     }
 
-    [HttpGet("/admin/organizations/{id}/export/audit-log")]
+    [HttpGet("organizations/{id}/export/audit-log")]
     public async Task<IActionResult> AdminExportAuditLog(
         Guid id,
         [FromQuery] string format = "csv",
@@ -897,7 +900,7 @@ await hydra.DeleteOAuth2ClientAsync(id);
             return StatusCode(429, new { error = "export_rate_limited", retry_after_seconds = appConfig.ExportRateLimitMinutes * 60 });
         await cache.SetAsync(rateLimitKey, [1], new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(appConfig.ExportRateLimitMinutes) });
 
-        await audit.RecordAsync(id, null, GetActorId(), "export.audit_log", "organisation", id.ToString(),
+        await audit.RecordAsync(id, null, GetActorId(), "export.audit_log", AuditOrg, id.ToString(),
             new Dictionary<string, object> { ["format"] = format, ["from"] = from?.ToString("O") ?? "", ["to"] = to?.ToString("O") ?? "" });
 
         var query = db.AuditLogs
@@ -932,7 +935,7 @@ await hydra.DeleteOAuth2ClientAsync(id);
 
     // ── SAML IdP management (admin) ───────────────────────────────────────────
 
-    [HttpGet("/admin/projects/{id}/saml-providers")]
+    [HttpGet("projects/{id}/saml-providers")]
     public async Task<IActionResult> AdminListSamlProviders(Guid id)
     {
         var project = await db.Projects.FindAsync(id);
@@ -950,7 +953,7 @@ await hydra.DeleteOAuth2ClientAsync(id);
         return Ok(providers);
     }
 
-    [HttpPost("/admin/projects/{id}/saml-providers")]
+    [HttpPost("projects/{id}/saml-providers")]
     public async Task<IActionResult> AdminCreateSamlProvider(Guid id, [FromBody] AdminCreateSamlProviderRequest req)
     {
         var project = await db.Projects.FindAsync(id);
@@ -977,7 +980,7 @@ await hydra.DeleteOAuth2ClientAsync(id);
         return Ok(new { entity.Id });
     }
 
-    [HttpPatch("/admin/projects/{projectId}/saml-providers/{providerId}")]
+    [HttpPatch("projects/{projectId}/saml-providers/{providerId}")]
     public async Task<IActionResult> AdminUpdateSamlProvider(Guid projectId, Guid providerId, [FromBody] AdminUpdateSamlProviderRequest req)
     {
         var provider = await db.SamlIdpConfigs
@@ -1001,7 +1004,7 @@ await hydra.DeleteOAuth2ClientAsync(id);
         return Ok();
     }
 
-    [HttpDelete("/admin/projects/{projectId}/saml-providers/{providerId}")]
+    [HttpDelete("projects/{projectId}/saml-providers/{providerId}")]
     public async Task<IActionResult> AdminDeleteSamlProvider(Guid projectId, Guid providerId)
     {
         var provider = await db.SamlIdpConfigs

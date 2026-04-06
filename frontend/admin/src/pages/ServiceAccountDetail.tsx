@@ -275,34 +275,43 @@ export default function ServiceAccountDetail() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {loading
-              ? Array.from({ length: 1 }).map((_, i) => (
-                  <TableRow key={i}>{Array.from({ length: 4 }).map((__, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
-                ))
-              : (sa?.roles ?? []).length === 0
-              ? <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-8">No roles assigned.</TableCell></TableRow>
-              : (sa?.roles ?? []).map(r => (
-                  <TableRow key={r.id}>
-                    <TableCell><Badge variant="outline" className="font-mono">{r.role}</Badge></TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {r.project_id ? `project: ${r.project_id}` : r.org_id ? `org: ${r.org_id}` : '—'}
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{fmtDateShort(r.granted_at)}</TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent>
-                          <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setRemoveRoleTarget(r)}>
-                            <Trash2 className="h-4 w-4" />Remove
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))
-            }
+            {(() => {
+              if (loading) return (
+                Array.from({ length: 1 }, (_, i) => `sk-row-${i}`).map(rowId => (
+                    <TableRow key={rowId}>{Array.from({ length: 4 }, (_, j) => `sk-cell-${j}`).map(cellId => <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
+                  ))
+              );
+              if ((sa?.roles ?? []).length === 0) return (
+                <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-8">No roles assigned.</TableCell></TableRow>
+              );
+              return (
+                (sa?.roles ?? []).map(r => (
+                    <TableRow key={r.id}>
+                      <TableCell><Badge variant="outline" className="font-mono">{r.role}</Badge></TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {(() => {
+                          if (r.project_id) return `project: ${r.project_id}`;
+                          if (r.org_id) return `org: ${r.org_id}`;
+                          return '—';
+                        })()}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{fmtDateShort(r.granted_at)}</TableCell>
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent>
+                            <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setRemoveRoleTarget(r)}>
+                              <Trash2 className="h-4 w-4" />Remove
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))
+              );
+            })()}
           </TableBody>
         </Table>
       </div>
@@ -324,33 +333,38 @@ export default function ServiceAccountDetail() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {loading
-              ? Array.from({ length: 2 }).map((_, i) => (
-                  <TableRow key={i}>{Array.from({ length: 5 }).map((__, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
-                ))
-              : (sa?.pats ?? []).length === 0
-              ? <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No tokens generated yet.</TableCell></TableRow>
-              : (sa?.pats ?? []).map(p => (
-                  <TableRow key={p.id}>
-                    <TableCell className="font-medium">{p.name}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{p.expires_at ? fmtDateShort(p.expires_at) : 'Never'}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{fmtDateShort(p.last_used_at)}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{fmtDateShort(p.created_at)}</TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent>
-                          <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setRevokeTarget(p)}>
-                            <Trash2 className="h-4 w-4" />Revoke
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))
-            }
+            {(() => {
+              if (loading) return (
+                Array.from({ length: 2 }, (_, i) => `sk-row-${i}`).map(rowId => (
+                    <TableRow key={rowId}>{Array.from({ length: 5 }, (_, j) => `sk-cell-${j}`).map(cellId => <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
+                  ))
+              );
+              if ((sa?.pats ?? []).length === 0) return (
+                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No tokens generated yet.</TableCell></TableRow>
+              );
+              return (
+                (sa?.pats ?? []).map(p => (
+                    <TableRow key={p.id}>
+                      <TableCell className="font-medium">{p.name}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{p.expires_at ? fmtDateShort(p.expires_at) : 'Never'}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{fmtDateShort(p.last_used_at)}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{fmtDateShort(p.created_at)}</TableCell>
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent>
+                            <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setRevokeTarget(p)}>
+                              <Trash2 className="h-4 w-4" />Revoke
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))
+              );
+            })()}
           </TableBody>
         </Table>
       </div>

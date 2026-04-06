@@ -42,6 +42,13 @@ export default function OrgDashboard() {
     );
   }
 
+  let orgStatusBadge: React.ReactNode = null;
+  if (org) {
+    if (org.suspended_at) orgStatusBadge = <Badge variant="destructive">Suspended</Badge>;
+    else if (org.active) orgStatusBadge = <Badge variant="success">Active</Badge>;
+    else orgStatusBadge = <Badge variant="secondary">Inactive</Badge>;
+  }
+
   return (
     <div>
       <PageHeader
@@ -50,19 +57,14 @@ export default function OrgDashboard() {
         action={
           org && (
             <div className="flex gap-2 items-center">
-              {org.suspended_at
-                ? <Badge variant="destructive">Suspended</Badge>
-                : org.active
-                ? <Badge variant="success">Active</Badge>
-                : <Badge variant="secondary">Inactive</Badge>
-              }
+              {orgStatusBadge}
             </div>
           )
         }
       />
       <div className="p-6 space-y-6">
         {loading ? (
-          <div className="grid grid-cols-3 gap-4">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-32 rounded-xl" />)}</div>
+          <div className="grid grid-cols-3 gap-4">{Array.from({ length: 3 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-32 rounded-xl" />)}</div>
         ) : (
           <>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

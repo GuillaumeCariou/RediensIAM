@@ -17,6 +17,8 @@ public class WebhookController(
     AuditLogService audit,
     WebhookService webhookService) : ControllerBase
 {
+    private const string AuditWebhook = "webhook";
+
     private TokenClaims Claims => HttpContext.GetClaims()!;
     private Guid OrgId   => Guid.TryParse(Claims.OrgId, out var g) ? g : Guid.Empty;
     private Guid ActorId => Claims.ParsedUserId;
@@ -58,7 +60,7 @@ public class WebhookController(
         };
         db.Webhooks.Add(wh);
         await db.SaveChangesAsync();
-        await audit.RecordAsync(OrgId, null, ActorId, "webhook.created", "webhook", wh.Id.ToString());
+        await audit.RecordAsync(OrgId, null, ActorId, "webhook.created", AuditWebhook, wh.Id.ToString());
         return Created($"/org/webhooks/{wh.Id}", new
         {
             wh.Id, wh.Url, wh.Events, wh.Active,
@@ -127,7 +129,7 @@ public class WebhookController(
         if (wh == null) return NotFound();
         db.Webhooks.Remove(wh);
         await db.SaveChangesAsync();
-        await audit.RecordAsync(OrgId, null, ActorId, "webhook.deleted", "webhook", id.ToString());
+        await audit.RecordAsync(OrgId, null, ActorId, "webhook.deleted", AuditWebhook, id.ToString());
         return NoContent();
     }
 
@@ -190,7 +192,7 @@ public class WebhookController(
         };
         db.Webhooks.Add(wh);
         await db.SaveChangesAsync();
-        await audit.RecordAsync(null, null, ActorId, "webhook.created", "webhook", wh.Id.ToString());
+        await audit.RecordAsync(null, null, ActorId, "webhook.created", AuditWebhook, wh.Id.ToString());
         return Created($"/admin/webhooks/{wh.Id}", new
         {
             wh.Id, wh.Url, wh.Events, wh.Active,
@@ -207,7 +209,7 @@ public class WebhookController(
         if (wh == null) return NotFound();
         db.Webhooks.Remove(wh);
         await db.SaveChangesAsync();
-        await audit.RecordAsync(null, null, ActorId, "webhook.deleted", "webhook", id.ToString());
+        await audit.RecordAsync(null, null, ActorId, "webhook.deleted", AuditWebhook, id.ToString());
         return NoContent();
     }
 }

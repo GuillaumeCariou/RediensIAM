@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { isAuthenticated, startLogin, handleCallback, logout, getToken, restoreSession } from '../auth';
 
 interface AuthState {
@@ -28,9 +28,12 @@ interface ParsedToken {
 function parseToken(token: string | null): ParsedToken {
   if (!token) return { roles: [], orgId: '', projectId: '' };
   try {
-    const payload = JSON.parse(atob(token.split('.')[1]!.replaceAll('-', '+').replaceAll('_', '/')));
+    const payload = JSON.parse(atob(token.split('.')[1].replaceAll('-', '+').replaceAll('_', '/')));
     const raw = payload.roles ?? payload.ext?.roles ?? [];
-    const roles: string[] = typeof raw === 'string' ? raw.split(',').filter(Boolean) : Array.isArray(raw) ? raw : [];
+    let roles: string[];
+    if (typeof raw === 'string') roles = raw.split(',').filter(Boolean);
+    else if (Array.isArray(raw)) roles = raw;
+    else roles = [];
     const orgId: string = payload.org_id ?? payload.ext?.org_id ?? '';
     const projectId: string = payload.project_id ?? payload.ext?.project_id ?? '';
     return { roles, orgId, projectId };
@@ -55,7 +58,7 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
         if (ok) {
           url.searchParams.delete('code');
           url.searchParams.delete('state');
-          window.history.replaceState({}, '', url.toString());
+          globalThis.history.replaceState({}, '', url.toString());
         } else {
           await startLogin();
           return; // redirect in progress
@@ -83,16 +86,18 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
     logout().then(() => startLogin());
   };
 
+  const ctx = useMemo<AuthState>(() => ({
+    ready, authenticated, roles,
+    isSuperAdmin: roles.includes('super_admin'),
+    isOrgAdmin: roles.includes('org_admin') || roles.includes('super_admin'),
+    isProjectManager: roles.some(r => r === 'project_manager' || r.startsWith('project_manager:')) || roles.includes('org_admin') || roles.includes('super_admin'),
+    orgId,
+    projectId,
+    logout: handleLogout,
+  }), [ready, authenticated, roles, orgId, projectId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
-    <AuthContext.Provider value={{
-      ready, authenticated, roles,
-      isSuperAdmin: roles.includes('super_admin'),
-      isOrgAdmin: roles.includes('org_admin') || roles.includes('super_admin'),
-      isProjectManager: roles.some(r => r === 'project_manager' || r.startsWith('project_manager:')) || roles.includes('org_admin') || roles.includes('super_admin'),
-      orgId,
-      projectId,
-      logout: handleLogout,
-    }}>
+    <AuthContext.Provider value={ctx}>
       {children}
     </AuthContext.Provider>
   );

@@ -61,9 +61,14 @@ export default function ProjectSettings() {
   if (loading) return (
     <div>
       <PageHeader title="Settings" />
-      <div className="p-6 space-y-4">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-lg" />)}</div>
+      <div className="p-6 space-y-4">{Array.from({ length: 3 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-20 rounded-lg" />)}</div>
     </div>
   );
+
+  let saveLabel: string;
+  if (saving) saveLabel = 'Saving…';
+  else if (saved) saveLabel = 'Saved!';
+  else saveLabel = 'Save Changes';
 
   return (
     <div>
@@ -72,7 +77,7 @@ export default function ProjectSettings() {
         description="Manage general project configuration"
         action={
           <Button onClick={handleSave} disabled={saving}>
-            <Save className="h-4 w-4" />{saving ? 'Saving…' : saved ? 'Saved!' : 'Save Changes'}
+            <Save className="h-4 w-4" />{saveLabel}
           </Button>
         }
       />

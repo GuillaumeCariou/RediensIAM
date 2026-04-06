@@ -6,6 +6,8 @@ namespace RediensIAM.Services;
 
 public static class TotpEncryption
 {
+    private const string ProvidersKey       = "providers";
+    private const string ClientSecretEncKey = "client_secret_enc";
     public static string Encrypt(byte[] key, byte[] plaintext)
     {
         var nonce = RandomNumberGenerator.GetBytes(12);
@@ -35,16 +37,16 @@ public static class TotpEncryption
     public static Dictionary<string, object>? StripSecretsFromTheme(Dictionary<string, object>? theme)
     {
         if (theme == null) return null;
-        if (!theme.TryGetValue("providers", out var raw)) return theme;
+        if (!theme.TryGetValue(ProvidersKey, out var raw)) return theme;
         if (raw is not JsonElement el || el.ValueKind != JsonValueKind.Array) return theme;
 
         var strippedProviders = el.EnumerateArray()
             .Select(p => p.EnumerateObject()
-                .Where(prop => prop.Name != "client_secret" && prop.Name != "client_secret_enc")
+                .Where(prop => prop.Name != "client_secret" && prop.Name != ClientSecretEncKey)
                 .ToDictionary(prop => prop.Name, prop => (object)prop.Value.Clone()))
             .ToList<object>();
 
-        return new Dictionary<string, object>(theme) { ["providers"] = strippedProviders };
+        return new Dictionary<string, object>(theme) { [ProvidersKey] = strippedProviders };
     }
 
     public static string EncryptString(byte[] key, string plaintext)
@@ -65,18 +67,18 @@ public static class TotpEncryption
         byte[] key)
     {
         if (incoming == null) return null;
-        if (!incoming.TryGetValue("providers", out var rawIn)) return incoming;
+        if (!incoming.TryGetValue(ProvidersKey, out var rawIn)) return incoming;
         if (rawIn is not JsonElement inEl || inEl.ValueKind != JsonValueKind.Array) return incoming;
 
         // Build map of existing encrypted secrets: providerId → client_secret_enc
         var existingSecrets = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (existing?.TryGetValue("providers", out var rawEx) == true &&
+        if (existing?.TryGetValue(ProvidersKey, out var rawEx) == true &&
             rawEx is JsonElement exEl && exEl.ValueKind == JsonValueKind.Array)
         {
             foreach (var p in exEl.EnumerateArray())
             {
                 if (p.TryGetProperty("id", out var idProp) && idProp.GetString() is { } pid &&
-                    p.TryGetProperty("client_secret_enc", out var encProp) && encProp.GetString() is { } enc)
+                    p.TryGetProperty(ClientSecretEncKey, out var encProp) && encProp.GetString() is { } enc)
                     existingSecrets[pid] = enc;
             }
         }
@@ -85,7 +87,7 @@ public static class TotpEncryption
         {
             // Copy all props except client_secret / client_secret_enc
             var dict = p.EnumerateObject()
-                .Where(prop => prop.Name != "client_secret" && prop.Name != "client_secret_enc")
+                .Where(prop => prop.Name != "client_secret" && prop.Name != ClientSecretEncKey)
                 .ToDictionary(prop => prop.Name, prop => (object)prop.Value.Clone());
 
             var providerId = p.TryGetProperty("id", out var idP) ? idP.GetString() : null;
@@ -94,17 +96,17 @@ public static class TotpEncryption
             if (p.TryGetProperty("client_secret", out var csProp) &&
                 !string.IsNullOrEmpty(csProp.GetString()))
             {
-                dict["client_secret_enc"] = EncryptString(key, csProp.GetString()!);
+                dict[ClientSecretEncKey] = EncryptString(key, csProp.GetString()!);
             }
             // No new secret → preserve existing encrypted one if available
             else if (providerId != null && existingSecrets.TryGetValue(providerId, out var existingEnc))
             {
-                dict["client_secret_enc"] = existingEnc;
+                dict[ClientSecretEncKey] = existingEnc;
             }
 
             return dict;
         }).ToList<object>();
 
-        return new Dictionary<string, object>(incoming) { ["providers"] = updatedProviders };
+        return new Dictionary<string, object>(incoming) { [ProvidersKey] = updatedProviders };
     }
 }

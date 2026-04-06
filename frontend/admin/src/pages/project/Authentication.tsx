@@ -111,6 +111,9 @@ function LogoUpload({ value, onChange, label = 'Logo' }: Readonly<{ value?: stri
         onDragOver={e => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={e => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handle(f); }}
+        role="button"
+        tabIndex={0}
+        onKeyDown={e => e.key === 'Enter' && document.getElementById('logo-file-input')?.click()}
         className={`relative border-2 border-dashed rounded-lg p-4 text-center transition-colors ${dragOver ? 'border-primary bg-primary/5' : 'border-border'}`}
       >
         {value ? (
@@ -123,7 +126,7 @@ function LogoUpload({ value, onChange, label = 'Logo' }: Readonly<{ value?: stri
             <Upload className="h-6 w-6 mx-auto text-muted-foreground" />
             <p className="text-xs text-muted-foreground">Drag & drop or{' '}
               <label className="cursor-pointer text-primary underline">
-                browse
+                browse{' '}
                 <input type="file" accept="image/*" className="hidden" onChange={e => { if (e.target.files?.[0]) handle(e.target.files[0]); }} />
               </label>
             </p>
@@ -148,6 +151,24 @@ function CopyButton({ text }: Readonly<{ text: string }>) {
 type PreviewMode = 'login' | 'register' | 'verify';
 
 // ── Main component ────────────────────────────────────────────────────────────
+
+function SecretInput({ value, saved: secretSaved, onChange }: Readonly<{ value: string; saved?: boolean; onChange: (v: string) => void }>) {
+  return (
+    <div className="space-y-1">
+      <Label className="text-xs">Client Secret</Label>
+      <Input
+        type="password"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={secretSaved && !value ? '••••••••• (saved — enter new to replace)' : 'OAuth2 client secret'}
+        autoComplete="new-password"
+      />
+      {secretSaved && !value && (
+        <p className="text-xs text-muted-foreground">Secret is saved. Enter a new one to replace it.</p>
+      )}
+    </div>
+  );
+}
 
 export default function Authentication() {
   const { projectId } = useProjectContext();
@@ -370,32 +391,18 @@ export default function Authentication() {
     setSamlProviders(prev => prev.filter(p => p.id !== idpId));
   };
 
-  // ── Secret input helper ───────────────────────────────────────────
-  function SecretInput({ value, saved: secretSaved, onChange }: Readonly<{ value: string; saved?: boolean; onChange: (v: string) => void }>) {
-    return (
-      <div className="space-y-1">
-        <Label className="text-xs">Client Secret</Label>
-        <Input
-          type="password"
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          placeholder={secretSaved && !value ? '••••••••• (saved — enter new to replace)' : 'OAuth2 client secret'}
-          autoComplete="new-password"
-        />
-        {secretSaved && !value && (
-          <p className="text-xs text-muted-foreground">Secret is saved. Enter a new one to replace it.</p>
-        )}
-      </div>
-    );
-  }
-
   // ── Loading skeleton ──────────────────────────────────────────────
   if (loading) return (
     <div>
       <PageHeader title="Authentication" />
-      <div className="p-6 space-y-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12 rounded-lg" />)}</div>
+      <div className="p-6 space-y-4">{Array.from({ length: 4 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-12 rounded-lg" />)}</div>
     </div>
   );
+
+  let saveLabel: string;
+  if (saving) saveLabel = 'Saving…';
+  else if (saved) saveLabel = 'Saved!';
+  else saveLabel = 'Save Changes';
 
   return (
     <div>
@@ -404,7 +411,7 @@ export default function Authentication() {
         description="Configure login appearance, providers, registration, and verification"
         action={
           <Button onClick={handleSave} disabled={saving}>
-            <Save className="h-4 w-4" />{saving ? 'Saving…' : saved ? 'Saved!' : 'Save Changes'}
+            <Save className="h-4 w-4" />{saveLabel}
           </Button>
         }
       />
@@ -661,7 +668,7 @@ export default function Authentication() {
                       onChange={e => { setNewScope(e.target.value.toLowerCase().replaceAll(/[^a-z0-9:_-]/g, '')); setScopeError(''); }}
                       placeholder="read:orders"
                       className="font-mono"
-                      onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addScope())}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addScope(); } }}
                     />
                     <Button type="button" variant="outline" onClick={addScope}>Add</Button>
                   </div>

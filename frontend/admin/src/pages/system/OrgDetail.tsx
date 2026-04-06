@@ -78,31 +78,34 @@ export default function OrgDetail() {
   const [createProjectSaving, setCreateProjectSaving] = useState(false);
   const [createProjectError, setCreateProjectError] = useState('');
 
-  const load = useCallback(() => {
+  const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
-    getOrg(id)
-      .then(o => {
-        setOrg(o);
-        return Promise.all([
-          listSystemUserListMembers(o.org_list_id).then(r => setOrgListMembers(r ?? [])),
-          listOrgAdmins(id).then(r => setOrgRoles(r ?? [])),
-          listServiceAccounts().then((r: ServiceAccount[]) => setServiceAccounts((r ?? []).filter(sa => sa.org_id === id))),
-          listUserLists(id).then(r => {
-            const all: UserList[] = r.user_lists ?? r ?? [];
-            setUserLists(all.filter(l => !l.immovable));
-          }),
-          listProjects(id).then(r => setProjects(r.projects ?? r ?? [])),
-        ]);
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
+    try {
+      const o = await getOrg(id);
+      setOrg(o);
+      const [members, roles, sas, lists, projects] = await Promise.all([
+        listSystemUserListMembers(o.org_list_id),
+        listOrgAdmins(id),
+        listServiceAccounts() as Promise<ServiceAccount[]>,
+        listUserLists(id),
+        listProjects(id),
+      ]);
+      setOrgListMembers(members ?? []);
+      setOrgRoles(roles ?? []);
+      setServiceAccounts((sas ?? []).filter((sa: ServiceAccount) => sa.org_id === id));
+      const all: UserList[] = lists.user_lists ?? lists ?? [];
+      setUserLists(all.filter((l: UserList) => !l.immovable));
+      setProjects(projects.projects ?? projects ?? []);
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
 
   const rolesMap = orgRoles.reduce<Record<string, OrgRole[]>>((acc, r) => {
-    (acc[r.user_id] ??= []).push(r);
+    if (!acc[r.user_id]) acc[r.user_id] = [];
+    acc[r.user_id].push(r);
     return acc;
   }, {});
 
@@ -199,11 +202,11 @@ export default function OrgDetail() {
   };
 
   const skeletonRows = (cols: number, rows = 2) =>
-    Array.from({ length: rows }).map((_, i) => (
-      <TableRow key={i}>
-        {Array.from({ length: cols }).map((__, j) => (
-          <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
-        ))}
+    Array.from({ length: rows }, (_, i) => `sk-row-${i}`).map(rowId => (
+      <TableRow key={rowId}>
+        {Array.from({ length: cols }, (_, j) => `sk-cell-${j}`).map(cellId => (
+          <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>
+          ))}
       </TableRow>
     ));
 
@@ -272,46 +275,51 @@ export default function OrgDetail() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {loading
-                ? skeletonRows(4)
-                : orgListMembers.length === 0
-                ? <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-6">No users in org list.</TableCell></TableRow>
-                : orgListMembers.map(m => {
-                    const roles = rolesMap[m.id] ?? [];
-                    return (
-                      <TableRow key={m.id}>
-                        <TableCell className="font-medium">{m.username}#{m.discriminator}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">{m.email}</TableCell>
-                        <TableCell>
-                          {roles.length === 0
-                            ? <span className="text-xs text-muted-foreground">No role</span>
-                            : roles.map(r => (
-                                <Badge key={r.id} variant={r.role === 'org_admin' ? 'default' : 'secondary'} className="mr-1 text-xs">
-                                  {r.role === 'org_admin' ? 'Org Admin' : `PM: ${r.scope_name ?? '…'}`}
-                                </Badge>
-                              ))
-                          }
-                        </TableCell>
-                        <TableCell>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent>
-                              <DropdownMenuItem onClick={() => { setAssignRoleTarget(m); setAssignRoleForm({ role: 'org_admin', scope_id: '' }); }}>
-                                <Shield className="h-4 w-4" />Assign role
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setRemoveUserTarget(m)}>
-                                <Trash2 className="h-4 w-4" />Remove from org
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })
-              }
+              {(() => {
+                if (loading) return (
+                  skeletonRows(4)
+                );
+                if (orgListMembers.length === 0) return (
+                  <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-6">No users in org list.</TableCell></TableRow>
+                );
+                return (
+                  orgListMembers.map(m => {
+                      const roles = rolesMap[m.id] ?? [];
+                      return (
+                        <TableRow key={m.id}>
+                          <TableCell className="font-medium">{m.username}#{m.discriminator}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground">{m.email}</TableCell>
+                          <TableCell>
+                            {roles.length === 0
+                              ? <span className="text-xs text-muted-foreground">No role</span>
+                              : roles.map(r => (
+                                  <Badge key={r.id} variant={r.role === 'org_admin' ? 'default' : 'secondary'} className="mr-1 text-xs">
+                                    {r.role === 'org_admin' ? 'Org Admin' : `PM: ${r.scope_name ?? '…'}`}
+                                  </Badge>
+                                ))
+                            }
+                          </TableCell>
+                          <TableCell>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent>
+                                <DropdownMenuItem onClick={() => { setAssignRoleTarget(m); setAssignRoleForm({ role: 'org_admin', scope_id: '' }); }}>
+                                  <Shield className="h-4 w-4" />Assign role
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setRemoveUserTarget(m)}>
+                                  <Trash2 className="h-4 w-4" />Remove from org
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                );
+              })()}
             </TableBody>
           </Table>
         </div>
@@ -336,23 +344,28 @@ export default function OrgDetail() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {loading
-                ? skeletonRows(4, 1)
-                : serviceAccounts.length === 0
-                ? <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-6">No service accounts.</TableCell></TableRow>
-                : serviceAccounts.map(sa => (
-                    <TableRow key={sa.id}>
-                      <TableCell className="font-medium">{sa.name}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{sa.description ?? '—'}</TableCell>
-                      <TableCell>
-                        <Badge variant={sa.active ? 'success' : 'secondary'}>{sa.active ? 'Active' : 'Inactive'}</Badge>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {sa.last_used_at ? fmtDateShort(sa.last_used_at) : '—'}
-                      </TableCell>
-                    </TableRow>
-                  ))
-              }
+              {(() => {
+                if (loading) return (
+                  skeletonRows(4, 1)
+                );
+                if (serviceAccounts.length === 0) return (
+                  <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-6">No service accounts.</TableCell></TableRow>
+                );
+                return (
+                  serviceAccounts.map(sa => (
+                      <TableRow key={sa.id}>
+                        <TableCell className="font-medium">{sa.name}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{sa.description ?? '—'}</TableCell>
+                        <TableCell>
+                          <Badge variant={sa.active ? 'success' : 'secondary'}>{sa.active ? 'Active' : 'Inactive'}</Badge>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {sa.last_used_at ? fmtDateShort(sa.last_used_at) : '—'}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                );
+              })()}
             </TableBody>
           </Table>
         </div>
@@ -379,17 +392,22 @@ export default function OrgDetail() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {loading
-                ? skeletonRows(2)
-                : userLists.length === 0
-                ? <TableRow><TableCell colSpan={2} className="text-center text-muted-foreground py-8">No user lists.</TableCell></TableRow>
-                : userLists.map(ul => (
-                    <TableRow key={ul.id} className="cursor-pointer hover:bg-muted/50" onClick={() => navigate(`/system/organisations/${id}/userlists/${ul.id}`)}>
-                      <TableCell className="font-medium">{ul.name}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">—</TableCell>
-                    </TableRow>
-                  ))
-              }
+              {(() => {
+                if (loading) return (
+                  skeletonRows(2)
+                );
+                if (userLists.length === 0) return (
+                  <TableRow><TableCell colSpan={2} className="text-center text-muted-foreground py-8">No user lists.</TableCell></TableRow>
+                );
+                return (
+                  userLists.map(ul => (
+                      <TableRow key={ul.id} className="cursor-pointer hover:bg-muted/50" onClick={() => navigate(`/system/organisations/${id}/userlists/${ul.id}`)}>
+                        <TableCell className="font-medium">{ul.name}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">—</TableCell>
+                      </TableRow>
+                    ))
+                );
+              })()}
             </TableBody>
           </Table>
         </div>
@@ -413,29 +431,34 @@ export default function OrgDetail() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {loading
-                ? skeletonRows(3)
-                : projects.length === 0
-                ? <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground py-8">No projects.</TableCell></TableRow>
-                : projects.map(p => (
-                    <TableRow
-                      key={p.id}
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => navigate(`/system/organisations/${id}/projects/${p.id}`)}
-                    >
-                      <TableCell className="font-medium">{p.name}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {p.assigned_user_list_id
-                          ? (assignedListName(p.assigned_user_list_id) ?? <span className="font-mono text-xs">{p.assigned_user_list_id.slice(0, 8)}…</span>)
-                          : <span className="italic">Unassigned</span>
-                        }
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={p.active ? 'success' : 'secondary'}>{p.active ? 'Active' : 'Draft'}</Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))
-              }
+              {(() => {
+                if (loading) return (
+                  skeletonRows(3)
+                );
+                if (projects.length === 0) return (
+                  <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground py-8">No projects.</TableCell></TableRow>
+                );
+                return (
+                  projects.map(p => (
+                      <TableRow
+                        key={p.id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => navigate(`/system/organisations/${id}/projects/${p.id}`)}
+                      >
+                        <TableCell className="font-medium">{p.name}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {p.assigned_user_list_id
+                            ? (assignedListName(p.assigned_user_list_id) ?? <span className="font-mono text-xs">{p.assigned_user_list_id.slice(0, 8)}…</span>)
+                            : <span className="italic">Unassigned</span>
+                          }
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={p.active ? 'success' : 'secondary'}>{p.active ? 'Active' : 'Draft'}</Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                );
+              })()}
             </TableBody>
           </Table>
         </div>

@@ -99,62 +99,66 @@ export default function Organisations() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {loading
-                ? Array.from({ length: 5 }).map((_, i) => (
-                    <TableRow key={i}>
-                      {Array.from({ length: 5 }).map((__, j) => (
-                        <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
-                      ))}
-                    </TableRow>
-                  ))
-                : filtered.length === 0
-                ? (
-                    <TableRow>
-                      <TableCell className="text-center text-muted-foreground py-12" colSpan={5}>
-                        <Building2 className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                        No organisations found
-                      </TableCell>
-                    </TableRow>
-                  )
-                : filtered.map(org => (
-                    <TableRow
-                      key={org.id}
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => navigate(`/system/organisations/${org.id}`)}
-                    >
-                      <TableCell className="font-medium">{org.name}</TableCell>
-                      <TableCell className="font-mono text-sm text-muted-foreground">{org.slug}</TableCell>
-                      <TableCell>
-                        {org.suspended_at
-                          ? <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Suspended</Badge>
-                          : org.active
-                          ? <Badge variant="success"><CheckCircle className="h-3 w-3 mr-1" />Active</Badge>
-                          : <Badge variant="secondary">Inactive</Badge>
-                        }
-                      </TableCell>
-                      <TableCell className="text-muted-foreground text-sm">{fmtDateShort(org.created_at)}</TableCell>
-                      <TableCell onClick={e => e.stopPropagation()}>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent>
-                            <DropdownMenuItem onClick={() => handleSuspend(org)}>
-                              {org.suspended_at
-                                ? <><PlayCircle className="h-4 w-4" />Unsuspend</>
-                                : <><PauseCircle className="h-4 w-4" />Suspend</>
-                              }
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteTarget(org)}>
-                              <Trash2 className="h-4 w-4" />Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  ))
-              }
+              {(() => {
+                if (loading) return (
+                  Array.from({ length: 5 }, (_, i) => `sk-row-${i}`).map(rowId => (
+                      <TableRow key={rowId}>
+                        {Array.from({ length: 5 }, (_, j) => `sk-cell-${j}`).map(cellId => (
+                          <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>
+                          ))}
+                      </TableRow>
+                    ))
+                );
+                if (filtered.length === 0) return (
+                  (
+                      <TableRow>
+                        <TableCell className="text-center text-muted-foreground py-12" colSpan={5}>
+                          <Building2 className="h-8 w-8 mx-auto mb-2 opacity-40" />
+                          No organisations found
+                        </TableCell>
+                      </TableRow>
+                    )
+                );
+                return (
+                  filtered.map(org => (
+                      <TableRow
+                        key={org.id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => navigate(`/system/organisations/${org.id}`)}
+                      >
+                        <TableCell className="font-medium">{org.name}</TableCell>
+                        <TableCell className="font-mono text-sm text-muted-foreground">{org.slug}</TableCell>
+                        <TableCell>
+                          {(() => {
+                            if (org.suspended_at) return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Suspended</Badge>;
+                            if (org.active) return <Badge variant="success"><CheckCircle className="h-3 w-3 mr-1" />Active</Badge>;
+                            return <Badge variant="secondary">Inactive</Badge>;
+                          })()}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground text-sm">{fmtDateShort(org.created_at)}</TableCell>
+                        <TableCell onClick={e => e.stopPropagation()}>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent>
+                              <DropdownMenuItem onClick={() => handleSuspend(org)}>
+                                {org.suspended_at
+                                  ? <><PlayCircle className="h-4 w-4" />Unsuspend</>
+                                  : <><PauseCircle className="h-4 w-4" />Suspend</>
+                                }
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteTarget(org)}>
+                                <Trash2 className="h-4 w-4" />Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                );
+              })()}
             </TableBody>
           </Table>
         </div>

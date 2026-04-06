@@ -15,6 +15,7 @@ using RediensIAM.Services;
 namespace RediensIAM.Controllers;
 
 [ApiController]
+[Route("auth")]
 public class AuthController(
     RediensIamDbContext db,
     HydraService hydra,
@@ -32,9 +33,25 @@ public class AuthController(
     Microsoft.Extensions.Caching.Distributed.IDistributedCache cache,
     ILogger<AuthController> logger) : ControllerBase
 {
+    private const string MfaPendingUser      = "mfa_pending_user";
+    private const string MfaPendingProject   = "mfa_pending_project";
+    private const string MfaPendingChallenge = "mfa_pending_challenge";
+    private const string ErrRateLimited      = "rate_limited";
+    private const string ErrMissingProjectId = "missing_project_id";
+    private const string ErrInvalidChallenge = "invalid_challenge";
+    private const string ErrAccessDenied     = "access_denied";
+    private const string ErrProjectNotReady  = "project_not_ready";
+    private const string ErrInvalidCreds     = "invalid_credentials";
+    private const string ErrNoMfaSession     = "no_mfa_session";
+    private const string ErrInvalidCode      = "invalid_code";
+    private const string ErrReset            = "reset";
+    private const string CtxOrgId            = "org_id";
+    private const string CtxProjectId        = "project_id";
+    private const string CtxUserId           = "user_id";
+
     private string Ip => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
-    [HttpGet("/auth/login")]
+    [HttpGet("login")]
     public async Task<IActionResult> GetLogin([FromQuery] string login_challenge)
     {
         try
@@ -50,7 +67,7 @@ public class AuthController(
                 return Ok(new { project_name = "RediensIAM Admin", is_admin_login = true });
 
             var projectId = ExtractProjectId(req);
-            if (projectId == null) return BadRequest(new { error = "missing_project_id" });
+            if (projectId == null) return BadRequest(new { error = ErrMissingProjectId });
 
             var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId) && p.Active);
             if (project == null) return BadRequest(new { error = "invalid_project" });
@@ -75,11 +92,11 @@ public class AuthController(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "GetLogin failed for challenge {Challenge}", login_challenge);
-            return BadRequest(new { error = "invalid_challenge" });
+            return BadRequest(new { error = ErrInvalidChallenge });
         }
     }
 
-    [HttpGet("/auth/login/theme")]
+    [HttpGet("login/theme")]
     public async Task<IActionResult> GetTheme([FromQuery] string login_challenge)
     {
         try
@@ -105,30 +122,30 @@ public class AuthController(
         }
     }
 
-    [HttpPost("/auth/login")]
+    [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest body)
     {
         if (await rateLimiter.IsBlockedAsync(Ip))
-            return StatusCode(429, new { error = "rate_limited" });
+            return StatusCode(429, new { error = ErrRateLimited });
 
         HydraLoginRequest req;
         try { req = await hydra.GetLoginRequestAsync(body.LoginChallenge); }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Login: invalid challenge {Challenge}", body.LoginChallenge);
-            return BadRequest(new { error = "invalid_challenge" });
+            return BadRequest(new { error = ErrInvalidChallenge });
         }
 
         if (req.Client?.ClientId == Roles.AdminClientId)
             return await AdminLogin(body, req);
 
         var projectId = ExtractProjectId(req);
-        if (projectId == null) return BadRequest(new { error = "missing_project_id" });
+        if (projectId == null) return BadRequest(new { error = ErrMissingProjectId });
 
-        var registeredProjectId = req.Client?.Metadata?.GetValueOrDefault("project_id")?.ToString();
+        var registeredProjectId = req.Client?.Metadata?.GetValueOrDefault(CtxProjectId)?.ToString();
         if (registeredProjectId != null && registeredProjectId != projectId)
         {
-            var rejectUrl = await hydra.RejectLoginAsync(body.LoginChallenge, "access_denied", "project_id mismatch");
+            var rejectUrl = await hydra.RejectLoginAsync(body.LoginChallenge, ErrAccessDenied, "project_id mismatch");
             return Ok(new { redirect_to = rejectUrl, error = "project_id_mismatch" });
         }
 
@@ -137,7 +154,7 @@ public class AuthController(
             .FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId) && p.Active);
 
         if (project?.AssignedUserListId == null)
-            return BadRequest(new { error = "project_not_ready" });
+            return BadRequest(new { error = ErrProjectNotReady });
 
         User? user = null;
         if (body.Email != null)
@@ -157,7 +174,7 @@ public class AuthController(
         {
             await rateLimiter.RecordFailureAsync(Ip, null);
             IamMetrics.LoginAttempts.WithLabels("failure").Inc();
-            return Unauthorized(new { error = "invalid_credentials" });
+            return Unauthorized(new { error = ErrInvalidCreds });
         }
 
         if (user.LockedUntil.HasValue && user.LockedUntil > DateTimeOffset.UtcNow)
@@ -174,19 +191,17 @@ public class AuthController(
             await db.SaveChangesAsync();
             await rateLimiter.RecordFailureAsync(Ip, user.Id);
             IamMetrics.LoginAttempts.WithLabels("failure").Inc();
-            return Unauthorized(new { error = "invalid_credentials" });
+            return Unauthorized(new { error = ErrInvalidCreds });
         }
 
         // C6: IP allowlist check
-        if (project.IpAllowlist.Length > 0)
+        if (project.IpAllowlist.Length > 0 &&
+            (!System.Net.IPAddress.TryParse(Ip, out var clientIp) ||
+             !project.IpAllowlist.Any(cidr => IpInRange(clientIp, cidr))))
         {
-            if (!System.Net.IPAddress.TryParse(Ip, out var clientIp) ||
-                !project.IpAllowlist.Any(cidr => IpInRange(clientIp, cidr)))
-            {
-                await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.failure");
-                IamMetrics.LoginAttempts.WithLabels("ip_blocked").Inc();
-                return Unauthorized(new { error = "ip_not_allowed" });
-            }
+            await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.failure");
+            IamMetrics.LoginAttempts.WithLabels("ip_blocked").Inc();
+            return Unauthorized(new { error = "ip_not_allowed" });
         }
 
         if (project.RequireRoleToLogin)
@@ -194,7 +209,7 @@ public class AuthController(
             var hasRole = await db.UserProjectRoles.AnyAsync(r => r.UserId == user.Id && r.ProjectId == project.Id);
             if (!hasRole)
             {
-                var rejectUrl = await hydra.RejectLoginAsync(body.LoginChallenge, "access_denied", "no_role_assigned");
+                var rejectUrl = await hydra.RejectLoginAsync(body.LoginChallenge, ErrAccessDenied, "no_role_assigned");
                 return Ok(new { redirect_to = rejectUrl, error = "no_role" });
             }
         }
@@ -207,9 +222,9 @@ public class AuthController(
             if (!hasMfa)
             {
                 HttpContext.Session.SetString("mfa_setup_required",  "true");
-                HttpContext.Session.SetString("mfa_pending_user",     user.Id.ToString());
-                HttpContext.Session.SetString("mfa_pending_project",  projectId);
-                HttpContext.Session.SetString("mfa_pending_challenge", body.LoginChallenge);
+                HttpContext.Session.SetString(MfaPendingUser,     user.Id.ToString());
+                HttpContext.Session.SetString(MfaPendingProject,  projectId);
+                HttpContext.Session.SetString(MfaPendingChallenge, body.LoginChallenge);
                 IamMetrics.LoginAttempts.WithLabels("mfa_setup_required").Inc();
                 return Ok(new { requires_mfa_setup = true });
             }
@@ -217,17 +232,17 @@ public class AuthController(
 
         if (user.TotpEnabled)
         {
-            HttpContext.Session.SetString("mfa_pending_user", user.Id.ToString());
-            HttpContext.Session.SetString("mfa_pending_challenge", body.LoginChallenge);
-            HttpContext.Session.SetString("mfa_pending_project", projectId);
+            HttpContext.Session.SetString(MfaPendingUser, user.Id.ToString());
+            HttpContext.Session.SetString(MfaPendingChallenge, body.LoginChallenge);
+            HttpContext.Session.SetString(MfaPendingProject, projectId);
             return Ok(new { requires_mfa = true, mfa_type = "totp" });
         }
 
         if (user.PhoneVerified && !string.IsNullOrEmpty(user.Phone))
         {
-            HttpContext.Session.SetString("mfa_pending_user", user.Id.ToString());
-            HttpContext.Session.SetString("mfa_pending_challenge", body.LoginChallenge);
-            HttpContext.Session.SetString("mfa_pending_project", projectId);
+            HttpContext.Session.SetString(MfaPendingUser, user.Id.ToString());
+            HttpContext.Session.SetString(MfaPendingChallenge, body.LoginChallenge);
+            HttpContext.Session.SetString(MfaPendingProject, projectId);
             var smsCode = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
             await otp.StoreSessionOtpAsync("sms_mfa", user.Id.ToString(), smsCode);
             await smsService.SendOtpAsync(user.Phone, smsCode, "login");
@@ -239,9 +254,9 @@ public class AuthController(
 
         if (user.WebAuthnEnabled)
         {
-            HttpContext.Session.SetString("mfa_pending_user", user.Id.ToString());
-            HttpContext.Session.SetString("mfa_pending_challenge", body.LoginChallenge);
-            HttpContext.Session.SetString("mfa_pending_project", projectId);
+            HttpContext.Session.SetString(MfaPendingUser, user.Id.ToString());
+            HttpContext.Session.SetString(MfaPendingChallenge, body.LoginChallenge);
+            HttpContext.Session.SetString(MfaPendingProject, projectId);
             return Ok(new { requires_mfa = true, mfa_type = "webauthn" });
         }
 
@@ -253,9 +268,9 @@ public class AuthController(
         var subject = $"{project.OrgId}:{user.Id}";
         var context = new Dictionary<string, object>
         {
-            ["org_id"] = project.OrgId.ToString(),
-            ["project_id"] = project.Id.ToString(),
-            ["user_id"] = user.Id.ToString()
+            [CtxOrgId] = project.OrgId.ToString(),
+            [CtxProjectId] = project.Id.ToString(),
+            [CtxUserId] = user.Id.ToString()
         };
 
         var redirectUrl = await hydra.AcceptLoginAsync(body.LoginChallenge, subject, context);
@@ -265,19 +280,19 @@ public class AuthController(
         return Ok(new { redirect_to = redirectUrl });
     }
 
-    [HttpPost("/auth/mfa/backup-codes/verify")]
+    [HttpPost("mfa/backup-codes/verify")]
     public async Task<IActionResult> VerifyBackupCode([FromBody] BackupCodeVerifyRequest body)
     {
-        var userId    = HttpContext.Session.GetString("mfa_pending_user");
-        var challenge = HttpContext.Session.GetString("mfa_pending_challenge");
-        var projectId = HttpContext.Session.GetString("mfa_pending_project");
+        var userId    = HttpContext.Session.GetString(MfaPendingUser);
+        var challenge = HttpContext.Session.GetString(MfaPendingChallenge);
+        var projectId = HttpContext.Session.GetString(MfaPendingProject);
 
         if (userId == null || challenge == null || projectId == null)
-            return BadRequest(new { error = "no_mfa_session" });
+            return BadRequest(new { error = ErrNoMfaSession });
 
         var userGuid = Guid.Parse(userId);
         if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
-            return StatusCode(429, new { error = "rate_limited" });
+            return StatusCode(429, new { error = ErrRateLimited });
 
         var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
             System.Text.Encoding.UTF8.GetBytes(body.Code.ToUpperInvariant())));
@@ -287,7 +302,7 @@ public class AuthController(
         if (code == null)
         {
             await rateLimiter.RecordFailureAsync(Ip, userGuid);
-            return Unauthorized(new { error = "invalid_code" });
+            return Unauthorized(new { error = ErrInvalidCode });
         }
 
         code.UsedAt = DateTimeOffset.UtcNow;
@@ -296,31 +311,31 @@ public class AuthController(
         await db.SaveChangesAsync();
         await rateLimiter.ResetAsync(Ip, userGuid);
 
-        HttpContext.Session.Remove("mfa_pending_user");
-        HttpContext.Session.Remove("mfa_pending_challenge");
-        HttpContext.Session.Remove("mfa_pending_project");
+        HttpContext.Session.Remove(MfaPendingUser);
+        HttpContext.Session.Remove(MfaPendingChallenge);
+        HttpContext.Session.Remove(MfaPendingProject);
 
         var project = await db.Projects.FindAsync(Guid.Parse(projectId));
         var subject = $"{project!.OrgId}:{user.Id}";
         var context = new Dictionary<string, object>
         {
-            ["org_id"]     = project.OrgId.ToString(),
-            ["project_id"] = projectId,
-            ["user_id"]    = user.Id.ToString()
+            [CtxOrgId]     = project.OrgId.ToString(),
+            [CtxProjectId] = projectId,
+            [CtxUserId]    = user.Id.ToString()
         };
         var redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, context);
         await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.backup_code");
         return Ok(new { redirect_to = redirectUrl });
     }
 
-    [HttpPost("/auth/mfa/phone/send")]
+    [HttpPost("mfa/phone/send")]
     public async Task<IActionResult> SendSmsOtp()
     {
-        var userId = HttpContext.Session.GetString("mfa_pending_user");
-        if (userId == null) return BadRequest(new { error = "no_mfa_session" });
+        var userId = HttpContext.Session.GetString(MfaPendingUser);
+        if (userId == null) return BadRequest(new { error = ErrNoMfaSession });
         var userGuid = Guid.Parse(userId);
         if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
-            return StatusCode(429, new { error = "rate_limited" });
+            return StatusCode(429, new { error = ErrRateLimited });
         var user = await db.Users.FindAsync(userGuid);
         if (user == null || !user.PhoneVerified || string.IsNullOrEmpty(user.Phone))
             return BadRequest(new { error = "phone_not_configured" });
@@ -331,23 +346,23 @@ public class AuthController(
         return Ok(new { sent = true });
     }
 
-    [HttpPost("/auth/mfa/phone/verify")]
+    [HttpPost("mfa/phone/verify")]
     public async Task<IActionResult> VerifySmsOtp([FromBody] SmsOtpVerifyRequest body)
     {
-        var userId    = HttpContext.Session.GetString("mfa_pending_user");
-        var challenge = HttpContext.Session.GetString("mfa_pending_challenge");
-        var projectId = HttpContext.Session.GetString("mfa_pending_project");
+        var userId    = HttpContext.Session.GetString(MfaPendingUser);
+        var challenge = HttpContext.Session.GetString(MfaPendingChallenge);
+        var projectId = HttpContext.Session.GetString(MfaPendingProject);
         if (userId == null || challenge == null || projectId == null)
-            return BadRequest(new { error = "no_mfa_session" });
+            return BadRequest(new { error = ErrNoMfaSession });
 
         var userGuid = Guid.Parse(userId);
         if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
-            return StatusCode(429, new { error = "rate_limited" });
+            return StatusCode(429, new { error = ErrRateLimited });
 
         if (!await otp.VerifySessionOtpAsync("sms_mfa", userId, body.Code))
         {
             await rateLimiter.RecordFailureAsync(Ip, userGuid);
-            return Unauthorized(new { error = "invalid_code" });
+            return Unauthorized(new { error = ErrInvalidCode });
         }
 
         var user = await db.Users.FindAsync(userGuid);
@@ -356,34 +371,34 @@ public class AuthController(
         await db.SaveChangesAsync();
         await rateLimiter.ResetAsync(Ip, userGuid);
 
-        HttpContext.Session.Remove("mfa_pending_user");
-        HttpContext.Session.Remove("mfa_pending_challenge");
-        HttpContext.Session.Remove("mfa_pending_project");
+        HttpContext.Session.Remove(MfaPendingUser);
+        HttpContext.Session.Remove(MfaPendingChallenge);
+        HttpContext.Session.Remove(MfaPendingProject);
 
         var project = await db.Projects.FindAsync(Guid.Parse(projectId));
         var subject = $"{project!.OrgId}:{user.Id}";
         var context = new Dictionary<string, object>
         {
-            ["org_id"] = project.OrgId.ToString(), ["project_id"] = projectId, ["user_id"] = user.Id.ToString()
+            [CtxOrgId] = project.OrgId.ToString(), [CtxProjectId] = projectId, [CtxUserId] = user.Id.ToString()
         };
         var redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, context);
         await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.sms");
         return Ok(new { redirect_to = redirectUrl });
     }
 
-    [HttpPost("/auth/mfa/totp/verify")]
+    [HttpPost("mfa/totp/verify")]
     public async Task<IActionResult> VerifyTotp([FromBody] TotpVerifyRequest body)
     {
-        var userId = HttpContext.Session.GetString("mfa_pending_user");
-        var challenge = HttpContext.Session.GetString("mfa_pending_challenge");
-        var projectId = HttpContext.Session.GetString("mfa_pending_project");
+        var userId = HttpContext.Session.GetString(MfaPendingUser);
+        var challenge = HttpContext.Session.GetString(MfaPendingChallenge);
+        var projectId = HttpContext.Session.GetString(MfaPendingProject);
 
         if (userId == null || challenge == null || projectId == null)
-            return BadRequest(new { error = "no_mfa_session" });
+            return BadRequest(new { error = ErrNoMfaSession });
 
         var userGuid = Guid.Parse(userId);
         if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
-            return StatusCode(429, new { error = "rate_limited" });
+            return StatusCode(429, new { error = ErrRateLimited });
 
         var user = await db.Users.FindAsync(userGuid);
         if (user?.TotpSecret == null) return BadRequest(new { error = "totp_not_configured" });
@@ -409,29 +424,29 @@ public class AuthController(
         await db.SaveChangesAsync();
         await rateLimiter.ResetAsync(Ip, userGuid);
 
-        HttpContext.Session.Remove("mfa_pending_user");
-        HttpContext.Session.Remove("mfa_pending_challenge");
-        HttpContext.Session.Remove("mfa_pending_project");
+        HttpContext.Session.Remove(MfaPendingUser);
+        HttpContext.Session.Remove(MfaPendingChallenge);
+        HttpContext.Session.Remove(MfaPendingProject);
 
         var subject = $"{project!.OrgId}:{user.Id}";
         var context = new Dictionary<string, object>
         {
-            ["org_id"] = project.OrgId.ToString(),
-            ["project_id"] = projectId,
-            ["user_id"] = user.Id.ToString()
+            [CtxOrgId] = project.OrgId.ToString(),
+            [CtxProjectId] = projectId,
+            [CtxUserId] = user.Id.ToString()
         };
         var redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, context);
         await audit.RecordAsync(project!.OrgId, project.Id, user.Id, "user.login.mfa");
         return Ok(new { redirect_to = redirectUrl });
     }
 
-    [HttpGet("/auth/consent")]
+    [HttpGet("consent")]
     public async Task<IActionResult> GetConsent([FromQuery] string consent_challenge)
     {
         var req = await hydra.GetConsentRequestAsync(consent_challenge);
 
         var context = req.Context;
-        var userIdStr = context?.GetValueOrDefault("user_id")?.ToString();
+        var userIdStr = context?.GetValueOrDefault(CtxUserId)?.ToString();
 
         if (userIdStr == null) return BadRequest(new { error = "missing_context" });
         var userId = Guid.Parse(userIdStr);
@@ -448,7 +463,7 @@ public class AuthController(
 
             if (adminRoles.Count == 0)
             {
-                var rejectUrl = await hydra.RejectConsentAsync(consent_challenge, "access_denied", "insufficient_role");
+                var rejectUrl = await hydra.RejectConsentAsync(consent_challenge, ErrAccessDenied, "insufficient_role");
                 return Redirect(rejectUrl);
             }
 
@@ -476,8 +491,8 @@ public class AuthController(
             return Redirect(adminRedirect);
         }
 
-        var projectIdStr = context?.GetValueOrDefault("project_id")?.ToString();
-        var orgIdStr = context?.GetValueOrDefault("org_id")?.ToString();
+        var projectIdStr = context?.GetValueOrDefault(CtxProjectId)?.ToString();
+        var orgIdStr = context?.GetValueOrDefault(CtxOrgId)?.ToString();
 
         if (projectIdStr == null) return BadRequest(new { error = "missing_context" });
 
@@ -510,7 +525,7 @@ public class AuthController(
         return Redirect(redirectUrl);
     }
 
-    [HttpGet("/auth/logout")]
+    [HttpGet("logout")]
     public async Task<IActionResult> GetLogout([FromQuery] string logout_challenge)
     {
         try
@@ -525,29 +540,29 @@ public class AuthController(
         }
     }
 
-    [HttpPost("/auth/logout")]
+    [HttpPost("logout")]
     public async Task<IActionResult> AcceptLogout([FromBody] LogoutRequest body)
     {
         var redirectUrl = await hydra.AcceptLogoutAsync(body.LogoutChallenge);
         return Ok(new { redirect_to = redirectUrl });
     }
 
-    [HttpPost("/auth/register")]
+    [HttpPost("register")]
     public async Task<IActionResult> Register([FromBody] RegisterRequest body)
     {
         if (await rateLimiter.IsBlockedAsync(Ip, null, "register"))
-            return StatusCode(429, new { error = "rate_limited" });
+            return StatusCode(429, new { error = ErrRateLimited });
 
         HydraLoginRequest req;
         try { req = await hydra.GetLoginRequestAsync(body.LoginChallenge); }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Register: invalid challenge {Challenge}", body.LoginChallenge);
-            return BadRequest(new { error = "invalid_challenge" });
+            return BadRequest(new { error = ErrInvalidChallenge });
         }
 
         var projectId = ExtractProjectId(req);
-        if (projectId == null) return BadRequest(new { error = "missing_project_id" });
+        if (projectId == null) return BadRequest(new { error = ErrMissingProjectId });
 
         var project = await db.Projects
             .Include(p => p.AssignedUserList)
@@ -555,7 +570,7 @@ public class AuthController(
 
         if (project == null) return NotFound(new { error = "project_not_found" });
         if (!project.AllowSelfRegistration) return StatusCode(403, new { error = "registration_not_allowed" });
-        if (project.AssignedUserListId == null) return BadRequest(new { error = "project_not_ready" });
+        if (project.AssignedUserListId == null) return BadRequest(new { error = ErrProjectNotReady });
 
         // M1: enforce project-level password policy
         if (project.MinPasswordLength > 0 && body.Password.Length < project.MinPasswordLength)
@@ -608,9 +623,9 @@ public class AuthController(
             var subject = $"{project.OrgId}:{user.Id}";
             var ctx = new Dictionary<string, object>
             {
-                ["org_id"] = project.OrgId.ToString(),
-                ["project_id"] = project.Id.ToString(),
-                ["user_id"] = user.Id.ToString()
+                [CtxOrgId] = project.OrgId.ToString(),
+                [CtxProjectId] = project.Id.ToString(),
+                [CtxUserId] = user.Id.ToString()
             };
             var redirectUrl = await hydra.AcceptLoginAsync(body.LoginChallenge, subject, ctx);
             return Ok(new { redirect_to = redirectUrl });
@@ -640,11 +655,11 @@ public class AuthController(
         return Ok(new { requires_verification = true, session_id = sessionId });
     }
 
-    [HttpPost("/auth/register/verify")]
+    [HttpPost("register/verify")]
     public async Task<IActionResult> VerifyRegistration([FromBody] VerifyOtpRequest body)
     {
         if (!await otp.VerifySessionOtpAsync("reg", body.SessionId, body.Code))
-            return BadRequest(new { error = "invalid_code" });
+            return BadRequest(new { error = ErrInvalidCode });
 
         var pendingJson = await otp.GetAndDeletePendingAsync("reg", body.SessionId);
         if (pendingJson == null) return BadRequest(new { error = "session_expired" });
@@ -656,8 +671,8 @@ public class AuthController(
         var username = root.GetProperty("username").GetString()!;
         var passwordHash = root.GetProperty("password_hash").GetString()!;
         var userListId = Guid.Parse(root.GetProperty("user_list_id").GetString()!);
-        var orgId = Guid.Parse(root.GetProperty("org_id").GetString()!);
-        var projId = Guid.Parse(root.GetProperty("project_id").GetString()!);
+        var orgId = Guid.Parse(root.GetProperty(CtxOrgId).GetString()!);
+        var projId = Guid.Parse(root.GetProperty(CtxProjectId).GetString()!);
         var loginChallenge = root.GetProperty("login_challenge").GetString()!;
 
         if (await db.Users.AnyAsync(u => u.UserListId == userListId && u.Email == email))
@@ -684,15 +699,15 @@ public class AuthController(
         var subject = $"{orgId}:{user.Id}";
         var ctx = new Dictionary<string, object>
         {
-            ["org_id"] = orgId.ToString(),
-            ["project_id"] = projId.ToString(),
-            ["user_id"] = user.Id.ToString()
+            [CtxOrgId] = orgId.ToString(),
+            [CtxProjectId] = projId.ToString(),
+            [CtxUserId] = user.Id.ToString()
         };
         var redirectUrl = await hydra.AcceptLoginAsync(loginChallenge, subject, ctx);
         return Ok(new { redirect_to = redirectUrl });
     }
 
-    [HttpPost("/auth/invite/complete")]
+    [HttpPost("invite/complete")]
     public async Task<IActionResult> CompleteInvite([FromBody] InviteCompleteRequest body)
     {
         var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
@@ -722,7 +737,7 @@ public class AuthController(
         return Ok(new { message = "invite_accepted" });
     }
 
-    [HttpGet("/auth/verify-email")]
+    [HttpGet("verify-email")]
     public async Task<IActionResult> VerifyEmail([FromQuery] string token)
     {
         var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token)));
@@ -739,11 +754,11 @@ public class AuthController(
         return Ok(new { message = "email_verified" });
     }
 
-    [HttpPost("/auth/password-reset/request")]
+    [HttpPost("password-reset/request")]
     public async Task<IActionResult> RequestPasswordReset([FromBody] PasswordResetRequestBody body)
     {
-        if (await rateLimiter.IsBlockedAsync(Ip, null, "reset"))
-            return StatusCode(429, new { error = "rate_limited" });
+        if (await rateLimiter.IsBlockedAsync(Ip, null, ErrReset))
+            return StatusCode(429, new { error = ErrRateLimited });
 
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == body.ProjectId && p.Active);
         if (project?.AssignedUserListId == null || (!project.EmailVerificationEnabled && !project.SmsVerificationEnabled))
@@ -758,8 +773,8 @@ public class AuthController(
 
         if (user != null)
         {
-            await otp.StorePendingAsync("reset", sessionId, user.Id.ToString());
-            await otp.StoreSessionOtpAsync("reset", sessionId, code);
+            await otp.StorePendingAsync(ErrReset, sessionId, user.Id.ToString());
+            await otp.StoreSessionOtpAsync(ErrReset, sessionId, code);
 
             if (project.EmailVerificationEnabled)
                 await emailService.SendOtpAsync(user.Email, code, "password_reset", project.OrgId, project.Id);
@@ -772,17 +787,17 @@ public class AuthController(
         // Constant-time: perform equivalent Redis writes to prevent timing-based email enumeration
         await otp.StorePendingAsync("reset:void", sessionId, "void");
         await otp.StoreSessionOtpAsync("reset:void", sessionId, code);
-        await rateLimiter.RecordFailureAsync(Ip, null, "reset");
+        await rateLimiter.RecordFailureAsync(Ip, null, ErrReset);
         return Ok(new { });
     }
 
-    [HttpPost("/auth/password-reset/verify")]
+    [HttpPost("password-reset/verify")]
     public async Task<IActionResult> VerifyPasswordReset([FromBody] VerifyOtpRequest body)
     {
-        if (!await otp.VerifySessionOtpAsync("reset", body.SessionId, body.Code))
-            return Unauthorized(new { error = "invalid_code" });
+        if (!await otp.VerifySessionOtpAsync(ErrReset, body.SessionId, body.Code))
+            return Unauthorized(new { error = ErrInvalidCode });
 
-        var userIdStr = await otp.GetAndDeletePendingAsync("reset", body.SessionId);
+        var userIdStr = await otp.GetAndDeletePendingAsync(ErrReset, body.SessionId);
         if (userIdStr == null) return BadRequest(new { error = "session_expired" });
 
         var raw = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
@@ -799,7 +814,7 @@ public class AuthController(
         return Ok(new { reset_token = raw });
     }
 
-    [HttpPost("/auth/password-reset/confirm")]
+    [HttpPost("password-reset/confirm")]
     public async Task<IActionResult> ConfirmPasswordReset([FromBody] PasswordResetConfirmBody body)
     {
         var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(body.Token)));
@@ -832,7 +847,7 @@ public class AuthController(
         if (user == null || !user.Active)
         {
             await rateLimiter.RecordFailureAsync(Ip, null);
-            return Unauthorized(new { error = "invalid_credentials" });
+            return Unauthorized(new { error = ErrInvalidCreds });
         }
 
         if (user.LockedUntil.HasValue && user.LockedUntil > DateTimeOffset.UtcNow)
@@ -845,7 +860,7 @@ public class AuthController(
                 user.LockedUntil = DateTimeOffset.UtcNow.AddMinutes(appConfig.LockoutMinutes);
             await db.SaveChangesAsync();
             await rateLimiter.RecordFailureAsync(Ip, user.Id);
-            return Unauthorized(new { error = "invalid_credentials" });
+            return Unauthorized(new { error = ErrInvalidCreds });
         }
 
         var hasSuperAdmin = await keto.CheckAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{user.Id}");
@@ -860,7 +875,7 @@ public class AuthController(
         await db.SaveChangesAsync();
         await rateLimiter.ResetAsync(Ip, user.Id);
 
-        var context = new Dictionary<string, object> { ["user_id"] = user.Id.ToString() };
+        var context = new Dictionary<string, object> { [CtxUserId] = user.Id.ToString() };
         var redirectUrl = await hydra.AcceptLoginAsync(body.LoginChallenge, user.Id.ToString(), context);
         return Ok(new { redirect_to = redirectUrl });
     }
@@ -959,20 +974,20 @@ public class AuthController(
 
     // ── OAuth2 social login ───────────────────────────────────────────────────
 
-    [HttpGet("/auth/oauth2/start")]
+    [HttpGet("oauth2/start")]
     public async Task<IActionResult> OAuthStart(
         [FromQuery] string login_challenge,
         [FromQuery] string provider_id)
     {
         HydraLoginRequest req;
         try { req = await hydra.GetLoginRequestAsync(login_challenge); }
-        catch { return BadRequest(new { error = "invalid_challenge" }); }
+        catch { return BadRequest(new { error = ErrInvalidChallenge }); }
 
         var projectId = ExtractProjectId(req);
-        if (projectId == null) return BadRequest(new { error = "missing_project_id" });
+        if (projectId == null) return BadRequest(new { error = ErrMissingProjectId });
 
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId) && p.Active);
-        if (project?.AssignedUserListId == null) return BadRequest(new { error = "project_not_ready" });
+        if (project?.AssignedUserListId == null) return BadRequest(new { error = ErrProjectNotReady });
 
         var providerCfg = GetProviderConfig(project.LoginTheme, provider_id);
         if (providerCfg == null) return BadRequest(new { error = "provider_not_found" });
@@ -984,17 +999,17 @@ public class AuthController(
 
     // ── Link additional social provider to an already-authenticated user ──────
 
-    [HttpGet("/auth/oauth2/link/start")]
+    [HttpGet("oauth2/link/start")]
     public async Task<IActionResult> OAuthLinkStart([FromQuery] string provider_id)
     {
         var claims = HttpContext.GetClaims();
         if (claims == null) return Unauthorized();
 
         var projectId = claims.ProjectId;
-        if (string.IsNullOrEmpty(projectId)) return BadRequest(new { error = "missing_project_id" });
+        if (string.IsNullOrEmpty(projectId)) return BadRequest(new { error = ErrMissingProjectId });
 
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId) && p.Active);
-        if (project?.AssignedUserListId == null) return BadRequest(new { error = "project_not_ready" });
+        if (project?.AssignedUserListId == null) return BadRequest(new { error = ErrProjectNotReady });
 
         var providerCfg = GetProviderConfig(project.LoginTheme, provider_id);
         if (providerCfg == null) return BadRequest(new { error = "provider_not_found" });
@@ -1011,7 +1026,7 @@ public class AuthController(
         return Redirect(url);
     }
 
-    [HttpGet("/auth/oauth2/callback")]
+    [HttpGet("oauth2/callback")]
     public async Task<IActionResult> OAuthCallback(
         [FromQuery] string? code,
         [FromQuery] string? state,
@@ -1022,7 +1037,7 @@ public class AuthController(
         var stateData = await socialLogin.ConsumeStateAsync(state);
         if (stateData == null) return BadRequest(new { error = "invalid_or_expired_state" });
 
-        var errorRedirect = $"/auth/oauth2/error?login_challenge={Uri.EscapeDataString(stateData.LoginChallenge)}";
+        var errorRedirect = $"oauth2/error?login_challenge={Uri.EscapeDataString(stateData.LoginChallenge)}";
 
         if (error != null || code == null)
         {
@@ -1080,7 +1095,7 @@ public class AuthController(
             var hasRole = await db.UserProjectRoles.AnyAsync(r => r.UserId == user.Id && r.ProjectId == project.Id);
             if (!hasRole)
             {
-                var rejectUrl = await hydra.RejectLoginAsync(stateData.LoginChallenge, "access_denied", "no_role_assigned");
+                var rejectUrl = await hydra.RejectLoginAsync(stateData.LoginChallenge, ErrAccessDenied, "no_role_assigned");
                 return Redirect(rejectUrl);
             }
         }
@@ -1091,9 +1106,9 @@ public class AuthController(
         var subject = $"{project.OrgId}:{user.Id}";
         var ctx = new Dictionary<string, object>
         {
-            ["org_id"]     = project.OrgId.ToString(),
-            ["project_id"] = project.Id.ToString(),
-            ["user_id"]    = user.Id.ToString(),
+            [CtxOrgId]     = project.OrgId.ToString(),
+            [CtxProjectId] = project.Id.ToString(),
+            [CtxUserId]    = user.Id.ToString(),
         };
 
         var redirectTo = await hydra.AcceptLoginAsync(stateData.LoginChallenge, subject, ctx);
@@ -1217,7 +1232,7 @@ public class AuthController(
     private static string? ExtractProjectId(HydraLoginRequest req)
     {
         var extra = req.OidcContext?.Extra;
-        if (extra?.TryGetValue("project_id", out var v) == true) return v?.ToString();
+        if (extra?.TryGetValue(CtxProjectId, out var v) == true) return v?.ToString();
 
         var url = req.RequestUrl;
         var idx = url.IndexOf("project_id=", StringComparison.OrdinalIgnoreCase);
@@ -1229,11 +1244,11 @@ public class AuthController(
 
     // ── WebAuthn assertion ────────────────────────────────────────────────────
 
-    [HttpGet("/auth/mfa/webauthn/options")]
+    [HttpGet("mfa/webauthn/options")]
     public async Task<IActionResult> WebAuthnOptions()
     {
-        var userId = HttpContext.Session.GetString("mfa_pending_user");
-        if (userId == null) return BadRequest(new { error = "no_mfa_session" });
+        var userId = HttpContext.Session.GetString(MfaPendingUser);
+        if (userId == null) return BadRequest(new { error = ErrNoMfaSession });
 
         var uid = Guid.Parse(userId);
         var allowedCreds = await db.WebAuthnCredentials
@@ -1251,14 +1266,14 @@ public class AuthController(
         return Ok(options);
     }
 
-    [HttpPost("/auth/mfa/webauthn/verify")]
+    [HttpPost("mfa/webauthn/verify")]
     public async Task<IActionResult> WebAuthnVerify([FromBody] JsonElement body)
     {
-        var userId    = HttpContext.Session.GetString("mfa_pending_user");
-        var challenge = HttpContext.Session.GetString("mfa_pending_challenge");
-        var projectId = HttpContext.Session.GetString("mfa_pending_project");
+        var userId    = HttpContext.Session.GetString(MfaPendingUser);
+        var challenge = HttpContext.Session.GetString(MfaPendingChallenge);
+        var projectId = HttpContext.Session.GetString(MfaPendingProject);
         if (userId == null || challenge == null || projectId == null)
-            return BadRequest(new { error = "no_mfa_session" });
+            return BadRequest(new { error = ErrNoMfaSession });
 
         var json = HttpContext.Session.GetString("fido2.assertionOptions");
         if (json == null) return BadRequest(new { error = "no_assertion_options" });
@@ -1299,15 +1314,15 @@ public class AuthController(
         user.LastLoginAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
 
-        HttpContext.Session.Remove("mfa_pending_user");
-        HttpContext.Session.Remove("mfa_pending_challenge");
-        HttpContext.Session.Remove("mfa_pending_project");
+        HttpContext.Session.Remove(MfaPendingUser);
+        HttpContext.Session.Remove(MfaPendingChallenge);
+        HttpContext.Session.Remove(MfaPendingProject);
 
         var project = await db.Projects.FindAsync(Guid.Parse(projectId));
         var subject  = $"{project!.OrgId}:{user.Id}";
         var ctx = new Dictionary<string, object>
         {
-            ["org_id"] = project.OrgId.ToString(), ["project_id"] = projectId, ["user_id"] = user.Id.ToString()
+            [CtxOrgId] = project.OrgId.ToString(), [CtxProjectId] = projectId, [CtxUserId] = user.Id.ToString()
         };
         var redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, ctx);
         await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.webauthn");

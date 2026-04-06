@@ -139,9 +139,10 @@ public class SmtpEmailService(
         string fromAddress;
         string fromName;
 
-        var orgConfig = (projectId.HasValue
+        Guid? resolvedOrgId = projectId.HasValue
             ? await db.Projects.Where(p => p.Id == projectId.Value).Select(p => p.OrgId).FirstOrDefaultAsync()
-            : (Guid?)null) is Guid orgIdFromProject
+            : null;
+        var orgConfig = resolvedOrgId is Guid orgIdFromProject
             ? await db.OrgSmtpConfigs.FirstOrDefaultAsync(c => c.OrgId == orgIdFromProject)
             : null;
 

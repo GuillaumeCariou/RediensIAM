@@ -72,26 +72,31 @@ export default function OrgAuditLog() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {loading
-                ? Array.from({ length: 6 }).map((_, i) => <TableRow key={i}>{Array.from({ length: 5 }).map((__, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>)
-                : entries.length === 0
-                ? <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No events yet</TableCell></TableRow>
-                : entries.map(e => (
-                    <TableRow key={e.id}>
-                      <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{fmtDate(e.created_at)}</TableCell>
-                      <TableCell><Badge variant="secondary" className="font-mono text-xs">{e.action}</Badge></TableCell>
-                      <TableCell>
-                        <p className="text-sm">{e.actor_email ?? '—'}</p>
-                        {e.actor_id && <p className="text-xs text-muted-foreground font-mono">{e.actor_id.slice(0, 8)}…</p>}
-                      </TableCell>
-                      <TableCell>
-                        {e.target_type && <Badge variant="outline" className="text-xs">{e.target_type}</Badge>}
-                        {e.target_id && <p className="text-xs text-muted-foreground font-mono mt-0.5">{e.target_id.slice(0, 8)}…</p>}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground font-mono">{e.ip_address ?? '—'}</TableCell>
-                    </TableRow>
-                  ))
-              }
+              {(() => {
+                if (loading) return (
+                  Array.from({ length: 6 }, (_, i) => `sk-row-${i}`).map(rowId => <TableRow key={rowId}>{Array.from({ length: 5 }, (_, j) => `sk-cell-${j}`).map(cellId => <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>)
+                );
+                if (entries.length === 0) return (
+                  <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No events yet</TableCell></TableRow>
+                );
+                return (
+                  entries.map(e => (
+                      <TableRow key={e.id}>
+                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{fmtDate(e.created_at)}</TableCell>
+                        <TableCell><Badge variant="secondary" className="font-mono text-xs">{e.action}</Badge></TableCell>
+                        <TableCell>
+                          <p className="text-sm">{e.actor_email ?? '—'}</p>
+                          {e.actor_id && <p className="text-xs text-muted-foreground font-mono">{e.actor_id.slice(0, 8)}…</p>}
+                        </TableCell>
+                        <TableCell>
+                          {e.target_type && <Badge variant="outline" className="text-xs">{e.target_type}</Badge>}
+                          {e.target_id && <p className="text-xs text-muted-foreground font-mono mt-0.5">{e.target_id.slice(0, 8)}…</p>}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground font-mono">{e.ip_address ?? '—'}</TableCell>
+                      </TableRow>
+                    ))
+                );
+              })()}
             </TableBody>
           </Table>
         </div>

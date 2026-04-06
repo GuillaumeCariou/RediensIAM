@@ -145,7 +145,7 @@ public class WebhookDispatcherService(
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 lastError = ex.Message;
-                logger.LogWarning("Webhook {Id} attempt {Attempt} failed: {Error}", job.WebhookId, attempts, ex.Message);
+                logger.LogWarning(ex, "Webhook {Id} attempt {Attempt} failed: {Error}", job.WebhookId, attempts, ex.Message);
             }
 
             if (i < RetryDelaysMs.Length)

@@ -270,101 +270,7 @@ export default function UserListMembersPanel({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {loading
-                ? Array.from({ length: 3 }).map((_, i) => (
-                    <TableRow key={i}>{Array.from({ length: projectId ? 5 : 4 }).map((__, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
-                  ))
-                : members.length === 0
-                ? <TableRow><TableCell colSpan={projectId ? 5 : 4} className="text-center text-muted-foreground py-8">No members yet</TableCell></TableRow>
-                : members.map(m => (
-                    <TableRow
-                      key={m.id}
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => openEdit(m)}
-                    >
-                      <TableCell>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <div>
-                            <p className="font-medium text-sm">{m.display_name ?? m.username}#{m.discriminator}</p>
-                            <p className="text-xs text-muted-foreground">{m.email}</p>
-                          </div>
-                          {m.invite_pending && (
-                            <Badge variant="outline" className="text-amber-600 border-amber-400 text-[10px]">
-                              Invite pending
-                            </Badge>
-                          )}
-                          {isLocked(m) && (
-                            <Badge variant="destructive" className="text-[10px]">
-                              Locked
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {m.active
-                          ? <Badge variant="success"><CheckCircle className="h-3 w-3 mr-1" />Active</Badge>
-                          : <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Disabled</Badge>
-                        }
-                      </TableCell>
-                      {projectId && (
-                        <TableCell onClick={e => e.stopPropagation()}>
-                          <div className="flex flex-wrap items-center gap-1">
-                            {userRoles(m.id).map(r => (
-                              <Badge key={r.id} variant="secondary" className="gap-1 pr-1">
-                                {r.name}
-                                {r.id === defaultRoleId && <span className="text-[10px] opacity-60 ml-0.5">default</span>}
-                                <button
-                                  onClick={() => handleRemoveRole(m.id, r.id)}
-                                  className="ml-0.5 rounded-full hover:bg-muted-foreground/20 p-0.5"
-                                >
-                                  <Trash2 className="h-2.5 w-2.5" />
-                                </button>
-                              </Badge>
-                            ))}
-                            {userRoles(m.id).length === 0 && (
-                              <span className="text-xs text-muted-foreground">No roles</span>
-                            )}
-                          </div>
-                        </TableCell>
-                      )}
-                      <TableCell className="text-sm text-muted-foreground">{fmtDate(m.last_login_at)}</TableCell>
-                      <TableCell onClick={e => e.stopPropagation()}>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button size="sm" variant="ghost">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => openEdit(m)}>
-                              Edit
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => openSessions(m)}>
-                              <Monitor className="h-4 w-4 mr-2" />View sessions
-                            </DropdownMenuItem>
-                            {m.invite_pending && (
-                              <DropdownMenuItem onClick={() => handleResendInvite(m)}>
-                                <Mail className="h-4 w-4 mr-2" />Resend invite
-                              </DropdownMenuItem>
-                            )}
-                            {isLocked(m) && (
-                              <DropdownMenuItem onClick={() => handleUnlock(m)} className="text-amber-600">
-                                <LockOpen className="h-4 w-4 mr-2" />Unlock account
-                              </DropdownMenuItem>
-                            )}
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              className="text-destructive focus:text-destructive"
-                              onClick={() => setRemoveTarget(m)}
-                            >
-                              <Trash2 className="h-4 w-4 mr-2" />Remove
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  ))
-              }
+              {memberRows}
             </TableBody>
           </Table>
         </CardContent>
@@ -401,7 +307,7 @@ export default function UserListMembersPanel({
             <DialogDescription>Update this account's information. Leave password blank to keep it unchanged.</DialogDescription>
           </DialogHeader>
           {editLoading
-            ? <div className="space-y-3 py-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
+            ? <div className="space-y-3 py-2">{Array.from({ length: 5 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-8 w-full" />)}</div>
             : (
               <form onSubmit={handleEdit} className="space-y-4">
                 {editError && <p className="text-sm text-destructive">{editError}</p>}
@@ -485,11 +391,14 @@ export default function UserListMembersPanel({
             <DialogTitle>Active sessions — {sessionsUser?.email}</DialogTitle>
             <DialogDescription>OAuth2 applications this user has granted access to.</DialogDescription>
           </DialogHeader>
-          {sessionsLoading
-            ? <div className="space-y-2 py-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
-            : sessions.length === 0
-            ? <p className="text-sm text-muted-foreground py-4 text-center">No active sessions.</p>
-            : (
+          {(() => {
+            if (sessionsLoading) return (
+              <div className="space-y-2 py-2">{Array.from({ length: 3 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-8 w-full" />)}</div>
+            );
+            if (sessions.length === 0) return (
+              <p className="text-sm text-muted-foreground py-4 text-center">No active sessions.</p>
+            );
+            return (
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -506,8 +415,8 @@ export default function UserListMembersPanel({
                   ))}
                 </TableBody>
               </Table>
-            )
-          }
+            );
+          })()}
           <DialogFooter>
             <Button variant="outline" onClick={() => setSessionsUser(null)}>Close</Button>
             <Button

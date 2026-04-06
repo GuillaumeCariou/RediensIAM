@@ -31,7 +31,7 @@ export default function SystemAdmins() {
         {error && <p className="text-sm text-destructive mb-4">{error}</p>}
         {loading && (
           <div className="space-y-2">
-            {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
+            {Array.from({ length: 3 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-12 w-full" />)}
           </div>
         )}
         {!loading && systemListId && (

@@ -139,13 +139,16 @@ export default function OrgWebhooks() {
             </Button>
           </CardHeader>
           <CardContent className="p-0">
-            {loading ? (
-              <div className="p-4 space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
-            ) : webhooks.length === 0 ? (
+            {(() => {
+              if (loading) return (
+              <div className="p-4 space-y-2">{Array.from({ length: 3 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-10 w-full" />)}</div>
+              );
+              if (webhooks.length === 0) return (
               <p className="text-center text-sm text-muted-foreground py-10">
                 No webhooks configured. Add one to receive event notifications.
               </p>
-            ) : (
+              );
+              return (
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -159,8 +162,7 @@ export default function OrgWebhooks() {
                 </TableHeader>
                 <TableBody>
                   {webhooks.map(wh => (
-                    <>
-                      <TableRow key={wh.id}>
+                    <TableRow key={wh.id}>
                         <TableCell className="font-mono text-xs max-w-xs truncate">{wh.url}</TableCell>
                         <TableCell>
                           <div className="flex flex-wrap gap-1 max-w-xs">
@@ -172,11 +174,11 @@ export default function OrgWebhooks() {
                           <Switch checked={wh.active} onCheckedChange={() => handleToggleActive(wh)} />
                         </TableCell>
                         <TableCell>
-                          {wh.last_delivery_status != null ? (
+                          {wh.last_delivery_status == null ? <span className="text-xs text-muted-foreground">—</span> : (
                             <Badge variant={wh.last_delivery_status >= 200 && wh.last_delivery_status < 300 ? 'success' : 'destructive'} className="text-xs font-mono">
                               {wh.last_delivery_status}
                             </Badge>
-                          ) : <span className="text-xs text-muted-foreground">—</span>}
+                          )}
                         </TableCell>
                         <TableCell className="text-xs text-muted-foreground">{fmtDate(wh.created_at)}</TableCell>
                         <TableCell className="text-right">
@@ -208,12 +210,12 @@ export default function OrgWebhooks() {
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </TableCell>
-                      </TableRow>
-                    </>
+                    </TableRow>
                   ))}
                 </TableBody>
               </Table>
-            )}
+              );
+            })()}
           </CardContent>
         </Card>
       </div>
@@ -228,8 +230,9 @@ export default function OrgWebhooks() {
           <div className="space-y-4 py-2">
             {createError && <Alert variant="destructive" className="text-sm py-2 px-3">{createError}</Alert>}
             <div className="space-y-2">
-              <label className="text-sm font-medium">URL</label>
+              <label className="text-sm font-medium" htmlFor="wh-url">URL</label>
               <Input
+                id="wh-url"
                 type="url"
                 placeholder="https://example.com/webhook"
                 value={newUrl}
@@ -237,7 +240,7 @@ export default function OrgWebhooks() {
               />
             </div>
             <div className="space-y-3">
-              <label className="text-sm font-medium">Events</label>
+              <span className="text-sm font-medium">Events</span>
               {EVENT_GROUPS.map(group => {
                 const allChecked = group.events.every(e => newEvents.includes(e));
                 const someChecked = group.events.some(e => newEvents.includes(e));
@@ -300,11 +303,14 @@ export default function OrgWebhooks() {
             <DialogTitle>Delivery Log</DialogTitle>
             <DialogDescription>Last 25 deliveries for this webhook.</DialogDescription>
           </DialogHeader>
-          {deliveriesLoading ? (
-            <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
-          ) : deliveries.length === 0 ? (
+          {(() => {
+            if (deliveriesLoading) return (
+            <div className="space-y-2">{Array.from({ length: 5 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-10 w-full" />)}</div>
+            );
+            if (deliveries.length === 0) return (
             <p className="text-sm text-muted-foreground py-4 text-center">No deliveries yet.</p>
-          ) : (
+            );
+            return (
             <div className="space-y-1 max-h-96 overflow-y-auto">
               {deliveries.map(d => (
                 <div key={d.id} className="rounded-lg border">
@@ -313,11 +319,11 @@ export default function OrgWebhooks() {
                     onClick={() => setExpandedDelivery(expandedDelivery === d.id ? null : d.id)}
                   >
                     <span className="font-mono text-xs flex-1">{d.event}</span>
-                    {d.status_code != null ? (
+                    {d.status_code == null ? <Badge variant="secondary" className="text-xs">pending</Badge> : (
                       <Badge variant={d.status_code >= 200 && d.status_code < 300 ? 'success' : 'destructive'} className="text-xs font-mono">
                         {d.status_code}
                       </Badge>
-                    ) : <Badge variant="secondary" className="text-xs">pending</Badge>}
+                    )}
                     <span className="text-xs text-muted-foreground">{d.attempt_count} attempt{d.attempt_count !== 1 ? 's' : ''}</span>
                     <span className="text-xs text-muted-foreground">{d.delivered_at ? fmtDate(d.delivered_at) : '—'}</span>
                     {expandedDelivery === d.id ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
@@ -330,7 +336,8 @@ export default function OrgWebhooks() {
                 </div>
               ))}
             </div>
-          )}
+            );
+          })()}
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeliveriesOpen(false)}>Close</Button>
           </DialogFooter>

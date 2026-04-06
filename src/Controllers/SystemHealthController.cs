@@ -23,6 +23,7 @@ public sealed record ComponentHealth(
     IReadOnlyDictionary<string, string>? Stats = null);
 
 [ApiController]
+[Route("admin/system")]
 [RequireManagementLevel(ManagementLevel.SuperAdmin)]
 public class SystemHealthController(
     RediensIamDbContext db,
@@ -32,8 +33,10 @@ public class SystemHealthController(
     IEmailService emailService) : ControllerBase
 {
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
+    private const string CategoryStorage = "Storage";
+    private const string StatsVersion    = "version";
 
-    [HttpGet("/admin/system/health")]
+    [HttpGet("health")]
     public async Task<IActionResult> GetHealth()
     {
         var checks = await Task.WhenAll(
@@ -76,12 +79,12 @@ public class SystemHealthController(
             }
             catch { /* stats are best-effort */ }
 
-            return new ComponentHealth("PostgreSQL", "Storage", HealthStatus.Ok, sw.ElapsedMilliseconds, null, stats);
+            return new ComponentHealth("PostgreSQL", CategoryStorage, HealthStatus.Ok, sw.ElapsedMilliseconds, null, stats);
         }
         catch (Exception ex)
         {
             sw.Stop();
-            return Err("PostgreSQL", "Storage", ex, sw);
+            return Err("PostgreSQL", CategoryStorage, ex, sw);
         }
     }
 
@@ -95,9 +98,9 @@ public class SystemHealthController(
                 { AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(5) });
             var val = await cache.GetStringAsync(key);
             if (val != "1") throw new Exception("cache round-trip mismatch");
-            return Ok("Dragonfly", "Storage", sw);
+            return Ok("Dragonfly", CategoryStorage, sw);
         }
-        catch (Exception ex) { return Err("Dragonfly", "Storage", ex, sw); }
+        catch (Exception ex) { return Err("Dragonfly", CategoryStorage, ex, sw); }
     }
 
     private async Task<ComponentHealth> CheckHydraAdmin()
@@ -110,7 +113,7 @@ public class SystemHealthController(
         try
         {
             var version = await FetchVersion($"{appConfig.HydraAdminUrl}/version");
-            if (version != null) stats["version"] = version;
+            if (version != null) stats[StatsVersion] = version;
             // OAuth2 clients managed by this app
             var clients = await db.Projects.CountAsync(p => p.HydraClientId != null);
             stats["oauth2_clients"] = clients.ToString();
@@ -130,7 +133,7 @@ public class SystemHealthController(
         try
         {
             var version = await FetchVersion($"{appConfig.HydraPublicUrl}/version");
-            if (version != null) stats["version"] = version;
+            if (version != null) stats[StatsVersion] = version;
         }
         catch { /* best-effort */ }
 
@@ -147,7 +150,7 @@ public class SystemHealthController(
         try
         {
             var version = await FetchVersion($"{appConfig.KetoReadUrl}/version");
-            if (version != null) stats["version"] = version;
+            if (version != null) stats[StatsVersion] = version;
         }
         catch { /* best-effort */ }
 
@@ -164,7 +167,7 @@ public class SystemHealthController(
         try
         {
             var version = await FetchVersion($"{appConfig.KetoWriteUrl}/version");
-            if (version != null) stats["version"] = version;
+            if (version != null) stats[StatsVersion] = version;
         }
         catch { /* best-effort */ }
 
@@ -225,7 +228,7 @@ public class SystemHealthController(
         if (!resp.IsSuccessStatusCode) return null;
         var json = await resp.Content.ReadAsStringAsync();
         var doc  = JsonSerializer.Deserialize<JsonElement>(json, JsonOpts);
-        return doc.TryGetProperty("version", out var v) ? v.GetString() : null;
+        return doc.TryGetProperty(StatsVersion, out var v) ? v.GetString() : null;
     }
 
     private static ComponentHealth Ok(string name, string category, Stopwatch sw, string? detail = null)

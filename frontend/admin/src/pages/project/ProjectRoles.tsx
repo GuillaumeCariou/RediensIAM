@@ -59,7 +59,7 @@ export default function ProjectRoles() {
     e.preventDefault();
     setSaving(true);
     try {
-      await createRole(projectId, { name: form.name, description: form.description || undefined, rank: parseInt(form.rank) });
+      await createRole(projectId, { name: form.name, description: form.description || undefined, rank: Number.parseInt(form.rank, 10) });
       setCreateOpen(false);
       setForm({ name: '', description: '', rank: '100' });
       load();
@@ -118,32 +118,37 @@ export default function ProjectRoles() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {loading
-                ? Array.from({ length: 4 }).map((_, i) => <TableRow key={i}>{Array.from({ length: 5 }).map((__, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>)
-                : roles.length === 0
-                ? (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center text-muted-foreground py-12">
-                        <Shield className="h-8 w-8 mx-auto mb-2 opacity-40" />No roles defined yet
-                      </TableCell>
-                    </TableRow>
-                  )
-                : [...roles].sort((a, b) => a.rank - b.rank).map(role => (
-                    <TableRow key={role.id}>
-                      <TableCell className="font-medium font-mono">{role.name}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{role.description ?? '—'}</TableCell>
-                      <TableCell>
-                        <span className="text-sm font-mono bg-muted px-2 py-0.5 rounded">{role.rank}</span>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{fmtDate(role.created_at)}</TableCell>
-                      <TableCell>
-                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={() => setDeleteTarget(role)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))
-              }
+              {(() => {
+                if (loading) return (
+                  Array.from({ length: 4 }, (_, i) => `sk-row-${i}`).map(rowId => <TableRow key={rowId}>{Array.from({ length: 5 }, (_, j) => `sk-cell-${j}`).map(cellId => <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>)
+                );
+                if (roles.length === 0) return (
+                  (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center text-muted-foreground py-12">
+                          <Shield className="h-8 w-8 mx-auto mb-2 opacity-40" />No roles defined yet
+                        </TableCell>
+                      </TableRow>
+                    )
+                );
+                return (
+                  [...roles].sort((a, b) => a.rank - b.rank).map(role => (
+                      <TableRow key={role.id}>
+                        <TableCell className="font-medium font-mono">{role.name}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{role.description ?? '—'}</TableCell>
+                        <TableCell>
+                          <span className="text-sm font-mono bg-muted px-2 py-0.5 rounded">{role.rank}</span>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{fmtDate(role.created_at)}</TableCell>
+                        <TableCell>
+                          <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={() => setDeleteTarget(role)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                );
+              })()}
             </TableBody>
           </Table>
         </div>

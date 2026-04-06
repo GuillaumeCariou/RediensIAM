@@ -55,12 +55,11 @@ export default function ProjectUsers() {
 
   const handleAssignList = async (ulId: string) => {
     if (!projectId) return;
+    const isAdmin = isSystemCtx || isSuperAdmin;
     if (ulId === '__none__') {
-      if (isSystemCtx || isSuperAdmin) await adminUnassignUserList(projectId);
-      else await unassignUserList(projectId);
+      await (isAdmin ? adminUnassignUserList(projectId) : unassignUserList(projectId));
     } else {
-      if (isSystemCtx || isSuperAdmin) await adminAssignUserList(projectId, ulId);
-      else await assignUserList(projectId, ulId);
+      await (isAdmin ? adminAssignUserList(projectId, ulId) : assignUserList(projectId, ulId));
     }
     getProjectInfo(projectId).then(p => setProject(p)).catch(() => null);
   };
@@ -81,9 +80,11 @@ export default function ProjectUsers() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {loading ? (
+            {(() => {
+              if (loading) return (
               <Skeleton className="h-10 w-72" />
-            ) : isOrgAdmin ? (
+              );
+              if (isOrgAdmin) return (
               <div className="space-y-2">
                 <Select value={assignedListId ?? '__none__'} onValueChange={handleAssignList}>
                   <SelectTrigger className="w-72 bg-background">
@@ -100,14 +101,16 @@ export default function ProjectUsers() {
                   <p className="text-xs text-amber-500">No user list assigned — users cannot log in to this project.</p>
                 )}
               </div>
-            ) : (
+              );
+              return (
               <div className="flex items-center gap-2">
                 {assignedListName
                   ? <Badge variant="secondary">{assignedListName}</Badge>
                   : <span className="text-sm text-muted-foreground italic">No user list assigned</span>
                 }
               </div>
-            )}
+              );
+            })()}
           </CardContent>
         </Card>
 

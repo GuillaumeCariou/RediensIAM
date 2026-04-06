@@ -99,41 +99,46 @@ export default function AuditLog() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {loading
-                ? Array.from({ length: 8 }).map((_, i) => (
-                    <TableRow key={i}>
-                      {Array.from({ length: 5 }).map((__, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}
-                    </TableRow>
-                  ))
-                : entries.length === 0
-                ? (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center text-muted-foreground py-12">
-                        <ScrollText className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                        No audit events found
-                      </TableCell>
-                    </TableRow>
-                  )
-                : entries.map(e => (
-                    <TableRow key={e.id}>
-                      <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{fmtDate(e.created_at)}</TableCell>
-                      <TableCell>
-                        <Badge variant={ACTION_COLORS[e.action] ?? 'secondary'} className="font-mono text-xs">
-                          {e.action}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <p className="text-sm">{e.actor_email ?? '—'}</p>
-                        {e.actor_id && <p className="text-xs text-muted-foreground font-mono">{e.actor_id.slice(0, 8)}…</p>}
-                      </TableCell>
-                      <TableCell>
-                        {e.target_type && <Badge variant="secondary" className="text-xs">{e.target_type}</Badge>}
-                        {e.target_id && <p className="text-xs text-muted-foreground font-mono mt-0.5">{e.target_id.slice(0, 8)}…</p>}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground font-mono">{e.ip_address ?? '—'}</TableCell>
-                    </TableRow>
-                  ))
-              }
+              {(() => {
+                if (loading) return (
+                  Array.from({ length: 8 }, (_, i) => `sk-row-${i}`).map(rowId => (
+                      <TableRow key={rowId}>
+                        {Array.from({ length: 5 }, (_, j) => `sk-cell-${j}`).map(cellId => <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>)}
+                      </TableRow>
+                    ))
+                );
+                if (entries.length === 0) return (
+                  (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center text-muted-foreground py-12">
+                          <ScrollText className="h-8 w-8 mx-auto mb-2 opacity-40" />
+                          No audit events found
+                        </TableCell>
+                      </TableRow>
+                    )
+                );
+                return (
+                  entries.map(e => (
+                      <TableRow key={e.id}>
+                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{fmtDate(e.created_at)}</TableCell>
+                        <TableCell>
+                          <Badge variant={ACTION_COLORS[e.action] ?? 'secondary'} className="font-mono text-xs">
+                            {e.action}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <p className="text-sm">{e.actor_email ?? '—'}</p>
+                          {e.actor_id && <p className="text-xs text-muted-foreground font-mono">{e.actor_id.slice(0, 8)}…</p>}
+                        </TableCell>
+                        <TableCell>
+                          {e.target_type && <Badge variant="secondary" className="text-xs">{e.target_type}</Badge>}
+                          {e.target_id && <p className="text-xs text-muted-foreground font-mono mt-0.5">{e.target_id.slice(0, 8)}…</p>}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground font-mono">{e.ip_address ?? '—'}</TableCell>
+                      </TableRow>
+                    ))
+                );
+              })()}
             </TableBody>
           </Table>
         </div>

@@ -16,11 +16,14 @@ namespace RediensIAM.Controllers;
 ///   ProjectAdmin → service accounts in their project's assigned user list
 /// </summary>
 [ApiController]
+[Route("service-accounts")]
 public class ServiceAccountController(
     RediensIamDbContext db,
     PatService patService,
     AuditLogService audit) : ControllerBase
 {
+    private const string AuditSa = "service_account";
+
     private TokenClaims Claims     => HttpContext.GetClaims()!;
     private ManagementLevel Level  => Claims.GetManagementLevel();
     private Guid ActorId           => Claims.ParsedUserId;
@@ -47,7 +50,7 @@ public class ServiceAccountController(
 
     // ── List ──────────────────────────────────────────────────────────────────
 
-    [HttpGet("/service-accounts")]
+    [HttpGet("")]
     public async Task<IActionResult> ListServiceAccounts()
     {
         if (Level == ManagementLevel.None) return Unauthorized();
@@ -82,7 +85,7 @@ public class ServiceAccountController(
 
     // ── Create ────────────────────────────────────────────────────────────────
 
-    [HttpPost("/service-accounts")]
+    [HttpPost("")]
     public async Task<IActionResult> CreateServiceAccount([FromBody] CreateSaRequest body)
     {
         if (Level == ManagementLevel.None) return Unauthorized();
@@ -116,13 +119,13 @@ public class ServiceAccountController(
         };
         db.ServiceAccounts.Add(sa);
         await db.SaveChangesAsync();
-        await audit.RecordAsync(list.OrgId, null, ActorId, "sa.created", "service_account", sa.Id.ToString());
+        await audit.RecordAsync(list.OrgId, null, ActorId, "sa.created", AuditSa, sa.Id.ToString());
         return Created($"/service-accounts/{sa.Id}", new { sa.Id, sa.Name, sa.Description });
     }
 
     // ── Get / Delete ──────────────────────────────────────────────────────────
 
-    [HttpGet("/service-accounts/{id}")]
+    [HttpGet("{id}")]
     public async Task<IActionResult> GetServiceAccount(Guid id)
     {
         var sa = await db.ServiceAccounts
@@ -143,7 +146,7 @@ public class ServiceAccountController(
         });
     }
 
-    [HttpDelete("/service-accounts/{id}")]
+    [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteServiceAccount(Guid id)
     {
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
@@ -151,13 +154,13 @@ public class ServiceAccountController(
         var orgId = sa.UserList.OrgId;
         db.ServiceAccounts.Remove(sa);
         await db.SaveChangesAsync();
-        await audit.RecordAsync(orgId, null, ActorId, "sa.deleted", "service_account", id.ToString());
+        await audit.RecordAsync(orgId, null, ActorId, "sa.deleted", AuditSa, id.ToString());
         return NoContent();
     }
 
     // ── PAT management ────────────────────────────────────────────────────────
 
-    [HttpGet("/service-accounts/{id}/pat")]
+    [HttpGet("{id}/pat")]
     public async Task<IActionResult> ListPats(Guid id)
     {
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
@@ -165,7 +168,7 @@ public class ServiceAccountController(
         return Ok(await patService.ListPatsAsync(id));
     }
 
-    [HttpPost("/service-accounts/{id}/pat")]
+    [HttpPost("{id}/pat")]
     public async Task<IActionResult> GeneratePat(Guid id, [FromBody] GenerateSaPatRequest body)
     {
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
@@ -174,7 +177,7 @@ public class ServiceAccountController(
         return Ok(new { pat.Id, pat.Name, token = raw, pat.ExpiresAt, message = "store_this_token_shown_once" });
     }
 
-    [HttpDelete("/service-accounts/{id}/pat/{patId}")]
+    [HttpDelete("{id}/pat/{patId}")]
     public async Task<IActionResult> RevokePat(Guid id, Guid patId)
     {
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
@@ -185,7 +188,7 @@ public class ServiceAccountController(
 
     // ── API keys (Hydra JWK) ──────────────────────────────────────────────────
 
-    [HttpGet("/service-accounts/{id}/api-keys")]
+    [HttpGet("{id}/api-keys")]
     public async Task<IActionResult> GetApiKeys(Guid id)
     {
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
@@ -193,7 +196,7 @@ public class ServiceAccountController(
         return Ok(await patService.GetKeysAsync(sa));
     }
 
-    [HttpPost("/service-accounts/{id}/api-keys")]
+    [HttpPost("{id}/api-keys")]
     public async Task<IActionResult> AddApiKey(Guid id, [FromBody] SaApiKeyRequest body)
     {
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
@@ -202,7 +205,7 @@ public class ServiceAccountController(
         catch (Exception ex) { return BadRequest(new { error = "hydra_error", detail = ex.Message }); }
     }
 
-    [HttpDelete("/service-accounts/{id}/api-keys")]
+    [HttpDelete("{id}/api-keys")]
     public async Task<IActionResult> RemoveApiKey(Guid id)
     {
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
@@ -213,7 +216,7 @@ public class ServiceAccountController(
 
     // ── Role management ───────────────────────────────────────────────────────
 
-    [HttpGet("/service-accounts/{id}/roles")]
+    [HttpGet("{id}/roles")]
     public async Task<IActionResult> ListRoles(Guid id)
     {
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
@@ -225,7 +228,7 @@ public class ServiceAccountController(
         return Ok(roles);
     }
 
-    [HttpPost("/service-accounts/{id}/roles")]
+    [HttpPost("{id}/roles")]
     public async Task<IActionResult> AssignRole(Guid id, [FromBody] AssignSaRoleRequest body)
     {
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
@@ -280,12 +283,12 @@ public class ServiceAccountController(
         db.ServiceAccountRoles.Add(role);
         await db.SaveChangesAsync();
         await audit.RecordAsync(body.OrgId, body.ProjectId, ActorId, "sa.role.assigned",
-            "service_account", id.ToString(), new() { ["role"] = body.Role });
+            AuditSa, id.ToString(), new() { ["role"] = body.Role });
         return Created($"/service-accounts/{id}/roles/{role.Id}",
             new { role.Id, role.Role, role.OrgId, role.ProjectId, role.GrantedAt });
     }
 
-    [HttpDelete("/service-accounts/{id}/roles/{roleId}")]
+    [HttpDelete("{id}/roles/{roleId}")]
     public async Task<IActionResult> RemoveRole(Guid id, Guid roleId)
     {
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
@@ -307,7 +310,7 @@ public class ServiceAccountController(
         db.ServiceAccountRoles.Remove(role);
         await db.SaveChangesAsync();
         await audit.RecordAsync(role.OrgId, role.ProjectId, ActorId, "sa.role.removed",
-            "service_account", id.ToString(), new() { ["role"] = role.Role });
+            AuditSa, id.ToString(), new() { ["role"] = role.Role });
         return NoContent();
     }
 }

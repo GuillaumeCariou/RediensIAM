@@ -53,54 +53,59 @@ export default function SystemProjects() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {loading
-                ? Array.from({ length: 6 }).map((_, i) => (
-                    <TableRow key={i}>
-                      {Array.from({ length: 4 }).map((__, j) => (
-                        <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
-                      ))}
-                    </TableRow>
-                  ))
-                : filtered.length === 0
-                ? (
-                    <TableRow>
-                      <TableCell colSpan={4} className="text-center text-muted-foreground py-12">
-                        <FolderKanban className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                        {search ? 'No projects match your search' : 'No projects yet'}
-                      </TableCell>
-                    </TableRow>
-                  )
-                : filtered.map(p => (
-                    <TableRow key={p.id}>
-                      <TableCell>
-                        <Link
-                          to={`/system/organisations/${p.org_id}/projects/${p.id}`}
-                          className="block group"
-                        >
-                          <p className="font-medium group-hover:text-primary transition-colors">{p.name}</p>
-                          <p className="text-xs text-muted-foreground font-mono">/{p.slug}</p>
-                        </Link>
-                      </TableCell>
-                      <TableCell>
-                        <Link
-                          to={`/system/organisations/${p.org_id}`}
-                          className="text-sm hover:underline text-muted-foreground hover:text-foreground"
-                        >
-                          {p.org_name}
-                        </Link>
-                      </TableCell>
-                      <TableCell>
-                        {p.active
-                          ? <Badge variant="success">Active</Badge>
-                          : <Badge variant="secondary">Inactive</Badge>
-                        }
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {fmtDateShort(p.created_at)}
-                      </TableCell>
-                    </TableRow>
-                  ))
-              }
+              {(() => {
+                if (loading) return (
+                  Array.from({ length: 6 }, (_, i) => `sk-row-${i}`).map(rowId => (
+                      <TableRow key={rowId}>
+                        {Array.from({ length: 4 }, (_, j) => `sk-cell-${j}`).map(cellId => (
+                          <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>
+                          ))}
+                      </TableRow>
+                    ))
+                );
+                if (filtered.length === 0) return (
+                  (
+                      <TableRow>
+                        <TableCell colSpan={4} className="text-center text-muted-foreground py-12">
+                          <FolderKanban className="h-8 w-8 mx-auto mb-2 opacity-40" />
+                          {search ? 'No projects match your search' : 'No projects yet'}
+                        </TableCell>
+                      </TableRow>
+                    )
+                );
+                return (
+                  filtered.map(p => (
+                      <TableRow key={p.id}>
+                        <TableCell>
+                          <Link
+                            to={`/system/organisations/${p.org_id}/projects/${p.id}`}
+                            className="block group"
+                          >
+                            <p className="font-medium group-hover:text-primary transition-colors">{p.name}</p>
+                            <p className="text-xs text-muted-foreground font-mono">/{p.slug}</p>
+                          </Link>
+                        </TableCell>
+                        <TableCell>
+                          <Link
+                            to={`/system/organisations/${p.org_id}`}
+                            className="text-sm hover:underline text-muted-foreground hover:text-foreground"
+                          >
+                            {p.org_name}
+                          </Link>
+                        </TableCell>
+                        <TableCell>
+                          {p.active
+                            ? <Badge variant="success">Active</Badge>
+                            : <Badge variant="secondary">Inactive</Badge>
+                          }
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {fmtDateShort(p.created_at)}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                );
+              })()}
             </TableBody>
           </Table>
         </div>

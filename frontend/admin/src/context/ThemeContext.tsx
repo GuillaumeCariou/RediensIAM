@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 export type Theme = 'light' | 'dark' | 'system';
 
@@ -7,24 +7,25 @@ interface ThemeCtx { theme: Theme; setTheme: (t: Theme) => void; }
 const Ctx = createContext<ThemeCtx>({ theme: 'system', setTheme: () => {} });
 
 function applyTheme(t: Theme) {
-  if (t === 'system') document.documentElement.removeAttribute('data-theme');
-  else document.documentElement.setAttribute('data-theme', t);
+  if (t === 'system') delete document.documentElement.dataset['theme'];
+  else document.documentElement.dataset['theme'] = t;
 }
 
 export function ThemeProvider({ children }: Readonly<{ children: ReactNode }>) {
-  const [theme, setThemeState] = useState<Theme>(
+  const [theme, setTheme] = useState<Theme>(
     () => (localStorage.getItem('theme') as Theme) ?? 'system'
   );
 
   useEffect(() => { applyTheme(theme); }, [theme]);
 
-  const setTheme = (t: Theme) => {
+  const changeTheme = (t: Theme) => {
     localStorage.setItem('theme', t);
-    setThemeState(t);
+    setTheme(t);
     applyTheme(t);
   };
 
-  return <Ctx.Provider value={{ theme, setTheme }}>{children}</Ctx.Provider>;
+  const ctx = useMemo(() => ({ theme, setTheme: changeTheme }), [theme]); // eslint-disable-line react-hooks/exhaustive-deps
+  return <Ctx.Provider value={ctx}>{children}</Ctx.Provider>;
 }
 
 export const useTheme = () => useContext(Ctx);

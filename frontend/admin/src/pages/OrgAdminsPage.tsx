@@ -75,7 +75,7 @@ export default function OrgAdminsPage() {
     setAssignSaving(true);
     try {
       if (isSystemCtx) {
-        await assignOrgAdmin(orgId!, assignForm.user_id, assignForm.role, assignForm.scope_id || undefined);
+        await assignOrgAdmin(orgId, assignForm.user_id, assignForm.role, assignForm.scope_id || undefined);
       } else {
         await assignOrgListManager({ user_id: assignForm.user_id, role: assignForm.role, scope_id: assignForm.scope_id || undefined });
       }
@@ -122,7 +122,7 @@ export default function OrgAdminsPage() {
 
   const handleRemove = async () => {
     if (!removeTarget) return;
-    if (isSystemCtx) await removeOrgAdmin(orgId!, removeTarget.id);
+    if (isSystemCtx) await removeOrgAdmin(orgId, removeTarget.id);
     else await removeOrgListManager(removeTarget.id);
     setRemoveTarget(null);
     load();
@@ -154,53 +154,58 @@ export default function OrgAdminsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {loading
-                ? Array.from({ length: 3 }).map((_, i) => (
-                    <TableRow key={i}>
-                      {Array.from({ length: 6 }).map((__, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}
-                    </TableRow>
-                  ))
-                : roles.length === 0
-                ? (
-                    <TableRow>
-                      <TableCell colSpan={6} className="text-center text-muted-foreground py-12">
-                        <Shield className="h-8 w-8 mx-auto mb-2 opacity-40" />No admins assigned yet.
-                      </TableCell>
-                    </TableRow>
-                  )
-                : roles.map(r => (
-                    <TableRow key={r.id}>
-                      <TableCell>
-                        <p className="font-medium text-sm">{r.user_name}</p>
-                        <p className="text-xs text-muted-foreground">{r.user_email}</p>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={r.role === 'org_admin' ? 'default' : 'secondary'}>{r.role}</Badge>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {r.scope_name ?? (r.scope_id ? `${r.scope_id.slice(0, 8)}…` : 'Entire org')}
-                      </TableCell>
-                      <TableCell>
-                        {r.active !== undefined
-                          ? <Badge variant={r.active ? 'success' : 'secondary'}>{r.active ? 'Active' : 'Disabled'}</Badge>
-                          : <span className="text-muted-foreground text-xs">—</span>
-                        }
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{fmtDate(r.granted_at)}</TableCell>
-                      <TableCell>
-                        <div className="flex items-center justify-end gap-1">
-                          <Button variant="ghost" size="icon" onClick={() => openEdit(r.user_id, r.user_name)}>
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                            onClick={() => setRemoveTarget({ id: r.id, label: `${r.user_name} (${r.role})` })}>
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))
-              }
+              {(() => {
+                if (loading) return (
+                  Array.from({ length: 3 }, (_, i) => `sk-row-${i}`).map(rowId => (
+                      <TableRow key={rowId}>
+                        {Array.from({ length: 6 }, (_, j) => `sk-cell-${j}`).map(cellId => <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>)}
+                      </TableRow>
+                    ))
+                );
+                if (roles.length === 0) return (
+                  (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center text-muted-foreground py-12">
+                          <Shield className="h-8 w-8 mx-auto mb-2 opacity-40" />No admins assigned yet.
+                        </TableCell>
+                      </TableRow>
+                    )
+                );
+                return (
+                  roles.map(r => (
+                      <TableRow key={r.id}>
+                        <TableCell>
+                          <p className="font-medium text-sm">{r.user_name}</p>
+                          <p className="text-xs text-muted-foreground">{r.user_email}</p>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={r.role === 'org_admin' ? 'default' : 'secondary'}>{r.role}</Badge>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {r.scope_name ?? (r.scope_id ? `${r.scope_id.slice(0, 8)}…` : 'Entire org')}
+                        </TableCell>
+                        <TableCell>
+                          {r.active === undefined
+                            ? <span className="text-muted-foreground text-xs">—</span>
+                            : <Badge variant={r.active ? 'success' : 'secondary'}>{r.active ? 'Active' : 'Disabled'}</Badge>
+                          }
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{fmtDate(r.granted_at)}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center justify-end gap-1">
+                            <Button variant="ghost" size="icon" onClick={() => openEdit(r.user_id, r.user_name)}>
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                              onClick={() => setRemoveTarget({ id: r.id, label: `${r.user_name} (${r.role})` })}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                );
+              })()}
             </TableBody>
           </Table>
         </div>
@@ -250,7 +255,7 @@ export default function OrgAdminsPage() {
             <DialogDescription>Update account details. Leave password blank to keep unchanged.</DialogDescription>
           </DialogHeader>
           {editLoading
-            ? <div className="space-y-3 py-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
+            ? <div className="space-y-3 py-2">{Array.from({ length: 5 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-8 w-full" />)}</div>
             : (
               <form onSubmit={handleEdit} className="space-y-4">
                 {editError && <p className="text-sm text-destructive">{editError}</p>}

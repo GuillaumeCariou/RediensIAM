@@ -55,6 +55,7 @@ public class HydraConsentSessionRequest
 public class HydraService(IHttpClientFactory http, AppConfig appConfig)
 {
     private static readonly string[] BaseScopes = ["openid", "profile", "offline_access"];
+    private const string RedirectToKey = "redirect_to";
 
     private readonly string _adminUrl = appConfig.HydraAdminUrl;
     private readonly JsonSerializerOptions _json = new() { PropertyNameCaseInsensitive = true };
@@ -68,7 +69,7 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig)
     {
         var resp = await Client.GetAsync($"{_adminUrl}/admin/oauth2/auth/requests/login?login_challenge={challenge}");
         resp.EnsureSuccessStatusCode();
-        return await resp.Content.ReadFromJsonAsync<HydraLoginRequest>(_json) ?? throw new Exception("Invalid Hydra response");
+        return await resp.Content.ReadFromJsonAsync<HydraLoginRequest>(_json) ?? throw new InvalidOperationException("Invalid Hydra response");
     }
 
     public async Task<string> AcceptLoginAsync(string challenge, string subject, Dictionary<string, object> context)
@@ -78,7 +79,7 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig)
             $"{_adminUrl}/admin/oauth2/auth/requests/login/accept?login_challenge={challenge}", body);
         resp.EnsureSuccessStatusCode();
         var result = await resp.Content.ReadFromJsonAsync<JsonElement>(_json);
-        return result.GetProperty("redirect_to").GetString()!;
+        return result.GetProperty(RedirectToKey).GetString()!;
     }
 
     public async Task<string> RejectLoginAsync(string challenge, string error, string description)
@@ -88,7 +89,7 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig)
             $"{_adminUrl}/admin/oauth2/auth/requests/login/reject?login_challenge={challenge}", body);
         resp.EnsureSuccessStatusCode();
         var result = await resp.Content.ReadFromJsonAsync<JsonElement>(_json);
-        return result.GetProperty("redirect_to").GetString()!;
+        return result.GetProperty(RedirectToKey).GetString()!;
     }
 
     // ── Consent ───────────────────────────────────────────────────────────────
@@ -97,7 +98,7 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig)
     {
         var resp = await Client.GetAsync($"{_adminUrl}/admin/oauth2/auth/requests/consent?consent_challenge={challenge}");
         resp.EnsureSuccessStatusCode();
-        return await resp.Content.ReadFromJsonAsync<HydraConsentRequest>(_json) ?? throw new Exception("Invalid Hydra response");
+        return await resp.Content.ReadFromJsonAsync<HydraConsentRequest>(_json) ?? throw new InvalidOperationException("Invalid Hydra response");
     }
 
     public async Task<string> AcceptConsentAsync(string challenge, object session, List<string> grantScope)
@@ -107,7 +108,7 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig)
             $"{_adminUrl}/admin/oauth2/auth/requests/consent/accept?consent_challenge={challenge}", body);
         resp.EnsureSuccessStatusCode();
         var result = await resp.Content.ReadFromJsonAsync<JsonElement>(_json);
-        return result.GetProperty("redirect_to").GetString()!;
+        return result.GetProperty(RedirectToKey).GetString()!;
     }
 
     public async Task<string> RejectConsentAsync(string challenge, string error, string description)
@@ -117,7 +118,7 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig)
             $"{_adminUrl}/admin/oauth2/auth/requests/consent/reject?consent_challenge={challenge}", body);
         resp.EnsureSuccessStatusCode();
         var result = await resp.Content.ReadFromJsonAsync<JsonElement>(_json);
-        return result.GetProperty("redirect_to").GetString()!;
+        return result.GetProperty(RedirectToKey).GetString()!;
     }
 
     // ── Logout ────────────────────────────────────────────────────────────────
@@ -136,7 +137,7 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig)
             $"{_adminUrl}/admin/oauth2/auth/requests/logout/accept?logout_challenge={challenge}", new { });
         resp.EnsureSuccessStatusCode();
         var result = await resp.Content.ReadFromJsonAsync<JsonElement>(_json);
-        return result.GetProperty("redirect_to").GetString()!;
+        return result.GetProperty(RedirectToKey).GetString()!;
     }
 
     // ── Clients ───────────────────────────────────────────────────────────────
@@ -253,11 +254,11 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig)
         };
     }
 
-    private record IntrospectResult(
+    private sealed record IntrospectResult(
         bool Active, string? Sub,
         [property: JsonPropertyName("ext")] ExtClaims? Ext);
 
-    private class ExtClaims : Dictionary<string, JsonElement>
+    private sealed class ExtClaims : Dictionary<string, JsonElement>
     {
         public string? GetString(string key) =>
             TryGetValue(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
@@ -271,7 +272,8 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig)
             {
                 var raw = v.GetString() ?? "";
                 if (raw.StartsWith('['))
-                    try { return JsonSerializer.Deserialize<List<string>>(raw) ?? []; } catch { }
+                    try { return JsonSerializer.Deserialize<List<string>>(raw) ?? []; }
+                    catch (JsonException) { /* fall through to comma-split */ }
                 return raw.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
             }
             return [];

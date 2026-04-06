@@ -129,30 +129,34 @@ export default function SystemHealth() {
           </div>
         )}
 
-        {loading ? (
-          <div className="grid gap-4 md:grid-cols-2">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <Skeleton key={i} className="h-24 w-full" />
-            ))}
-          </div>
-        ) : data ? (
-          <div className="space-y-6">
-            {categories.map(cat => (
-              <Card key={cat}>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                    {cat}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="grid gap-3 md:grid-cols-2">
-                  {data.checks.filter(c => c.category === cat).map(check => (
-                    <ComponentCard key={check.name} check={check} />
-                  ))}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        ) : null}
+        {(() => {
+          if (loading) return (
+            <div className="grid gap-4 md:grid-cols-2">
+              {Array.from({ length: 6 }, (_, i) => `sk-row-${i}`).map(rowId => (
+                <Skeleton key={rowId} className="h-24 w-full" />
+              ))}
+            </div>
+          );
+          if (data) return (
+            <div className="space-y-6">
+              {categories.map(cat => (
+                <Card key={cat}>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                      {cat}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="grid gap-3 md:grid-cols-2">
+                    {data.checks.filter(c => c.category === cat).map(check => (
+                      <ComponentCard key={check.name} check={check} />
+                    ))}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          );
+          return null;
+        })()}
       </div>
     </div>
   );

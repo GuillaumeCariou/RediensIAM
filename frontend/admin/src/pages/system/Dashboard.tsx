@@ -56,7 +56,7 @@ export default function SystemDashboard() {
       <div className="p-6 space-y-6">
         {loading ? (
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}
+            {Array.from({ length: 8 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-28 rounded-xl" />)}
           </div>
         ) : (
           <>

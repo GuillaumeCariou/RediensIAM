@@ -240,11 +240,14 @@ function SecurityTab() {
         </CardHeader>
         <CardContent className="space-y-4">
           {unlinkError && <Alert variant="destructive" className="text-sm py-2 px-3">{unlinkError}</Alert>}
-          {linkedLoading ? (
+          {(() => {
+            if (linkedLoading) return (
             <Skeleton className="h-12 w-full" />
-          ) : linked.length === 0 ? (
+            );
+            if (linked.length === 0) return (
             <p className="text-sm text-muted-foreground">No linked accounts.</p>
-          ) : (
+            );
+            return (
             <div className="space-y-2">
               {linked.map(acc => (
                 <div key={acc.id} className="flex items-center justify-between rounded-lg border px-4 py-3">
@@ -266,7 +269,8 @@ function SecurityTab() {
                 </div>
               ))}
             </div>
-          )}
+            );
+          })()}
 
           {availableToConnect.length > 0 && (
             <div className="space-y-2 pt-2 border-t">
@@ -371,9 +375,11 @@ function PasskeysCard() {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {loading ? (
+        {(() => {
+          if (loading) return (
           <Skeleton className="h-16 w-full" />
-        ) : creds.length > 0 ? (
+          );
+          if (creds.length > 0) return (
           <div className="space-y-2">
             {creds.map(c => (
               <div key={c.id} className="flex items-center justify-between rounded-lg border px-4 py-3">
@@ -742,7 +748,7 @@ function SessionsTab() {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12 rounded-lg" />)}</div>
+            <div className="space-y-2">{Array.from({ length: 3 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-12 rounded-lg" />)}</div>
           ) : sessions.length === 0 ? (
             <p className="text-sm text-muted-foreground py-4 text-center">No active sessions.</p>
           ) : (
@@ -824,7 +830,8 @@ export default function AccountPage() {
           </div>
         ) : !me ? (
           <p className="text-muted-foreground">Failed to load account.</p>
-        ) : (
+          );
+          return (
           <Tabs defaultValue="profile" className="space-y-4">
             <TabsList>
               <TabsTrigger value="profile"><User className="h-4 w-4" />Profile</TabsTrigger>
@@ -837,7 +844,8 @@ export default function AccountPage() {
             <TabsContent value="mfa"><MfaTab /></TabsContent>
             <TabsContent value="sessions"><SessionsTab /></TabsContent>
           </Tabs>
-        )}
+          );
+        })()}
       </div>
     </div>
   );

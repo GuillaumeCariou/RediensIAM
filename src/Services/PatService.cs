@@ -132,8 +132,9 @@ public class PatService(
         var hasJwks = client.Value.TryGetProperty("jwks", out var jwks)
             && jwks.TryGetProperty("keys", out var keys)
             && keys.GetArrayLength() > 0;
-        var kid = hasJwks && jwks.TryGetProperty("keys", out var ks) && ks.GetArrayLength() > 0
-            ? ks[0].TryGetProperty("kid", out var k) ? k.GetString() : null : null;
+        string? kid = null;
+        if (hasJwks && jwks.TryGetProperty("keys", out var ks) && ks.GetArrayLength() > 0)
+            kid = ks[0].TryGetProperty("kid", out var k) ? k.GetString() : null;
 
         return new { client_id = sa.HydraClientId, has_key = hasJwks, kid };
     }

@@ -91,44 +91,49 @@ export default function SystemServiceAccounts() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {loading
-                ? Array.from({ length: 3 }).map((_, i) => (
-                    <TableRow key={i}>{Array.from({ length: 5 }).map((__, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
-                  ))
-                : accounts.length === 0
-                ? (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center text-muted-foreground py-12">
-                        <Bot className="h-8 w-8 mx-auto mb-2 opacity-40" />No system service accounts yet
-                      </TableCell>
-                    </TableRow>
-                  )
-                : accounts.map(sa => (
-                    <TableRow key={sa.id} className="cursor-pointer" onClick={() => navigate(`/system/service-accounts/${sa.id}`)}>
-                      <TableCell>
-                        <p className="font-medium">{sa.name}</p>
-                        {sa.description && <p className="text-xs text-muted-foreground">{sa.description}</p>}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={sa.active ? 'success' : 'secondary'}>{sa.active ? 'Active' : 'Inactive'}</Badge>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{fmtDateShort(sa.last_used_at)}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{fmtDateShort(sa.created_at)}</TableCell>
-                      <TableCell onClick={e => e.stopPropagation()}>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent>
-                            <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteTarget(sa)}>
-                              <Trash2 className="h-4 w-4" />Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  ))
-              }
+              {(() => {
+                if (loading) return (
+                  Array.from({ length: 3 }, (_, i) => `sk-row-${i}`).map(rowId => (
+                      <TableRow key={rowId}>{Array.from({ length: 5 }, (_, j) => `sk-cell-${j}`).map(cellId => <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
+                    ))
+                );
+                if (accounts.length === 0) return (
+                  (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center text-muted-foreground py-12">
+                          <Bot className="h-8 w-8 mx-auto mb-2 opacity-40" />No system service accounts yet
+                        </TableCell>
+                      </TableRow>
+                    )
+                );
+                return (
+                  accounts.map(sa => (
+                      <TableRow key={sa.id} className="cursor-pointer" onClick={() => navigate(`/system/service-accounts/${sa.id}`)}>
+                        <TableCell>
+                          <p className="font-medium">{sa.name}</p>
+                          {sa.description && <p className="text-xs text-muted-foreground">{sa.description}</p>}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={sa.active ? 'success' : 'secondary'}>{sa.active ? 'Active' : 'Inactive'}</Badge>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{fmtDateShort(sa.last_used_at)}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{fmtDateShort(sa.created_at)}</TableCell>
+                        <TableCell onClick={e => e.stopPropagation()}>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent>
+                              <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteTarget(sa)}>
+                                <Trash2 className="h-4 w-4" />Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                );
+              })()}
             </TableBody>
           </Table>
         </div>

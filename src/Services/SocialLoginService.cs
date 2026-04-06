@@ -39,8 +39,6 @@ public class SocialLoginService(
     AppConfig appConfig,
     ILogger<SocialLoginService> logger)
 {
-    private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
-
     // Provider-specific hardcoded endpoints (builtin)
     private static readonly Dictionary<string, (string Auth, string Token, string UserInfo)> BuiltinEndpoints = new()
     {
@@ -63,8 +61,12 @@ public class SocialLoginService(
         ["google"]   = "openid email profile",
         ["github"]   = "read:user user:email",
         ["gitlab"]   = "read_user",
-        ["facebook"] = "email",
+        ["facebook"] = Email,
     };
+
+    private const string GithubUserUrl   = "https://api.github.com/user";
+    private const string GithubEmailsUrl = "https://api.github.com/user/emails";
+    private const string Email           = "email";
 
     // In-process cache for OIDC discovery documents
     private readonly Dictionary<string, JsonDocument> _discoveryCache = [];
@@ -207,7 +209,7 @@ public class SocialLoginService(
         return provider.Type switch
         {
             "github"   => await GetGithubProfileAsync(accessToken),
-            "facebook" => await GetFacebookProfileAsync(provider, accessToken),
+            "facebook" => await GetFacebookProfileAsync(accessToken),
             "oidc"     => await GetOidcProfileAsync(provider, accessToken),
             _          => await GetStandardProfileAsync(provider, accessToken),
         };
@@ -224,7 +226,7 @@ public class SocialLoginService(
 
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
         var sub   = TryGet(doc, "sub", "id");
-        var email = TryGet(doc, "email");
+        var email = TryGet(doc, Email);
         var name  = TryGet(doc, "name", "display_name", "username");
         return sub == null ? null : new SocialUserProfile(sub, email, name);
     }
@@ -244,24 +246,24 @@ public class SocialLoginService(
             return JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
         }
 
-        using var user = await CallAsync("https://api.github.com/user");
+        using var user = await CallAsync(GithubUserUrl);
         if (user == null) return null;
 
         var id   = user.RootElement.GetProperty("id").GetInt64().ToString();
         var name = TryGet(user, "name", "login");
 
         // email may be null if private — fetch separately
-        var email = TryGet(user, "email");
+        var email = TryGet(user, Email);
         if (string.IsNullOrEmpty(email))
         {
-            using var emails = await CallAsync("https://api.github.com/user/emails");
+            using var emails = await CallAsync(GithubEmailsUrl);
             if (emails != null)
             {
                 foreach (var e in emails.RootElement.EnumerateArray())
                 {
                     if (e.TryGetProperty("primary", out var primary) && primary.GetBoolean() &&
                         e.TryGetProperty("verified", out var verified) && verified.GetBoolean() &&
-                        e.TryGetProperty("email", out var em))
+                        e.TryGetProperty(Email, out var em))
                     {
                         email = em.GetString();
                         break;
@@ -273,7 +275,7 @@ public class SocialLoginService(
         return new SocialUserProfile(id, email, name);
     }
 
-    private async Task<SocialUserProfile?> GetFacebookProfileAsync(ProviderConfig provider, string accessToken)
+    private async Task<SocialUserProfile?> GetFacebookProfileAsync(string accessToken)
     {
         var url = $"https://graph.facebook.com/v18.0/me?fields=id,email,name&access_token={Uri.EscapeDataString(accessToken)}";
         var http = httpClientFactory.CreateClient();
@@ -282,7 +284,7 @@ public class SocialLoginService(
 
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
         var id    = TryGet(doc, "id");
-        var email = TryGet(doc, "email");
+        var email = TryGet(doc, Email);
         var name  = TryGet(doc, "name");
         return id == null ? null : new SocialUserProfile(id, email, name);
     }
@@ -300,7 +302,7 @@ public class SocialLoginService(
 
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
         var sub   = TryGet(doc, "sub");
-        var email = TryGet(doc, "email");
+        var email = TryGet(doc, Email);
         var name  = TryGet(doc, "name", "preferred_username");
         return sub == null ? null : new SocialUserProfile(sub, email, name);
     }

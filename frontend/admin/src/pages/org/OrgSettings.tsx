@@ -49,7 +49,7 @@ export default function OrgSettings() {
             </CardHeader>
             <CardContent>
               <Select
-                value={retentionDays != null ? String(retentionDays) : ''}
+                value={retentionDays == null ? '' : String(retentionDays)}
                 onValueChange={v => setRetentionDays(v === '' ? null : Number(v))}
               >
                 <SelectTrigger className="w-48">

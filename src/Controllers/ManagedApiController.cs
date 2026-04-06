@@ -14,6 +14,7 @@ namespace RediensIAM.Controllers;
 // Requires SuperAdmin PAT or client_credentials access token with super_admin role.
 
 [ApiController]
+[Route("api/manage")]
 [RequireManagementLevel(ManagementLevel.SuperAdmin)]
 public class ManagedApiController(
     RediensIamDbContext db,
@@ -33,7 +34,7 @@ public class ManagedApiController(
 
     // ── Organisations ─────────────────────────────────────────────────────────
 
-    [HttpGet("/api/manage/organizations")]
+    [HttpGet("organizations")]
     public async Task<IActionResult> ListOrgs()
     {
         var orgs = await db.Organisations
@@ -43,7 +44,7 @@ public class ManagedApiController(
         return Ok(orgs);
     }
 
-    [HttpGet("/api/manage/organizations/{id}")]
+    [HttpGet("organizations/{id}")]
     public async Task<IActionResult> GetOrg(Guid id)
     {
         var org = await db.Organisations
@@ -54,7 +55,7 @@ public class ManagedApiController(
         return Ok(org);
     }
 
-    [HttpPost("/api/manage/organizations")]
+    [HttpPost("organizations")]
     public async Task<IActionResult> CreateOrg([FromBody] CreateOrgRequest body)
     {
         var actorId = GetActorId();
@@ -82,7 +83,7 @@ public class ManagedApiController(
 
     // ── Projects ──────────────────────────────────────────────────────────────
 
-    [HttpGet("/api/manage/organizations/{id}/projects")]
+    [HttpGet("organizations/{id}/projects")]
     public async Task<IActionResult> ListProjects(Guid id)
     {
         if (!await db.Organisations.AnyAsync(o => o.Id == id)) return NotFound();
@@ -93,7 +94,7 @@ public class ManagedApiController(
         return Ok(projects);
     }
 
-    [HttpPost("/api/manage/organizations/{id}/projects")]
+    [HttpPost("organizations/{id}/projects")]
     public async Task<IActionResult> CreateProject(Guid id, [FromBody] AdminCreateProjectRequest body)
     {
         var actorId = GetActorId();
@@ -140,7 +141,7 @@ public class ManagedApiController(
 
     // ── User Lists ────────────────────────────────────────────────────────────
 
-    [HttpPost("/api/manage/userlists")]
+    [HttpPost("userlists")]
     public async Task<IActionResult> CreateUserList([FromBody] AdminCreateUserListRequest body)
     {
         var ul = new UserList { Name = body.Name, OrgId = body.OrgId, Immovable = false, CreatedAt = DateTimeOffset.UtcNow };
@@ -149,7 +150,7 @@ public class ManagedApiController(
         return Created($"/api/manage/userlists/{ul.Id}", new { ul.Id, ul.Name });
     }
 
-    [HttpPost("/api/manage/userlists/{id}/users")]
+    [HttpPost("userlists/{id}/users")]
     public async Task<IActionResult> AddUserToList(Guid id, [FromBody] AdminCreateUserRequest body)
     {
         var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(ul => ul.Id == id);

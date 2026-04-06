@@ -14,6 +14,7 @@ using RediensIAM.Services;
 namespace RediensIAM.Controllers;
 
 [ApiController]
+[Route("org")]
 [RequireManagementLevel(ManagementLevel.OrgAdmin)]
 public class OrgController(
     RediensIamDbContext db,
@@ -27,6 +28,8 @@ public class OrgController(
     ILogger<OrgController> logger) : ControllerBase
 {
     private static readonly string[] BuiltInScopes = ["openid", "profile", "offline_access"];
+    private const string KindInvite      = "invite";
+    private const string AuditOrg        = "organisation";
 
     private TokenClaims Claims => HttpContext.GetClaims() ?? throw new UnauthorizedException("Not authenticated");
     private Guid OrgId   => Guid.TryParse(Claims.OrgId, out var g) ? g : Guid.Empty;
@@ -34,7 +37,7 @@ public class OrgController(
 
     // ── Organisation ──────────────────────────────────────────────────────────
 
-    [HttpGet("/org/info")]
+    [HttpGet("info")]
     public async Task<IActionResult> GetOrgInfo()
     {
         var org = await db.Organisations
@@ -45,7 +48,7 @@ public class OrgController(
         return Ok(org);
     }
 
-    [HttpPatch("/org/settings")]
+    [HttpPatch("settings")]
     public async Task<IActionResult> UpdateOrgSettings([FromBody] UpdateOrgSettingsRequest body)
     {
         var org = await db.Organisations.FindAsync(OrgId);
@@ -55,13 +58,13 @@ public class OrgController(
             org.AuditRetentionDays = body.AuditRetentionDays == -1 ? null : body.AuditRetentionDays;
         org.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
-        await audit.RecordAsync(OrgId, null, ActorId, "org.settings_updated", "organisation", OrgId.ToString());
+        await audit.RecordAsync(OrgId, null, ActorId, "org.settings_updated", AuditOrg, OrgId.ToString());
         return Ok(new { org.Id, org.AuditRetentionDays });
     }
 
     // ── Projects ──────────────────────────────────────────────────────────────
 
-    [HttpGet("/org/projects")]
+    [HttpGet("projects")]
     public async Task<IActionResult> ListProjects([FromQuery] Guid? org_id)
     {
         Guid orgId;
@@ -78,7 +81,7 @@ public class OrgController(
         return Ok(projects);
     }
 
-    [HttpPost("/org/projects")]
+    [HttpPost("projects")]
     public async Task<IActionResult> CreateProject([FromBody] CreateProjectRequest body)
     {
         var orgId = OrgId;
@@ -121,7 +124,7 @@ public class OrgController(
         return Created($"/org/projects/{project.Id}", new { project.Id, project.Name, project.Slug });
     }
 
-    [HttpGet("/org/projects/{id}")]
+    [HttpGet("projects/{id}")]
     public async Task<IActionResult> GetProject(Guid id)
     {
         var isSuperAdmin = Claims.Roles.Contains(Roles.SuperAdmin);
@@ -133,7 +136,7 @@ public class OrgController(
         return Ok(project);
     }
 
-    [HttpPatch("/org/projects/{id}")]
+    [HttpPatch("projects/{id}")]
     public async Task<IActionResult> UpdateProject(Guid id, [FromBody] UpdateProjectRequest body)
     {
         var isSuperAdmin = Claims.Roles.Contains(Roles.SuperAdmin);
@@ -174,7 +177,7 @@ public class OrgController(
 
     // ── Scopes ────────────────────────────────────────────────────────────────
 
-    [HttpGet("/org/projects/{id}/scopes")]
+    [HttpGet("projects/{id}/scopes")]
     public async Task<IActionResult> GetProjectScopes(Guid id)
     {
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
@@ -182,7 +185,7 @@ public class OrgController(
         return Ok(new { custom_scopes = project.AllowedScopes, built_in = BuiltInScopes });
     }
 
-    [HttpPut("/org/projects/{id}/scopes")]
+    [HttpPut("projects/{id}/scopes")]
     public async Task<IActionResult> UpdateProjectScopes(Guid id, [FromBody] UpdateScopesRequest body)
     {
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
@@ -205,7 +208,7 @@ public class OrgController(
         return Ok(new { project.Id, custom_scopes = project.AllowedScopes });
     }
 
-    [HttpDelete("/org/projects/{id}")]
+    [HttpDelete("projects/{id}")]
     public async Task<IActionResult> DeleteProject(Guid id)
     {
         var isSuperAdmin = Claims.Roles.Contains(Roles.SuperAdmin);
@@ -223,7 +226,7 @@ public class OrgController(
         return NoContent();
     }
 
-    [HttpPut("/org/projects/{id}/userlist")]
+    [HttpPut("projects/{id}/userlist")]
     public async Task<IActionResult> AssignUserList(Guid id, [FromBody] AssignUserListRequest body)
     {
         var orgId = OrgId;
@@ -237,7 +240,7 @@ public class OrgController(
         return Ok(new { project.Id, project.AssignedUserListId });
     }
 
-    [HttpDelete("/org/projects/{id}/userlist")]
+    [HttpDelete("projects/{id}/userlist")]
     public async Task<IActionResult> UnassignUserList(Guid id)
     {
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
@@ -250,7 +253,7 @@ public class OrgController(
 
     // ── UserLists ─────────────────────────────────────────────────────────────
 
-    [HttpGet("/org/userlists")]
+    [HttpGet("userlists")]
     public async Task<IActionResult> ListUserLists()
     {
         var lists = await db.UserLists
@@ -260,7 +263,7 @@ public class OrgController(
         return Ok(lists);
     }
 
-    [HttpPost("/org/userlists")]
+    [HttpPost("userlists")]
     public async Task<IActionResult> CreateUserList([FromBody] CreateUserListRequest body)
     {
         var ul = new UserList { Name = body.Name, OrgId = OrgId, Immovable = false, CreatedAt = DateTimeOffset.UtcNow };
@@ -269,7 +272,7 @@ public class OrgController(
         return Created($"/org/userlists/{ul.Id}", new { ul.Id, ul.Name });
     }
 
-    [HttpGet("/org/userlists/{id}")]
+    [HttpGet("userlists/{id}")]
     public async Task<IActionResult> GetUserList(Guid id)
     {
         var ul = await db.UserLists.Include(ul => ul.Users)
@@ -280,7 +283,7 @@ public class OrgController(
         return Ok(new { ul.Id, ul.Name, ul.Immovable, user_count = ul.Users.Count, assigned_projects = assignedProjects });
     }
 
-    [HttpDelete("/org/userlists/{id}")]
+    [HttpDelete("userlists/{id}")]
     public async Task<IActionResult> DeleteUserList(Guid id)
     {
         var ul = await db.UserLists.FirstOrDefaultAsync(ul => ul.Id == id && ul.OrgId == OrgId);
@@ -293,7 +296,7 @@ public class OrgController(
         return NoContent();
     }
 
-    [HttpPost("/org/userlists/{id}/cleanup")]
+    [HttpPost("userlists/{id}/cleanup")]
     public async Task<IActionResult> CleanupUserList(Guid id, [FromBody] OrgCleanupRequest body)
     {
         var orgId = OrgId;
@@ -334,19 +337,19 @@ public class OrgController(
         {
             dry_run = body.DryRun,
             orphaned_roles_found = orphanedRoles.Count,
-            orphaned_roles_removed = body.DryRun ? 0 : (body.RemoveOrphanedRoles ? orphanedRoles.Count : 0),
+            orphaned_roles_removed = body.DryRun || !body.RemoveOrphanedRoles ? 0 : orphanedRoles.Count,
             inactive_users_found = inactiveUsers.Count,
-            inactive_users_removed = body.DryRun ? 0 : (body.RemoveInactiveUsers ? inactiveUsers.Count : 0),
+            inactive_users_removed = body.DryRun || !body.RemoveInactiveUsers ? 0 : inactiveUsers.Count,
         });
     }
 
-    [HttpGet("/org/userlists/{id}/users")]
+    [HttpGet("userlists/{id}/users")]
     public async Task<IActionResult> ListUsersInList(Guid id)
     {
         if (!await db.UserLists.AnyAsync(ul => ul.Id == id && ul.OrgId == OrgId)) return NotFound();
         var userIds = await db.Users.Where(u => u.UserListId == id).Select(u => u.Id).ToListAsync();
         var pendingInvites = await db.EmailTokens
-            .Where(t => userIds.Contains(t.UserId) && t.Kind == "invite" && t.UsedAt == null && t.ExpiresAt > DateTimeOffset.UtcNow)
+            .Where(t => userIds.Contains(t.UserId) && t.Kind == KindInvite && t.UsedAt == null && t.ExpiresAt > DateTimeOffset.UtcNow)
             .Select(t => t.UserId).ToHashSetAsync();
         var users = await db.Users
             .Where(u => u.UserListId == id)
@@ -355,7 +358,7 @@ public class OrgController(
         return Ok(users.Select(u => new { u.Id, u.Username, u.Discriminator, u.Email, u.DisplayName, u.Active, u.LastLoginAt, invite_pending = pendingInvites.Contains(u.Id) }));
     }
 
-    [HttpPost("/org/userlists/{id}/users")]
+    [HttpPost("userlists/{id}/users")]
     public async Task<IActionResult> AddUserToList(Guid id, [FromBody] CreateUserRequest body)
     {
         var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(ul => ul.Id == id && ul.OrgId == OrgId);
@@ -389,7 +392,7 @@ public class OrgController(
             db.EmailTokens.Add(new EmailToken
             {
                 UserId    = user.Id,
-                Kind      = "invite",
+                Kind      = KindInvite,
                 TokenHash = hash,
                 ExpiresAt = DateTimeOffset.UtcNow.AddHours(appConfig.InviteExpiryHours),
                 CreatedAt = DateTimeOffset.UtcNow
@@ -408,7 +411,7 @@ public class OrgController(
         });
     }
 
-    [HttpPost("/org/userlists/{id}/users/{uid}/resend-invite")]
+    [HttpPost("userlists/{id}/users/{uid}/resend-invite")]
     public async Task<IActionResult> ResendInvite(Guid id, Guid uid)
     {
         var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(ul => ul.Id == id && ul.OrgId == OrgId);
@@ -420,7 +423,7 @@ public class OrgController(
 
         // Expire any existing invite tokens
         var existing = await db.EmailTokens
-            .Where(t => t.UserId == uid && t.Kind == "invite" && t.UsedAt == null)
+            .Where(t => t.UserId == uid && t.Kind == KindInvite && t.UsedAt == null)
             .ToListAsync();
         foreach (var t in existing) t.ExpiresAt = DateTimeOffset.UtcNow;
 
@@ -429,7 +432,7 @@ public class OrgController(
         db.EmailTokens.Add(new EmailToken
         {
             UserId    = user.Id,
-            Kind      = "invite",
+            Kind      = KindInvite,
             TokenHash = hash,
             ExpiresAt = DateTimeOffset.UtcNow.AddHours(72),
             CreatedAt = DateTimeOffset.UtcNow
@@ -443,7 +446,7 @@ public class OrgController(
         return Ok(new { message = "invite_resent" });
     }
 
-    [HttpPatch("/org/userlists/{id}/users/{uid}")]
+    [HttpPatch("userlists/{id}/users/{uid}")]
     public async Task<IActionResult> UpdateUser(Guid id, Guid uid, [FromBody] UpdateUserRequest body)
     {
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == uid && u.UserListId == id && u.UserList.OrgId == OrgId);
@@ -451,7 +454,7 @@ public class OrgController(
         return await ApplyUserUpdate(user, body);
     }
 
-    [HttpGet("/org/users/{uid}")]
+    [HttpGet("users/{uid}")]
     public async Task<IActionResult> GetOrgUser(Guid uid)
     {
         var user = await db.Users
@@ -471,7 +474,7 @@ public class OrgController(
         });
     }
 
-    [HttpPatch("/org/users/{uid}")]
+    [HttpPatch("users/{uid}")]
     public async Task<IActionResult> UpdateOrgUser(Guid uid, [FromBody] UpdateUserRequest body)
     {
         var user = await db.Users.Include(u => u.UserList)
@@ -496,13 +499,12 @@ public class OrgController(
         return Ok(new { user.Id, user.Email, user.Username, user.Discriminator, user.DisplayName, user.Phone, user.Active, user.EmailVerified, user.LockedUntil, user.FailedLoginCount });
     }
 
-    [HttpGet("/org/userlists/{id}/users/{uid}/sessions")]
+    [HttpGet("userlists/{id}/users/{uid}/sessions")]
     public async Task<IActionResult> ListUserSessions(Guid id, Guid uid)
     {
         var user = await db.Users.Include(u => u.UserList)
             .FirstOrDefaultAsync(u => u.Id == uid && u.UserListId == id && u.UserList.OrgId == OrgId);
         if (user == null) return NotFound();
-        var org = await db.Organisations.FirstOrDefaultAsync(o => o.Id == OrgId);
         var subject = $"{OrgId}:{uid}";
         var sessions = await hydra.ListConsentSessionsAsync(subject);
         return Ok(sessions.Select(s => new
@@ -515,7 +517,7 @@ public class OrgController(
         }));
     }
 
-    [HttpDelete("/org/userlists/{id}/users/{uid}/sessions")]
+    [HttpDelete("userlists/{id}/users/{uid}/sessions")]
     public async Task<IActionResult> RevokeUserSessions(Guid id, Guid uid)
     {
         var user = await db.Users.Include(u => u.UserList)
@@ -526,7 +528,7 @@ public class OrgController(
         return Ok(new { message = "sessions_revoked" });
     }
 
-    [HttpPost("/org/userlists/{id}/users/{uid}/unlock")]
+    [HttpPost("userlists/{id}/users/{uid}/unlock")]
     public async Task<IActionResult> UnlockUser(Guid id, Guid uid)
     {
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == uid && u.UserListId == id && u.UserList.OrgId == OrgId);
@@ -539,7 +541,7 @@ public class OrgController(
         return Ok(new { user.Id, message = "user_unlocked" });
     }
 
-    [HttpDelete("/org/userlists/{id}/users/{uid}")]
+    [HttpDelete("userlists/{id}/users/{uid}")]
     public async Task<IActionResult> RemoveUser(Guid id, Guid uid)
     {
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == uid && u.UserListId == id && u.UserList.OrgId == OrgId);
@@ -555,7 +557,7 @@ public class OrgController(
     // These endpoints let an org admin manage who has management roles within their org.
     // Keto tuples are written/deleted via KetoService to keep auth in sync.
 
-    [HttpGet("/org/admins")]
+    [HttpGet("admins")]
     public async Task<IActionResult> ListOrgListManagers()
     {
         var orgId = OrgId;
@@ -571,7 +573,7 @@ public class OrgController(
         }));
     }
 
-    [HttpPost("/org/admins")]
+    [HttpPost("admins")]
     public async Task<IActionResult> AssignOrgListManager([FromBody] OrgAssignManagerRequest body)
     {
         if (body.Role == Roles.SuperAdmin) return StatusCode(403, new { error = "cannot_grant_super_admin" });
@@ -580,7 +582,7 @@ public class OrgController(
         return Ok(new { message = "role_assigned" });
     }
 
-    [HttpPatch("/org/admins/{id}")]
+    [HttpPatch("admins/{id}")]
     public async Task<IActionResult> UpdateOrgListManager(Guid id, [FromBody] OrgUpdateManagerRequest body)
     {
         var orgId = OrgId;
@@ -612,7 +614,7 @@ public class OrgController(
         return Ok(new { role.Id, role.Role, role.ScopeId });
     }
 
-    [HttpDelete("/org/admins/{id}")]
+    [HttpDelete("admins/{id}")]
     public async Task<IActionResult> RemoveOrgListManager(Guid id)
     {
         
@@ -622,7 +624,7 @@ public class OrgController(
 
     // ── SMTP ──────────────────────────────────────────────────────────────────
 
-    [HttpGet("/org/smtp")]
+    [HttpGet("smtp")]
     public async Task<IActionResult> GetSmtp()
     {
         var config = await db.OrgSmtpConfigs.FirstOrDefaultAsync(c => c.OrgId == OrgId);
@@ -640,7 +642,7 @@ public class OrgController(
         });
     }
 
-    [HttpPut("/org/smtp")]
+    [HttpPut("smtp")]
     public async Task<IActionResult> UpsertSmtp([FromBody] UpsertSmtpRequest body)
     {
         var orgId  = OrgId;
@@ -683,7 +685,7 @@ public class OrgController(
         return Ok(new { message = "smtp_config_saved" });
     }
 
-    [HttpDelete("/org/smtp")]
+    [HttpDelete("smtp")]
     public async Task<IActionResult> DeleteSmtp()
     {
         var config = await db.OrgSmtpConfigs.FirstOrDefaultAsync(c => c.OrgId == OrgId);
@@ -693,7 +695,7 @@ public class OrgController(
         return NoContent();
     }
 
-    [HttpPost("/org/smtp/test")]
+    [HttpPost("smtp/test")]
     public async Task<IActionResult> TestSmtp()
     {
         var actor = await db.Users.FirstOrDefaultAsync(u => u.Id == ActorId);
@@ -710,7 +712,7 @@ public class OrgController(
         }
     }
 
-    [HttpGet("/org/audit-log")]
+    [HttpGet("audit-log")]
     public async Task<IActionResult> GetAuditLog([FromQuery] int limit = 50, [FromQuery] int offset = 0)
     {
         var orgId = OrgId;
@@ -725,7 +727,7 @@ public class OrgController(
 
     // ── SAML IdP configs ──────────────────────────────────────────────────────
 
-    [HttpGet("/org/projects/{id}/saml-providers")]
+    [HttpGet("projects/{id}/saml-providers")]
     public async Task<IActionResult> ListSamlProviders(Guid id)
     {
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
@@ -737,7 +739,7 @@ public class OrgController(
         return Ok(providers);
     }
 
-    [HttpPost("/org/projects/{id}/saml-providers")]
+    [HttpPost("projects/{id}/saml-providers")]
     public async Task<IActionResult> CreateSamlProvider(Guid id, [FromBody] CreateSamlProviderRequest body)
     {
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
@@ -767,7 +769,7 @@ public class OrgController(
         return Created($"/org/projects/{id}/saml-providers/{provider.Id}", new { provider.Id, provider.EntityId });
     }
 
-    [HttpPatch("/org/projects/{id}/saml-providers/{pid}")]
+    [HttpPatch("projects/{id}/saml-providers/{pid}")]
     public async Task<IActionResult> UpdateSamlProvider(Guid id, Guid pid, [FromBody] UpdateSamlProviderRequest body)
     {
         var provider = await db.SamlIdpConfigs.FirstOrDefaultAsync(x => x.Id == pid && x.ProjectId == id);
@@ -786,7 +788,7 @@ public class OrgController(
         return Ok(new { provider.Id, provider.EntityId, provider.Active });
     }
 
-    [HttpDelete("/org/projects/{id}/saml-providers/{pid}")]
+    [HttpDelete("projects/{id}/saml-providers/{pid}")]
     public async Task<IActionResult> DeleteSamlProvider(Guid id, Guid pid)
     {
         var provider = await db.SamlIdpConfigs
@@ -801,7 +803,7 @@ public class OrgController(
 
     // ── Export ────────────────────────────────────────────────────────────────
 
-    [HttpGet("/org/userlists/{id}/export")]
+    [HttpGet("userlists/{id}/export")]
     public async Task<IActionResult> ExportUserList(Guid id, [FromQuery] string format = "csv")
     {
         var list = await db.UserLists.FirstOrDefaultAsync(ul => ul.Id == id && ul.OrgId == OrgId);
@@ -835,7 +837,7 @@ public class OrgController(
         return Empty;
     }
 
-    [HttpGet("/org/audit-log/export")]
+    [HttpGet("audit-log/export")]
     public async Task<IActionResult> ExportAuditLog(
         [FromQuery] string format = "csv",
         [FromQuery] DateTimeOffset? from = null,
@@ -846,7 +848,7 @@ public class OrgController(
             return StatusCode(429, new { error = "export_rate_limited", retry_after_seconds = appConfig.ExportRateLimitMinutes * 60 });
         await cache.SetAsync(rateLimitKey, [1], new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(appConfig.ExportRateLimitMinutes) });
 
-        await audit.RecordAsync(OrgId, null, ActorId, "export.audit_log", "organisation", OrgId.ToString(),
+        await audit.RecordAsync(OrgId, null, ActorId, "export.audit_log", AuditOrg, OrgId.ToString(),
             new Dictionary<string, object> { ["format"] = format, ["from"] = from?.ToString("O") ?? "", ["to"] = to?.ToString("O") ?? "" });
 
         var orgId = OrgId;

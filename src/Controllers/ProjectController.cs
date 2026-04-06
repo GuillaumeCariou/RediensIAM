@@ -10,6 +10,7 @@ using RediensIAM.Services;
 namespace RediensIAM.Controllers;
 
 [ApiController]
+[Route("project")]
 [RequireManagementLevel(ManagementLevel.ProjectAdmin)]
 public class ProjectController(
     RediensIamDbContext db,
@@ -49,7 +50,7 @@ public class ProjectController(
 
     // ── Project info ──────────────────────────────────────────────────────────
 
-    [HttpGet("/project/info")]
+    [HttpGet("info")]
     public async Task<IActionResult> GetInfo()
     {
         var project = await db.Projects
@@ -73,7 +74,7 @@ public class ProjectController(
         });
     }
 
-    [HttpPatch("/project/info")]
+    [HttpPatch("info")]
     public async Task<IActionResult> UpdateInfo([FromBody] UpdateProjectInfoRequest body)
     {
         var project = await GetProjectAsync();
@@ -112,7 +113,7 @@ public class ProjectController(
 
     // ── Users ─────────────────────────────────────────────────────────────────
 
-    [HttpGet("/project/users")]
+    [HttpGet("users")]
     public async Task<IActionResult> ListUsers()
     {
         var project = await GetProjectAsync();
@@ -129,7 +130,7 @@ public class ProjectController(
         return Ok(users);
     }
 
-    [HttpGet("/project/users/{id}")]
+    [HttpGet("users/{id}")]
     public async Task<IActionResult> GetUser(Guid id)
     {
         // H2: verify the user belongs to this project's user list
@@ -143,7 +144,7 @@ public class ProjectController(
         return Ok(new { user.Id, user.Username, user.Discriminator, user.Email, user.DisplayName, user.Active, roles });
     }
 
-    [HttpPost("/project/users/{id}/roles")]
+    [HttpPost("users/{id}/roles")]
     public async Task<IActionResult> AssignRole(Guid id, [FromBody] AssignRoleRequest body)
     {
         // KetoService re-validates authority; the org check here prevents
@@ -159,7 +160,7 @@ public class ProjectController(
         catch (Exceptions.NotFoundException ex)   { return NotFound(new { error = ex.Message }); }
     }
 
-    [HttpDelete("/project/users/{id}/roles/{roleId}")]
+    [HttpDelete("users/{id}/roles/{roleId}")]
     public async Task<IActionResult> RemoveRole(Guid id, Guid roleId)
     {
         if (await GetProjectAsync() == null) return NotFound();
@@ -172,7 +173,7 @@ public class ProjectController(
         catch (Exceptions.NotFoundException ex)  { return NotFound(new { error = ex.Message }); }
     }
 
-    [HttpPost("/project/users")]
+    [HttpPost("users")]
     public async Task<IActionResult> CreateUser([FromBody] CreateProjectUserRequest body)
     {
         var project = await GetProjectAsync();
@@ -210,7 +211,7 @@ public class ProjectController(
         return Created($"/project/users/{user.Id}", new { user.Id, username = $"{user.Username}#{user.Discriminator}", user.Email });
     }
 
-    [HttpDelete("/project/users/{id}/sessions")]
+    [HttpDelete("users/{id}/sessions")]
     public async Task<IActionResult> ForceLogoutUser(Guid id)
     {
         var project = await GetProjectAsync();
@@ -222,7 +223,7 @@ public class ProjectController(
         return Ok(new { message = "sessions_revoked" });
     }
 
-    [HttpGet("/project/stats")]
+    [HttpGet("stats")]
     public async Task<IActionResult> GetStats()
     {
         var project = await GetProjectAsync();
@@ -242,7 +243,7 @@ public class ProjectController(
 
     // ── Roles ─────────────────────────────────────────────────────────────────
 
-    [HttpGet("/project/roles")]
+    [HttpGet("roles")]
     public async Task<IActionResult> ListRoles()
     {
         if (await GetProjectAsync() == null) return NotFound();
@@ -253,7 +254,7 @@ public class ProjectController(
         return Ok(roles);
     }
 
-    [HttpPost("/project/roles")]
+    [HttpPost("roles")]
     public async Task<IActionResult> CreateRole([FromBody] CreateRoleRequest body)
     {
         if (await GetProjectAsync() == null) return NotFound();
@@ -268,7 +269,7 @@ public class ProjectController(
         return Created($"/project/roles/{role.Id}", new { role.Id, role.Name, role.Rank });
     }
 
-    [HttpPatch("/project/roles/{id}")]
+    [HttpPatch("roles/{id}")]
     public async Task<IActionResult> UpdateRole(Guid id, [FromBody] UpdateRoleRequest body)
     {
         if (await GetProjectAsync() == null) return NotFound();
@@ -280,7 +281,7 @@ public class ProjectController(
         return Ok(new { role.Id, role.Name, role.Rank });
     }
 
-    [HttpDelete("/project/roles/{id}")]
+    [HttpDelete("roles/{id}")]
     public async Task<IActionResult> DeleteRole(Guid id)
     {
         if (await GetProjectAsync() == null) return NotFound();
@@ -297,7 +298,7 @@ public class ProjectController(
 
     // ── Audit log + cleanup ───────────────────────────────────────────────────
 
-    [HttpGet("/project/audit-log")]
+    [HttpGet("audit-log")]
     public async Task<IActionResult> GetAuditLog([FromQuery] int limit = 50, [FromQuery] int offset = 0)
     {
         if (await GetProjectAsync() == null) return NotFound();
@@ -310,7 +311,7 @@ public class ProjectController(
         return Ok(logs);
     }
 
-    [HttpPost("/project/cleanup")]
+    [HttpPost("cleanup")]
     public async Task<IActionResult> Cleanup([FromBody] CleanupRequest body)
     {
         var project = await GetProjectAsync();

@@ -14,6 +14,7 @@ using RediensIAM.Services;
 namespace RediensIAM.Controllers;
 
 [ApiController]
+[Route("account")]
 public class AccountController(
     RediensIamDbContext db,
     PasswordService passwords,
@@ -27,7 +28,7 @@ public class AccountController(
     // /account/* routes are protected by GatewayAuthMiddleware — Claims is always non-null here.
     private TokenClaims Claims => HttpContext.GetClaims()!;
 
-    [HttpGet("/account/me")]
+    [HttpGet("me")]
     public async Task<IActionResult> GetMe()
     {
         var user = await db.Users.FindAsync(Claims.ParsedUserId);
@@ -43,7 +44,7 @@ public class AccountController(
         });
     }
 
-    [HttpPatch("/account/me")]
+    [HttpPatch("me")]
     public async Task<IActionResult> UpdateMe([FromBody] UpdateMeRequest body)
     {
         var user = await db.Users.FindAsync(Claims.ParsedUserId);
@@ -55,7 +56,7 @@ public class AccountController(
         return Ok(new { user.Id, user.DisplayName, user.NewDeviceAlertsEnabled });
     }
 
-    [HttpPatch("/account/password")]
+    [HttpPatch("password")]
     public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest body)
     {
         var userId = Claims.ParsedUserId;
@@ -70,7 +71,7 @@ public class AccountController(
         return Ok(new { message = "password_changed" });
     }
 
-    [HttpPost("/account/mfa/totp/setup")]
+    [HttpPost("mfa/totp/setup")]
     public async Task<IActionResult> SetupTotp()
     {
         var user = await db.Users.FindAsync(Claims.ParsedUserId);
@@ -84,7 +85,7 @@ public class AccountController(
         return Ok(new { otpauth_url = otpAuthUrl, secret = base32 });
     }
 
-    [HttpPost("/account/mfa/totp/confirm")]
+    [HttpPost("mfa/totp/confirm")]
     public async Task<IActionResult> ConfirmTotp([FromBody] TotpConfirmRequest body)
     {
         var userId = Claims.ParsedUserId;
@@ -115,7 +116,7 @@ public class AccountController(
         return Ok(new { message = "totp_enabled", backup_codes = backupCodes.Select(c => c.code).ToList() });
     }
 
-    [HttpPost("/account/mfa/backup-codes")]
+    [HttpPost("mfa/backup-codes")]
     public async Task<IActionResult> RegenerateBackupCodes()
     {
         var userId = Claims.ParsedUserId;
@@ -135,7 +136,7 @@ public class AccountController(
 
     // ── Sessions ──────────────────────────────────────────────────────────────
 
-    [HttpGet("/account/sessions")]
+    [HttpGet("sessions")]
     public async Task<IActionResult> GetSessions()
     {
         var subject = string.IsNullOrEmpty(Claims.OrgId) ? Claims.UserId : $"{Claims.OrgId}:{Claims.ParsedUserId}";
@@ -149,7 +150,7 @@ public class AccountController(
         }));
     }
 
-    [HttpDelete("/account/sessions")]
+    [HttpDelete("sessions")]
     public async Task<IActionResult> RevokeAllSessions()
     {
         var subject = string.IsNullOrEmpty(Claims.OrgId) ? Claims.UserId : $"{Claims.OrgId}:{Claims.ParsedUserId}";
@@ -157,7 +158,7 @@ public class AccountController(
         return Ok(new { message = "all_sessions_revoked" });
     }
 
-    [HttpDelete("/account/sessions/{clientId}")]
+    [HttpDelete("sessions/{clientId}")]
     public async Task<IActionResult> RevokeSession(string clientId)
     {
         var subject = string.IsNullOrEmpty(Claims.OrgId) ? Claims.UserId : $"{Claims.OrgId}:{Claims.ParsedUserId}";
@@ -167,7 +168,7 @@ public class AccountController(
 
     // ── Phone / SMS MFA setup ─────────────────────────────────────────────────
 
-    [HttpPost("/account/mfa/phone/setup")]
+    [HttpPost("mfa/phone/setup")]
     public async Task<IActionResult> SetupPhone([FromBody] PhoneSetupRequest body)
     {
         var code = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
@@ -177,7 +178,7 @@ public class AccountController(
         return Ok(new { sent = true });
     }
 
-    [HttpPost("/account/mfa/phone/verify")]
+    [HttpPost("mfa/phone/verify")]
     public async Task<IActionResult> VerifyPhone([FromBody] PhoneVerifyRequest body)
     {
         var phone = HttpContext.Session.GetString("phone_setup_number");
@@ -194,7 +195,7 @@ public class AccountController(
         return Ok(new { message = "phone_verified" });
     }
 
-    [HttpDelete("/account/mfa/phone")]
+    [HttpDelete("mfa/phone")]
     public async Task<IActionResult> RemovePhone()
     {
         var user = await db.Users.FindAsync(Claims.ParsedUserId);
@@ -206,7 +207,7 @@ public class AccountController(
         return Ok(new { message = "phone_removed" });
     }
 
-    [HttpGet("/account/mfa")]
+    [HttpGet("mfa")]
     public async Task<IActionResult> GetMfaStatus()
     {
         var userId = Claims.ParsedUserId;
@@ -218,7 +219,7 @@ public class AccountController(
 
     // ── WebAuthn / Passkeys ───────────────────────────────────────────────────
 
-    [HttpPost("/account/mfa/webauthn/register/begin")]
+    [HttpPost("mfa/webauthn/register/begin")]
     public async Task<IActionResult> WebAuthnRegisterBegin()
     {
         var userId = Claims.ParsedUserId;
@@ -245,7 +246,7 @@ public class AccountController(
         return Ok(options);
     }
 
-    [HttpPost("/account/mfa/webauthn/register/complete")]
+    [HttpPost("mfa/webauthn/register/complete")]
     public async Task<IActionResult> WebAuthnRegisterComplete([FromBody] WebAuthnCompleteRequest body)
     {
         var userId = Claims.ParsedUserId;
@@ -284,7 +285,7 @@ public class AccountController(
         return Ok(new { message = "passkey_registered" });
     }
 
-    [HttpGet("/account/mfa/webauthn/credentials")]
+    [HttpGet("mfa/webauthn/credentials")]
     public async Task<IActionResult> ListWebAuthnCredentials()
     {
         var userId = Claims.ParsedUserId;
@@ -296,7 +297,7 @@ public class AccountController(
         return Ok(creds);
     }
 
-    [HttpDelete("/account/mfa/webauthn/credentials/{id}")]
+    [HttpDelete("mfa/webauthn/credentials/{id}")]
     public async Task<IActionResult> DeleteWebAuthnCredential(Guid id)
     {
         var userId = Claims.ParsedUserId;
@@ -315,7 +316,7 @@ public class AccountController(
 
     // ── Linked social accounts ────────────────────────────────────────────────
 
-    [HttpGet("/account/social-accounts")]
+    [HttpGet("social-accounts")]
     public async Task<IActionResult> GetSocialAccounts()
     {
         var userId = Claims.ParsedUserId;
@@ -327,7 +328,7 @@ public class AccountController(
         return Ok(accounts);
     }
 
-    [HttpDelete("/account/social-accounts/{id}")]
+    [HttpDelete("social-accounts/{id}")]
     public async Task<IActionResult> UnlinkSocialAccount(Guid id)
     {
         var userId = Claims.ParsedUserId;

@@ -60,7 +60,7 @@ export default function ProjectDashboard() {
       />
       <div className="p-6 space-y-6">
         {loading ? (
-          <div className="grid grid-cols-3 gap-4">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-32 rounded-xl" />)}</div>
+          <div className="grid grid-cols-3 gap-4">{Array.from({ length: 3 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-32 rounded-xl" />)}</div>
         ) : (
           <>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

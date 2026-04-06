@@ -31,7 +31,7 @@ export default function SystemMetrics() {
       <div>
         <PageHeader title="Metrics" description="System-wide usage statistics" />
         <div className="p-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-64 rounded-xl" />)}
+          {Array.from({ length: 4 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-64 rounded-xl" />)}
         </div>
       </div>
     );

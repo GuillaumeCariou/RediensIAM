@@ -64,7 +64,7 @@ export default function UserLists() {
     } finally { setSaving(false); }
   };
 
-  const colSpan = isGlobal ? 3 : 3;
+  const colSpan = 3;
 
   return (
     <div>
@@ -72,9 +72,9 @@ export default function UserLists() {
         title="User Lists"
         description={isGlobal ? 'All user lists across the system' : 'Reusable pools of users that can be assigned to projects'}
         action={
-          !isGlobal
-            ? <Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />New User List</Button>
-            : undefined
+          isGlobal
+            ? undefined
+            : <Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />New User List</Button>
         }
       />
       <div className="p-6 space-y-4">
@@ -99,50 +99,55 @@ export default function UserLists() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {loading
-                ? Array.from({ length: 4 }).map((_, i) => (
-                    <TableRow key={i}>
-                      {Array.from({ length: colSpan }).map((__, j) => (
-                        <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
-                      ))}
-                    </TableRow>
-                  ))
-                : filtered.length === 0
-                ? (
-                    <TableRow>
-                      <TableCell colSpan={colSpan} className="text-center text-muted-foreground py-12">
-                        <List className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                        {isGlobal ? 'No user lists found' : 'No user lists yet'}
-                      </TableCell>
-                    </TableRow>
-                  )
-                : filtered.map(list => (
-                    <TableRow
-                      key={list.id}
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => navigate(`${navigateBase}/${list.id}`)}
-                    >
-                      <TableCell className="font-medium">{list.name}</TableCell>
-                      {isGlobal
-                        ? <TableCell className="text-sm text-muted-foreground">{list.org_name ?? 'System (root)'}</TableCell>
-                        : (
-                            <TableCell>
-                              <div className="flex items-center gap-1">
-                                <Users className="h-3 w-3 text-muted-foreground" />
-                                <span className="text-sm">{list.user_count ?? '—'}</span>
-                              </div>
-                            </TableCell>
-                          )
-                      }
-                      <TableCell>
-                        {list.immovable
-                          ? <Badge variant="secondary">Immovable</Badge>
-                          : <Badge variant="outline">Movable</Badge>
+              {(() => {
+                if (loading) return (
+                  Array.from({ length: 4 }, (_, i) => `sk-row-${i}`).map(rowId => (
+                      <TableRow key={rowId}>
+                        {Array.from({ length: colSpan }, (_, j) => `sk-cell-${j}`).map(cellId => (
+                          <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>
+                          ))}
+                      </TableRow>
+                    ))
+                );
+                if (filtered.length === 0) return (
+                  (
+                      <TableRow>
+                        <TableCell colSpan={colSpan} className="text-center text-muted-foreground py-12">
+                          <List className="h-8 w-8 mx-auto mb-2 opacity-40" />
+                          {isGlobal ? 'No user lists found' : 'No user lists yet'}
+                        </TableCell>
+                      </TableRow>
+                    )
+                );
+                return (
+                  filtered.map(list => (
+                      <TableRow
+                        key={list.id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => navigate(`${navigateBase}/${list.id}`)}
+                      >
+                        <TableCell className="font-medium">{list.name}</TableCell>
+                        {isGlobal
+                          ? <TableCell className="text-sm text-muted-foreground">{list.org_name ?? 'System (root)'}</TableCell>
+                          : (
+                              <TableCell>
+                                <div className="flex items-center gap-1">
+                                  <Users className="h-3 w-3 text-muted-foreground" />
+                                  <span className="text-sm">{list.user_count ?? '—'}</span>
+                                </div>
+                              </TableCell>
+                            )
                         }
-                      </TableCell>
-                    </TableRow>
-                  ))
-              }
+                        <TableCell>
+                          {list.immovable
+                            ? <Badge variant="secondary">Immovable</Badge>
+                            : <Badge variant="outline">Movable</Badge>
+                          }
+                        </TableCell>
+                      </TableRow>
+                    ))
+                );
+              })()}
             </TableBody>
           </Table>
         </div>

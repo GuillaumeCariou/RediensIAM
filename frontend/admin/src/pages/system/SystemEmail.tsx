@@ -75,7 +75,7 @@ export default function SystemEmail() {
     <div>
       <PageHeader title="Email" />
       <div className="p-6 space-y-4">
-        {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-lg" />)}
+        {Array.from({ length: 4 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-20 rounded-lg" />)}
       </div>
     </div>
   );

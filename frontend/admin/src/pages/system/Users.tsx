@@ -171,60 +171,65 @@ export default function SystemUsers() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {loading
-                  ? Array.from({ length: 3 }).map((_, i) => (
-                      <TableRow key={i}>
-                        {Array.from({ length: 6 }).map((__, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}
-                      </TableRow>
-                    ))
-                  : users.length === 0
-                  ? (
-                      <TableRow>
-                        <TableCell colSpan={6} className="text-center text-muted-foreground py-8">No users found</TableCell>
-                      </TableRow>
-                    )
-                  : users.map(user => (
-                      <TableRow key={user.id} className="cursor-pointer hover:bg-muted/50" onClick={() => openEdit(user)}>
-                        <TableCell>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <div>
-                              <p className="font-medium">{user.display_name ?? user.username}</p>
-                              <p className="text-xs text-muted-foreground">{user.email}</p>
-                              <p className="text-xs text-muted-foreground font-mono">{user.username}#{user.discriminator}</p>
+                {(() => {
+                  if (loading) return (
+                    Array.from({ length: 3 }, (_, i) => `sk-row-${i}`).map(rowId => (
+                        <TableRow key={rowId}>
+                          {Array.from({ length: 6 }, (_, j) => `sk-cell-${j}`).map(cellId => <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>)}
+                        </TableRow>
+                      ))
+                  );
+                  if (users.length === 0) return (
+                    (
+                        <TableRow>
+                          <TableCell colSpan={6} className="text-center text-muted-foreground py-8">No users found</TableCell>
+                        </TableRow>
+                      )
+                  );
+                  return (
+                    users.map(user => (
+                        <TableRow key={user.id} className="cursor-pointer hover:bg-muted/50" onClick={() => openEdit(user)}>
+                          <TableCell>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <div>
+                                <p className="font-medium">{user.display_name ?? user.username}</p>
+                                <p className="text-xs text-muted-foreground">{user.email}</p>
+                                <p className="text-xs text-muted-foreground font-mono">{user.username}#{user.discriminator}</p>
+                              </div>
+                              {isLocked(user) && <Badge variant="destructive" className="text-[10px]">Locked</Badge>}
                             </div>
-                            {isLocked(user) && <Badge variant="destructive" className="text-[10px]">Locked</Badge>}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-sm">{user.org_name}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">{user.user_list_name}</TableCell>
-                        <TableCell>
-                          {user.active
-                            ? <Badge variant="success"><CheckCircle className="h-3 w-3 mr-1" />Active</Badge>
-                            : <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Disabled</Badge>
-                          }
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">{fmtDate(user.last_login_at)}</TableCell>
-                        <TableCell onClick={e => e.stopPropagation()}>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button size="sm" variant="ghost"><MoreHorizontal className="h-4 w-4" /></Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => openEdit(user)}>Edit</DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => openSessions(user)}>
-                                <Monitor className="h-4 w-4 mr-2" />View sessions
-                              </DropdownMenuItem>
-                              {isLocked(user) && (
-                                <DropdownMenuItem onClick={() => handleUnlock(user)} className="text-amber-600">
-                                  <LockOpen className="h-4 w-4 mr-2" />Unlock account
+                          </TableCell>
+                          <TableCell className="text-sm">{user.org_name}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground">{user.user_list_name}</TableCell>
+                          <TableCell>
+                            {user.active
+                              ? <Badge variant="success"><CheckCircle className="h-3 w-3 mr-1" />Active</Badge>
+                              : <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Disabled</Badge>
+                            }
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">{fmtDate(user.last_login_at)}</TableCell>
+                          <TableCell onClick={e => e.stopPropagation()}>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button size="sm" variant="ghost"><MoreHorizontal className="h-4 w-4" /></Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => openEdit(user)}>Edit</DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => openSessions(user)}>
+                                  <Monitor className="h-4 w-4 mr-2" />View sessions
                                 </DropdownMenuItem>
-                              )}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                }
+                                {isLocked(user) && (
+                                  <DropdownMenuItem onClick={() => handleUnlock(user)} className="text-amber-600">
+                                    <LockOpen className="h-4 w-4 mr-2" />Unlock account
+                                  </DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                  );
+                })()}
               </TableBody>
             </Table>
           </div>
@@ -239,7 +244,7 @@ export default function SystemUsers() {
             <DialogDescription>Update this account's information. Leave password blank to keep it unchanged.</DialogDescription>
           </DialogHeader>
           {editLoading
-            ? <div className="space-y-3 py-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
+            ? <div className="space-y-3 py-2">{Array.from({ length: 5 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-8 w-full" />)}</div>
             : (
               <form onSubmit={handleEdit} className="space-y-4">
                 {editError && <p className="text-sm text-destructive">{editError}</p>}
@@ -277,11 +282,14 @@ export default function SystemUsers() {
             <DialogTitle>Active sessions — {sessionsUser?.email}</DialogTitle>
             <DialogDescription>OAuth2 applications this user has granted access to.</DialogDescription>
           </DialogHeader>
-          {sessionsLoading
-            ? <div className="space-y-2 py-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
-            : sessions.length === 0
-            ? <p className="text-sm text-muted-foreground py-4 text-center">No active sessions.</p>
-            : (
+          {(() => {
+            if (sessionsLoading) return (
+              <div className="space-y-2 py-2">{Array.from({ length: 3 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-8 w-full" />)}</div>
+            );
+            if (sessions.length === 0) return (
+              <p className="text-sm text-muted-foreground py-4 text-center">No active sessions.</p>
+            );
+            return (
               <Table>
                 <TableHeader>
                   <TableRow><TableHead>App</TableHead><TableHead>Granted</TableHead></TableRow>
@@ -295,8 +303,8 @@ export default function SystemUsers() {
                   ))}
                 </TableBody>
               </Table>
-            )
-          }
+            );
+          })()}
           <DialogFooter>
             <Button variant="outline" onClick={() => setSessionsUser(null)}>Close</Button>
             <Button
