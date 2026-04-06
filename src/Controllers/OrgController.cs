@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Distributed;
@@ -18,15 +19,17 @@ namespace RediensIAM.Controllers;
 [RequireManagementLevel(ManagementLevel.OrgAdmin)]
 public class OrgController(
     RediensIamDbContext db,
-    HydraService hydra,
-    KetoService keto,
-    PasswordService passwords,
-    AuditLogService audit,
+    OrgAdminServices svc,
     AppConfig appConfig,
-    IEmailService emailService,
-    IDistributedCache cache,
     ILogger<OrgController> logger) : ControllerBase
 {
+    // Unwrap bundle (S107)
+    private HydraService hydra         => svc.Hydra;
+    private KetoService keto           => svc.Keto;
+    private PasswordService passwords   => svc.Passwords;
+    private AuditLogService audit       => svc.Audit;
+    private IEmailService emailService  => svc.Email;
+    private IDistributedCache cache     => svc.Cache;
     private static readonly string[] BuiltInScopes = ["openid", "profile", "offline_access"];
     private const string KindInvite      = "invite";
     private const string AuditOrg        = "organisation";
@@ -150,29 +153,41 @@ public class OrgController(
         if (body.SmsVerificationEnabled.HasValue) project.SmsVerificationEnabled = body.SmsVerificationEnabled.Value;
         if (body.Active.HasValue) project.Active = body.Active.Value;
         if (body.AllowedEmailDomains != null) project.AllowedEmailDomains = body.AllowedEmailDomains;
-        if (body.ClearDefaultRole == true)
-            project.DefaultRoleId = null;
-        else if (body.DefaultRoleId.HasValue)
-        {
-            var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == body.DefaultRoleId && r.ProjectId == id);
-            if (role == null) return BadRequest(new { error = "invalid_default_role" });
-            project.DefaultRoleId = body.DefaultRoleId;
-        }
-        if (body.LoginTheme != null)
-        {
-            var encKey = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
-            project.LoginTheme = TotpEncryption.EncryptProviderSecretsInTheme(
-                body.LoginTheme, project.LoginTheme, encKey)!;
-        }
-        if (body.ClearEmailFromName == true)
-            project.EmailFromName = null;
-        else if (body.EmailFromName != null)
-            project.EmailFromName = body.EmailFromName;
+        var roleErr = await ApplyDefaultRoleAsync(project, body.ClearDefaultRole, body.DefaultRoleId, id);
+        if (roleErr != null) return roleErr;
+        ApplyLoginTheme(project, body.LoginTheme);
+        ApplyEmailFromName(project, body.ClearEmailFromName, body.EmailFromName);
         if (body.IpAllowlist != null) project.IpAllowlist = body.IpAllowlist;
         if (body.CheckBreachedPasswords.HasValue) project.CheckBreachedPasswords = body.CheckBreachedPasswords.Value;
         project.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         return Ok(new { project.Id, project.Name });
+    }
+
+    private async Task<IActionResult?> ApplyDefaultRoleAsync(Project project, bool? clearRole, Guid? newRoleId, Guid projectId)
+    {
+        if (clearRole == true)
+            project.DefaultRoleId = null;
+        else if (newRoleId.HasValue)
+        {
+            var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == newRoleId && r.ProjectId == projectId);
+            if (role == null) return BadRequest(new { error = "invalid_default_role" });
+            project.DefaultRoleId = newRoleId;
+        }
+        return null;
+    }
+
+    private void ApplyLoginTheme(Project project, Dictionary<string, object>? theme)
+    {
+        if (theme == null) return;
+        var encKey = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
+        project.LoginTheme = TotpEncryption.EncryptProviderSecretsInTheme(theme, project.LoginTheme, encKey)!;
+    }
+
+    private static void ApplyEmailFromName(Project project, bool? clear, string? name)
+    {
+        if (clear == true) project.EmailFromName = null;
+        else if (name != null) project.EmailFromName = name;
     }
 
     // ── Scopes ────────────────────────────────────────────────────────────────
@@ -191,7 +206,7 @@ public class OrgController(
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
         if (project == null) return NotFound();
 
-        var invalid = body.Scopes.Where(s => !System.Text.RegularExpressions.Regex.IsMatch(s, @"^[a-z0-9_:.-]+$")).ToArray();
+        var invalid = body.Scopes.Where(s => !System.Text.RegularExpressions.Regex.IsMatch(s, @"^[a-z0-9_:.-]+$", System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromMilliseconds(100))).ToArray();
         if (invalid.Length > 0) return BadRequest(new { error = "invalid_scope_names", invalid });
 
         project.AllowedScopes = body.Scopes;
@@ -302,45 +317,56 @@ public class OrgController(
         var orgId = OrgId;
         if (!await db.UserLists.AnyAsync(ul => ul.Id == id && ul.OrgId == orgId)) return NotFound();
 
-        var projectIds = await db.Projects.Where(p => p.AssignedUserListId == id).Select(p => p.Id).ToListAsync();
-        var allUserIds = await db.Users.Where(u => u.UserListId == id).Select(u => u.Id).ToHashSetAsync();
+        var projectIds   = await db.Projects.Where(p => p.AssignedUserListId == id).Select(p => p.Id).ToListAsync();
+        var allUserIds   = await db.Users.Where(u => u.UserListId == id).Select(u => u.Id).ToHashSetAsync();
         var orphanedRoles = await db.UserProjectRoles.Include(r => r.Role)
             .Where(r => projectIds.Contains(r.ProjectId) && !allUserIds.Contains(r.UserId)).ToListAsync();
 
-        var inactiveUsers = new List<User>();
-        if (body.RemoveInactiveUsers)
-        {
-            var cutoff = DateTimeOffset.UtcNow.AddDays(-body.InactiveThresholdDays);
-            inactiveUsers = await db.Users
-                .Where(u => u.UserListId == id && (u.LastLoginAt == null || u.LastLoginAt < cutoff))
-                .ToListAsync();
-        }
+        var inactiveUsers = await FindInactiveUsersAsync(id, body);
 
-        if (!body.DryRun)
-        {
-            if (body.RemoveOrphanedRoles)
-            {
-                db.UserProjectRoles.RemoveRange(orphanedRoles);
-                foreach (var r in orphanedRoles)
-                    await keto.DeleteRelationTupleAsync(Roles.KetoProjectsNamespace, r.ProjectId.ToString(), $"role:{r.Role.Name}", $"user:{r.UserId}");
-            }
-            if (body.RemoveInactiveUsers)
-            {
-                foreach (var u in inactiveUsers)
-                    await keto.DeleteRelationTupleAsync(Roles.KetoUserListsNamespace, id.ToString(), "member", $"user:{u.Id}");
-                db.Users.RemoveRange(inactiveUsers);
-            }
-            await db.SaveChangesAsync();
-        }
+        var dryRun        = body.DryRun ?? true;
+        var removeOrphaned = body.RemoveOrphanedRoles ?? true;
+        var removeInactive = body.RemoveInactiveUsers ?? false;
+
+        if (!dryRun)
+            await ApplyCleanupChangesAsync(id, orphanedRoles, inactiveUsers, removeOrphaned, removeInactive);
 
         return Ok(new
         {
-            dry_run = body.DryRun,
-            orphaned_roles_found = orphanedRoles.Count,
-            orphaned_roles_removed = body.DryRun || !body.RemoveOrphanedRoles ? 0 : orphanedRoles.Count,
-            inactive_users_found = inactiveUsers.Count,
-            inactive_users_removed = body.DryRun || !body.RemoveInactiveUsers ? 0 : inactiveUsers.Count,
+            dry_run                = dryRun,
+            orphaned_roles_found   = orphanedRoles.Count,
+            orphaned_roles_removed = dryRun || !removeOrphaned ? 0 : orphanedRoles.Count,
+            inactive_users_found   = inactiveUsers.Count,
+            inactive_users_removed = dryRun || !removeInactive ? 0 : inactiveUsers.Count,
         });
+    }
+
+    private async Task<List<User>> FindInactiveUsersAsync(Guid listId, OrgCleanupRequest body)
+    {
+        if (!(body.RemoveInactiveUsers ?? false)) return [];
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-(body.InactiveThresholdDays ?? 90));
+        return await db.Users
+            .Where(u => u.UserListId == listId && (u.LastLoginAt == null || u.LastLoginAt < cutoff))
+            .ToListAsync();
+    }
+
+    private async Task ApplyCleanupChangesAsync(
+        Guid listId, List<UserProjectRole> orphanedRoles, List<User> inactiveUsers,
+        bool removeOrphaned, bool removeInactive)
+    {
+        if (removeOrphaned)
+        {
+            db.UserProjectRoles.RemoveRange(orphanedRoles);
+            foreach (var r in orphanedRoles)
+                await keto.DeleteRelationTupleAsync(Roles.KetoProjectsNamespace, r.ProjectId.ToString(), $"role:{r.Role.Name}", $"user:{r.UserId}");
+        }
+        if (removeInactive)
+        {
+            foreach (var u in inactiveUsers)
+                await keto.DeleteRelationTupleAsync(Roles.KetoUserListsNamespace, listId.ToString(), "member", $"user:{u.Id}");
+            db.Users.RemoveRange(inactiveUsers);
+        }
+        await db.SaveChangesAsync();
     }
 
     [HttpGet("userlists/{id}/users")]
@@ -485,18 +511,36 @@ public class OrgController(
 
     private async Task<IActionResult> ApplyUserUpdate(User user, UpdateUserRequest body)
     {
-        if (body.Email != null) { user.Email = body.Email.ToLowerInvariant(); user.EmailVerified = false; user.EmailVerifiedAt = null; }
-        if (body.Username != null) user.Username = body.Username;
-        if (body.DisplayName != null) user.DisplayName = body.DisplayName == "" ? null : body.DisplayName;
-        if (body.Phone != null) user.Phone = body.Phone == "" ? null : body.Phone;
-        if (body.Active.HasValue) { user.Active = body.Active.Value; user.DisabledAt = body.Active.Value ? null : DateTimeOffset.UtcNow; }
-        if (body.EmailVerified.HasValue) { user.EmailVerified = body.EmailVerified.Value; user.EmailVerifiedAt = body.EmailVerified.Value ? DateTimeOffset.UtcNow : null; }
-        if (body.ClearLock == true) { user.LockedUntil = null; user.FailedLoginCount = 0; }
-        if (!string.IsNullOrEmpty(body.NewPassword)) user.PasswordHash = passwords.Hash(body.NewPassword);
+        MutateUserFields(user, body);
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         await audit.RecordAsync(OrgId, null, ActorId, "user.updated", "user", user.Id.ToString());
         return Ok(new { user.Id, user.Email, user.Username, user.Discriminator, user.DisplayName, user.Phone, user.Active, user.EmailVerified, user.LockedUntil, user.FailedLoginCount });
+    }
+
+    private void MutateUserFields(User user, UpdateUserRequest body)
+    {
+        if (body.Email != null)
+        {
+            user.Email = body.Email.ToLowerInvariant();
+            user.EmailVerified = false;
+            user.EmailVerifiedAt = null;
+        }
+        if (body.Username != null) user.Username = body.Username;
+        if (body.DisplayName != null) user.DisplayName = body.DisplayName == "" ? null : body.DisplayName;
+        if (body.Phone != null) user.Phone = body.Phone == "" ? null : body.Phone;
+        if (body.Active.HasValue)
+        {
+            user.Active = body.Active.Value;
+            user.DisabledAt = body.Active.Value ? null : DateTimeOffset.UtcNow;
+        }
+        if (body.EmailVerified.HasValue)
+        {
+            user.EmailVerified = body.EmailVerified.Value;
+            user.EmailVerifiedAt = body.EmailVerified.Value ? DateTimeOffset.UtcNow : null;
+        }
+        if (body.ClearLock == true) { user.LockedUntil = null; user.FailedLoginCount = 0; }
+        if (!string.IsNullOrEmpty(body.NewPassword)) user.PasswordHash = passwords.Hash(body.NewPassword);
     }
 
     [HttpGet("userlists/{id}/users/{uid}/sessions")]
@@ -883,7 +927,7 @@ public class OrgController(
     }
 }
 
-public record CreateProjectRequest(string Name, string Slug, bool RequireRoleToLogin, string[]? RedirectUris);
+public record CreateProjectRequest(string Name, string Slug, [property: JsonRequired] bool RequireRoleToLogin, string[]? RedirectUris);
 public record UpdateProjectRequest(
     string? Name,
     bool? RequireRoleToLogin,
@@ -908,7 +952,7 @@ public record AssignUserListRequest(Guid UserListId);
 public record CreateUserListRequest(string Name);
 public record CreateUserRequest(string Email, string? Password, string? Username);
 public record UpdateUserRequest(string? Email, string? Username, string? DisplayName, string? Phone, bool? Active, bool? EmailVerified, bool? ClearLock, string? NewPassword);
-public record OrgCleanupRequest(bool RemoveOrphanedRoles = true, bool RemoveInactiveUsers = false, int InactiveThresholdDays = 90, bool DryRun = true);
-public record OrgAssignManagerRequest(Guid UserId, string Role, Guid? ScopeId);
+public record OrgCleanupRequest(bool? RemoveOrphanedRoles, bool? RemoveInactiveUsers, int? InactiveThresholdDays, bool? DryRun);
+public record OrgAssignManagerRequest([property: JsonRequired] Guid UserId, string Role, Guid? ScopeId);
 public record OrgUpdateManagerRequest(string? Role, Guid? ScopeId);
-public record UpsertSmtpRequest(string Host, int Port, bool StartTls, string? Username, string? Password, string FromAddress, string FromName);
+public record UpsertSmtpRequest(string Host, [property: JsonRequired] int Port, [property: JsonRequired] bool StartTls, string? Username, string? Password, string FromAddress, string FromName);

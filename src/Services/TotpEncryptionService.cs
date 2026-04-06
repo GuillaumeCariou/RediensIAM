@@ -70,43 +70,42 @@ public static class TotpEncryption
         if (!incoming.TryGetValue(ProvidersKey, out var rawIn)) return incoming;
         if (rawIn is not JsonElement inEl || inEl.ValueKind != JsonValueKind.Array) return incoming;
 
-        // Build map of existing encrypted secrets: providerId → client_secret_enc
-        var existingSecrets = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (existing?.TryGetValue(ProvidersKey, out var rawEx) == true &&
-            rawEx is JsonElement exEl && exEl.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var p in exEl.EnumerateArray())
-            {
-                if (p.TryGetProperty("id", out var idProp) && idProp.GetString() is { } pid &&
-                    p.TryGetProperty(ClientSecretEncKey, out var encProp) && encProp.GetString() is { } enc)
-                    existingSecrets[pid] = enc;
-            }
-        }
-
-        var updatedProviders = inEl.EnumerateArray().Select(p =>
-        {
-            // Copy all props except client_secret / client_secret_enc
-            var dict = p.EnumerateObject()
-                .Where(prop => prop.Name != "client_secret" && prop.Name != ClientSecretEncKey)
-                .ToDictionary(prop => prop.Name, prop => (object)prop.Value.Clone());
-
-            var providerId = p.TryGetProperty("id", out var idP) ? idP.GetString() : null;
-
-            // New secret provided → encrypt it
-            if (p.TryGetProperty("client_secret", out var csProp) &&
-                !string.IsNullOrEmpty(csProp.GetString()))
-            {
-                dict[ClientSecretEncKey] = EncryptString(key, csProp.GetString()!);
-            }
-            // No new secret → preserve existing encrypted one if available
-            else if (providerId != null && existingSecrets.TryGetValue(providerId, out var existingEnc))
-            {
-                dict[ClientSecretEncKey] = existingEnc;
-            }
-
-            return dict;
-        }).ToList<object>();
+        var existingSecrets = BuildExistingSecretsMap(existing);
+        var updatedProviders = inEl.EnumerateArray()
+            .Select(p => EncryptProviderEntry(p, existingSecrets, key))
+            .ToList<object>();
 
         return new Dictionary<string, object>(incoming) { [ProvidersKey] = updatedProviders };
+    }
+
+    private static Dictionary<string, string> BuildExistingSecretsMap(Dictionary<string, object>? existing)
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (existing?.TryGetValue(ProvidersKey, out var rawEx) != true) return map;
+        if (rawEx is not JsonElement exEl || exEl.ValueKind != JsonValueKind.Array) return map;
+        foreach (var p in exEl.EnumerateArray())
+        {
+            if (p.TryGetProperty("id", out var idProp) && idProp.GetString() is { } pid &&
+                p.TryGetProperty(ClientSecretEncKey, out var encProp) && encProp.GetString() is { } enc)
+                map[pid] = enc;
+        }
+        return map;
+    }
+
+    private static Dictionary<string, object> EncryptProviderEntry(
+        JsonElement p, Dictionary<string, string> existingSecrets, byte[] key)
+    {
+        var dict = p.EnumerateObject()
+            .Where(prop => prop.Name != "client_secret" && prop.Name != ClientSecretEncKey)
+            .ToDictionary(prop => prop.Name, prop => (object)prop.Value.Clone());
+
+        var providerId = p.TryGetProperty("id", out var idP) ? idP.GetString() : null;
+
+        if (p.TryGetProperty("client_secret", out var csProp) && !string.IsNullOrEmpty(csProp.GetString()))
+            dict[ClientSecretEncKey] = EncryptString(key, csProp.GetString()!);
+        else if (providerId != null && existingSecrets.TryGetValue(providerId, out var enc))
+            dict[ClientSecretEncKey] = enc;
+
+        return dict;
     }
 }

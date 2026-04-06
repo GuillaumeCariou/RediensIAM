@@ -9,9 +9,12 @@ using RediensIAM.Services;
 
 namespace RediensIAM.Controllers;
 
+// ── Org-scoped webhooks ───────────────────────────────────────────────────────
+
 [ApiController]
+[Route("org/webhooks")]
 [RequireManagementLevel(ManagementLevel.OrgAdmin)]
-public class WebhookController(
+public class OrgWebhookController(
     RediensIamDbContext db,
     AppConfig appConfig,
     AuditLogService audit,
@@ -23,9 +26,7 @@ public class WebhookController(
     private Guid OrgId   => Guid.TryParse(Claims.OrgId, out var g) ? g : Guid.Empty;
     private Guid ActorId => Claims.ParsedUserId;
 
-    // ── Org webhooks ──────────────────────────────────────────────────────────
-
-    [HttpGet("/org/webhooks")]
+    [HttpGet("")]
     public async Task<IActionResult> ListWebhooks()
     {
         var webhooks = await db.Webhooks
@@ -35,7 +36,7 @@ public class WebhookController(
         return Ok(webhooks);
     }
 
-    [HttpPost("/org/webhooks")]
+    [HttpPost("")]
     public async Task<IActionResult> CreateWebhook([FromBody] CreateWebhookRequest body)
     {
         if (!body.Url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
@@ -69,7 +70,7 @@ public class WebhookController(
         });
     }
 
-    [HttpGet("/org/webhooks/{id}")]
+    [HttpGet("{id}")]
     public async Task<IActionResult> GetWebhook(Guid id)
     {
         var wh = await db.Webhooks
@@ -86,7 +87,7 @@ public class WebhookController(
         });
     }
 
-    [HttpPatch("/org/webhooks/{id}")]
+    [HttpPatch("{id}")]
     public async Task<IActionResult> UpdateWebhook(Guid id, [FromBody] UpdateWebhookRequest body)
     {
         var wh = await db.Webhooks.FirstOrDefaultAsync(w => w.Id == id && w.OrgId == OrgId && w.ProjectId == null);
@@ -110,7 +111,7 @@ public class WebhookController(
         return Ok(new { wh.Id, wh.Url, wh.Events, wh.Active });
     }
 
-    [HttpPost("/org/webhooks/{id}/rotate-secret")]
+    [HttpPost("{id}/rotate-secret")]
     public async Task<IActionResult> RotateSecret(Guid id)
     {
         var wh = await db.Webhooks.FirstOrDefaultAsync(w => w.Id == id && w.OrgId == OrgId && w.ProjectId == null);
@@ -122,7 +123,7 @@ public class WebhookController(
         return Ok(new { secret = rawSecret, message = "store_secret_shown_once" });
     }
 
-    [HttpDelete("/org/webhooks/{id}")]
+    [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteWebhook(Guid id)
     {
         var wh = await db.Webhooks.FirstOrDefaultAsync(w => w.Id == id && w.OrgId == OrgId && w.ProjectId == null);
@@ -133,7 +134,7 @@ public class WebhookController(
         return NoContent();
     }
 
-    [HttpPost("/org/webhooks/{id}/test")]
+    [HttpPost("{id}/test")]
     public async Task<IActionResult> TestWebhook(Guid id)
     {
         var wh = await db.Webhooks.FirstOrDefaultAsync(w => w.Id == id && w.OrgId == OrgId && w.ProjectId == null);
@@ -142,7 +143,7 @@ public class WebhookController(
         return Ok(new { message = "test_dispatched" });
     }
 
-    [HttpGet("/org/webhooks/{id}/deliveries")]
+    [HttpGet("{id}/deliveries")]
     public async Task<IActionResult> ListDeliveries(Guid id, [FromQuery] int limit = 20, [FromQuery] int offset = 0)
     {
         if (!await db.Webhooks.AnyAsync(w => w.Id == id && w.OrgId == OrgId)) return NotFound();
@@ -154,11 +155,24 @@ public class WebhookController(
             .ToListAsync();
         return Ok(deliveries);
     }
+}
 
-    // ── Admin webhooks ────────────────────────────────────────────────────────
+// ── Admin-scoped webhooks (SuperAdmin only) ───────────────────────────────────
 
-    [HttpGet("/admin/webhooks")]
-    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
+[ApiController]
+[Route("admin/webhooks")]
+[RequireManagementLevel(ManagementLevel.SuperAdmin)]
+public class AdminWebhookController(
+    RediensIamDbContext db,
+    AppConfig appConfig,
+    AuditLogService audit) : ControllerBase
+{
+    private const string AuditWebhook = "webhook";
+
+    private TokenClaims Claims => HttpContext.GetClaims()!;
+    private Guid ActorId => Claims.ParsedUserId;
+
+    [HttpGet("")]
     public async Task<IActionResult> AdminListWebhooks()
     {
         var webhooks = await db.Webhooks
@@ -167,8 +181,7 @@ public class WebhookController(
         return Ok(webhooks);
     }
 
-    [HttpPost("/admin/webhooks")]
-    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
+    [HttpPost("")]
     public async Task<IActionResult> AdminCreateWebhook([FromBody] CreateWebhookRequest body)
     {
         if (!body.Url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
@@ -201,8 +214,7 @@ public class WebhookController(
         });
     }
 
-    [HttpDelete("/admin/webhooks/{id}")]
-    [RequireManagementLevel(ManagementLevel.SuperAdmin)]
+    [HttpDelete("{id}")]
     public async Task<IActionResult> AdminDeleteWebhook(Guid id)
     {
         var wh = await db.Webhooks.FindAsync(id);

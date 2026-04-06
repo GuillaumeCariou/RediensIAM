@@ -64,9 +64,7 @@ public class SocialLoginService(
         ["facebook"] = Email,
     };
 
-    private const string GithubUserUrl   = "https://api.github.com/user";
-    private const string GithubEmailsUrl = "https://api.github.com/user/emails";
-    private const string Email           = "email";
+    private const string Email = "email";
 
     // In-process cache for OIDC discovery documents
     private readonly Dictionary<string, JsonDocument> _discoveryCache = [];
@@ -246,7 +244,7 @@ public class SocialLoginService(
             return JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
         }
 
-        using var user = await CallAsync(GithubUserUrl);
+        using var user = await CallAsync(appConfig.GithubUserApiUrl);
         if (user == null) return null;
 
         var id   = user.RootElement.GetProperty("id").GetInt64().ToString();
@@ -256,7 +254,7 @@ public class SocialLoginService(
         var email = TryGet(user, Email);
         if (string.IsNullOrEmpty(email))
         {
-            using var emails = await CallAsync(GithubEmailsUrl);
+            using var emails = await CallAsync(appConfig.GithubEmailsApiUrl);
             if (emails != null)
             {
                 foreach (var e in emails.RootElement.EnumerateArray())

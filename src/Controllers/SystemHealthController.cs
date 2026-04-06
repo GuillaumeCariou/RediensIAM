@@ -97,7 +97,7 @@ public class SystemHealthController(
             await cache.SetStringAsync(key, "1", new DistributedCacheEntryOptions
                 { AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(5) });
             var val = await cache.GetStringAsync(key);
-            if (val != "1") throw new Exception("cache round-trip mismatch");
+            if (val != "1") throw new InvalidOperationException("cache round-trip mismatch");
             return Ok("Dragonfly", CategoryStorage, sw);
         }
         catch (Exception ex) { return Err("Dragonfly", CategoryStorage, ex, sw); }

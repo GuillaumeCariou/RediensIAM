@@ -18,14 +18,16 @@ namespace RediensIAM.Controllers;
 [RequireManagementLevel(ManagementLevel.SuperAdmin)]
 public class ManagedApiController(
     RediensIamDbContext db,
-    HydraService hydra,
-    KetoService keto,
-    PasswordService passwords,
-    AuditLogService audit,
+    ManagedApiServices svc,
     AppConfig appConfig,
-    IEmailService emailService,
     ILogger<ManagedApiController> logger) : ControllerBase
 {
+    // Unwrap bundle (S107)
+    private HydraService hydra         => svc.Hydra;
+    private KetoService keto           => svc.Keto;
+    private PasswordService passwords   => svc.Passwords;
+    private AuditLogService audit       => svc.Audit;
+    private IEmailService emailService  => svc.Email;
     private static readonly string[] OAuth2GrantTypes = ["authorization_code", "refresh_token"];
     private static readonly string[] OAuth2ResponseTypes = ["code"];
 

@@ -234,36 +234,8 @@ public class ServiceAccountController(
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
         if (sa == null || !await CanAccessAsync(sa)) return NotFound();
 
-        var targetLevel = body.Role switch
-        {
-            Roles.SuperAdmin   => ManagementLevel.SuperAdmin,
-            Roles.OrgAdmin     => ManagementLevel.OrgAdmin,
-            Roles.ProjectAdmin => ManagementLevel.ProjectAdmin,
-            _                  => ManagementLevel.None
-        };
-        if (targetLevel == ManagementLevel.None) return BadRequest(new { error = "unknown_role" });
-
-        // Cannot grant a role higher than your own
-        if (targetLevel < Level) return StatusCode(403, new { error = "insufficient_level_to_grant_this_role" });
-
-        // OrgAdmin can only assign roles within their own org
-        if (Level == ManagementLevel.OrgAdmin && body.OrgId != CallerOrgId)
-            return StatusCode(403, new { error = "org_mismatch" });
-
-        // ProjectAdmin can only assign project_admin within their own project
-        if (Level == ManagementLevel.ProjectAdmin)
-        {
-            if (body.Role != Roles.ProjectAdmin)
-                return StatusCode(403, new { error = "project_admin_can_only_assign_project_admin" });
-            if (!Guid.TryParse(Claims.ProjectId, out var pId) || body.ProjectId != pId)
-                return StatusCode(403, new { error = "project_mismatch" });
-        }
-
-        // Validate required scope fields
-        if (body.Role == Roles.OrgAdmin && body.OrgId == null)
-            return BadRequest(new { error = "org_id_required_for_org_admin" });
-        if (body.Role == Roles.ProjectAdmin && (body.OrgId == null || body.ProjectId == null))
-            return BadRequest(new { error = "org_id_and_project_id_required_for_project_admin" });
+        var authErr = ValidateRoleAssignment(body);
+        if (authErr != null) return authErr;
 
         var existing = await db.ServiceAccountRoles.FirstOrDefaultAsync(r =>
             r.ServiceAccountId == id && r.Role == body.Role
@@ -313,9 +285,42 @@ public class ServiceAccountController(
             AuditSa, id.ToString(), new() { ["role"] = role.Role });
         return NoContent();
     }
+
+    private IActionResult? ValidateRoleAssignment(AssignSaRoleRequest body)
+    {
+        var targetLevel = body.Role switch
+        {
+            Roles.SuperAdmin   => ManagementLevel.SuperAdmin,
+            Roles.OrgAdmin     => ManagementLevel.OrgAdmin,
+            Roles.ProjectAdmin => ManagementLevel.ProjectAdmin,
+            _                  => ManagementLevel.None
+        };
+        if (targetLevel == ManagementLevel.None) return BadRequest(new { error = "unknown_role" });
+        if (targetLevel < Level) return StatusCode(403, new { error = "insufficient_level_to_grant_this_role" });
+        if (Level == ManagementLevel.OrgAdmin && body.OrgId != CallerOrgId)
+            return StatusCode(403, new { error = "org_mismatch" });
+        if (Level == ManagementLevel.ProjectAdmin)
+            return ValidateProjectAdminRoleAssignment(body);
+        if (body.Role == Roles.OrgAdmin && body.OrgId == null)
+            return BadRequest(new { error = "org_id_required_for_org_admin" });
+        if (body.Role == Roles.ProjectAdmin && (body.OrgId == null || body.ProjectId == null))
+            return BadRequest(new { error = "org_id_and_project_id_required_for_project_admin" });
+        return null;
+    }
+
+    private IActionResult? ValidateProjectAdminRoleAssignment(AssignSaRoleRequest body)
+    {
+        if (body.Role != Roles.ProjectAdmin)
+            return StatusCode(403, new { error = "project_admin_can_only_assign_project_admin" });
+        if (!Guid.TryParse(Claims.ProjectId, out var pId) || body.ProjectId != pId)
+            return StatusCode(403, new { error = "project_mismatch" });
+        if (body.OrgId == null || body.ProjectId == null)
+            return BadRequest(new { error = "org_id_and_project_id_required_for_project_admin" });
+        return null;
+    }
 }
 
-public record CreateSaRequest(string Name, string? Description, Guid UserListId);
+public record CreateSaRequest(string Name, string? Description, [property: System.Text.Json.Serialization.JsonRequired] Guid UserListId);
 public record GenerateSaPatRequest(string Name, DateTimeOffset? ExpiresAt);
-public record SaApiKeyRequest(System.Text.Json.JsonElement Jwk);
+public record SaApiKeyRequest([property: System.Text.Json.Serialization.JsonRequired] System.Text.Json.JsonElement Jwk);
 public record AssignSaRoleRequest(string Role, Guid? OrgId, Guid? ProjectId);

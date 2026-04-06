@@ -17,14 +17,16 @@ namespace RediensIAM.Controllers;
 [Route("account")]
 public class AccountController(
     RediensIamDbContext db,
-    PasswordService passwords,
+    AccountControllerServices svc,
     AuditLogService audit,
-    HydraService hydra,
-    AppConfig appConfig,
-    ISmsService smsService,
-    OtpCacheService otpCache,
-    IFido2 fido2) : ControllerBase
+    AppConfig appConfig) : ControllerBase
 {
+    // Unwrap bundle (S107)
+    private PasswordService passwords => svc.Passwords;
+    private HydraService hydra        => svc.Hydra;
+    private ISmsService smsService    => svc.Sms;
+    private OtpCacheService otpCache  => svc.Otp;
+    private IFido2 fido2              => svc.Fido2;
     // /account/* routes are protected by GatewayAuthMiddleware — Claims is always non-null here.
     private TokenClaims Claims => HttpContext.GetClaims()!;
 

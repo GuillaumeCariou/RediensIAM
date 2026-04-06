@@ -25,49 +25,52 @@ public class SamlService(
         config.AllowedAudienceUris.Add(spEntityId);
 
         if (!string.IsNullOrEmpty(idp.MetadataUrl))
-        {
-            try
-            {
-                var metaUri = new Uri(idp.MetadataUrl);
-                if (metaUri.Scheme != Uri.UriSchemeHttps)
-                    throw new InvalidOperationException("SAML metadata URL must use HTTPS");
-
-                var descriptor = new EntityDescriptor();
-                await descriptor.ReadIdPSsoDescriptorFromUrlAsync(
-                    httpClientFactory, metaUri);
-
-                if (descriptor.IdPSsoDescriptor == null)
-                    throw new InvalidOperationException("No IdPSsoDescriptor in metadata");
-
-                config.AllowedIssuer = descriptor.EntityId;
-                config.SingleSignOnDestination =
-                    descriptor.IdPSsoDescriptor.SingleSignOnServices.First().Location;
-
-                foreach (var cert in descriptor.IdPSsoDescriptor.SigningCertificates.Where(c => c.IsValidLocalTime()))
-                    config.SignatureValidationCertificates.Add(cert);
-
-                if (config.SignatureValidationCertificates.Count == 0)
-                    logger.LogWarning("SAML IdP {IdpId}: no valid signing certs in metadata", idp.Id);
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "SAML IdP {IdpId}: failed to load metadata from {Url}", idp.Id, idp.MetadataUrl);
-                throw new InvalidOperationException($"SAML IdP {idp.Id}: failed to load metadata", ex);
-            }
-        }
+            await ApplyMetadataAsync(config, idp);
         else
-        {
-            if (string.IsNullOrEmpty(idp.SsoUrl))
-                throw new InvalidOperationException("SAML IdP has neither MetadataUrl nor SsoUrl");
-
-            config.SingleSignOnDestination = new Uri(idp.SsoUrl);
-
-            if (!string.IsNullOrEmpty(idp.CertificatePem))
-                config.SignatureValidationCertificates.Add(
-                    X509Certificate2.CreateFromPem(idp.CertificatePem));
-        }
+            ApplyExplicitConfig(config, idp);
 
         return config;
+    }
+
+    private async Task ApplyMetadataAsync(Saml2Configuration config, SamlIdpConfig idp)
+    {
+        try
+        {
+            var metaUri = new Uri(idp.MetadataUrl!);
+            if (metaUri.Scheme != Uri.UriSchemeHttps)
+                throw new InvalidOperationException("SAML metadata URL must use HTTPS");
+
+            var descriptor = new EntityDescriptor();
+            await descriptor.ReadIdPSsoDescriptorFromUrlAsync(httpClientFactory, metaUri);
+
+            if (descriptor.IdPSsoDescriptor == null)
+                throw new InvalidOperationException("No IdPSsoDescriptor in metadata");
+
+            config.AllowedIssuer = descriptor.EntityId;
+            config.SingleSignOnDestination = descriptor.IdPSsoDescriptor.SingleSignOnServices.First().Location;
+
+            foreach (var cert in descriptor.IdPSsoDescriptor.SigningCertificates.Where(c => c.IsValidLocalTime()))
+                config.SignatureValidationCertificates.Add(cert);
+
+            if (config.SignatureValidationCertificates.Count == 0)
+                logger.LogWarning("SAML IdP {IdpId}: no valid signing certs in metadata", idp.Id);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "SAML IdP {IdpId}: failed to load metadata from {Url}", idp.Id, idp.MetadataUrl);
+            throw new InvalidOperationException($"SAML IdP {idp.Id}: failed to load metadata", ex);
+        }
+    }
+
+    private static void ApplyExplicitConfig(Saml2Configuration config, SamlIdpConfig idp)
+    {
+        if (string.IsNullOrEmpty(idp.SsoUrl))
+            throw new InvalidOperationException("SAML IdP has neither MetadataUrl nor SsoUrl");
+
+        config.SingleSignOnDestination = new Uri(idp.SsoUrl);
+
+        if (!string.IsNullOrEmpty(idp.CertificatePem))
+            config.SignatureValidationCertificates.Add(X509Certificate2.CreateFromPem(idp.CertificatePem));
     }
 
     /// <summary>Extracts the user's email from a claims identity using the configured attribute name.</summary>

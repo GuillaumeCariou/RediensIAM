@@ -32,7 +32,7 @@ public class ProjectController(
         {
             if (Claims.GetManagementLevel() <= ManagementLevel.OrgAdmin)
             {
-                var q = HttpContext.Request.Query["project_id"].FirstOrDefault();
+                var q = HttpContext.Request.Query["project_id"].FirstOrDefault(); // NOSONAR S6932 — property getter, model binding not applicable here
                 if (q != null && Guid.TryParse(q, out var g)) return g;
             }
             return Guid.Parse(Claims.ProjectId);
@@ -92,23 +92,34 @@ public class ProjectController(
         if (body.PasswordRequireLowercase.HasValue)   project.PasswordRequireLowercase   = body.PasswordRequireLowercase.Value;
         if (body.PasswordRequireDigit.HasValue)       project.PasswordRequireDigit       = body.PasswordRequireDigit.Value;
         if (body.PasswordRequireSpecial.HasValue)     project.PasswordRequireSpecial     = body.PasswordRequireSpecial.Value;
-        if (body.ClearDefaultRole == true)
-            project.DefaultRoleId = null;
-        else if (body.DefaultRoleId.HasValue)
-        {
-            var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == body.DefaultRoleId && r.ProjectId == ProjectId);
-            if (role == null) return BadRequest(new { error = "invalid_default_role" });
-            project.DefaultRoleId = body.DefaultRoleId;
-        }
-        if (body.LoginTheme != null)
-        {
-            var encKey = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
-            project.LoginTheme = TotpEncryption.EncryptProviderSecretsInTheme(
-                body.LoginTheme, project.LoginTheme, encKey)!;
-        }
+        var roleErr = await ApplyDefaultRoleAsync(project, body.ClearDefaultRole, body.DefaultRoleId);
+        if (roleErr != null) return roleErr;
+        ApplyLoginTheme(project, body.LoginTheme);
         project.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         return Ok(new { project.Id, project.Name });
+    }
+
+    private async Task<IActionResult?> ApplyDefaultRoleAsync(Project project, bool? clearRole, Guid? newRoleId)
+    {
+        if (clearRole == true)
+        {
+            project.DefaultRoleId = null;
+        }
+        else if (newRoleId.HasValue)
+        {
+            var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == newRoleId && r.ProjectId == ProjectId);
+            if (role == null) return BadRequest(new { error = "invalid_default_role" });
+            project.DefaultRoleId = newRoleId;
+        }
+        return null;
+    }
+
+    private void ApplyLoginTheme(Project project, Dictionary<string, object>? theme)
+    {
+        if (theme == null) return;
+        var encKey = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
+        project.LoginTheme = TotpEncryption.EncryptProviderSecretsInTheme(theme, project.LoginTheme, encKey)!;
     }
 
     // ── Users ─────────────────────────────────────────────────────────────────
@@ -261,7 +272,7 @@ public class ProjectController(
         var role = new Role
         {
             ProjectId = ProjectId, Name = body.Name,
-            Description = body.Description, Rank = body.Rank,
+            Description = body.Description, Rank = body.Rank ?? 100,
             CreatedBy = ActorId, CreatedAt = DateTimeOffset.UtcNow
         };
         db.Roles.Add(role);
@@ -340,7 +351,7 @@ public record UpdateProjectInfoRequest(string? Name, bool? Active, bool? Require
     bool? PasswordRequireUppercase, bool? PasswordRequireLowercase,
     bool? PasswordRequireDigit, bool? PasswordRequireSpecial);
 public record CreateProjectUserRequest(string Email, string? Username, string Password);
-public record AssignRoleRequest(Guid RoleId);
-public record CreateRoleRequest(string Name, string? Description, int Rank = 100);
+public record AssignRoleRequest([property: System.Text.Json.Serialization.JsonRequired] Guid RoleId);
+public record CreateRoleRequest(string Name, string? Description, int? Rank);
 public record UpdateRoleRequest(string? Description, int? Rank);
 public record CleanupRequest(bool DryRun = true, bool RemoveOrphanedRoles = true);

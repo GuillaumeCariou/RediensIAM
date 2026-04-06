@@ -175,14 +175,7 @@ public class KetoService(IHttpClientFactory http, AppConfig appConfig, RediensIa
             throw new ForbiddenException($"Cannot assign '{role}': insufficient management level");
 
         if (actorLevel == ManagementLevel.ProjectAdmin)
-        {
-            if (role != Roles.ProjectAdmin || scopeId == null)
-                throw new ForbiddenException("project_manager can only assign project_manager roles");
-            var actorScope = await db.OrgRoles.FirstOrDefaultAsync(r =>
-                r.OrgId == orgId && r.UserId == actorId && r.Role == Roles.ProjectAdmin);
-            if (actorScope?.ScopeId != scopeId)
-                throw new ForbiddenException("Cannot assign project_manager for a project outside your scope");
-        }
+            await ValidateProjectAdminScopeAsync(actorId, orgId, role, scopeId);
 
         var existing = await db.OrgRoles.FirstOrDefaultAsync(r =>
             r.OrgId == orgId && r.UserId == targetUserId && r.Role == role && r.ScopeId == scopeId);
@@ -213,6 +206,16 @@ public class KetoService(IHttpClientFactory http, AppConfig appConfig, RediensIa
         }
         await audit.RecordAsync(orgId, null, actorId, "role.management.assigned",
             "user", targetUserId.ToString(), new() { ["role"] = role });
+    }
+
+    private async Task ValidateProjectAdminScopeAsync(Guid actorId, Guid orgId, string role, Guid? scopeId)
+    {
+        if (role != Roles.ProjectAdmin || scopeId == null)
+            throw new ForbiddenException("project_manager can only assign project_manager roles");
+        var actorScope = await db.OrgRoles.FirstOrDefaultAsync(r =>
+            r.OrgId == orgId && r.UserId == actorId && r.Role == Roles.ProjectAdmin);
+        if (actorScope?.ScopeId != scopeId)
+            throw new ForbiddenException("Cannot assign project_manager for a project outside your scope");
     }
 
     public async Task RemoveManagementRoleAsync(Guid actorId, Guid orgRoleId, Guid orgId)

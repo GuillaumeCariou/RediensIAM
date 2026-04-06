@@ -71,6 +71,12 @@ builder.Services.AddScoped<PatService>();
 builder.Services.AddScoped<SocialLoginService>();
 builder.Services.AddHttpContextAccessor();
 
+// ── Controller service bundles (reduce constructor param counts, S107) ────────
+builder.Services.AddScoped<AuthControllerServices>();
+builder.Services.AddScoped<AccountControllerServices>();
+builder.Services.AddScoped<OrgAdminServices>();
+builder.Services.AddScoped<ManagedApiServices>();
+
 // ── WebAuthn / Passkeys ────────────────────────────────────────────────────
 builder.Services.AddFido2(opts =>
 {
@@ -143,8 +149,11 @@ builder.WebHost.ConfigureKestrel(kestrel =>
 var app = builder.Build();
 
 // ── Ensure DB schema exists ─────────────────────────────────────────────────
+await EnsureDbSchemaAsync(app);
+
+static async Task EnsureDbSchemaAsync(WebApplication webApp)
 {
-    using var scope = app.Services.CreateScope();
+    using var scope = webApp.Services.CreateScope();
     var db     = scope.ServiceProvider.GetRequiredService<RediensIamDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
     for (var attempt = 1; attempt <= 12; attempt++)
@@ -296,7 +305,7 @@ app.Use(async (ctx, next) =>
     // CSP only for the login SPA (not the admin SPA — it has its own inline scripts)
     if (!ctx.Request.Path.StartsWithSegments("/admin"))
         ctx.Response.Headers.ContentSecurityPolicy =
-            "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; frame-ancestors 'none';";
+            "default-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none';";
 
     await next();
 });

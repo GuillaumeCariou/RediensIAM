@@ -18,21 +18,23 @@ namespace RediensIAM.Controllers;
 [Route("auth")]
 public class AuthController(
     RediensIamDbContext db,
-    HydraService hydra,
-    PasswordService passwords,
-    OtpCacheService otp,
-    LoginRateLimiter rateLimiter,
-    AuditLogService audit,
-    KetoService keto,
-    IEmailService emailService,
-    ISmsService smsService,
-    IFido2 fido2,
-    SocialLoginService socialLogin,
+    AuthControllerServices svc,
     AppConfig appConfig,
-    BreachCheckService breachCheck,
     Microsoft.Extensions.Caching.Distributed.IDistributedCache cache,
     ILogger<AuthController> logger) : ControllerBase
 {
+    // Unwrap bundle — keeps method bodies unchanged while satisfying S107
+    private HydraService hydra            => svc.Hydra;
+    private PasswordService passwords      => svc.Passwords;
+    private OtpCacheService otp            => svc.Otp;
+    private LoginRateLimiter rateLimiter   => svc.RateLimiter;
+    private AuditLogService audit          => svc.Audit;
+    private KetoService keto               => svc.Keto;
+    private IEmailService emailService     => svc.Email;
+    private ISmsService smsService         => svc.Sms;
+    private IFido2 fido2                   => svc.Fido2;
+    private SocialLoginService socialLogin  => svc.SocialLogin;
+    private BreachCheckService breachCheck  => svc.BreachCheck;
     private const string MfaPendingUser      = "mfa_pending_user";
     private const string MfaPendingProject   = "mfa_pending_project";
     private const string MfaPendingChallenge = "mfa_pending_challenge";
@@ -137,7 +139,7 @@ public class AuthController(
         }
 
         if (req.Client?.ClientId == Roles.AdminClientId)
-            return await AdminLogin(body, req);
+            return await AdminLogin(body);
 
         var projectId = ExtractProjectId(req);
         if (projectId == null) return BadRequest(new { error = ErrMissingProjectId });
@@ -156,20 +158,7 @@ public class AuthController(
         if (project?.AssignedUserListId == null)
             return BadRequest(new { error = ErrProjectNotReady });
 
-        User? user = null;
-        if (body.Email != null)
-        {
-            user = await db.Users.FirstOrDefaultAsync(u =>
-                u.UserListId == project.AssignedUserListId && u.Email == body.Email.ToLowerInvariant());
-        }
-        else if (body.Username != null)
-        {
-            var parts = body.Username.Split('#');
-            if (parts.Length == 2)
-                user = await db.Users.FirstOrDefaultAsync(u =>
-                    u.UserListId == project.AssignedUserListId && u.Username == parts[0] && u.Discriminator == parts[1]);
-        }
-
+        var user = await LookupUserByCredentialsAsync(project, body);
         if (user == null || !user.Active)
         {
             await rateLimiter.RecordFailureAsync(Ip, null);
@@ -177,6 +166,36 @@ public class AuthController(
             return Unauthorized(new { error = ErrInvalidCreds });
         }
 
+        var credErr = await CheckUserCredentialsAsync(user, body);
+        if (credErr != null) return credErr;
+
+        var accessErr = await CheckProjectAccessAsync(user, project, body.LoginChallenge);
+        if (accessErr != null) return accessErr;
+
+        var mfaResult = await InitiateMfaAsync(user, project, projectId, body.LoginChallenge);
+        if (mfaResult != null) return mfaResult;
+
+        return await CompleteLoginAsync(user, project, projectId, body.LoginChallenge);
+    }
+
+    private async Task<User?> LookupUserByCredentialsAsync(Project project, LoginRequest body)
+    {
+        if (body.Email != null)
+            return await db.Users.FirstOrDefaultAsync(u =>
+                u.UserListId == project.AssignedUserListId && u.Email == body.Email.ToLowerInvariant());
+
+        if (body.Username != null)
+        {
+            var parts = body.Username.Split('#');
+            if (parts.Length == 2)
+                return await db.Users.FirstOrDefaultAsync(u =>
+                    u.UserListId == project.AssignedUserListId && u.Username == parts[0] && u.Discriminator == parts[1]);
+        }
+        return null;
+    }
+
+    private async Task<IActionResult?> CheckUserCredentialsAsync(User user, LoginRequest body)
+    {
         if (user.LockedUntil.HasValue && user.LockedUntil > DateTimeOffset.UtcNow)
         {
             IamMetrics.LoginAttempts.WithLabels("locked").Inc();
@@ -193,8 +212,11 @@ public class AuthController(
             IamMetrics.LoginAttempts.WithLabels("failure").Inc();
             return Unauthorized(new { error = ErrInvalidCreds });
         }
+        return null;
+    }
 
-        // C6: IP allowlist check
+    private async Task<IActionResult?> CheckProjectAccessAsync(User user, Project project, string loginChallenge)
+    {
         if (project.IpAllowlist.Length > 0 &&
             (!System.Net.IPAddress.TryParse(Ip, out var clientIp) ||
              !project.IpAllowlist.Any(cidr => IpInRange(clientIp, cidr))))
@@ -209,22 +231,23 @@ public class AuthController(
             var hasRole = await db.UserProjectRoles.AnyAsync(r => r.UserId == user.Id && r.ProjectId == project.Id);
             if (!hasRole)
             {
-                var rejectUrl = await hydra.RejectLoginAsync(body.LoginChallenge, ErrAccessDenied, "no_role_assigned");
+                var rejectUrl = await hydra.RejectLoginAsync(loginChallenge, ErrAccessDenied, "no_role_assigned");
                 return Ok(new { redirect_to = rejectUrl, error = "no_role" });
             }
         }
+        return null;
+    }
 
-        // B3: Mandatory MFA — if project requires MFA and user has none configured, block login
+    private async Task<IActionResult?> InitiateMfaAsync(User user, Project project, string projectId, string loginChallenge)
+    {
         if (project.RequireMfa)
         {
             var hasMfa = user.TotpEnabled || user.PhoneVerified ||
                          await db.WebAuthnCredentials.AnyAsync(w => w.UserId == user.Id);
             if (!hasMfa)
             {
-                HttpContext.Session.SetString("mfa_setup_required",  "true");
-                HttpContext.Session.SetString(MfaPendingUser,     user.Id.ToString());
-                HttpContext.Session.SetString(MfaPendingProject,  projectId);
-                HttpContext.Session.SetString(MfaPendingChallenge, body.LoginChallenge);
+                HttpContext.Session.SetString("mfa_setup_required", "true");
+                SetMfaSession(user.Id.ToString(), loginChallenge, projectId);
                 IamMetrics.LoginAttempts.WithLabels("mfa_setup_required").Inc();
                 return Ok(new { requires_mfa_setup = true });
             }
@@ -232,17 +255,13 @@ public class AuthController(
 
         if (user.TotpEnabled)
         {
-            HttpContext.Session.SetString(MfaPendingUser, user.Id.ToString());
-            HttpContext.Session.SetString(MfaPendingChallenge, body.LoginChallenge);
-            HttpContext.Session.SetString(MfaPendingProject, projectId);
+            SetMfaSession(user.Id.ToString(), loginChallenge, projectId);
             return Ok(new { requires_mfa = true, mfa_type = "totp" });
         }
 
         if (user.PhoneVerified && !string.IsNullOrEmpty(user.Phone))
         {
-            HttpContext.Session.SetString(MfaPendingUser, user.Id.ToString());
-            HttpContext.Session.SetString(MfaPendingChallenge, body.LoginChallenge);
-            HttpContext.Session.SetString(MfaPendingProject, projectId);
+            SetMfaSession(user.Id.ToString(), loginChallenge, projectId);
             var smsCode = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
             await otp.StoreSessionOtpAsync("sms_mfa", user.Id.ToString(), smsCode);
             await smsService.SendOtpAsync(user.Phone, smsCode, "login");
@@ -254,12 +273,22 @@ public class AuthController(
 
         if (user.WebAuthnEnabled)
         {
-            HttpContext.Session.SetString(MfaPendingUser, user.Id.ToString());
-            HttpContext.Session.SetString(MfaPendingChallenge, body.LoginChallenge);
-            HttpContext.Session.SetString(MfaPendingProject, projectId);
+            SetMfaSession(user.Id.ToString(), loginChallenge, projectId);
             return Ok(new { requires_mfa = true, mfa_type = "webauthn" });
         }
 
+        return null;
+    }
+
+    private void SetMfaSession(string userId, string loginChallenge, string projectId)
+    {
+        HttpContext.Session.SetString(MfaPendingUser, userId);
+        HttpContext.Session.SetString(MfaPendingChallenge, loginChallenge);
+        HttpContext.Session.SetString(MfaPendingProject, projectId);
+    }
+
+    private async Task<IActionResult> CompleteLoginAsync(User user, Project project, string projectId, string loginChallenge)
+    {
         user.FailedLoginCount = 0;
         user.LastLoginAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
@@ -268,12 +297,12 @@ public class AuthController(
         var subject = $"{project.OrgId}:{user.Id}";
         var context = new Dictionary<string, object>
         {
-            [CtxOrgId] = project.OrgId.ToString(),
+            [CtxOrgId]     = project.OrgId.ToString(),
             [CtxProjectId] = project.Id.ToString(),
-            [CtxUserId] = user.Id.ToString()
+            [CtxUserId]    = user.Id.ToString()
         };
 
-        var redirectUrl = await hydra.AcceptLoginAsync(body.LoginChallenge, subject, context);
+        var redirectUrl = await hydra.AcceptLoginAsync(loginChallenge, subject, context);
         await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login");
         IamMetrics.LoginAttempts.WithLabels("success").Inc();
         _ = Task.Run(() => CheckNewDeviceAsync(user, Ip, Request.Headers.UserAgent.ToString()));
@@ -572,27 +601,44 @@ public class AuthController(
         if (!project.AllowSelfRegistration) return StatusCode(403, new { error = "registration_not_allowed" });
         if (project.AssignedUserListId == null) return BadRequest(new { error = ErrProjectNotReady });
 
-        // M1: enforce project-level password policy
-        if (project.MinPasswordLength > 0 && body.Password.Length < project.MinPasswordLength)
-            return BadRequest(new { error = "password_too_short",     min_length = project.MinPasswordLength });
-        if (project.PasswordRequireUppercase && !body.Password.Any(char.IsUpper))
+        var policyErr = await ValidatePasswordPolicyAsync(project, body.Password);
+        if (policyErr != null) return policyErr;
+
+        var email = body.Email.ToLowerInvariant();
+        var emailErr = await ValidateEmailForRegistrationAsync(project, email);
+        if (emailErr != null) return emailErr;
+
+        var verificationEnabled = project.EmailVerificationEnabled || project.SmsVerificationEnabled;
+
+        if (!verificationEnabled)
+            return await RegisterDirectAsync(project, projectId, email, body);
+
+        return await RegisterWithVerificationAsync(project, projectId, email, body);
+    }
+
+    private async Task<IActionResult?> ValidatePasswordPolicyAsync(Project project, string password)
+    {
+        if (project.MinPasswordLength > 0 && password.Length < project.MinPasswordLength)
+            return BadRequest(new { error = "password_too_short", min_length = project.MinPasswordLength });
+        if (project.PasswordRequireUppercase && !password.Any(char.IsUpper))
             return BadRequest(new { error = "password_requires_uppercase" });
-        if (project.PasswordRequireLowercase && !body.Password.Any(char.IsLower))
+        if (project.PasswordRequireLowercase && !password.Any(char.IsLower))
             return BadRequest(new { error = "password_requires_lowercase" });
-        if (project.PasswordRequireDigit && !body.Password.Any(char.IsDigit))
+        if (project.PasswordRequireDigit && !password.Any(char.IsDigit))
             return BadRequest(new { error = "password_requires_digit" });
-        if (project.PasswordRequireSpecial && !body.Password.Any(c => !char.IsLetterOrDigit(c)))
+        if (project.PasswordRequireSpecial && !password.Any(c => !char.IsLetterOrDigit(c)))
             return BadRequest(new { error = "password_requires_special" });
 
         if (project.CheckBreachedPasswords)
         {
-            var count = await breachCheck.GetBreachCountAsync(body.Password);
-            if (count > 0)
-                return BadRequest(new { error = "password_breached", count });
+            var count = await breachCheck.GetBreachCountAsync(password);
+            if (count > 0) return BadRequest(new { error = "password_breached", count });
         }
+        return null;
+    }
 
-        var email = body.Email.ToLowerInvariant();
-
+    private async Task<IActionResult?> ValidateEmailForRegistrationAsync(Project project, string email)
+    {
         if (project.AllowedEmailDomains.Length > 0)
         {
             var domain = email.Split('@').LastOrDefault() ?? "";
@@ -608,39 +654,41 @@ public class AuthController(
             await rateLimiter.RecordFailureAsync(Ip, null, "register");
             return Conflict(new { error = "email_already_exists" });
         }
+        return null;
+    }
 
-        var verificationEnabled = project.EmailVerificationEnabled || project.SmsVerificationEnabled;
+    private async Task<IActionResult> RegisterDirectAsync(Project project, string projectId, string email, RegisterRequest body)
+    {
+        var user = await BuildUserAsync(project.AssignedUserListId!.Value, email, body.Username, body.Password);
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+        await keto.WriteRelationTupleAsync(Roles.KetoUserListsNamespace, project.AssignedUserListId!.Value.ToString(), "member", $"user:{user.Id}");
+        await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.registered");
+        await keto.AssignDefaultRoleAsync(project, user);
 
-        if (!verificationEnabled)
+        var subject = $"{project.OrgId}:{user.Id}";
+        var ctx = new Dictionary<string, object>
         {
-            var user = await BuildUserAsync(project.AssignedUserListId!.Value, email, body.Username, body.Password);
-            db.Users.Add(user);
-            await db.SaveChangesAsync();
-            await keto.WriteRelationTupleAsync(Roles.KetoUserListsNamespace, project.AssignedUserListId!.Value.ToString(), "member", $"user:{user.Id}");
-            await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.registered");
-            await keto.AssignDefaultRoleAsync(project, user);
+            [CtxOrgId]     = project.OrgId.ToString(),
+            [CtxProjectId] = project.Id.ToString(),
+            [CtxUserId]    = user.Id.ToString()
+        };
+        var redirectUrl = await hydra.AcceptLoginAsync(body.LoginChallenge, subject, ctx);
+        return Ok(new { redirect_to = redirectUrl });
+    }
 
-            var subject = $"{project.OrgId}:{user.Id}";
-            var ctx = new Dictionary<string, object>
-            {
-                [CtxOrgId] = project.OrgId.ToString(),
-                [CtxProjectId] = project.Id.ToString(),
-                [CtxUserId] = user.Id.ToString()
-            };
-            var redirectUrl = await hydra.AcceptLoginAsync(body.LoginChallenge, subject, ctx);
-            return Ok(new { redirect_to = redirectUrl });
-        }
-
+    private async Task<IActionResult> RegisterWithVerificationAsync(Project project, string projectId, string email, RegisterRequest body)
+    {
         var sessionId = Guid.NewGuid().ToString("N");
         var code = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
         var pending = System.Text.Json.JsonSerializer.Serialize(new
         {
             email,
-            username = body.Username ?? email.Split('@')[0],
+            username      = body.Username ?? email.Split('@')[0],
             password_hash = passwords.Hash(body.Password),
-            project_id = projectId,
-            user_list_id = project.AssignedUserListId!.Value.ToString(),
-            org_id = project.OrgId.ToString(),
+            project_id    = projectId,
+            user_list_id  = project.AssignedUserListId!.Value.ToString(),
+            org_id        = project.OrgId.ToString(),
             login_challenge = body.LoginChallenge
         });
 
@@ -832,7 +880,7 @@ public class AuthController(
         return Ok(new { message = "password_reset" });
     }
 
-    private async Task<IActionResult> AdminLogin(LoginRequest body, HydraLoginRequest req)
+    private async Task<IActionResult> AdminLogin(LoginRequest body)
     {
         if (body.Email == null) return BadRequest(new { error = "email_required" });
 
@@ -1057,35 +1105,8 @@ public class AuthController(
         var profile = await socialLogin.ExchangeAndGetProfileAsync(providerCfg, code);
         if (profile == null) return Redirect(errorRedirect);
 
-        // ── Link mode: attach social account to existing authenticated user ───
         if (stateData.LinkMode && stateData.LinkUserId != null)
-        {
-            if (!Guid.TryParse(stateData.LinkUserId, out var linkUserId))
-                return Redirect("/account?link_error=invalid_user");
-
-            var existing = await db.UserSocialAccounts.AnyAsync(s =>
-                s.Provider == stateData.ProviderId && s.ProviderUserId == profile.ProviderUserId);
-            if (existing) return Redirect("/account?link_error=already_linked");
-
-            db.UserSocialAccounts.Add(new UserSocialAccount
-            {
-                UserId         = linkUserId,
-                Provider       = stateData.ProviderId,
-                ProviderUserId = profile.ProviderUserId,
-                Email          = profile.Email,
-                LinkedAt       = DateTimeOffset.UtcNow,
-            });
-            await db.SaveChangesAsync();
-
-            if (Guid.TryParse(stateData.LinkProjectId, out var lpId))
-            {
-                var lpProject = await db.Projects.FindAsync(lpId);
-                if (lpProject != null)
-                    await audit.RecordAsync(lpProject.OrgId, lpId, linkUserId,
-                        $"user.social_linked.{stateData.ProviderId}", "user", linkUserId.ToString());
-            }
-            return Redirect("/account?link_success=1");
-        }
+            return await HandleOAuthLinkModeAsync(stateData, profile);
 
         var user = await FindOrCreateSocialUserAsync(profile, stateData.ProviderId, project);
         if (user == null) return Redirect(errorRedirect);
@@ -1116,6 +1137,35 @@ public class AuthController(
         return Redirect(redirectTo);
     }
 
+    private async Task<IActionResult> HandleOAuthLinkModeAsync(OAuthStateData stateData, SocialUserProfile profile)
+    {
+        if (!Guid.TryParse(stateData.LinkUserId, out var linkUserId))
+            return Redirect("/account?link_error=invalid_user");
+
+        var existing = await db.UserSocialAccounts.AnyAsync(s =>
+            s.Provider == stateData.ProviderId && s.ProviderUserId == profile.ProviderUserId);
+        if (existing) return Redirect("/account?link_error=already_linked");
+
+        db.UserSocialAccounts.Add(new UserSocialAccount
+        {
+            UserId         = linkUserId,
+            Provider       = stateData.ProviderId,
+            ProviderUserId = profile.ProviderUserId,
+            Email          = profile.Email,
+            LinkedAt       = DateTimeOffset.UtcNow,
+        });
+        await db.SaveChangesAsync();
+
+        if (Guid.TryParse(stateData.LinkProjectId, out var lpId))
+        {
+            var lpProject = await db.Projects.FindAsync(lpId);
+            if (lpProject != null)
+                await audit.RecordAsync(lpProject.OrgId, lpId, linkUserId,
+                    $"user.social_linked.{stateData.ProviderId}", "user", linkUserId.ToString());
+        }
+        return Redirect("/account?link_success=1");
+    }
+
     private async Task<User?> FindOrCreateSocialUserAsync(SocialUserProfile profile, string provider, Project project)
     {
         // 1. Check existing social link
@@ -1142,7 +1192,8 @@ public class AuthController(
 
             var email = profile.Email.ToLowerInvariant();
             var uname = Regex.Replace(
-                (profile.Name?.Split(' ')[0]?.ToLower() ?? email.Split('@')[0]), @"[^a-z0-9_]", "");
+                (profile.Name?.Split(' ')[0]?.ToLower() ?? email.Split('@')[0]), @"[^a-z0-9_]", "",
+                RegexOptions.None, TimeSpan.FromMilliseconds(100));
             if (string.IsNullOrEmpty(uname)) uname = "user";
 
             string discriminator;
@@ -1204,26 +1255,26 @@ public class AuthController(
             if (!p.TryGetProperty("id", out var idProp) || idProp.GetString() != providerId) continue;
             if (p.TryGetProperty("enabled", out var enProp) && !enProp.GetBoolean()) return null;
 
-            var type     = p.TryGetProperty("type",      out var t)  ? t.GetString()  ?? "" : "";
-            var clientId = p.TryGetProperty("client_id", out var ci) ? ci.GetString() ?? "" : "";
+            var type      = p.TryGetProperty("type",       out var t)  ? t.GetString()  ?? "" : "";
+            var clientId  = p.TryGetProperty("client_id",  out var ci) ? ci.GetString() ?? "" : "";
             var issuerUrl = p.TryGetProperty("issuer_url", out var iu) ? iu.GetString() : null;
-
-            // Prefer encrypted secret; fall back to legacy plaintext for backward compatibility
-            var clientSecret = "";
-            if (p.TryGetProperty("client_secret_enc", out var csEnc) &&
-                !string.IsNullOrEmpty(csEnc.GetString()))
-            {
-                try { clientSecret = TotpEncryption.DecryptString(encKey, csEnc.GetString()!); }
-                catch { /* corrupt/mismatched key — treat as no secret */ }
-            }
-            else if (p.TryGetProperty("client_secret", out var cs))
-            {
-                clientSecret = cs.GetString() ?? "";
-            }
+            var clientSecret = ResolveProviderSecret(p, encKey);
 
             return new ProviderConfig(providerId, type, clientId, clientSecret, issuerUrl);
         }
         return null;
+    }
+
+    private static string ResolveProviderSecret(JsonElement p, byte[] encKey)
+    {
+        if (p.TryGetProperty("client_secret_enc", out var csEnc) && !string.IsNullOrEmpty(csEnc.GetString()))
+        {
+            try { return TotpEncryption.DecryptString(encKey, csEnc.GetString()!); }
+            catch { /* corrupt/mismatched key — treat as no secret */ }
+        }
+        if (p.TryGetProperty("client_secret", out var cs))
+            return cs.GetString() ?? "";
+        return "";
     }
 
     private static Dictionary<string, object>? StripSecretsFromTheme(Dictionary<string, object>? theme)
@@ -1337,6 +1388,6 @@ public record SmsOtpVerifyRequest(string Code);
 public record LogoutRequest(string LogoutChallenge);
 public record RegisterRequest(string LoginChallenge, string Email, string Password, string? Username, string? Phone);
 public record VerifyOtpRequest(string SessionId, string Code);
-public record PasswordResetRequestBody(Guid ProjectId, string Email, string? Phone);
+public record PasswordResetRequestBody([property: System.Text.Json.Serialization.JsonRequired] Guid ProjectId, string Email, string? Phone);
 public record PasswordResetConfirmBody(string Token, string NewPassword);
 public record InviteCompleteRequest(string Token, string Password);

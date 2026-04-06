@@ -13,7 +13,7 @@ public class AppConfig(IConfiguration config)
 
     // ── Database ──────────────────────────────────────────────────────────────
     public string ConnectionString => config.GetConnectionString("Default")
-        ?? "Host=localhost;Database=rediensiam;Username=iam;Password=changeme";
+        ?? throw new InvalidOperationException("ConnectionStrings:Default is required — set via env var ConnectionStrings__Default");
 
     // ── Cache / Redis ─────────────────────────────────────────────────────────
     public string CacheConnectionString => config["Cache:ConnectionString"] ?? "localhost:6379,abortConnect=false";
@@ -68,8 +68,13 @@ public class AppConfig(IConfiguration config)
     // Override these env vars to point at external (off-cluster) service instances:
     //   Hydra__AdminUrl, Hydra__PublicUrl, Keto__ReadUrl, Keto__WriteUrl
     //   ConnectionStrings__Default, Cache__ConnectionString
-    public string HydraAdminUrl  => config["Hydra:AdminUrl"]  ?? "http://rediensiam-hydra-admin:4445";
-    public string HydraPublicUrl => config["Hydra:PublicUrl"] ?? "http://rediensiam-hydra-public:4444";
-    public string KetoReadUrl    => config["Keto:ReadUrl"]    ?? "http://rediensiam-keto-read:4466";
-    public string KetoWriteUrl   => config["Keto:WriteUrl"]   ?? "http://rediensiam-keto-write:4467";
+    // Internal Kubernetes service URLs — HTTP is correct for in-cluster traffic. NOSONAR S5332
+    public string HydraAdminUrl  => config["Hydra:AdminUrl"]  ?? "http://rediensiam-hydra-admin:4445"; // NOSONAR S5332
+    public string HydraPublicUrl => config["Hydra:PublicUrl"] ?? "http://rediensiam-hydra-public:4444"; // NOSONAR S5332
+    public string KetoReadUrl    => config["Keto:ReadUrl"]    ?? "http://rediensiam-keto-read:4466"; // NOSONAR S5332
+    public string KetoWriteUrl   => config["Keto:WriteUrl"]   ?? "http://rediensiam-keto-write:4467"; // NOSONAR S5332
+
+    // ── Social login ──────────────────────────────────────────────────────────
+    public string GithubUserApiUrl   => config["Social:GithubUserApiUrl"]   ?? "https://api.github.com/user";
+    public string GithubEmailsApiUrl => config["Social:GithubEmailsApiUrl"] ?? "https://api.github.com/user/emails";
 }

@@ -16,15 +16,17 @@ namespace RediensIAM.Controllers;
 [RequireManagementLevel(ManagementLevel.SuperAdmin)]
 public class SystemAdminController(
     RediensIamDbContext db,
-    HydraService hydra,
-    KetoService keto,
-    PasswordService passwords,
-    AuditLogService audit,
+    OrgAdminServices svc,
     AppConfig appConfig,
-    IEmailService emailService,
-    IDistributedCache cache,
     ILogger<SystemAdminController> logger) : ControllerBase
 {
+    // Unwrap bundle (S107)
+    private HydraService hydra         => svc.Hydra;
+    private KetoService keto           => svc.Keto;
+    private PasswordService passwords   => svc.Passwords;
+    private AuditLogService audit       => svc.Audit;
+    private IEmailService emailService  => svc.Email;
+    private IDistributedCache cache     => svc.Cache;
     private static readonly string[] OAuth2GrantTypes   = ["authorization_code", "refresh_token"];
     private static readonly string[] OAuth2ResponseTypes = ["code"];
     private static readonly string[] BuiltInScopes       = ["openid", "profile", "offline_access"];
@@ -205,8 +207,17 @@ var user = await db.Users
     [HttpPatch("users/{id}")]
     public async Task<IActionResult> UpdateUser(Guid id, [FromBody] AdminUpdateUserRequest body)
     {
-var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id == id);
+        var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id == id);
         if (user == null) return NotFound();
+        ApplyUserFields(user, body);
+        user.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        await audit.RecordAsync(user.UserList.OrgId, null, GetActorId(), "user.updated", "user", id.ToString());
+        return Ok(new { user.Id, user.Email, user.Username, user.Discriminator, user.DisplayName, user.Phone, user.Active, user.EmailVerified, user.LockedUntil, user.FailedLoginCount });
+    }
+
+    private void ApplyUserFields(User user, AdminUpdateUserRequest body)
+    {
         if (body.Email != null) { user.Email = body.Email.ToLowerInvariant(); user.EmailVerified = false; user.EmailVerifiedAt = null; }
         if (body.Username != null) user.Username = body.Username;
         if (body.DisplayName != null) user.DisplayName = body.DisplayName == "" ? null : body.DisplayName;
@@ -215,10 +226,6 @@ var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id
         if (body.EmailVerified.HasValue) { user.EmailVerified = body.EmailVerified.Value; user.EmailVerifiedAt = body.EmailVerified.Value ? DateTimeOffset.UtcNow : null; }
         if (body.ClearLock == true) { user.LockedUntil = null; user.FailedLoginCount = 0; }
         if (!string.IsNullOrEmpty(body.NewPassword)) user.PasswordHash = passwords.Hash(body.NewPassword);
-        user.UpdatedAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync();
-        await audit.RecordAsync(user.UserList.OrgId, null, GetActorId(), "user.updated", "user", id.ToString());
-        return Ok(new { user.Id, user.Email, user.Username, user.Discriminator, user.DisplayName, user.Phone, user.Active, user.EmailVerified, user.LockedUntil, user.FailedLoginCount });
     }
 
     [HttpPost("users/{id}/unlock")]
@@ -499,25 +506,36 @@ var project = await db.Projects.FindAsync(id);
         if (body.SmsVerificationEnabled.HasValue)   project.SmsVerificationEnabled   = body.SmsVerificationEnabled.Value;
         if (body.Active.HasValue)                   project.Active                   = body.Active.Value;
         if (body.AllowedEmailDomains != null)       project.AllowedEmailDomains      = body.AllowedEmailDomains;
-        if (body.ClearDefaultRole == true)
-            project.DefaultRoleId = null;
-        else if (body.DefaultRoleId.HasValue)
-        {
-            var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == body.DefaultRoleId && r.ProjectId == id);
-            if (role == null) return BadRequest(new { error = "invalid_default_role" });
-            project.DefaultRoleId = body.DefaultRoleId;
-        }
-        if (body.LoginTheme != null)
-        {
-            var encKey = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
-            project.LoginTheme = TotpEncryption.EncryptProviderSecretsInTheme(
-                body.LoginTheme, project.LoginTheme, encKey)!;
-        }
+        var roleErr = await ApplyDefaultRoleAsync(project, body.ClearDefaultRole, body.DefaultRoleId, id);
+        if (roleErr != null) return roleErr;
+        ApplyLoginTheme(project, body.LoginTheme);
         if (body.IpAllowlist != null) project.IpAllowlist = body.IpAllowlist;
         if (body.CheckBreachedPasswords.HasValue) project.CheckBreachedPasswords = body.CheckBreachedPasswords.Value;
         project.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         return Ok(new { project.Id, project.Name });
+    }
+
+    private async Task<IActionResult?> ApplyDefaultRoleAsync(Project project, bool? clearRole, Guid? newRoleId, Guid projectId)
+    {
+        if (clearRole == true)
+        {
+            project.DefaultRoleId = null;
+        }
+        else if (newRoleId.HasValue)
+        {
+            var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == newRoleId && r.ProjectId == projectId);
+            if (role == null) return BadRequest(new { error = "invalid_default_role" });
+            project.DefaultRoleId = newRoleId;
+        }
+        return null;
+    }
+
+    private void ApplyLoginTheme(Project project, Dictionary<string, object>? theme)
+    {
+        if (theme == null) return;
+        var encKey = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
+        project.LoginTheme = TotpEncryption.EncryptProviderSecretsInTheme(theme, project.LoginTheme, encKey)!;
     }
 
     [HttpGet("projects/{id}/scopes")]
@@ -534,7 +552,7 @@ var project = await db.Projects.FindAsync(id);
         var project = await db.Projects.FindAsync(id);
         if (project == null) return NotFound();
 
-        var invalid = body.Scopes.Where(s => !System.Text.RegularExpressions.Regex.IsMatch(s, @"^[a-z0-9_:.-]+$")).ToArray();
+        var invalid = body.Scopes.Where(s => !System.Text.RegularExpressions.Regex.IsMatch(s, @"^[a-z0-9_:.-]+$", System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromMilliseconds(100))).ToArray();
         if (invalid.Length > 0) return BadRequest(new { error = "invalid_scope_names", invalid });
 
         project.AllowedScopes = body.Scopes;
@@ -1024,16 +1042,16 @@ await hydra.DeleteOAuth2ClientAsync(id);
 public record CreateOrgRequest(string Name, string Slug);
 public record UpdateOrgRequest(string? Name, int? AuditRetentionDays);
 public record AdminCreateUserRequest(string Email, string? Password, string? Username, bool? EmailVerified);
-public record AssignOrgAdminRequest(Guid UserId, string Role, Guid? ScopeId);
-public record AdminCreateUserListRequest(string Name, Guid OrgId);
-public record AdminCreateProjectRequest(string Name, string Slug, bool RequireRoleToLogin, string[]? RedirectUris);
+public record AssignOrgAdminRequest([property: System.Text.Json.Serialization.JsonRequired] Guid UserId, string Role, Guid? ScopeId);
+public record AdminCreateUserListRequest(string Name, [property: System.Text.Json.Serialization.JsonRequired] Guid OrgId);
+public record AdminCreateProjectRequest(string Name, string Slug, [property: System.Text.Json.Serialization.JsonRequired] bool RequireRoleToLogin, string[]? RedirectUris);
 public record AdminUpdateProjectRequest(string? Name, bool? RequireRoleToLogin, bool? RequireMfa, bool? AllowSelfRegistration, bool? EmailVerificationEnabled,
     bool? SmsVerificationEnabled, bool? Active, Guid? DefaultRoleId, bool? ClearDefaultRole, string[]? AllowedEmailDomains, Dictionary<string, object>? LoginTheme,
     string[]? IpAllowlist, bool? CheckBreachedPasswords);
-public record AdminAssignUserListRequest(Guid UserListId);
+public record AdminAssignUserListRequest([property: System.Text.Json.Serialization.JsonRequired] Guid UserListId);
 public record AdminUpdateUserRequest(string? Email, string? Username, string? DisplayName, string? Phone, bool? Active, bool? EmailVerified, bool? ClearLock, string? NewPassword);
 public record AdminCreateRoleRequest(string Name, string? Description, int? Rank);
 public record CreateHydraClientRequest(string ClientName, string[] GrantTypes, string[] RedirectUris, string? Scope);
-public record AdminUpsertSmtpRequest(string Host, int Port, bool StartTls, string? Username, string? Password, string FromAddress, string FromName);
+public record AdminUpsertSmtpRequest(string Host, [property: System.Text.Json.Serialization.JsonRequired] int Port, [property: System.Text.Json.Serialization.JsonRequired] bool StartTls, string? Username, string? Password, string FromAddress, string FromName);
 public record AdminCreateSamlProviderRequest(string EntityId, string? MetadataUrl, string? SsoUrl, string? CertificatePem, string? EmailAttributeName, string? DisplayNameAttributeName, bool? JitProvisioning, Guid? DefaultRoleId);
 public record AdminUpdateSamlProviderRequest(string? EntityId, string? MetadataUrl, string? SsoUrl, string? CertificatePem, string? EmailAttributeName, string? DisplayNameAttributeName, bool? JitProvisioning, Guid? DefaultRoleId, bool? Active);
