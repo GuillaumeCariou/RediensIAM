@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { UserPlus, Trash2, CheckCircle, XCircle, Plus, MoreHorizontal, LockOpen, Mail, Monitor } from 'lucide-react';
+import { UserPlus, Trash2, Plus, MoreHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -270,7 +270,59 @@ export default function UserListMembersPanel({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {memberRows}
+              {loading
+                ? Array.from({ length: 3 }, (_, i) => (
+                    <TableRow key={i}>
+                      <TableCell colSpan={projectId ? 5 : 4}><Skeleton className="h-6 w-full" /></TableCell>
+                    </TableRow>
+                  ))
+                : members.map(m => (
+                    <TableRow key={m.id}>
+                      <TableCell>
+                        <p className="text-sm font-medium">{m.username}#{m.discriminator}</p>
+                        <p className="text-xs text-muted-foreground">{m.email}</p>
+                      </TableCell>
+                      <TableCell>
+                        {m.invite_pending
+                          ? <Badge variant="secondary">Invite pending</Badge>
+                          : isLocked(m)
+                            ? <Badge variant="destructive">Locked</Badge>
+                            : m.active
+                              ? <Badge variant="default">Active</Badge>
+                              : <Badge variant="destructive">Inactive</Badge>}
+                      </TableCell>
+                      {projectId && (
+                        <TableCell>
+                          <div className="flex flex-wrap gap-1">
+                            {userRoles(m.id).map(r => <Badge key={r.id} variant="secondary">{r.name}</Badge>)}
+                          </div>
+                        </TableCell>
+                      )}
+                      <TableCell className="text-sm text-muted-foreground">{fmtDate(m.last_login_at)}</TableCell>
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => openEdit(m)}>Edit</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openSessions(m)}>View sessions</DropdownMenuItem>
+                            {m.invite_pending && (
+                              <DropdownMenuItem onClick={() => handleResendInvite(m)}>Resend invite</DropdownMenuItem>
+                            )}
+                            {isLocked(m) && (
+                              <DropdownMenuItem onClick={() => handleUnlock(m)}>Unlock account</DropdownMenuItem>
+                            )}
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem className="text-destructive" onClick={() => setRemoveTarget(m)}>Remove</DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))
+              }
             </TableBody>
           </Table>
         </CardContent>

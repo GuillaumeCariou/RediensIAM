@@ -205,7 +205,7 @@ export default function MfaChallenge() {
 function base64urlToBuffer(b64: string): ArrayBuffer {
   const bin = atob(b64.replaceAll('-', '+').replaceAll('_', '/'));
   const buf = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) buf[i] = bin.codePointAt(i);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.codePointAt(i)!;
   return buf.buffer;
 }
 

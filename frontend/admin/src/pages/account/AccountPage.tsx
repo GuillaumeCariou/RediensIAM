@@ -399,7 +399,9 @@ function PasskeysCard() {
               </div>
             ))}
           </div>
-        ) : null}
+          );
+          return null;
+        })()}
 
         <div className="flex gap-2 items-center">
           <Input
@@ -423,7 +425,7 @@ function PasskeysCard() {
 function base64urlToBuffer(b64: string): ArrayBuffer {
   const bin = atob(b64.replaceAll('-', '+').replaceAll('_', '/'));
   const buf = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) buf[i] = bin.codePointAt(i);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.codePointAt(i)!;
   return buf.buffer;
 }
 function bufferToBase64url(buf: ArrayBuffer): string {
@@ -830,8 +832,7 @@ export default function AccountPage() {
           </div>
         ) : !me ? (
           <p className="text-muted-foreground">Failed to load account.</p>
-          );
-          return (
+        ) : (
           <Tabs defaultValue="profile" className="space-y-4">
             <TabsList>
               <TabsTrigger value="profile"><User className="h-4 w-4" />Profile</TabsTrigger>
@@ -844,8 +845,7 @@ export default function AccountPage() {
             <TabsContent value="mfa"><MfaTab /></TabsContent>
             <TabsContent value="sessions"><SessionsTab /></TabsContent>
           </Tabs>
-          );
-        })()}
+        )}
       </div>
     </div>
   );
