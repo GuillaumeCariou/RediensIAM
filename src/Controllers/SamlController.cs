@@ -123,8 +123,9 @@ public class SamlController(
             return StatusCode(503, new { error = "project_not_configured" });
 
         // Find or JIT-provision user
+        var emailLower = email.ToLowerInvariant();
         var user = await db.Users.FirstOrDefaultAsync(
-            u => u.UserListId == project.AssignedUserListId && u.Email == email.ToLowerInvariant());
+            u => u.UserListId == project.AssignedUserListId && u.Email == emailLower);
 
         if (user == null)
         {

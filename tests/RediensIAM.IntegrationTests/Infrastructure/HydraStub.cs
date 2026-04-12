@@ -21,6 +21,13 @@ public sealed class HydraStub : IDisposable
         SetupDefaults();
     }
 
+    /// <summary>Resets all stubs back to the default safe no-ops.</summary>
+    public void ResetDefaults()
+    {
+        _server.Reset();
+        SetupDefaults();
+    }
+
     // ── Default stubs (safe no-ops for all Hydra calls) ──────────────────────
 
     private void SetupDefaults()
@@ -37,7 +44,7 @@ public sealed class HydraStub : IDisposable
         // Clients — return empty list and accept any create/delete
         _server
             .Given(Request.Create().WithPath("/admin/clients").UsingGet())
-            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new object[] { }));
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(Array.Empty<object>()));
 
         _server
             .Given(Request.Create().WithPath("/admin/clients").UsingPost())
@@ -55,14 +62,20 @@ public sealed class HydraStub : IDisposable
             .Given(Request.Create().WithPath(new WildcardMatcher("/admin/clients/*")).UsingPut())
             .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { client_id = "stub-client" }));
 
+        _server
+            .Given(Request.Create().WithPath(new WildcardMatcher("/admin/clients/*")).UsingPatch())
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { client_id = "stub-client" }));
+
         // Sessions — accept any revoke
         _server
             .Given(Request.Create().WithPath("/admin/oauth2/auth/sessions/consent").UsingDelete())
+            .AtPriority(100)
             .RespondWith(Response.Create().WithStatusCode(204));
 
         _server
             .Given(Request.Create().WithPath("/admin/oauth2/auth/sessions/consent").UsingGet())
-            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new object[] { }));
+            .AtPriority(100)
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(Array.Empty<object>()));
 
         // Introspect — default: inactive token
         _server
@@ -146,6 +159,58 @@ public sealed class HydraStub : IDisposable
                 .WithBodyAsJson(new { active = true, sub = userId, ext }));
     }
 
+    /// <summary>
+    /// Registers a test bearer token where <c>ext.roles</c> is a plain string rather than
+    /// an array — this exercises the <c>ValueKind == String</c> branch of ExtClaims.GetRoles.
+    /// </summary>
+    public void RegisterTokenWithStringRoles(string token, string userId, string? orgId, string rolesString)
+    {
+        var ext = new Dictionary<string, object?>
+        {
+            ["user_id"]    = userId,
+            ["org_id"]     = orgId,
+            ["project_id"] = null,
+            ["roles"]      = rolesString,   // string, not string[]
+        };
+
+        _server
+            .Given(Request.Create()
+                .WithPath("/admin/oauth2/introspect")
+                .UsingPost()
+                .WithBody($"*token={Uri.EscapeDataString(token)}*", WireMock.Matchers.MatchBehaviour.AcceptOnMatch))
+            .AtPriority(1)
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBodyAsJson(new { active = true, sub = userId, ext }));
+    }
+
+    /// <summary>
+    /// Registers a token where ext.roles is a numeric JSON value (neither array nor string),
+    /// triggering the ExtClaims.GetRoles fallback return [] branch (HydraService line 279).
+    /// </summary>
+    public void RegisterTokenWithNumericRoles(string token, string userId, string? orgId)
+    {
+        var ext = new Dictionary<string, object?>
+        {
+            ["user_id"]    = userId,
+            ["org_id"]     = orgId,
+            ["project_id"] = null,
+            ["roles"]      = 0,   // numeric — ValueKind = Number, not Array or String
+        };
+
+        _server
+            .Given(Request.Create()
+                .WithPath("/admin/oauth2/introspect")
+                .UsingPost()
+                .WithBody($"*token={Uri.EscapeDataString(token)}*", WireMock.Matchers.MatchBehaviour.AcceptOnMatch))
+            .AtPriority(1)
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBodyAsJson(new { active = true, sub = userId, ext }));
+    }
+
     // ── Login challenge helpers ───────────────────────────────────────────────
 
     /// <summary>
@@ -198,6 +263,62 @@ public sealed class HydraStub : IDisposable
                     {
                         extra = new Dictionary<string, object> { ["project_id"] = projectId, ["org_id"] = orgId }
                     }
+                }));
+    }
+
+    /// <summary>
+    /// Sets up a login challenge where client.metadata.project_id differs from
+    /// oidc_context.extra.project_id — triggers the project_id mismatch rejection branch.
+    /// </summary>
+    public void SetupLoginChallengeWithProjectIdMismatch(
+        string challenge, string? clientId, string oidcProjectId, string registeredProjectId)
+    {
+        _server
+            .Given(Request.Create()
+                .WithPath("/admin/oauth2/auth/requests/login")
+                .UsingGet()
+                .WithParam("login_challenge", challenge))
+            .AtPriority(1)
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithBodyAsJson(new
+                {
+                    skip        = false,
+                    subject     = "",
+                    request_url = $"http://localhost/oauth2/auth?client_id={clientId}",
+                    client = new
+                    {
+                        client_id = clientId,
+                        metadata  = new Dictionary<string, object> { ["project_id"] = registeredProjectId }
+                    },
+                    oidc_context = new
+                    {
+                        extra = new Dictionary<string, object> { ["project_id"] = oidcProjectId }
+                    }
+                }));
+    }
+
+    /// <summary>
+    /// Sets up a login challenge where project_id appears only in the request URL,
+    /// not in oidc_context extras. Used to exercise the URL-fallback branch of ExtractProjectId.
+    /// </summary>
+    public void SetupLoginChallengeProjectInUrl(string challenge, string? clientId, string projectId)
+    {
+        _server
+            .Given(Request.Create()
+                .WithPath("/admin/oauth2/auth/requests/login")
+                .UsingGet()
+                .WithParam("login_challenge", challenge))
+            .AtPriority(1)
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithBodyAsJson(new
+                {
+                    skip        = false,
+                    subject     = "",
+                    request_url = $"http://localhost/oauth2/auth?client_id={clientId}&project_id={projectId}",
+                    client      = new { client_id = clientId, metadata = new Dictionary<string, object>() },
+                    oidc_context = new { extra = new Dictionary<string, object>() }   // no project_id
                 }));
     }
 
@@ -254,6 +375,102 @@ public sealed class HydraStub : IDisposable
                 .WithParam("subject", subject))
             .AtPriority(1)
             .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(sessions));
+    }
+
+    // ── OAuth2 client helpers ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Stubs GET /admin/clients/{clientId} to return a client with a JWKS key.
+    /// Needed to cover the GetKeysAsync has_key=true path in PatService.
+    /// </summary>
+    public void SetupOAuth2ClientWithJwks(string clientId, string kid = "test-key-1")
+    {
+        _server
+            .Given(Request.Create()
+                .WithPath($"/admin/clients/{Uri.EscapeDataString(clientId)}")
+                .UsingGet())
+            .AtPriority(0)
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithBodyAsJson(new
+                {
+                    client_id = clientId,
+                    jwks = new
+                    {
+                        keys = new[]
+                        {
+                            new { kid, kty = "RSA", use = "sig" }
+                        }
+                    }
+                }));
+    }
+
+    /// <summary>Configures GET /admin/clients/{clientId} to return a minimal client object (200).</summary>
+    public void SetupClientGetResponse(string clientId)
+    {
+        _server
+            .Given(Request.Create()
+                .WithPath($"/admin/clients/{Uri.EscapeDataString(clientId)}")
+                .UsingGet())
+            .AtPriority(0)
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithBodyAsJson(new { client_id = clientId, client_name = "Test Client" }));
+    }
+
+    /// <summary>Configures DELETE /admin/clients/{clientId} to return 500 (simulates Hydra failure).</summary>
+    public void SetupClientDeleteFailure(string clientId)
+    {
+        _server
+            .Given(Request.Create()
+                .WithPath($"/admin/clients/{Uri.EscapeDataString(clientId)}")
+                .UsingDelete())
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(500));
+    }
+
+    // ── Client creation failure simulation ───────────────────────────────────
+
+    /// <summary>Makes POST /admin/clients return 500 to simulate Hydra being unavailable.</summary>
+    public void SetupClientCreationFailure()
+    {
+        _server
+            .Given(Request.Create().WithPath("/admin/clients").UsingPost())
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(500).WithBodyAsJson(new { error = "service_unavailable" }));
+    }
+
+    /// <summary>Restores the default POST /admin/clients → 201 response, overriding a previous failure stub.</summary>
+    public void RestoreClientCreation()
+    {
+        _server
+            .Given(Request.Create().WithPath("/admin/clients").UsingPost())
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(201).WithBodyAsJson(new { client_id = "stub-client" }));
+    }
+
+    // ── Health failure simulation ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Makes /health/alive return 500 (overrides the default 200 stub at highest priority).
+    /// Call SetupDefaults() indirectly via Reset + SetupDefaults() or just restart after the test.
+    /// </summary>
+    public void SetHealthFailure()
+    {
+        _server
+            .Given(Request.Create().WithPath("/health/alive").UsingGet())
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(500).WithBodyAsJson(new { error = "simulated_failure" }));
+    }
+
+    /// <summary>Restores the default healthy /health/alive response.</summary>
+    public void RestoreHealth()
+    {
+        // Re-add the health stub at priority 0 so it beats the failure stub
+        _server
+            .Given(Request.Create().WithPath("/health/alive").UsingGet())
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { status = "ok" }));
     }
 
     // ── Verification helpers ──────────────────────────────────────────────────

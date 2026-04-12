@@ -346,4 +346,86 @@ public class ServiceAccountTests(TestFixture fixture)
         ids.Should().Contain(saInProject.Id.ToString());
         ids.Should().NotContain(saOtherList.Id.ToString());
     }
+
+    // ── GET /service-accounts/{id}/api-keys ──────────────────────────────────
+
+    [Fact]
+    public async Task GetApiKeys_SaWithoutHydraClient_ReturnsHasKeyFalse()
+    {
+        var (_, _, list, client) = await ScaffoldAsync();
+        var sa = await fixture.Seed.CreateServiceAccountAsync(list.Id);
+        // SA has no HydraClientId (seed creates with null)
+        sa.HydraClientId = null;
+        await fixture.Db.SaveChangesAsync();
+
+        var res = await client.GetAsync($"/service-accounts/{sa.Id}/api-keys");
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("has_key").GetBoolean().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetApiKeys_SaWithHydraClientNotFound_ReturnsHasKeyFalse()
+    {
+        var (_, _, list, client) = await ScaffoldAsync();
+        var sa = await fixture.Seed.CreateServiceAccountAsync(list.Id);
+        sa.HydraClientId = "sa_nonexistent_client";
+        await fixture.Db.SaveChangesAsync();
+
+        // Hydra stub returns 404 for GET /admin/clients/{id} → has_key = false
+        var res = await client.GetAsync($"/service-accounts/{sa.Id}/api-keys");
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("has_key").GetBoolean().Should().BeFalse();
+    }
+
+    // ── POST /service-accounts/{id}/api-keys ─────────────────────────────────
+
+    [Fact]
+    public async Task AddApiKey_ValidJwk_Returns200WithClientId()
+    {
+        var (_, _, list, client) = await ScaffoldAsync();
+        var sa = await fixture.Seed.CreateServiceAccountAsync(list.Id);
+
+        var res = await client.PostAsJsonAsync($"/service-accounts/{sa.Id}/api-keys", new
+        {
+            jwk = new { kty = "RSA", kid = "test-key-1", use = "sig", n = "test", e = "AQAB" }
+        });
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        body.TryGetProperty("client_id", out _).Should().BeTrue();
+    }
+
+    // ── DELETE /service-accounts/{id}/api-keys ────────────────────────────────
+
+    [Fact]
+    public async Task RemoveApiKey_SaWithHydraClient_Returns200()
+    {
+        var (_, _, list, client) = await ScaffoldAsync();
+        var sa = await fixture.Seed.CreateServiceAccountAsync(list.Id);
+        sa.HydraClientId = $"sa_{sa.Id}";
+        await fixture.Db.SaveChangesAsync();
+
+        var res = await client.DeleteAsync($"/service-accounts/{sa.Id}/api-keys");
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("message").GetString().Should().Be("key_removed");
+    }
+
+    [Fact]
+    public async Task RemoveApiKey_SaWithoutHydraClient_Returns200()
+    {
+        var (_, _, list, client) = await ScaffoldAsync();
+        var sa = await fixture.Seed.CreateServiceAccountAsync(list.Id);
+        sa.HydraClientId = null;
+        await fixture.Db.SaveChangesAsync();
+
+        var res = await client.DeleteAsync($"/service-accounts/{sa.Id}/api-keys");
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
 }

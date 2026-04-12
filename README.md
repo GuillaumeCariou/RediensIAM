@@ -129,9 +129,8 @@ All keys below can be overridden in `values.secret.yaml` or via `--set` on the c
 | Key | Default | Description |
 |-----|---------|-------------|
 | `appUrl` | `http://localhost` | Public base URL (login SPA, Hydra issuer, user-facing endpoints) |
-| `adminUrl` | `http://localhost:30501` | Admin SPA URL (NodePort / private ingress) |
 | `image.repository` | `rediensiam` | Docker image name |
-| `image.tag` | `latest` | Docker image tag |
+| `image.tag` | `"0.0.1"` | Docker image tag |
 | `image.pullPolicy` | `IfNotPresent` | Kubernetes pull policy |
 | `replicaCount` | `1` | Number of app replicas |
 | `service.public.port` | `5000` | Public API port |
@@ -140,7 +139,7 @@ All keys below can be overridden in `values.secret.yaml` or via `--set` on the c
 | `ingress.host` | `localhost` | Ingress hostname |
 | `env.IAM_ADMIN_PATH` | `/admin` | Path prefix for the admin SPA |
 | `env.App__PublicUrl` | `http://localhost` | Must match `appUrl` |
-| `env.App__AdminSpaOrigin` | `http://localhost:30501` | CORS origin for the admin SPA |
+| `env.App__AdminSpaOrigin` | `http://localhost` | CORS origin and OIDC redirect base for the admin SPA — must match the origin the browser uses to load it |
 | `env.App__Domain` | `localhost` | Cookie domain |
 | `env.Smtp__Host` | `""` | Global SMTP host (optional) |
 | `env.Smtp__Port` | `587` | Global SMTP port |
@@ -185,7 +184,7 @@ dotnet test tests/RediensIAM.IntegrationTests/ --logger "console;verbosity=detai
 dotnet test tests/RediensIAM.IntegrationTests/ -- xunit.maxParallelThreads=4
 ```
 
-The test suite covers 37 test files across auth flows, org/project management, service accounts, webhooks, and security.
+The test suite covers 367 tests across auth flows, org/project management, service accounts, webhooks, and security.
 
 ---
 
@@ -210,10 +209,13 @@ cp .env.example .env
 Edit `.env`:
 
 ```env
-TEST_BASE_URL=http://localhost          # where the dev stack is running
+TEST_BASE_URL=http://localhost          # public ingress URL (login SPA, admin SPA, OIDC flow)
+TEST_ADMIN_URL=http://localhost:30501   # direct NodePort URL for smoke tests only
 TEST_SUPER_ADMIN_EMAIL=admin@local      # must match IAM_BOOTSTRAP_EMAIL in values.secret.yaml
 TEST_SUPER_ADMIN_PASSWORD=Admin1234!    # must match IAM_BOOTSTRAP_PASSWORD
 ```
+
+> **Important:** `App__AdminSpaOrigin` in `values.yaml` (and the Hydra `redirect_uri` registered at deploy time) must match `TEST_BASE_URL`. Both default to `http://localhost`. Mismatching origins will cause the OIDC callback to fail with an empty session.
 
 > The dev stack must be running (`bash deploy/deploy.sh --dev`) before the E2E tests can be executed.  
 > The global setup will log in once via the full OIDC flow and cache the session in `.auth/admin-session.json`.
@@ -256,7 +258,7 @@ npm run report
 
 **Admin SPA authentication:** The admin SPA stores its OIDC token in `sessionStorage` (via `oidc-client-ts`). Playwright's native `storageState` only covers cookies and `localStorage`, so the global setup captures `sessionStorage` after a real login and writes it to `.auth/admin-session.json`. The `adminPage` fixture re-injects these keys via `page.addInitScript` before each test.
 
-#### Test coverage (129 tests across 12 files)
+#### Test coverage (50 tests across 13 files)
 
 | File | Area |
 |------|------|
@@ -272,6 +274,7 @@ npm run report
 | `admin/webhooks.spec.ts` | CRUD, test button, delivery log, secret rotation |
 | `admin/service-accounts.spec.ts` | PAT generation/revocation, API key management, delete SA |
 | `admin/project-authentication.spec.ts` | SAML providers, OAuth2 providers, password policy, login theme |
+| `admin/deployment-smoke.spec.ts` | Public ingress and NodePort reachability for /admin/ |
 | `org/org-email.spec.ts` | SMTP configure, test, delete, super-admin context |
 
 #### What requires manual testing

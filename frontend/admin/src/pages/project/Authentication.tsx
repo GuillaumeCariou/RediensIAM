@@ -107,14 +107,13 @@ function LogoUpload({ value, onChange, label = 'Logo' }: Readonly<{ value?: stri
   return (
     <div className="space-y-2">
       <Label>{label}</Label>
-      <div
+      <button
+        type="button"
         onDragOver={e => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={e => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handle(f); }}
-        role="button"
-        tabIndex={0}
-        onKeyDown={e => e.key === 'Enter' && document.getElementById('logo-file-input')?.click()}
-        className={`relative border-2 border-dashed rounded-lg p-4 text-center transition-colors ${dragOver ? 'border-primary bg-primary/5' : 'border-border'}`}
+        onClick={() => document.getElementById('logo-file-input')?.click()}
+        className={`relative w-full border-2 border-dashed rounded-lg p-4 text-center transition-colors ${dragOver ? 'border-primary bg-primary/5' : 'border-border'}`}
       >
         {value ? (
           <div className="flex items-center justify-center gap-3">
@@ -127,12 +126,12 @@ function LogoUpload({ value, onChange, label = 'Logo' }: Readonly<{ value?: stri
             <p className="text-xs text-muted-foreground">Drag & drop or{' '}
               <label className="cursor-pointer text-primary underline">
                 browse{' '}
-                <input type="file" accept="image/*" className="hidden" onChange={e => { if (e.target.files?.[0]) handle(e.target.files[0]); }} />
+                <input id="logo-file-input" type="file" accept="image/*" className="hidden" onChange={e => { if (e.target.files?.[0]) handle(e.target.files[0]); }} />
               </label>
             </p>
           </div>
         )}
-      </div>
+      </button>
       <Input value={value?.startsWith('data:') ? '' : (value ?? '')} onChange={e => onChange(e.target.value)}
         placeholder="https://cdn.example.com/logo.png" />
     </div>

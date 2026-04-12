@@ -162,4 +162,18 @@ public class GatewayMiddlewareTests(TestFixture fixture)
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
     }
+
+    // ── PAT token — not in database ───────────────────────────────────────────
+
+    [Fact]
+    public async Task PatToken_NotFoundInDatabase_Returns401()
+    {
+        // Covers GatewayAuthMiddleware line 28: result == null → claims = null → 401
+        var fakePatToken = "rediens_pat_" + Guid.NewGuid().ToString("N");
+        var client       = fixture.ClientWithToken(fakePatToken);
+
+        var res = await client.GetAsync("/account/me");
+
+        res.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
 }

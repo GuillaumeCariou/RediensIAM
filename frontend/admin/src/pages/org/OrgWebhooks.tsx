@@ -324,7 +324,7 @@ export default function OrgWebhooks() {
                         {d.status_code}
                       </Badge>
                     )}
-                    <span className="text-xs text-muted-foreground">{d.attempt_count} attempt{d.attempt_count !== 1 ? 's' : ''}</span>
+                    <span className="text-xs text-muted-foreground">{d.attempt_count} attempt{d.attempt_count === 1 ? '' : 's'}</span>
                     <span className="text-xs text-muted-foreground">{d.delivered_at ? fmtDate(d.delivered_at) : '—'}</span>
                     {expandedDelivery === d.id ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
                   </button>

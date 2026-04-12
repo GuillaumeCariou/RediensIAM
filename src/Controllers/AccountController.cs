@@ -258,8 +258,8 @@ public class AccountController(
         var options     = CredentialCreateOptions.FromJson(json);
         var attestation = JsonSerializer.Deserialize<AuthenticatorAttestationRawResponse>(
             JsonSerializer.Serialize(body.Response))!;
-        IsCredentialIdUniqueToUserAsyncDelegate isUnique = async (args, _) =>
-            !await db.WebAuthnCredentials.AnyAsync(c => c.CredentialId == args.CredentialId);
+        IsCredentialIdUniqueToUserAsyncDelegate isUnique = async (args, ct) =>
+            !await db.WebAuthnCredentials.AnyAsync(c => c.CredentialId == args.CredentialId, ct);
         RegisteredPublicKeyCredential result;
         try
         {

@@ -26,9 +26,12 @@ spec:
       labels:
         app: {{ .Release.Name }}-dragonfly
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: dragonfly
           image: {{ .Values.dragonfly.image }}
           ports:
             - containerPort: 6379
           args: ["--logtostderr"]
+          resources:
+            {{- toYaml .Values.dragonfly.resources | nindent 12 }}

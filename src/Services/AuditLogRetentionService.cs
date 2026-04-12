@@ -53,7 +53,7 @@ public class AuditLogRetentionService(
             .Where(a => a.OrgId == null && a.CreatedAt < systemCutoff)
             .ExecuteDeleteAsync(stoppingToken);
 
-        if (total > 0)
+        if (total > 0 && logger.IsEnabled(LogLevel.Information))
             logger.LogInformation("Audit log retention: purged {Count} expired entries", total);
     }
 }

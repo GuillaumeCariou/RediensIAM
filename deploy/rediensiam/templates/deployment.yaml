@@ -15,6 +15,7 @@ spec:
       labels:
         app: {{ .Release.Name }}
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: rediensiam
           image: {{ .Values.image.repository }}:{{ .Values.image.tag }}

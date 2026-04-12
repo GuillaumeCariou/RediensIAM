@@ -181,8 +181,11 @@ public class AuthController(
     private async Task<User?> LookupUserByCredentialsAsync(Project project, LoginRequest body)
     {
         if (body.Email != null)
+        {
+            var emailLower = body.Email.ToLowerInvariant();
             return await db.Users.FirstOrDefaultAsync(u =>
-                u.UserListId == project.AssignedUserListId && u.Email == body.Email.ToLowerInvariant());
+                u.UserListId == project.AssignedUserListId && u.Email == emailLower);
+        }
 
         if (body.Username != null)
         {
@@ -812,8 +815,9 @@ public class AuthController(
         if (project?.AssignedUserListId == null || (!project.EmailVerificationEnabled && !project.SmsVerificationEnabled))
             return BadRequest(new { error = "verification_not_configured" });
 
+        var emailLower = body.Email.ToLowerInvariant();
         var user = await db.Users.FirstOrDefaultAsync(u =>
-            u.UserListId == project.AssignedUserListId && u.Email == body.Email.ToLowerInvariant());
+            u.UserListId == project.AssignedUserListId && u.Email == emailLower);
 
         // Always generate code to keep compute time constant
         var sessionId = Guid.NewGuid().ToString("N");
@@ -885,10 +889,11 @@ public class AuthController(
         if (body.Email == null) return BadRequest(new { error = "email_required" });
 
         // Admin console users must belong to the system user list (OrgId == null, Immovable).
+        var emailLower = body.Email.ToLowerInvariant();
         var user = await db.Users
             .Include(u => u.UserList)
             .FirstOrDefaultAsync(u =>
-                u.Email == body.Email.ToLowerInvariant() &&
+                u.Email == emailLower &&
                 u.UserList.OrgId == null &&
                 u.UserList.Immovable);
 
@@ -1182,9 +1187,10 @@ public class AuthController(
         User? user = null;
         if (!string.IsNullOrEmpty(profile.Email))
         {
+            var emailLower = profile.Email.ToLowerInvariant();
             user = await db.Users.FirstOrDefaultAsync(u =>
                 u.UserListId == project.AssignedUserListId &&
-                u.Email == profile.Email.ToLowerInvariant() &&
+                u.Email == emailLower &&
                 u.Active);
         }
 
@@ -1343,8 +1349,8 @@ public class AuthController(
         if (cred == null) return Unauthorized(new { error = "unknown_credential" });
 
         var uid = Guid.Parse(userId);
-        IsUserHandleOwnerOfCredentialIdAsync isOwner = async (args, _) =>
-            await db.WebAuthnCredentials.AnyAsync(c => c.CredentialId == args.CredentialId && c.UserId == uid);
+        IsUserHandleOwnerOfCredentialIdAsync isOwner = async (args, ct) =>
+            await db.WebAuthnCredentials.AnyAsync(c => c.CredentialId == args.CredentialId && c.UserId == uid, ct);
 
         VerifyAssertionResult result;
         try

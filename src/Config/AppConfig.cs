@@ -68,8 +68,8 @@ public class AppConfig(IConfiguration config)
     // Override these env vars to point at external (off-cluster) service instances:
     //   Hydra__AdminUrl, Hydra__PublicUrl, Keto__ReadUrl, Keto__WriteUrl
     //   ConnectionStrings__Default, Cache__ConnectionString
-    // Internal Kubernetes service URLs — HTTP is correct for in-cluster traffic.
-#pragma warning disable S5332 // HTTP in-cluster only; overridden by env vars in production
+    // Ory Hydra and Keto disable TLS by default for in-cluster deployments; TLS terminates at the Traefik ingress.
+#pragma warning disable S5332 // In-cluster K8s service URLs — HTTP is correct; TLS terminates at the ingress
     public string HydraAdminUrl  => config["Hydra:AdminUrl"]  ?? "http://rediensiam-hydra-admin:4445";
     public string HydraPublicUrl => config["Hydra:PublicUrl"] ?? "http://rediensiam-hydra-public:4444";
     public string KetoReadUrl    => config["Keto:ReadUrl"]    ?? "http://rediensiam-keto-read:4466";

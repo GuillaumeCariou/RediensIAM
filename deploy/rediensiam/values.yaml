@@ -11,7 +11,7 @@ adminUrl: "http://localhost:30501"
 # ── RediensIAM ───────────────────────────────────────────────────────────────
 image:
   repository: rediensiam
-  tag: latest
+  tag: "0.0.1"
   pullPolicy: IfNotPresent
 
 replicaCount: 1
@@ -21,7 +21,7 @@ service:
     port: 5000
   admin:
     port: 5001
-    # NodePort 30501 is the ONLY external access point for the admin SPA after TODO2.
+    # NodePort 30501 is the ONLY external access point for the admin SPA (by design).
     # The public ingress no longer exposes /admin — access via:
     #   dev:  http://localhost:30501/admin/  (direct NodePort)
     #   ops:  kubectl port-forward svc/rediensiam-admin 30501:5001
@@ -64,7 +64,7 @@ env:
   # ── App ─────────────────────────────────────────────────────────────────────
   App__PublicUrl: "http://localhost"
   # Must match adminUrl above; also update hydra.hydra.config.serve.public.cors.allowed_origins
-  App__AdminSpaOrigin: "http://localhost:30501"
+  App__AdminSpaOrigin: "http://localhost"
   App__Domain: "localhost"
 
   # ── SMTP — optional; per-org SMTP works without this ────────────────────────
@@ -81,19 +81,39 @@ resources:
   requests:
     cpu: 100m
     memory: 128Mi
+    ephemeral-storage: 1Gi
   limits:
     cpu: 500m
     memory: 512Mi
+    ephemeral-storage: 2Gi
 
 # ── PostgreSQL ────────────────────────────────────────────────────────────────
 postgres:
   image: postgres:16-alpine
   password: ""  # override via values.secret.yaml
   storage: 2Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+      ephemeral-storage: 1Gi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+      ephemeral-storage: 2Gi
 
 # ── Dragonfly ─────────────────────────────────────────────────────────────────
 dragonfly:
-  image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+  image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.25.0
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+      ephemeral-storage: 100Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+      ephemeral-storage: 500Mi
 
 # ── Hydra (subchart) ─────────────────────────────────────────────────────────
 hydra:

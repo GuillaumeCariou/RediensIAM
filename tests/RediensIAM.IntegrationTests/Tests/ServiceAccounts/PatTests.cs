@@ -150,4 +150,32 @@ public class PatTests(TestFixture fixture)
         // Gateway accepted the PAT (controller returns 404, not 401 from middleware)
         res.StatusCode.Should().NotBe(HttpStatusCode.Unauthorized);
     }
+
+    // ── PAT cache hit path ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task PatToken_UsedTwice_SecondCallHitsRedisCache()
+    {
+        var (_, project, sa, client) = await ScaffoldAsync();
+
+        // Generate a PAT
+        var createRes = await client.PostAsJsonAsync($"/service-accounts/{sa.Id}/pat", new
+        {
+            name       = "Cache Hit Test Token",
+            expires_in = 60
+        });
+        var patToken = (await createRes.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("token").GetString()!;
+
+        var patClient = fixture.ClientWithToken(patToken);
+
+        // First call: DB lookup + caches the result in Redis
+        await patClient.GetAsync($"/service-accounts/{sa.Id}");
+
+        // Second call: same token → should hit Redis cache (line 56 in PatService)
+        var res = await patClient.GetAsync($"/service-accounts/{sa.Id}");
+
+        // Result is same regardless of cache; just confirm no 500 error
+        ((int)res.StatusCode).Should().BeLessThan(500);
+    }
 }

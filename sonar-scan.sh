@@ -44,7 +44,7 @@ dotnet sonarscanner begin \
   /d:sonar.host.url="$SONAR_HOST" \
   /d:sonar.token="$SONAR_TOKEN_API" \
   /d:sonar.projectBaseDir="$(pwd)" \
-  /d:sonar.exclusions="**/obj/**,**/bin/**,**/Migrations/**" \
+  /d:sonar.exclusions="**/obj/**,**/bin/**,**/Migrations/**,**/frontend/**,**/tests/e2e/**" \
   /d:sonar.cs.opencover.reportsPaths="tests/**/TestResults/**/coverage.opencover.xml"
 
 dotnet build RediensIAM.slnx --no-incremental

@@ -43,6 +43,13 @@ interface Props {
   onChanged?: () => void;
 }
 
+function MemberStatusBadge({ member, isLocked }: Readonly<{ member: Member; isLocked: (m: Member) => boolean }>) {
+  if (member.invite_pending) return <Badge variant="secondary">Invite pending</Badge>;
+  if (isLocked(member)) return <Badge variant="destructive">Locked</Badge>;
+  if (member.active) return <Badge variant="default">Active</Badge>;
+  return <Badge variant="destructive">Inactive</Badge>;
+}
+
 export default function UserListMembersPanel({
   listId, title = 'Members', isSystemCtx = false,
   projectId, defaultRoleId, onChanged,
@@ -277,19 +284,13 @@ export default function UserListMembersPanel({
                     </TableRow>
                   ))
                 : members.map(m => (
-                    <TableRow key={m.id}>
+                    <TableRow key={m.id} className="cursor-pointer" onClick={() => openEdit(m)}>
                       <TableCell>
                         <p className="text-sm font-medium">{m.username}#{m.discriminator}</p>
                         <p className="text-xs text-muted-foreground">{m.email}</p>
                       </TableCell>
                       <TableCell>
-                        {m.invite_pending
-                          ? <Badge variant="secondary">Invite pending</Badge>
-                          : isLocked(m)
-                            ? <Badge variant="destructive">Locked</Badge>
-                            : m.active
-                              ? <Badge variant="default">Active</Badge>
-                              : <Badge variant="destructive">Inactive</Badge>}
+                        <MemberStatusBadge member={m} isLocked={isLocked} />
                       </TableCell>
                       {projectId && (
                         <TableCell>
@@ -299,7 +300,7 @@ export default function UserListMembersPanel({
                         </TableCell>
                       )}
                       <TableCell className="text-sm text-muted-foreground">{fmtDate(m.last_login_at)}</TableCell>
-                      <TableCell>
+                      <TableCell onClick={e => e.stopPropagation()}>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="sm" className="h-7 w-7 p-0">

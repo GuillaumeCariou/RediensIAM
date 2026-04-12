@@ -205,7 +205,7 @@ echo "──── [5/5] Bootstrap ───────────────
 if [ "${PROD}" = "true" ]; then
   REDIRECT_URI="${PROD_URL}/admin/callback"
 else
-  REDIRECT_URI="http://localhost:30501/admin/callback"
+  REDIRECT_URI="http://localhost/admin/callback"
 fi
 
 kubectl exec -n "${NAMESPACE}" deployment/rediensiam-hydra -- \

@@ -7,9 +7,7 @@ public class BreachCheckService(IHttpClientFactory http, ILogger<BreachCheckServ
 {
     public async Task<int> GetBreachCountAsync(string password)
     {
-#pragma warning disable S4790 // HIBP k-anonymity protocol mandates SHA1
         var sha1 = SHA1.HashData(Encoding.UTF8.GetBytes(password));
-#pragma warning restore S4790
         var hex    = Convert.ToHexString(sha1).ToUpperInvariant();
         var prefix = hex[..5];
         var suffix = hex[5..];

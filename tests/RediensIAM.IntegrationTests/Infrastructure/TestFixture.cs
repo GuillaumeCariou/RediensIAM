@@ -36,9 +36,10 @@ public sealed class TestFixture : IAsyncLifetime
     public KetoStub         Keto       { get; } = new();
     public StubEmailService EmailStub  { get; } = new();
     public StubSmsService   SmsStub    { get; } = new();
+    public HibpStubHandler  HibpStub   { get; } = new();
 
     // ── Cache connection (for flush between tests) ────────────────────────────
-    private IConnectionMultiplexer _mux = null!;
+    private ConnectionMultiplexer? _mux;
 
     // ── App under test ────────────────────────────────────────────────────────
     private WebApplicationFactory<Program> _factory = null!;
@@ -47,6 +48,9 @@ public sealed class TestFixture : IAsyncLifetime
 
     /// <summary>Direct DB access for seeding and assertions.</summary>
     public RediensIamDbContext Db { get; private set; } = null!;
+
+    /// <summary>Root DI service provider from the test host.</summary>
+    public IServiceProvider Services => _factory.Services;
 
     /// <summary>Helper for creating test data.</summary>
     public SeedData Seed { get; private set; } = null!;
@@ -126,6 +130,11 @@ public sealed class TestFixture : IAsyncLifetime
                     if (smsDescriptor != null) services.Remove(smsDescriptor);
                     services.AddSingleton<ISmsService>(SmsStub);
 
+                    // Intercept unnamed HTTP client (used by BreachCheckService / SocialLoginService)
+                    // with a stub that can be configured per-test to return HIBP breach counts.
+                    var hibp = HibpStub;
+                    services.AddHttpClient(string.Empty).ConfigurePrimaryHttpMessageHandler(() => hibp);
+
                     // Allow session cookies over plain HTTP in tests (test server uses http://localhost)
                     services.Configure<SessionOptions>(opts =>
                     {
@@ -151,7 +160,7 @@ public sealed class TestFixture : IAsyncLifetime
     {
         Hydra.Dispose();
         Keto.Dispose();
-        _mux.Dispose();
+        _mux?.Dispose();
         Client.Dispose();
         await _factory.DisposeAsync();
         await Task.WhenAll(_postgres.DisposeAsync().AsTask(), _redis.DisposeAsync().AsTask());
@@ -181,7 +190,83 @@ public sealed class TestFixture : IAsyncLifetime
     /// <summary>Flushes the Dragonfly/Redis cache — resets rate limiters and session state between tests.</summary>
     public async Task FlushCacheAsync()
     {
-        await _mux.GetDatabase().ExecuteAsync("FLUSHALL");
+        await _mux!.GetDatabase().ExecuteAsync("FLUSHALL");
+    }
+
+    /// <summary>Resolves a scoped service from the app's DI container.</summary>
+    public T GetService<T>() where T : notnull
+    {
+        var scope = _factory.Services.CreateScope();
+        return scope.ServiceProvider.GetRequiredService<T>();
+    }
+
+    /// <summary>
+    /// Creates a new WebApplicationFactory with Smtp:Host configured (non-empty),
+    /// registering the supplied email service stub. Caller must dispose the factory.
+    /// </summary>
+    public (HttpClient Client, WebApplicationFactory<Program> Factory)
+        CreateSmtpEnabledClient(IEmailService emailService)
+    {
+        var factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.UseEnvironment("Testing");
+                builder.ConfigureAppConfiguration((_, cfg) =>
+                {
+                    cfg.AddInMemoryCollection(new Dictionary<string, string?>
+                    {
+                        ["ConnectionStrings:Default"]           = _postgres.GetConnectionString(),
+                        ["Cache:ConnectionString"]              = _redis.GetConnectionString(),
+                        ["Cache:InstanceName"]                  = "test2:",
+                        ["Cache:PatTtlMinutes"]                 = "5",
+                        ["App:PublicUrl"]                       = "http://localhost",
+                        ["App:Domain"]                          = "localhost",
+                        ["App:AdminSpaOrigin"]                  = "http://localhost",
+                        ["IAM_PUBLIC_PORT"]                     = "5000",
+                        ["IAM_ADMIN_PORT"]                      = "5001",
+                        ["Security:TotpSecretEncryptionKey"]    = new string('0', 64),
+                        ["Security:MaxLoginAttempts"]           = "5",
+                        ["Security:LockoutMinutes"]             = "15",
+                        ["Security:OtpTtlSeconds"]              = "300",
+                        ["Security:MaxSmsPerWindow"]            = "3",
+                        ["Security:SmsWindowMinutes"]           = "10",
+                        ["Security:PatPrefix"]                  = "rediens_pat_",
+                        ["Security:ArgonTimeCost"]              = "1",
+                        ["Security:ArgonMemoryCost"]            = "8192",
+                        ["Security:ArgonParallelism"]           = "1",
+                        ["Hydra:AdminUrl"]                      = Hydra.Url,
+                        ["Hydra:PublicUrl"]                     = Hydra.Url,
+                        ["Keto:ReadUrl"]                        = Keto.ReadUrl,
+                        ["Keto:WriteUrl"]                       = Keto.WriteUrl,
+                        ["Smtp:Host"]                           = "smtp.test.local",
+                        ["Smtp:FromAddress"]                    = "noreply@test.com",
+                        ["Smtp:FromName"]                       = "Test IAM",
+                        ["Bootstrap:Email"]                     = "",
+                        ["Bootstrap:Password"]                  = "",
+                    });
+                });
+                builder.ConfigureServices(services =>
+                {
+                    services.AddSingleton<IStartupFilter>(new LoopbackRemoteIpStartupFilter());
+                    var ed = services.SingleOrDefault(d => d.ServiceType == typeof(IEmailService));
+                    if (ed != null) services.Remove(ed);
+                    services.AddSingleton<IEmailService>(emailService);
+                    var sd = services.SingleOrDefault(d => d.ServiceType == typeof(ISmsService));
+                    if (sd != null) services.Remove(sd);
+                    services.AddSingleton<ISmsService>(SmsStub);
+                    services.Configure<SessionOptions>(opts =>
+                    {
+                        opts.Cookie.SecurePolicy = CookieSecurePolicy.None;
+                        opts.Cookie.SameSite    = SameSiteMode.Unspecified;
+                    });
+                });
+            });
+
+        var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false,
+        });
+        return (client, factory);
     }
 
     /// <summary>Refreshes the Db context (clears EF Core's first-level cache).</summary>
@@ -203,9 +288,18 @@ public class StubEmailService : IEmailService
     public List<SentEmail>   SentEmails   { get; } = [];
     public List<SentInvite>  SentInvites  { get; } = [];
 
+    /// <summary>When set, the next SendOtpAsync call throws this exception then clears itself.</summary>
+    public Exception? ThrowOnNextSend { get; set; }
+
     public Task SendOtpAsync(string to, string code, string purpose,
         Guid? orgId = null, Guid? projectId = null)
     {
+        if (ThrowOnNextSend != null)
+        {
+            var ex = ThrowOnNextSend;
+            ThrowOnNextSend = null;
+            throw ex;
+        }
         SentEmails.Add(new SentEmail(to, purpose, code));
         return Task.CompletedTask;
     }
@@ -245,8 +339,108 @@ public class StubSmsService : ISmsService
 
 public record SentSms(string To, string Purpose, string Code);
 
+// ── HIBP (Have I Been Pwned) stub handler ────────────────────────────────────
+
+/// <summary>
+/// Primary HttpMessageHandler for the unnamed IHttpClientFactory client.
+/// When configured via <see cref="Setup"/>, it intercepts requests to
+/// api.pwnedpasswords.com and returns a fake range response with the exact
+/// suffix/count pair for the configured password.  All other hosts get an
+/// empty 200 so other unnamed-client callers (SocialLoginService) don't crash.
+/// Call <see cref="Clear"/> after each test to restore passthrough behaviour.
+/// </summary>
+public class HibpStubHandler : HttpMessageHandler
+{
+    private string? _matchSuffix;
+    private int     _matchCount;
+
+    // ── GitHub / social-login stubs ───────────────────────────────────────────
+
+    private string? _githubToken;
+    private long    _githubUserId;
+    private string? _githubEmail;
+    private string? _githubName;
+
+    /// <summary>Configures the stub to report <paramref name="count"/> breaches for <paramref name="password"/>.</summary>
+    public void Setup(string password, int count = 100)
+    {
+        var sha1 = System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(password));
+        _matchSuffix = Convert.ToHexString(sha1).ToUpperInvariant()[5..]; // 35-char suffix
+        _matchCount  = count;
+    }
+
+    /// <summary>Clears the stub so it returns count=0 for all passwords (fail-open).</summary>
+    public void Clear() { _matchSuffix = null; _matchCount = 0; }
+
+    /// <summary>
+    /// Configures stub to return a GitHub access-token response and user profile.
+    /// Intercepted URLs: POST github.com (token exchange) and GET api.github.com (user profile).
+    /// </summary>
+    public void SetupGithubProfile(long userId, string email, string name = "Stub User")
+    {
+        _githubToken  = "stub-gh-access-token";
+        _githubUserId = userId;
+        _githubEmail  = email;
+        _githubName   = name;
+    }
+
+    /// <summary>Clears GitHub stub back to default (empty body → exchange fails).</summary>
+    public void ClearGithub()
+    {
+        _githubToken  = null;
+        _githubUserId = 0;
+        _githubEmail  = null;
+        _githubName   = null;
+    }
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var host = request.RequestUri?.Host ?? "";
+        string body = "";
+
+        if (_matchSuffix != null && host == "api.pwnedpasswords.com")
+        {
+            body = $"{_matchSuffix}:{_matchCount}\n";
+        }
+        else if (_githubToken != null && host == "github.com")
+        {
+            // GitHub token-exchange response
+            body = System.Text.Json.JsonSerializer.Serialize(new { access_token = _githubToken });
+        }
+        else if (_githubToken != null && host == "api.github.com")
+        {
+            // GitHub user-profile or emails endpoint
+            var path = request.RequestUri?.AbsolutePath ?? "";
+            if (path.StartsWith("/user/emails", StringComparison.OrdinalIgnoreCase))
+            {
+                // Return primary+verified email
+                body = System.Text.Json.JsonSerializer.Serialize(new[]
+                {
+                    new { email = _githubEmail, primary = true, verified = true }
+                });
+            }
+            else
+            {
+                body = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    id    = _githubUserId,
+                    email = _githubEmail,
+                    name  = _githubName,
+                    login = (_githubName ?? "stub").ToLowerInvariant().Replace(" ", "")
+                });
+            }
+        }
+
+        return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new System.Net.Http.StringContent(body,
+                System.Text.Encoding.UTF8, "application/json")
+        });
+    }
+}
+
 // Sets RemoteIpAddress to loopback for all test requests (TestServer leaves it null)
-file sealed class LoopbackRemoteIpStartupFilter : IStartupFilter
+internal sealed class LoopbackRemoteIpStartupFilter : IStartupFilter
 {
     public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
     {

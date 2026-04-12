@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using RediensIAM.Data.Entities;
 
@@ -8,6 +9,11 @@ namespace RediensIAM.Data.Configurations;
 public class UserConfiguration : IEntityTypeConfiguration<User>
 {
     private static readonly JsonSerializerOptions JsonOptions = new();
+
+    private static readonly ValueComparer<Dictionary<string, object>> DictComparer = new(
+        (l, r) => JsonSerializer.Serialize(l, JsonOptions) == JsonSerializer.Serialize(r, JsonOptions),
+        v => JsonSerializer.Serialize(v, JsonOptions).GetHashCode(),
+        v => JsonSerializer.Deserialize<Dictionary<string, object>>(JsonSerializer.Serialize(v, JsonOptions), JsonOptions)!);
 
     public void Configure(EntityTypeBuilder<User> builder)
     {
@@ -32,7 +38,8 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
                .HasColumnType("jsonb")
                .HasConversion(
                    v => JsonSerializer.Serialize(v, JsonOptions),
-                   v => JsonSerializer.Deserialize<Dictionary<string, object>>(v, JsonOptions) ?? new Dictionary<string, object>());
+                   v => JsonSerializer.Deserialize<Dictionary<string, object>>(v, JsonOptions) ?? new Dictionary<string, object>(),
+                   DictComparer);
 
         builder.HasMany(x => x.ProjectRoles).WithOne(x => x.User).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
         builder.HasMany(x => x.OrgRoles).WithOne(x => x.User).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);

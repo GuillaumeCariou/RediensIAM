@@ -55,7 +55,7 @@ public sealed class KetoStub : IDisposable
         // List: always empty
         _readServer
             .Given(Request.Create().WithPath("/relation-tuples").UsingGet())
-            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { relation_tuples = new object[] { } }));
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { relation_tuples = Array.Empty<object>() }));
 
         // Write (insert/delete): always success
         _writeServer
@@ -80,7 +80,7 @@ public sealed class KetoStub : IDisposable
                 .WithPath("/relation-tuples/check")
                 .UsingGet()
                 .WithParam("subject_id", subjectId))
-            .AtPriority(1)
+            .AtPriority(0)
             .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { allowed = false }));
     }
 
@@ -95,8 +95,32 @@ public sealed class KetoStub : IDisposable
                 .WithParam("object", obj)
                 .WithParam("relation", relation)
                 .WithParam("subject_id", subjectId))
-            .AtPriority(1)
+            .AtPriority(0)
             .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { allowed = false }));
+    }
+
+    /// <summary>
+    /// Makes the list endpoint return a non-empty relation tuple for <paramref name="userId"/>,
+    /// so that <c>HasAnyRelationAsync</c> returns <c>true</c> for that user.
+    /// Use this when testing code paths that call HasAnyRelationAsync (e.g. AdminLogin org_admin branch).
+    /// </summary>
+    public void SimulateRelationExists(string userId)
+    {
+        _readServer
+            .Given(Request.Create()
+                .WithPath("/relation-tuples")
+                .UsingGet()
+                .WithParam("subject_id", userId))
+            .AtPriority(0)
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithBodyAsJson(new
+                {
+                    relation_tuples = new[]
+                    {
+                        new { @namespace = "Orgs", @object = "stub-org", relation = "org_admin", subject_id = userId }
+                    }
+                }));
     }
 
     /// <summary>Deny ALL checks (simulate Keto returning forbidden for everything).</summary>
@@ -109,7 +133,7 @@ public sealed class KetoStub : IDisposable
 
         _readServer
             .Given(Request.Create().WithPath("/relation-tuples").UsingGet())
-            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { relation_tuples = new object[] { } }));
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { relation_tuples = Array.Empty<object>() }));
     }
 
     public void Dispose()

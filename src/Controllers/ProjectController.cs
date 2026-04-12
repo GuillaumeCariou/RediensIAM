@@ -32,9 +32,7 @@ public class ProjectController(
         {
             if (Claims.GetManagementLevel() <= ManagementLevel.OrgAdmin)
             {
-#pragma warning disable S6932 // property getter — model binding is not applicable here
                 var q = HttpContext.Request.Query["project_id"].FirstOrDefault();
-#pragma warning restore S6932
                 if (q != null && Guid.TryParse(q, out var g)) return g;
             }
             return Guid.Parse(Claims.ProjectId);
@@ -138,7 +136,7 @@ public class ProjectController(
                 u.Id, u.Username, u.Discriminator, u.Email, u.DisplayName, u.Active, u.LastLoginAt,
                 roles = db.UserProjectRoles
                     .Where(r => r.UserId == u.Id && r.ProjectId == ProjectId)
-                    .Select(r => new { r.RoleId, r.Role.Name }).ToList()
+                    .Select(r => new { Id = r.RoleId, r.Role.Name }).ToList()
             }).ToListAsync();
         return Ok(users);
     }

@@ -6,12 +6,12 @@
  *   import { test, expect } from '../fixtures/auth';
  *   test('...', async ({ adminPage }) => { ... });
  */
-import { test as baseTest, expect, type Page } from '@playwright/test';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { test as baseTest, type Page } from '@playwright/test';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-export { expect };
+export { expect } from '@playwright/test';
 
 const __dirname   = path.dirname(fileURLToPath(import.meta.url));
 const SESSION_FILE = path.join(__dirname, '../.auth/admin-session.json');

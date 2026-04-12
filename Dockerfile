@@ -29,4 +29,5 @@ WORKDIR /app
 COPY --from=backend-build /publish ./
 ENV ASPNETCORE_URLS=http://+:5000;http://+:5001
 EXPOSE 5000 5001
+USER app
 ENTRYPOINT ["dotnet", "RediensIAM.dll"]

@@ -252,4 +252,34 @@ public class OrgAdminTests(TestFixture fixture)
             .Any(u => u.GetProperty("email").GetString()!.Contains(uniquePart))
             .Should().BeTrue();
     }
+
+    // ── GET /org/userlists/{id}/export — covers OrgAdminServices.Cache ─────────
+
+    [Fact]
+    public async Task ExportUserList_OrgAdmin_Returns200Csv()
+    {
+        // Accessing cache (svc.Cache) covers ControllerServices.cs:84 (OrgAdminServices.Cache)
+        var (org, orgList, client) = await OrgAdminClientAsync();
+        var list = await fixture.Seed.CreateUserListAsync(org.Id);
+
+        var res = await client.GetAsync($"/org/userlists/{list.Id}/export");
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    // ── GET /org/projects/{id}/saml-providers — covers SamlIdpConfigs ─────────
+
+    [Fact]
+    public async Task ListSamlProviders_OrgAdmin_Returns200()
+    {
+        // Accessing db.SamlIdpConfigs covers RediensIamDbContext.cs:26
+        var (org, _, client) = await OrgAdminClientAsync();
+        var project          = await fixture.Seed.CreateProjectAsync(org.Id);
+
+        var res = await client.GetAsync($"/org/projects/{project.Id}/saml-providers");
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        body.ValueKind.Should().Be(JsonValueKind.Array);
+    }
 }

@@ -118,11 +118,11 @@ export default function UserListDetail() {
               <input type="checkbox" checked={cleanupInactive} onChange={e => setCleanupInactive(e.target.checked)} />
               {' '}Remove users inactive for more than{' '}
               <input type="number" min={1} max={3650} value={cleanupDays} onChange={e => setCleanupDays(Number(e.target.value))} className="w-16 border rounded px-2 py-0.5 text-sm" />
-              {'  '} days
+              {' days'}
             </label>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={cleanupDryRun} onChange={e => setCleanupDryRun(e.target.checked)} />
-              Dry run (preview only, no deletions)
+              {' '}Dry run (preview only, no deletions)
             </label>
             {cleanupResult && (
               <div className="rounded-lg border bg-muted p-3 text-sm space-y-1">

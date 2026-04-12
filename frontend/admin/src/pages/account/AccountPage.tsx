@@ -55,6 +55,11 @@ function ProfileTab({ me, onUpdated }: Readonly<{ me: Me; onUpdated: () => void 
     await updateMe({ new_device_alerts_enabled: value });
   };
 
+  let saveLabel;
+  if (saved) saveLabel = <><Check className="h-4 w-4" />Saved</>;
+  else if (saving) saveLabel = 'Saving…';
+  else saveLabel = 'Save';
+
   return (
     <div className="space-y-6">
       <Card>
@@ -118,7 +123,7 @@ function ProfileTab({ me, onUpdated }: Readonly<{ me: Me; onUpdated: () => void 
               />
             </div>
             <Button type="submit" disabled={saving}>
-              {saved ? <><Check className="h-4 w-4" />Saved</> : saving ? 'Saving…' : 'Save'}
+              {saveLabel}
             </Button>
           </form>
           <div className="flex items-center justify-between pt-4 border-t">
@@ -526,6 +531,49 @@ function MfaTab() {
 
   if (loading) return <Skeleton className="h-40 rounded-xl" />;
 
+  const renderPhoneForm = () => {
+    if (status?.phone_verified) {
+      return (
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-muted-foreground">Phone number verified and active.</p>
+          <Button variant="outline" size="sm" onClick={handleRemovePhone}>Remove</Button>
+        </div>
+      );
+    }
+    if (phoneCodeSent) {
+      return (
+        <form onSubmit={handlePhoneVerify} className="space-y-3 max-w-sm">
+          <p className="text-sm text-muted-foreground">Enter the 6-digit code sent to {phoneInput}.</p>
+          <div className="flex gap-2 items-center">
+            <Input
+              value={phoneOtp} onChange={e => setPhoneOtp(e.target.value.replaceAll(/\D/g, '').slice(0, 6))}
+              placeholder="000000" maxLength={6} className="font-mono w-32 text-center text-lg tracking-widest"
+              required
+            />
+            <Button type="submit" disabled={phoneSending || phoneOtp.length !== 6}>
+              {phoneSending ? 'Verifying…' : 'Verify'}
+            </Button>
+            <Button type="button" variant="outline" onClick={() => { setPhoneCodeSent(false); setPhoneOtp(''); }}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      );
+    }
+    return (
+      <form onSubmit={handlePhoneSend} className="flex gap-2 items-end max-w-sm">
+        <div className="flex-1 space-y-2">
+          <Label>Phone number</Label>
+          <Input
+            type="tel" placeholder="+1234567890"
+            value={phoneInput} onChange={e => setPhoneInput(e.target.value)} required
+          />
+        </div>
+        <Button type="submit" disabled={phoneSending}>{phoneSending ? 'Sending…' : 'Send code'}</Button>
+      </form>
+    );
+  };
+
   return (
     <div className="space-y-4">
       {/* TOTP card */}
@@ -544,9 +592,7 @@ function MfaTab() {
         </CardHeader>
         {!status?.totp_enabled && (
           <CardContent>
-            {!setupData ? (
-              <Button onClick={handleStartSetup}><Shield className="h-4 w-4" />Set up TOTP</Button>
-            ) : (
+            {setupData ? (
               <div className="space-y-4 max-w-sm">
                 <div className="rounded-lg bg-muted p-4 space-y-3">
                   <p className="text-sm font-medium">1. Open your authenticator app and add a new account manually.</p>
@@ -579,6 +625,8 @@ function MfaTab() {
                 </form>
                 {setupError && <p className="text-sm text-destructive">{setupError}</p>}
               </div>
+            ) : (
+              <Button onClick={handleStartSetup}><Shield className="h-4 w-4" />Set up TOTP</Button>
             )}
           </CardContent>
         )}
@@ -607,7 +655,7 @@ function MfaTab() {
             <div className="flex items-center justify-between">
               <div>
                 <CardTitle className="text-base">Backup Codes</CardTitle>
-                <CardDescription>{status.backup_codes_remaining} code{status.backup_codes_remaining !== 1 ? 's' : ''} remaining.</CardDescription>
+                <CardDescription>{status.backup_codes_remaining} code{status.backup_codes_remaining === 1 ? '' : 's'} remaining.</CardDescription>
               </div>
               <Button variant="outline" size="sm" onClick={() => setRegenOpen(true)}>
                 <RefreshCw className="h-4 w-4" />Regenerate
@@ -643,40 +691,7 @@ function MfaTab() {
           </div>
         </CardHeader>
         <CardContent>
-          {status?.phone_verified ? (
-            <div className="flex items-center gap-3">
-              <p className="text-sm text-muted-foreground">Phone number verified and active.</p>
-              <Button variant="outline" size="sm" onClick={handleRemovePhone}>Remove</Button>
-            </div>
-          ) : !phoneCodeSent ? (
-            <form onSubmit={handlePhoneSend} className="flex gap-2 items-end max-w-sm">
-              <div className="flex-1 space-y-2">
-                <Label>Phone number</Label>
-                <Input
-                  type="tel" placeholder="+1234567890"
-                  value={phoneInput} onChange={e => setPhoneInput(e.target.value)} required
-                />
-              </div>
-              <Button type="submit" disabled={phoneSending}>{phoneSending ? 'Sending…' : 'Send code'}</Button>
-            </form>
-          ) : (
-            <form onSubmit={handlePhoneVerify} className="space-y-3 max-w-sm">
-              <p className="text-sm text-muted-foreground">Enter the 6-digit code sent to {phoneInput}.</p>
-              <div className="flex gap-2 items-center">
-                <Input
-                  value={phoneOtp} onChange={e => setPhoneOtp(e.target.value.replaceAll(/\D/g, '').slice(0, 6))}
-                  placeholder="000000" maxLength={6} className="font-mono w-32 text-center text-lg tracking-widest"
-                  required
-                />
-                <Button type="submit" disabled={phoneSending || phoneOtp.length !== 6}>
-                  {phoneSending ? 'Verifying…' : 'Verify'}
-                </Button>
-                <Button type="button" variant="outline" onClick={() => { setPhoneCodeSent(false); setPhoneOtp(''); }}>
-                  Cancel
-                </Button>
-              </div>
-            </form>
-          )}
+          {renderPhoneForm()}
           {phoneError && <p className="text-sm text-destructive mt-2">{phoneError}</p>}
           {phoneSuccess && <p className="text-sm text-green-600 mt-2">Phone number verified successfully.</p>}
         </CardContent>
@@ -732,6 +747,41 @@ function SessionsTab() {
     setSessions([]);
   };
 
+  const renderSessionsList = () => {
+    if (loading) return <div className="space-y-2">{Array.from({ length: 3 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-12 rounded-lg" />)}</div>;
+    if (sessions.length === 0) return <p className="text-sm text-muted-foreground py-4 text-center">No active sessions.</p>;
+    return (
+      <div className="space-y-2">
+        {sessions.map(s => (
+          <div key={s.client_id ?? Math.random()} className="flex items-center justify-between rounded-lg border px-4 py-3">
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-2">
+                <MonitorSmartphone className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium">{s.client_name ?? s.client_id ?? 'Unknown client'}</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Granted {fmtDate(s.granted_at)}
+                {s.expires_at && ` · Expires ${fmtDate(s.expires_at)}`}
+              </p>
+            </div>
+            {s.client_id && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                disabled={revoking === s.client_id}
+                onClick={() => handleRevoke(s.client_id!)}
+              >
+                <LogOut className="h-4 w-4" />
+                {revoking === s.client_id ? 'Revoking…' : 'Revoke'}
+              </Button>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-4">
       <Card>
@@ -749,40 +799,7 @@ function SessionsTab() {
           </div>
         </CardHeader>
         <CardContent>
-          {loading ? (
-            <div className="space-y-2">{Array.from({ length: 3 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-12 rounded-lg" />)}</div>
-          ) : sessions.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4 text-center">No active sessions.</p>
-          ) : (
-            <div className="space-y-2">
-              {sessions.map(s => (
-                <div key={s.client_id ?? Math.random()} className="flex items-center justify-between rounded-lg border px-4 py-3">
-                  <div className="space-y-0.5">
-                    <div className="flex items-center gap-2">
-                      <MonitorSmartphone className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm font-medium">{s.client_name ?? s.client_id ?? 'Unknown client'}</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Granted {fmtDate(s.granted_at)}
-                      {s.expires_at && ` · Expires ${fmtDate(s.expires_at)}`}
-                    </p>
-                  </div>
-                  {s.client_id && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-destructive hover:text-destructive"
-                      disabled={revoking === s.client_id}
-                      onClick={() => handleRevoke(s.client_id!)}
-                    >
-                      <LogOut className="h-4 w-4" />
-                      {revoking === s.client_id ? 'Revoking…' : 'Revoke'}
-                    </Button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+          {renderSessionsList()}
         </CardContent>
       </Card>
 
@@ -812,6 +829,32 @@ export default function AccountPage() {
   };
   useEffect(load, []);
 
+  const renderContent = () => {
+    if (loading) {
+      return (
+        <div className="space-y-4">
+          <Skeleton className="h-40 rounded-xl" />
+          <Skeleton className="h-32 rounded-xl" />
+        </div>
+      );
+    }
+    if (!me) return <p className="text-muted-foreground">Failed to load account.</p>;
+    return (
+      <Tabs defaultValue="profile" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="profile"><User className="h-4 w-4" />Profile</TabsTrigger>
+          <TabsTrigger value="security"><Key className="h-4 w-4" />Security</TabsTrigger>
+          <TabsTrigger value="mfa"><Shield className="h-4 w-4" />MFA</TabsTrigger>
+          <TabsTrigger value="sessions"><MonitorSmartphone className="h-4 w-4" />Sessions</TabsTrigger>
+        </TabsList>
+        <TabsContent value="profile"><ProfileTab me={me} onUpdated={load} /></TabsContent>
+        <TabsContent value="security"><SecurityTab /></TabsContent>
+        <TabsContent value="mfa"><MfaTab /></TabsContent>
+        <TabsContent value="sessions"><SessionsTab /></TabsContent>
+      </Tabs>
+    );
+  };
+
   return (
     <div>
       <PageHeader
@@ -825,27 +868,7 @@ export default function AccountPage() {
         )}
       />
       <div className="p-6">
-        {loading ? (
-          <div className="space-y-4">
-            <Skeleton className="h-40 rounded-xl" />
-            <Skeleton className="h-32 rounded-xl" />
-          </div>
-        ) : !me ? (
-          <p className="text-muted-foreground">Failed to load account.</p>
-        ) : (
-          <Tabs defaultValue="profile" className="space-y-4">
-            <TabsList>
-              <TabsTrigger value="profile"><User className="h-4 w-4" />Profile</TabsTrigger>
-              <TabsTrigger value="security"><Key className="h-4 w-4" />Security</TabsTrigger>
-              <TabsTrigger value="mfa"><Shield className="h-4 w-4" />MFA</TabsTrigger>
-              <TabsTrigger value="sessions"><MonitorSmartphone className="h-4 w-4" />Sessions</TabsTrigger>
-            </TabsList>
-            <TabsContent value="profile"><ProfileTab me={me} onUpdated={load} /></TabsContent>
-            <TabsContent value="security"><SecurityTab /></TabsContent>
-            <TabsContent value="mfa"><MfaTab /></TabsContent>
-            <TabsContent value="sessions"><SessionsTab /></TabsContent>
-          </Tabs>
-        )}
+        {renderContent()}
       </div>
     </div>
   );

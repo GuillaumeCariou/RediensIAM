@@ -65,6 +65,36 @@ const themeOptions: { value: Theme; icon: React.ReactNode; label: string }[] = [
   { value: 'dark',   icon: <Moon    className="h-4 w-4" />, label: 'Dark'   },
 ];
 
+// ── Module-level helpers (kept outside Sidebar to limit cognitive complexity) ──
+
+function computeActiveSection(
+  isSuperAdmin: boolean,
+  urlOrgId: string,
+  urlProjectId: string,
+  pathname: string,
+): 'project' | 'org' | 'system' | null {
+  if (isSuperAdmin ? urlProjectId !== '' : pathname.startsWith('/project')) return 'project';
+  if (isSuperAdmin ? urlOrgId !== ''     : pathname.startsWith('/org'))     return 'org';
+  if (pathname.startsWith('/system')) return 'system';
+  return null;
+}
+
+function computeShowProject(
+  isSuperAdmin: boolean,
+  isOrgAdmin: boolean,
+  isProjectManager: boolean,
+  urlProjectId: string,
+  onProjectPath: boolean,
+): boolean {
+  if (isSuperAdmin) return urlProjectId !== '';
+  if (isOrgAdmin) return onProjectPath;
+  return isProjectManager;
+}
+
+function isNavItemActive(item: NavItem, pathname: string): boolean {
+  return item.exact ? pathname === item.to : pathname.startsWith(item.to);
+}
+
 // ── Sidebar ────────────────────────────────────────────────────────
 
 interface NavLinkProps { item: NavItem; active: boolean; superAdmin: boolean; }
@@ -142,11 +172,8 @@ export default function Sidebar() {
 
   // ── Visibility rules ──────────────────────────────────────────
   const showSystem  = isSuperAdmin;
-  const showOrg     = isSuperAdmin ? urlOrgId !== ''    : isOrgAdmin;
-  let showProject: boolean;
-  if (isSuperAdmin) showProject = urlProjectId !== '';
-  else if (isOrgAdmin) showProject = onProjectPath;
-  else showProject = isProjectManager;
+  const showOrg     = isSuperAdmin ? urlOrgId !== '' : isOrgAdmin;
+  const showProject = computeShowProject(isSuperAdmin, isOrgAdmin, isProjectManager, urlProjectId, onProjectPath);
 
   // ── Accordion open state ──────────────────────────────────────
   const [systemOpen,  setSystemOpen]  = useState(pathname.startsWith('/system'));
@@ -158,29 +185,20 @@ export default function Sidebar() {
   );
 
   // Determine which top-level section the current path belongs to
-  const isOnProject = isSuperAdmin ? urlProjectId !== '' : pathname.startsWith('/project');
-  const isOnOrg     = isSuperAdmin ? urlOrgId !== ''     : pathname.startsWith('/org');
-  let activeSection: 'project' | 'org' | 'system' | null;
-  if (isOnProject) activeSection = 'project';
-  else if (isOnOrg) activeSection = 'org';
-  else if (pathname.startsWith('/system')) activeSection = 'system';
-  else activeSection = null;
+  const activeSection = computeActiveSection(isSuperAdmin, urlOrgId, urlProjectId, pathname);
 
   // On section transition: collapse the previous section, expand the new one.
   // Manual toggling in between is preserved (effect only fires when section changes).
   const prevSectionRef = useRef(activeSection);
+  const sectionSetters: Partial<Record<string, (v: boolean) => void>> = {
+    system: setSystemOpen, org: setOrgOpen, project: setProjectOpen,
+  };
   useEffect(() => {
     const prev = prevSectionRef.current;
     if (prev === activeSection) return;
     prevSectionRef.current = activeSection;
-
-    if (prev === 'system')  setSystemOpen(false);
-    if (prev === 'org')     setOrgOpen(false);
-    if (prev === 'project') setProjectOpen(false);
-
-    if (activeSection === 'system')  setSystemOpen(true);
-    if (activeSection === 'org')     setOrgOpen(true);
-    if (activeSection === 'project') setProjectOpen(true);
+    if (prev) sectionSetters[prev]?.(false);
+    if (activeSection) sectionSetters[activeSection]?.(true);
   }, [activeSection]);
 
   // ── Contextual nav for super_admin ────────────────────────────
@@ -208,9 +226,7 @@ export default function Sidebar() {
   const activeOrgNav     = isSuperAdmin ? sysOrgNav  : orgNav;
   const activeProjectNav = isSuperAdmin ? sysProjNav : projectNav;
 
-  // ── Helpers ───────────────────────────────────────────────────
-  const isActive = (item: NavItem) =>
-    item.exact ? pathname === item.to : pathname.startsWith(item.to);
+  const isActive = (item: NavItem) => isNavItemActive(item, pathname);
 
 
 

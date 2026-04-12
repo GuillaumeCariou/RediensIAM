@@ -298,4 +298,27 @@ public class ManagedApiTests(TestFixture fixture)
 
         res.StatusCode.Should().Be(HttpStatusCode.Conflict);
     }
+
+    // ── Invite flow — covers ManagedApiServices.Email ─────────────────────────
+
+    [Fact]
+    public async Task AddUser_WithoutPassword_SendsInviteEmailAndReturns201()
+    {
+        // Omitting password → isInvite = true → emailService.SendInviteAsync called
+        // Covers ControllerServices.cs:99 (ManagedApiServices.Email property)
+        var (_, client) = await SuperAdminClientAsync();
+        var (org, _)    = await fixture.Seed.CreateOrgAsync();
+        var list        = await fixture.Seed.CreateUserListAsync(org.Id);
+        var email       = SeedData.UniqueEmail();
+
+        var res = await client.PostAsJsonAsync($"/api/manage/userlists/{list.Id}/users", new
+        {
+            email,
+        });
+
+        res.StatusCode.Should().Be(HttpStatusCode.Created);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("invite_pending").GetBoolean().Should().BeTrue();
+        fixture.EmailStub.SentInvites.Should().Contain(i => i.To == email);
+    }
 }

@@ -1,5 +1,8 @@
+using System.Net;
 using System.Net.Http.Json;
+using Microsoft.Extensions.Logging.Abstractions;
 using RediensIAM.IntegrationTests.Infrastructure;
+using RediensIAM.Services;
 
 namespace RediensIAM.IntegrationTests.Tests.Auth;
 
@@ -85,5 +88,77 @@ public class BreachCheckTests(TestFixture fixture)
 
         reloaded.Should().NotBeNull();
         reloaded!.CheckBreachedPasswords.Should().BeTrue();
+    }
+}
+
+// ── BreachCheckService unit tests (no fixture required) ───────────────────────
+
+/// <summary>
+/// Pure unit tests for BreachCheckService — covers the catch block (fail-open)
+/// without relying on the real HIBP API being unreachable.
+/// </summary>
+public class BreachCheckServiceUnitTests
+{
+    private sealed class FailingHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+            => throw new HttpRequestException("Simulated network failure");
+    }
+
+    private sealed class FailingClientFactory : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new(new FailingHandler());
+    }
+
+    [Fact]
+    public async Task GetBreachCount_WhenHibpUnreachable_ReturnsZero()
+    {
+        // Arrange: HTTP client always throws → catch block must return 0 (fail-open)
+        var svc = new BreachCheckService(
+            new FailingClientFactory(),
+            NullLogger<BreachCheckService>.Instance);
+
+        // Act
+        var count = await svc.GetBreachCountAsync("anypassword");
+
+        // Assert: fail-open — should not block the user
+        count.Should().Be(0);
+    }
+
+    // ── Breach found — line 26 (return int.TryParse branch) ──────────────────
+
+    [Fact]
+    public async Task GetBreachCount_WhenPasswordInDatabase_ReturnsCount()
+    {
+        // SHA1("password") = 5BAA61E4C9B93F3F0682250B6CF8331B7EE68FD8
+        // prefix = "5BAA6", suffix = "1E4C9B93F3F0682250B6CF8331B7EE68FD8"
+        const string password = "password";
+        const string suffix   = "1E4C9B93F3F0682250B6CF8331B7EE68FD8";
+        const int    expected = 3303003;
+
+        var hibpResponse = $"{suffix}:{expected}\nABCDE00000000000000000000000000000000:1\n";
+
+        var factory = new FixedResponseClientFactory(hibpResponse);
+        var svc = new BreachCheckService(factory, NullLogger<BreachCheckService>.Instance);
+
+        var count = await svc.GetBreachCountAsync(password);
+
+        count.Should().Be(expected);
+    }
+
+    private sealed class FixedResponseHandler(string body) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body)
+            });
+    }
+
+    private sealed class FixedResponseClientFactory(string body) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new(new FixedResponseHandler(body));
     }
 }

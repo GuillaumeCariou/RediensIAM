@@ -23,6 +23,9 @@ public class OrgController(
     AppConfig appConfig,
     ILogger<OrgController> logger) : ControllerBase
 {
+    private static readonly string[] _hydraGrantTypes    = ["authorization_code", "refresh_token"];
+    private static readonly string[] _hydraResponseTypes = ["code"];
+
     // Unwrap bundle (S107)
     private HydraService hydra         => svc.Hydra;
     private KetoService keto           => svc.Keto;
@@ -105,8 +108,8 @@ public class OrgController(
                 client_id = $"client_{project.Id}",
                 client_name = $"Project: {project.Name}",
                 redirect_uris = body.RedirectUris ?? [],
-                grant_types = new[] { "authorization_code", "refresh_token" },
-                response_types = new[] { "code" },
+                grant_types = _hydraGrantTypes,
+                response_types = _hydraResponseTypes,
                 scope = "openid profile offline_access",
                 token_endpoint_auth_method = "none",
                 metadata = new { project_id = project.Id.ToString(), org_id = orgId.ToString() }
@@ -817,7 +820,8 @@ public class OrgController(
     [HttpPatch("projects/{id}/saml-providers/{pid}")]
     public async Task<IActionResult> UpdateSamlProvider(Guid id, Guid pid, [FromBody] UpdateSamlProviderRequest body)
     {
-        var provider = await db.SamlIdpConfigs.FirstOrDefaultAsync(x => x.Id == pid && x.ProjectId == id);
+        var provider = await db.SamlIdpConfigs.Include(x => x.Project)
+            .FirstOrDefaultAsync(x => x.Id == pid && x.ProjectId == id);
         if (provider == null || provider.Project.OrgId != OrgId) return NotFound();
         if (body.EntityId != null) provider.EntityId = body.EntityId;
         if (body.MetadataUrl != null) provider.MetadataUrl = body.MetadataUrl;

@@ -292,7 +292,8 @@ static async Task EnsureBootstrapAdminAsync(
         bdb.Users.Add(user);
         await bketo.WriteRelationTupleAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{user.Id}");
         await bdb.SaveChangesAsync();
-        log.LogInformation("Bootstrap super admin created: {Email}", email);
+        if (log.IsEnabled(LogLevel.Information))
+            log.LogInformation("Bootstrap super admin created: {Email}", email);
     }
 }
 
@@ -339,7 +340,7 @@ app.MapHealthChecks("/health");
 
 // Protect account/project/org/internal/manage/system routes — admin SPA loads without auth (handles PKCE itself)
 // /admin/system is always auth-gated (no browser SPA navigation hits it, only API calls)
-var protectedPrefixes = new[] { "/account", "/project", "/org", "/internal", "/service-accounts", "/api/manage", "/admin/system" };
+var protectedPrefixes = new[] { "/account", "/project", "/org", "/internal", "/service-accounts", "/api/manage", "/admin/system", "/auth/oauth2/link" };
 app.UseWhen(
     ctx => protectedPrefixes.Any(p => ctx.Request.Path.StartsWithSegments(p)),
     branch => branch.UseMiddleware<GatewayAuthMiddleware>());
@@ -365,7 +366,7 @@ app.MapMetrics("/metrics")
    .RequireHost($"*:{appConfig.AdminPort}");
 
 // Admin SPA fallback (client-side routing)
-app.MapFallback("/admin/{**path}", async ctx =>
+app.MapFallback("/admin/{**path}", async (string path, HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
     await ctx.Response.SendFileAsync(
