@@ -14,6 +14,10 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<AppConfig>();
 var appConfig = new AppConfig(builder.Configuration);
 
+// Validate encryption key before DI is locked (uses builder.Environment, available pre-Build)
+if (appConfig.TotpSecretEncryptionKey == new string('0', 64) && builder.Environment.IsProduction())
+    throw new InvalidOperationException("TotpSecretEncryptionKey must not be the default all-zero value in production.");
+
 // ── Database ───────────────────────────────────────────────────────────────
 builder.Services.AddDbContext<RediensIamDbContext>(options =>
     options.UseNpgsql(appConfig.ConnectionString),
@@ -103,30 +107,23 @@ builder.Services.AddHealthChecks();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
-    c.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
+    c.SwaggerDoc("v1", new Microsoft.OpenApi.OpenApiInfo
     {
         Title   = "RediensIAM API",
         Version = "v1",
         Description = "Identity & Access Management API"
     });
-    c.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+    c.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.OpenApiSecurityScheme
     {
         Name         = "Authorization",
-        Type         = Microsoft.OpenApi.Models.SecuritySchemeType.Http,
+        Type         = Microsoft.OpenApi.SecuritySchemeType.Http,
         Scheme       = "bearer",
         BearerFormat = "JWT",
-        In           = Microsoft.OpenApi.Models.ParameterLocation.Header
+        In           = Microsoft.OpenApi.ParameterLocation.Header
     });
-    c.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
+    c.AddSecurityRequirement(document => new Microsoft.OpenApi.OpenApiSecurityRequirement
     {
-        {
-            new Microsoft.OpenApi.Models.OpenApiSecurityScheme
-            {
-                Reference = new Microsoft.OpenApi.Models.OpenApiReference
-                    { Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme, Id = "Bearer" }
-            },
-            Array.Empty<string>()
-        }
+        [new Microsoft.OpenApi.OpenApiSecuritySchemeReference("Bearer", document)] = []
     });
     var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
     var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
@@ -149,6 +146,11 @@ builder.WebHost.ConfigureKestrel(kestrel =>
 });
 
 var app = builder.Build();
+
+var logger = app.Services.GetRequiredService<ILogger<Program>>();
+
+if (appConfig.TotpSecretEncryptionKey == new string('0', 64))
+    logger.LogWarning("WARNING: TotpSecretEncryptionKey is the default all-zero dev key. Do not use in production.");
 
 // ── Ensure DB schema exists ─────────────────────────────────────────────────
 await EnsureDbSchemaAsync(app);
@@ -294,6 +296,7 @@ static async Task EnsureBootstrapAdminAsync(
         await bdb.SaveChangesAsync();
         if (log.IsEnabled(LogLevel.Information))
             log.LogInformation("Bootstrap super admin created: {Email}", email);
+        log.LogWarning("Bootstrap complete. Remove IAM_BOOTSTRAP_PASSWORD from environment variables.");
     }
 }
 
@@ -313,8 +316,11 @@ app.Use(async (ctx, next) =>
     if (!ctx.Request.Path.StartsWithSegments("/preview"))
         ctx.Response.Headers.XFrameOptions = "DENY";
 
-    // CSP only for the login SPA (not the admin SPA — it has its own inline scripts)
-    if (!ctx.Request.Path.StartsWithSegments("/admin"))
+    // CSP: admin SPA gets a relaxed policy allowing inline styles; login SPA gets a strict policy
+    if (ctx.Request.Path.StartsWithSegments("/admin"))
+        ctx.Response.Headers.ContentSecurityPolicy =
+            "script-src 'self'; style-src 'self'; object-src 'none'; frame-ancestors 'none';";
+    else
         ctx.Response.Headers.ContentSecurityPolicy =
             "default-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none';";
 

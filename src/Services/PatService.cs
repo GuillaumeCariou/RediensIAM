@@ -49,7 +49,7 @@ public class PatService(
     public async Task<IntrospectionResponse?> IntrospectAsync(string token)
     {
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
-        var cacheKey = $"pat:{hash[..32]}";
+        var cacheKey = $"pat:{hash}";
 
         var cached = await _cache.StringGetAsync(cacheKey);
         if (!cached.IsNull)
@@ -115,7 +115,7 @@ public class PatService(
 
     public async Task InvalidateAsync(string tokenHash)
     {
-        await _cache.KeyDeleteAsync($"pat:{tokenHash[..32]}");
+        await _cache.KeyDeleteAsync($"pat:{tokenHash}");
     }
 
     // ── Service account keys (Hydra JWK) ──────────────────────────────────────
@@ -170,6 +170,7 @@ public class PatService(
     {
         var pat = await db.PersonalAccessTokens.FirstOrDefaultAsync(p => p.Id == patId && p.ServiceAccountId == saId)
             ?? throw new KeyNotFoundException("PAT not found");
+        await InvalidateAsync(pat.TokenHash);
         db.PersonalAccessTokens.Remove(pat);
         await db.SaveChangesAsync();
     }

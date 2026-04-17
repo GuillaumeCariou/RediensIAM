@@ -395,7 +395,12 @@ public class OrgController(
 
         var username = body.Username ?? body.Email.Split('@')[0];
         string discriminator;
-        do { discriminator = Random.Shared.Next(1000, 9999).ToString(); }
+        var discIter = 0;
+        do
+        {
+            if (++discIter > 100) throw new InvalidOperationException("discriminator_space_exhausted");
+            discriminator = Random.Shared.Next(1000, 9999).ToString();
+        }
         while (await db.Users.AnyAsync(u => u.UserListId == id && u.Username == username && u.Discriminator == discriminator));
 
         var isInvite = string.IsNullOrEmpty(body.Password);
@@ -763,6 +768,8 @@ public class OrgController(
     [HttpGet("audit-log")]
     public async Task<IActionResult> GetAuditLog([FromQuery] int limit = 50, [FromQuery] int offset = 0)
     {
+        limit  = Math.Clamp(limit, 1, 200);
+        offset = Math.Max(0, offset);
         var orgId = OrgId;
         var logs = await db.AuditLogs
             .Where(l => l.OrgId == orgId)

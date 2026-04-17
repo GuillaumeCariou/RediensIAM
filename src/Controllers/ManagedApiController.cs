@@ -164,7 +164,12 @@ public class ManagedApiController(
 
         var username = body.Username ?? body.Email.Split('@')[0];
         string discriminator;
-        do { discriminator = Random.Shared.Next(1000, 9999).ToString(); }
+        var discIter = 0;
+        do
+        {
+            if (++discIter > 100) throw new InvalidOperationException("discriminator_space_exhausted");
+            discriminator = Random.Shared.Next(1000, 9999).ToString();
+        }
         while (await db.Users.AnyAsync(u => u.UserListId == id && u.Username == username && u.Discriminator == discriminator));
 
         var emailVerified = body.EmailVerified ?? false;

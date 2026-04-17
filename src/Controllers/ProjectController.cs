@@ -32,7 +32,7 @@ public class ProjectController(
         {
             if (Claims.GetManagementLevel() <= ManagementLevel.OrgAdmin)
             {
-                var q = HttpContext.Request.Query["project_id"].FirstOrDefault();
+                var q = HttpContext.Request.Query["project_id"].FirstOrDefault(); // NOSONAR: model binding not possible in a property getter
                 if (q != null && Guid.TryParse(q, out var g)) return g;
             }
             return Guid.Parse(Claims.ProjectId);
@@ -205,7 +205,12 @@ public class ProjectController(
         var listId = project.AssignedUserListId.Value;
         var username = body.Username ?? body.Email.Split('@')[0];
         string discriminator;
-        do { discriminator = Random.Shared.Next(1000, 9999).ToString(); }
+        var discIter = 0;
+        do
+        {
+            if (++discIter > 100) throw new InvalidOperationException("discriminator_space_exhausted");
+            discriminator = Random.Shared.Next(1000, 9999).ToString();
+        }
         while (await db.Users.AnyAsync(u => u.UserListId == listId && u.Username == username && u.Discriminator == discriminator));
 
         var user = new User
@@ -312,6 +317,8 @@ public class ProjectController(
     [HttpGet("audit-log")]
     public async Task<IActionResult> GetAuditLog([FromQuery] int limit = 50, [FromQuery] int offset = 0)
     {
+        limit  = Math.Clamp(limit, 1, 200);
+        offset = Math.Max(0, offset);
         if (await GetProjectAsync() == null) return NotFound();
         var logs = await db.AuditLogs
             .Where(l => l.ProjectId == ProjectId)

@@ -62,83 +62,26 @@ public class SamlController(
     // ── ACS: receive and validate SAMLResponse ────────────────────────────────
 
     [HttpPost("acs")]
-    public async Task<IActionResult> AssertionConsumerService()
+    public async Task<IActionResult> AssertionConsumerService([FromForm(Name = "RelayState")] string relayState = "")
     {
-        var httpRequest = await Request.ToGenericHttpRequestAsync(validate: true);
-        Saml2AuthnResponse? saml2AuthnResponse = null;
+        var (parsed, parseError) = await ParseSamlResponseAsync(relayState);
+        if (parseError != null) return BadRequest(new { error = parseError });
 
-        Guid idpId;
-        string? loginChallenge;
-        SamlIdpConfig? idp;
-
-        try
-        {
-            // Read relay state first to know which IdP/challenge we're handling
-            var relayQuery = httpRequest.Binding.GetRelayStateQuery();
-            if (!relayQuery.TryGetValue("login_challenge", out loginChallenge) ||
-                !relayQuery.TryGetValue("idp_id", out var idpIdStr) ||
-                !Guid.TryParse(idpIdStr, out idpId))
-                return BadRequest(new { error = "invalid_relay_state" });
-
-            idp = await db.SamlIdpConfigs
-                .Include(x => x.Project)
-                .FirstOrDefaultAsync(x => x.Id == idpId && x.Active);
-            if (idp == null) return BadRequest(new { error = "saml_idp_not_found" });
-
-            var config = await saml.BuildConfigAsync(idp, SpEntity, AcsUrl);
-
-            // Validate InResponseTo: ensure the response was triggered by a request we initiated
-            var expectedReqId = HttpContext.Session.GetString($"saml_req:{idpId}");
-            HttpContext.Session.Remove($"saml_req:{idpId}");
-
-            saml2AuthnResponse = new Saml2AuthnResponse(config);
-            httpRequest.Binding.ReadSamlResponse(httpRequest, saml2AuthnResponse);
-
-            if (saml2AuthnResponse.Status != Saml2StatusCodes.Success)
-                throw new AuthenticationException($"SAML status: {saml2AuthnResponse.Status}");
-
-            // Require a matching session-stored request ID — blocks IdP-initiated and replayed responses
-            if (expectedReqId == null)
-                throw new AuthenticationException("No pending SAML request found for this session");
-            if (saml2AuthnResponse.InResponseTo?.Value != expectedReqId)
-                throw new AuthenticationException("InResponseTo mismatch");
-
-            httpRequest.Binding.Unbind(httpRequest, saml2AuthnResponse);
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "SAML ACS validation failed");
-            return BadRequest(new { error = "saml_response_invalid" });
-        }
-
-        var identity = saml2AuthnResponse.ClaimsIdentity;
+        var (idp, loginChallenge, identity) = parsed!;
         var email = SamlService.ExtractEmail(identity, idp.EmailAttributeName);
-        if (string.IsNullOrEmpty(email))
-            return BadRequest(new { error = "saml_email_missing" });
+        if (string.IsNullOrEmpty(email)) return BadRequest(new { error = "saml_email_missing" });
 
-        var displayName = SamlService.ExtractDisplayName(identity, idp.DisplayNameAttributeName);
         var project = idp.Project;
+        if (project.AssignedUserListId == null) return StatusCode(503, new { error = "project_not_configured" });
 
-        if (project.AssignedUserListId == null)
-            return StatusCode(503, new { error = "project_not_configured" });
+        var (user, accessError) = await ResolveSamlUserAsync(project, idp, email,
+            SamlService.ExtractDisplayName(identity, idp.DisplayNameAttributeName), loginChallenge);
+        if (accessError != null) return Unauthorized(new { error = accessError });
 
-        // Find or JIT-provision user
-        var emailLower = email.ToLowerInvariant();
-        var user = await db.Users.FirstOrDefaultAsync(
-            u => u.UserListId == project.AssignedUserListId && u.Email == emailLower);
-
-        if (user == null)
-        {
-            if (!idp.JitProvisioning)
-                return Unauthorized(new { error = "user_not_provisioned" });
-            user = await ProvisionUserAsync(project, email, displayName, idp.DefaultRoleId);
-        }
-
-        if (!user.Active)
-            return Unauthorized(new { error = "account_disabled" });
-
-        user.LastLoginAt = DateTimeOffset.UtcNow;
+        user!.LastLoginAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
+
+        if (string.IsNullOrEmpty(loginChallenge)) return BadRequest(new { error = "invalid_login_challenge" });
 
         var subject = $"{project.OrgId}:{user.Id}";
         var context = new Dictionary<string, object>
@@ -148,11 +91,88 @@ public class SamlController(
             ["user_id"]    = user.Id.ToString()
         };
 
-        var redirectUrl = await hydra.AcceptLoginAsync(loginChallenge!, subject, context);
+        var redirectUrl = await hydra.AcceptLoginAsync(loginChallenge, subject, context);
         await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.saml",
             metadata: new Dictionary<string, object> { ["idp_id"] = idp.Id.ToString() });
 
         return Redirect(redirectUrl);
+    }
+
+    private record SamlParsed(SamlIdpConfig Idp, string? LoginChallenge, System.Security.Claims.ClaimsIdentity Identity);
+
+    private async Task<(SamlParsed? Parsed, string? Error)> ParseSamlResponseAsync(string relayState)
+    {
+        var httpRequest = await Request.ToGenericHttpRequestAsync(validate: true);
+        try
+        {
+            httpRequest.Binding.RelayState = relayState;
+            var relayQuery = httpRequest.Binding.GetRelayStateQuery();
+            if (!relayQuery.TryGetValue("login_challenge", out var loginChallenge) ||
+                !relayQuery.TryGetValue("idp_id", out var idpIdStr) ||
+                !Guid.TryParse(idpIdStr, out var idpId))
+                return (null, "invalid_relay_state");
+
+            var idp = await db.SamlIdpConfigs
+                .Include(x => x.Project)
+                .FirstOrDefaultAsync(x => x.Id == idpId && x.Active);
+            if (idp == null) return (null, "saml_idp_not_found");
+
+            var config = await saml.BuildConfigAsync(idp, SpEntity, AcsUrl);
+            var expectedReqId = HttpContext.Session.GetString($"saml_req:{idpId}");
+            HttpContext.Session.Remove($"saml_req:{idpId}");
+            if (string.IsNullOrEmpty(expectedReqId)) return (null, "saml_no_pending_request");
+
+            var saml2AuthnResponse = new Saml2AuthnResponse(config);
+            httpRequest.Binding.ReadSamlResponse(httpRequest, saml2AuthnResponse);
+            if (saml2AuthnResponse.Status != Saml2StatusCodes.Success)
+                throw new AuthenticationException($"SAML status: {saml2AuthnResponse.Status}");
+            if (saml2AuthnResponse.InResponseTo?.Value != expectedReqId)
+                throw new AuthenticationException("InResponseTo mismatch");
+            httpRequest.Binding.Unbind(httpRequest, saml2AuthnResponse);
+
+            return (new SamlParsed(idp, loginChallenge, saml2AuthnResponse.ClaimsIdentity), null);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "SAML ACS validation failed");
+            return (null, "saml_response_invalid");
+        }
+    }
+
+    private async Task<(User? User, string? Error)> ResolveSamlUserAsync(
+        Project project, SamlIdpConfig idp, string email, string? displayName, string? loginChallenge)
+    {
+        if (project.AllowedEmailDomains.Length > 0)
+        {
+            var domain = email.Split('@').LastOrDefault()?.ToLowerInvariant() ?? "";
+            if (!project.AllowedEmailDomains.Any(d => d.Equals(domain, StringComparison.OrdinalIgnoreCase)))
+            {
+                if (!string.IsNullOrEmpty(loginChallenge))
+                    await hydra.RejectLoginAsync(loginChallenge, "access_denied", "email_domain_not_allowed");
+                return (null, "email_domain_not_allowed");
+            }
+        }
+
+        var emailLower = email.ToLowerInvariant();
+        var user = await db.Users.FirstOrDefaultAsync(
+            u => u.UserListId == project.AssignedUserListId && u.Email == emailLower);
+
+        if (user == null && !idp.JitProvisioning) return (null, "user_not_provisioned");
+        if (user == null) user = await ProvisionUserAsync(project, email, displayName, idp.DefaultRoleId);
+        if (!user.Active) return (null, "account_disabled");
+
+        if (project.RequireRoleToLogin)
+        {
+            var hasRole = await db.UserProjectRoles.AnyAsync(r => r.UserId == user.Id && r.ProjectId == project.Id);
+            if (!hasRole)
+            {
+                if (!string.IsNullOrEmpty(loginChallenge))
+                    await hydra.RejectLoginAsync(loginChallenge, "access_denied", "no_role_assigned");
+                return (null, "no_role_assigned");
+            }
+        }
+
+        return (user, null);
     }
 
     // ── SP Metadata ───────────────────────────────────────────────────────────
@@ -183,7 +203,12 @@ public class SamlController(
     {
         var username = email.Split('@')[0];
         string discriminator;
-        do { discriminator = Random.Shared.Next(1000, 9999).ToString(); }
+        var discIter = 0;
+        do
+        {
+            if (++discIter > 100) throw new InvalidOperationException("discriminator_space_exhausted");
+            discriminator = Random.Shared.Next(1000, 9999).ToString();
+        }
         while (await db.Users.AnyAsync(u =>
             u.UserListId == project.AssignedUserListId &&
             u.Username == username && u.Discriminator == discriminator));

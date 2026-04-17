@@ -55,15 +55,17 @@ public class SecurityHeadersTests(TestFixture fixture)
     // ── Admin routes ──────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task AdminRoute_HasSecurityHeaders_ButNoCsp()
+    public async Task AdminRoute_HasSecurityHeaders_WithRelaxedCsp()
     {
         var res = await fixture.Client.GetAsync("/admin/config");
 
         res.Headers.TryGetValues("X-Content-Type-Options", out var xct).Should().BeTrue();
         xct!.First().Should().Be("nosniff");
 
-        // Admin SPA has its own inline scripts — no CSP injected by middleware
-        res.Headers.TryGetValues("Content-Security-Policy", out _).Should().BeFalse();
+        // Admin SPA gets a strict CSP (no unsafe-inline)
+        res.Headers.TryGetValues("Content-Security-Policy", out var csp).Should().BeTrue();
+        csp!.First().Should().Contain("script-src 'self'");
+        csp!.First().Should().NotContain("unsafe-inline");
     }
 
     // ── /preview should not have X-Frame-Options: DENY ────────────────────────

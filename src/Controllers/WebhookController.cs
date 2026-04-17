@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using RediensIAM.Config;
@@ -41,6 +43,9 @@ public class OrgWebhookController(
     {
         if (!body.Url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
             return BadRequest(new { error = "url_must_be_https" });
+
+        if (await IsPrivateOrReservedUrlAsync(body.Url))
+            return BadRequest(new { error = "url_not_allowed" });
 
         var invalidEvents = body.Events.Except(WebhookEvents.All).ToArray();
         if (invalidEvents.Length > 0)
@@ -134,6 +139,50 @@ public class OrgWebhookController(
         return NoContent();
     }
 
+    private static async Task<bool> IsPrivateOrReservedUrlAsync(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return true;
+
+        var host = uri.Host;
+
+        // Block internal hostname patterns
+        if (host.EndsWith(".svc", StringComparison.OrdinalIgnoreCase) ||
+            host.EndsWith(".cluster.local", StringComparison.OrdinalIgnoreCase) ||
+            host.EndsWith(".internal", StringComparison.OrdinalIgnoreCase) ||
+            host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+            host.Equals("metadata.google.internal", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Resolve and check all IPs — only block if resolution succeeds and returns a private IP
+        try
+        {
+            var addresses = await Dns.GetHostAddressesAsync(host);
+            if (addresses.Any(IsPrivateIp)) return true;
+        }
+        catch
+        {
+            // DNS failure = host may not exist; webhook delivery will fail naturally
+        }
+
+        return false;
+    }
+
+    private static bool IsPrivateIp(IPAddress ip)
+    {
+        if (IPAddress.IsLoopback(ip)) return true;
+        if (ip.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            if (ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal) return true;
+            return ip.Equals(IPAddress.IPv6Loopback);
+        }
+        var b = ip.GetAddressBytes();
+        return b[0] == 10
+            || (b[0] == 172 && b[1] >= 16 && b[1] <= 31)
+            || (b[0] == 192 && b[1] == 168)
+            || (b[0] == 169 && b[1] == 254)
+            || b[0] == 127;
+    }
+
     [HttpPost("{id}/test")]
     public async Task<IActionResult> TestWebhook(Guid id)
     {
@@ -146,6 +195,8 @@ public class OrgWebhookController(
     [HttpGet("{id}/deliveries")]
     public async Task<IActionResult> ListDeliveries(Guid id, [FromQuery] int limit = 20, [FromQuery] int offset = 0)
     {
+        limit  = Math.Clamp(limit, 1, 200);
+        offset = Math.Max(0, offset);
         if (!await db.Webhooks.AnyAsync(w => w.Id == id && w.OrgId == OrgId)) return NotFound();
         var deliveries = await db.WebhookDeliveries
             .Where(d => d.WebhookId == id)

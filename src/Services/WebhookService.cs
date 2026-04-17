@@ -99,12 +99,18 @@ public class WebhookDispatcherService(
 {
     // Retry delays: 2s, 8s, 32s
     private static readonly int[] RetryDelaysMs = [2_000, 8_000, 32_000];
+    private readonly SemaphoreSlim _sem = new(20, 20);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await foreach (var job in channel.Reader.ReadAllAsync(stoppingToken))
         {
-            _ = Task.Run(() => ProcessJobAsync(job, stoppingToken), stoppingToken);
+            await _sem.WaitAsync(stoppingToken);
+            _ = Task.Run(async () =>
+            {
+                try { await ProcessJobAsync(job, stoppingToken); }
+                finally { _sem.Release(); }
+            }, stoppingToken);
         }
     }
 
@@ -180,7 +186,7 @@ public class WebhookDispatcherService(
     private static string ComputeSignature(string secret, byte[] payload)
     {
         if (string.IsNullOrEmpty(secret)) return "";
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+        using var hmac = new HMACSHA256(Convert.FromBase64String(secret));
         return Convert.ToHexString(hmac.ComputeHash(payload)).ToLowerInvariant();
     }
 }

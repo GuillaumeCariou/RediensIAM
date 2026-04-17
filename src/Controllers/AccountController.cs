@@ -106,7 +106,7 @@ public class AccountController(
         HttpContext.Session.Remove("totp_setup_secret");
         var backupCodes = Enumerable.Range(0, 8).Select(_ =>
         {
-            var code = Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToUpper();
+            var code = Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToUpper();
             return (code, hash: Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(code))));
         }).ToList();
         db.BackupCodes.RemoveRange(db.BackupCodes.Where(c => c.UserId == userId));
@@ -124,7 +124,7 @@ public class AccountController(
         var userId = Claims.ParsedUserId;
         var codes = Enumerable.Range(0, 8).Select(_ =>
         {
-            var code = Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToUpper();
+            var code = Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToUpper();
             return (code, hash: Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(code))));
         }).ToList();
         db.BackupCodes.RemoveRange(db.BackupCodes.Where(c => c.UserId == userId));
@@ -173,6 +173,7 @@ public class AccountController(
     [HttpPost("mfa/phone/setup")]
     public async Task<IActionResult> SetupPhone([FromBody] PhoneSetupRequest body)
     {
+        await otpCache.EnforceSmsRateLimitAsync(Claims.ParsedUserId);
         var code = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
         HttpContext.Session.SetString("phone_setup_number", body.Phone);
         await otpCache.StoreSessionOtpAsync("phone_setup", Claims.UserId, code);
@@ -270,7 +271,10 @@ public class AccountController(
                 IsCredentialIdUniqueToUserCallback = isUnique
             });
         }
-        catch (Exception ex) { return BadRequest(new { error = "attestation_failed", detail = ex.Message }); }
+        catch (Exception)
+        {
+            return BadRequest(new { error = "attestation_failed" });
+        }
         db.WebAuthnCredentials.Add(new WebAuthnCredential
         {
             Id           = Guid.NewGuid(),

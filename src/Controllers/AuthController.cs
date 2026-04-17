@@ -235,7 +235,7 @@ public class AuthController(
             if (!hasRole)
             {
                 var rejectUrl = await hydra.RejectLoginAsync(loginChallenge, ErrAccessDenied, "no_role_assigned");
-                return Ok(new { redirect_to = rejectUrl, error = "no_role" });
+                return Redirect(rejectUrl);
             }
         }
         return null;
@@ -283,11 +283,11 @@ public class AuthController(
         return null;
     }
 
-    private void SetMfaSession(string userId, string loginChallenge, string projectId)
+    private void SetMfaSession(string userId, string loginChallenge, string? projectId)
     {
         HttpContext.Session.SetString(MfaPendingUser, userId);
         HttpContext.Session.SetString(MfaPendingChallenge, loginChallenge);
-        HttpContext.Session.SetString(MfaPendingProject, projectId);
+        HttpContext.Session.SetString(MfaPendingProject, projectId ?? "");
     }
 
     private async Task<IActionResult> CompleteLoginAsync(User user, Project project, string loginChallenge)
@@ -321,8 +321,9 @@ public class AuthController(
 
         if (userId == null || challenge == null || projectId == null)
             return BadRequest(new { error = ErrNoMfaSession });
+        if (!Guid.TryParse(userId, out var userGuid))
+            return BadRequest(new { error = ErrNoMfaSession });
 
-        var userGuid = Guid.Parse(userId);
         if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
             return StatusCode(429, new { error = ErrRateLimited });
 
@@ -347,16 +348,26 @@ public class AuthController(
         HttpContext.Session.Remove(MfaPendingChallenge);
         HttpContext.Session.Remove(MfaPendingProject);
 
-        var project = await db.Projects.FindAsync(Guid.Parse(projectId));
-        var subject = $"{project!.OrgId}:{user.Id}";
-        var context = new Dictionary<string, object>
+        string redirectUrl;
+        if (projectId == "")
         {
-            [CtxOrgId]     = project.OrgId.ToString(),
-            [CtxProjectId] = projectId,
-            [CtxUserId]    = user.Id.ToString()
-        };
-        var redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, context);
-        await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.backup_code");
+            var ctx = new Dictionary<string, object> { [CtxUserId] = user.Id.ToString() };
+            redirectUrl = await hydra.AcceptLoginAsync(challenge, user.Id.ToString(), ctx);
+            await audit.RecordAsync(null, null, user.Id, "user.login.backup_code");
+        }
+        else
+        {
+            var project = await db.Projects.FindAsync(Guid.Parse(projectId));
+            var subject = $"{project!.OrgId}:{user.Id}";
+            var context = new Dictionary<string, object>
+            {
+                [CtxOrgId]     = project.OrgId.ToString(),
+                [CtxProjectId] = projectId,
+                [CtxUserId]    = user.Id.ToString()
+            };
+            redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, context);
+            await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.backup_code");
+        }
         return Ok(new { redirect_to = redirectUrl });
     }
 
@@ -371,10 +382,10 @@ public class AuthController(
         var user = await db.Users.FindAsync(userGuid);
         if (user == null || !user.PhoneVerified || string.IsNullOrEmpty(user.Phone))
             return BadRequest(new { error = "phone_not_configured" });
+        await otp.EnforceSmsRateLimitAsync(userGuid);
         var smsCode = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
         await otp.StoreSessionOtpAsync("sms_mfa", userId, smsCode);
         await smsService.SendOtpAsync(user.Phone, smsCode, "login");
-        await rateLimiter.RecordFailureAsync(Ip, userGuid);
         return Ok(new { sent = true });
     }
 
@@ -386,8 +397,9 @@ public class AuthController(
         var projectId = HttpContext.Session.GetString(MfaPendingProject);
         if (userId == null || challenge == null || projectId == null)
             return BadRequest(new { error = ErrNoMfaSession });
+        if (!Guid.TryParse(userId, out var userGuid))
+            return BadRequest(new { error = ErrNoMfaSession });
 
-        var userGuid = Guid.Parse(userId);
         if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
             return StatusCode(429, new { error = ErrRateLimited });
 
@@ -407,14 +419,24 @@ public class AuthController(
         HttpContext.Session.Remove(MfaPendingChallenge);
         HttpContext.Session.Remove(MfaPendingProject);
 
-        var project = await db.Projects.FindAsync(Guid.Parse(projectId));
-        var subject = $"{project!.OrgId}:{user.Id}";
-        var context = new Dictionary<string, object>
+        string redirectUrl;
+        if (projectId == "")
         {
-            [CtxOrgId] = project.OrgId.ToString(), [CtxProjectId] = projectId, [CtxUserId] = user.Id.ToString()
-        };
-        var redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, context);
-        await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.sms");
+            var ctx = new Dictionary<string, object> { [CtxUserId] = user.Id.ToString() };
+            redirectUrl = await hydra.AcceptLoginAsync(challenge, user.Id.ToString(), ctx);
+            await audit.RecordAsync(null, null, user.Id, "user.login.sms");
+        }
+        else
+        {
+            var project = await db.Projects.FindAsync(Guid.Parse(projectId));
+            var subject = $"{project!.OrgId}:{user.Id}";
+            var context = new Dictionary<string, object>
+            {
+                [CtxOrgId] = project.OrgId.ToString(), [CtxProjectId] = projectId, [CtxUserId] = user.Id.ToString()
+            };
+            redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, context);
+            await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.sms");
+        }
         return Ok(new { redirect_to = redirectUrl });
     }
 
@@ -427,8 +449,9 @@ public class AuthController(
 
         if (userId == null || challenge == null || projectId == null)
             return BadRequest(new { error = ErrNoMfaSession });
+        if (!Guid.TryParse(userId, out var userGuid))
+            return BadRequest(new { error = ErrNoMfaSession });
 
-        var userGuid = Guid.Parse(userId);
         if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
             return StatusCode(429, new { error = ErrRateLimited });
 
@@ -451,7 +474,6 @@ public class AuthController(
 
         await otp.StoreTotpUsedAsync(user.Id, body.Code);
 
-        var project = await db.Projects.FindAsync(Guid.Parse(projectId));
         user.LastLoginAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         await rateLimiter.ResetAsync(Ip, userGuid);
@@ -460,15 +482,26 @@ public class AuthController(
         HttpContext.Session.Remove(MfaPendingChallenge);
         HttpContext.Session.Remove(MfaPendingProject);
 
-        var subject = $"{project!.OrgId}:{user.Id}";
-        var context = new Dictionary<string, object>
+        string redirectUrl;
+        if (projectId == "")
         {
-            [CtxOrgId] = project.OrgId.ToString(),
-            [CtxProjectId] = projectId,
-            [CtxUserId] = user.Id.ToString()
-        };
-        var redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, context);
-        await audit.RecordAsync(project!.OrgId, project.Id, user.Id, "user.login.mfa");
+            var ctx = new Dictionary<string, object> { [CtxUserId] = user.Id.ToString() };
+            redirectUrl = await hydra.AcceptLoginAsync(challenge, user.Id.ToString(), ctx);
+            await audit.RecordAsync(null, null, user.Id, "user.login.mfa");
+        }
+        else
+        {
+            var project = await db.Projects.FindAsync(Guid.Parse(projectId));
+            var subject = $"{project!.OrgId}:{user.Id}";
+            var context = new Dictionary<string, object>
+            {
+                [CtxOrgId] = project.OrgId.ToString(),
+                [CtxProjectId] = projectId,
+                [CtxUserId] = user.Id.ToString()
+            };
+            redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, context);
+            await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.mfa");
+        }
         return Ok(new { redirect_to = redirectUrl });
     }
 
@@ -726,11 +759,21 @@ public class AuthController(
         var projId = Guid.Parse(root.GetProperty(CtxProjectId).GetString()!);
         var loginChallenge = root.GetProperty("login_challenge").GetString()!;
 
+        // Verify project is still active and configured before creating user
+        var regProject = await db.Projects.FindAsync(projId);
+        if (regProject == null || !regProject.Active || regProject.AssignedUserListId == null)
+            return BadRequest(new { error = "project_inactive" });
+
         if (await db.Users.AnyAsync(u => u.UserListId == userListId && u.Email == email))
             return Conflict(new { error = "email_already_exists" });
 
         string discriminator;
-        do { discriminator = Random.Shared.Next(1000, 9999).ToString(); }
+        var discIter = 0;
+        do
+        {
+            if (++discIter > 100) throw new InvalidOperationException("discriminator_space_exhausted");
+            discriminator = Random.Shared.Next(1000, 9999).ToString();
+        }
         while (await db.Users.AnyAsync(u => u.UserListId == userListId && u.Username == username && u.Discriminator == discriminator));
         var user = new User
         {
@@ -744,8 +787,7 @@ public class AuthController(
         await db.SaveChangesAsync();
         await keto.WriteRelationTupleAsync(Roles.KetoUserListsNamespace, userListId.ToString(), "member", $"user:{user.Id}");
         await audit.RecordAsync(orgId, projId, user.Id, "user.registered");
-        var regProject = await db.Projects.FindAsync(projId);
-        if (regProject != null) await keto.AssignDefaultRoleAsync(regProject, user);
+        await keto.AssignDefaultRoleAsync(regProject, user);
 
         var subject = $"{orgId}:{user.Id}";
         var ctx = new Dictionary<string, object>
@@ -769,9 +811,14 @@ public class AuthController(
         if (token == null || token.ExpiresAt < DateTimeOffset.UtcNow || token.UsedAt != null)
             return BadRequest(new { error = "invalid_or_expired_token" });
 
-        // Check breach database if the user's project requires it
+        // Check project password policy
         var userList = await db.UserLists.Include(ul => ul.Projects).FirstOrDefaultAsync(ul => ul.Id == token.User.UserListId);
         var inviteProject = userList?.Projects.FirstOrDefault();
+        if (inviteProject != null)
+        {
+            var policyErr = await ValidatePasswordPolicyAsync(inviteProject, body.Password);
+            if (policyErr != null) return policyErr;
+        }
         if (inviteProject?.CheckBreachedPasswords == true)
         {
             var count = await breachCheck.GetBreachCountAsync(body.Password);
@@ -870,18 +917,36 @@ public class AuthController(
     public async Task<IActionResult> ConfirmPasswordReset([FromBody] PasswordResetConfirmBody body)
     {
         var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(body.Token)));
-        var token = await db.EmailTokens.Include(t => t.User)
+        var token = await db.EmailTokens
+            .Include(t => t.User).ThenInclude(u => u.UserList).ThenInclude(ul => ul.Projects)
             .FirstOrDefaultAsync(t => t.TokenHash == hash && t.Kind == "reset_password");
 
         if (token == null || token.ExpiresAt < DateTimeOffset.UtcNow || token.UsedAt != null)
             return BadRequest(new { error = "invalid_or_expired_token" });
+
+        var resetProject = token.User.UserList.Projects.FirstOrDefault();
+        if (resetProject != null)
+        {
+            var policyErr = await ValidatePasswordPolicyAsync(resetProject, body.NewPassword);
+            if (policyErr != null) return policyErr;
+        }
 
         token.User.PasswordHash = passwords.Hash(body.NewPassword);
         token.User.FailedLoginCount = 0;
         token.User.LockedUntil = null;
         token.UsedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
+        var subject = token.User.UserList.OrgId.HasValue ? $"{token.User.UserList.OrgId}:{token.User.Id}" : token.User.Id.ToString();
+        await hydra.RevokeSessionsAsync(subject);
         return Ok(new { message = "password_reset" });
+    }
+
+    private async Task<bool> HasManagementRoleAsync(Guid userId)
+    {
+        var subject = $"user:{userId}";
+        if (await keto.CheckAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, subject)) return true;
+        if (await keto.HasAnyRelationAsync(Roles.KetoOrgsNamespace, Roles.KetoOrgAdminRelation, subject)) return true;
+        return await keto.HasAnyRelationAsync(Roles.KetoProjectsNamespace, Roles.KetoManagerRelation, subject);
     }
 
     private async Task<IActionResult> AdminLogin(LoginRequest body)
@@ -909,24 +974,30 @@ public class AuthController(
         if (user.PasswordHash == null || !passwords.Verify(body.Password, user.PasswordHash))
         {
             user.FailedLoginCount++;
-            if (user.FailedLoginCount >= appConfig.MaxLoginAttempts)
-                user.LockedUntil = DateTimeOffset.UtcNow.AddMinutes(appConfig.LockoutMinutes);
+            user.LockedUntil = user.FailedLoginCount >= appConfig.MaxLoginAttempts
+                ? DateTimeOffset.UtcNow.AddMinutes(appConfig.LockoutMinutes)
+                : user.LockedUntil;
             await db.SaveChangesAsync();
             await rateLimiter.RecordFailureAsync(Ip, user.Id);
             return Unauthorized(new { error = ErrInvalidCreds });
         }
 
-        var hasSuperAdmin = await keto.CheckAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{user.Id}");
-        var hasOrgAdmin = !hasSuperAdmin && await keto.HasAnyRelationAsync(Roles.KetoOrgsNamespace, Roles.KetoOrgAdminRelation, $"user:{user.Id}");
-        var hasProjManager = !hasSuperAdmin && !hasOrgAdmin && await keto.HasAnyRelationAsync(Roles.KetoProjectsNamespace, Roles.KetoManagerRelation, $"user:{user.Id}");
-
-        if (!hasSuperAdmin && !hasOrgAdmin && !hasProjManager)
+        if (!await HasManagementRoleAsync(user.Id))
             return Unauthorized(new { error = "insufficient_role" });
 
         user.FailedLoginCount = 0;
         user.LastLoginAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         await rateLimiter.ResetAsync(Ip, user.Id);
+
+        // Require MFA if the user has any factor configured
+        var hasMfa = user.TotpEnabled || user.PhoneVerified ||
+                     await db.WebAuthnCredentials.AnyAsync(w => w.UserId == user.Id);
+        if (hasMfa)
+        {
+            SetMfaSession(user.Id.ToString(), body.LoginChallenge, null);
+            return Ok(new { requires_mfa = true });
+        }
 
         var context = new Dictionary<string, object> { [CtxUserId] = user.Id.ToString() };
         var redirectUrl = await hydra.AcceptLoginAsync(body.LoginChallenge, user.Id.ToString(), context);
@@ -1015,7 +1086,12 @@ public class AuthController(
     {
         var uname = username ?? email.Split('@')[0];
         string discriminator;
-        do { discriminator = Random.Shared.Next(1000, 9999).ToString(); }
+        var discIter = 0;
+        do
+        {
+            if (++discIter > 100) throw new InvalidOperationException("discriminator_space_exhausted");
+            discriminator = Random.Shared.Next(1000, 9999).ToString();
+        }
         while (await db.Users.AnyAsync(u => u.UserListId == userListId && u.Username == uname && u.Discriminator == discriminator));
         return new User
         {
@@ -1176,6 +1252,14 @@ public class AuthController(
 
     private async Task<User?> FindOrCreateSocialUserAsync(SocialUserProfile profile, string provider, Project project)
     {
+        // Check allowed email domains before any provisioning
+        if (project.AllowedEmailDomains.Length > 0 && !string.IsNullOrEmpty(profile.Email))
+        {
+            var domain = profile.Email.Split('@').LastOrDefault()?.ToLowerInvariant() ?? "";
+            if (!project.AllowedEmailDomains.Any(d => d.Equals(domain, StringComparison.OrdinalIgnoreCase)))
+                return null;
+        }
+
         // 1. Check existing social link
         var social = await db.UserSocialAccounts
             .Include(s => s.User)
@@ -1197,45 +1281,8 @@ public class AuthController(
         // 3. Create new user if not found
         if (user == null)
         {
-            if (string.IsNullOrEmpty(profile.Email)) return null;
-
-            var email = profile.Email.ToLowerInvariant();
-            var uname = Regex.Replace(
-                (profile.Name?.Split(' ')[0]?.ToLower() ?? email.Split('@')[0]), @"[^a-z0-9_]", "",
-                RegexOptions.None, TimeSpan.FromMilliseconds(100));
-            if (string.IsNullOrEmpty(uname)) uname = "user";
-
-            string discriminator;
-            do { discriminator = Random.Shared.Next(1000, 9999).ToString(); }
-            while (await db.Users.AnyAsync(u =>
-                u.UserListId == project.AssignedUserListId &&
-                u.Username == uname &&
-                u.Discriminator == discriminator));
-
-            user = new User
-            {
-                UserListId      = project.AssignedUserListId!.Value,
-                Username        = uname,
-                Discriminator   = discriminator,
-                Email           = email,
-                PasswordHash    = null,   // social-only user — no password
-                EmailVerified   = true,
-                EmailVerifiedAt = DateTimeOffset.UtcNow,
-                Active          = true,
-                CreatedAt       = DateTimeOffset.UtcNow,
-                UpdatedAt       = DateTimeOffset.UtcNow,
-            };
-            db.Users.Add(user);
-            await db.SaveChangesAsync();
-
-            await keto.WriteRelationTupleAsync(
-                Roles.KetoUserListsNamespace,
-                project.AssignedUserListId!.Value.ToString(),
-                Roles.KetoMemberRelation,
-                $"user:{user.Id}");
-
-            await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.registered.social");
-            await keto.AssignDefaultRoleAsync(project, user);
+            user = await CreateSocialUserAsync(profile, project);
+            if (user == null) return null;
         }
 
         // 4. Record the social link
@@ -1249,6 +1296,55 @@ public class AuthController(
         });
         await db.SaveChangesAsync();
 
+        return user;
+    }
+
+    private async Task<User?> CreateSocialUserAsync(SocialUserProfile profile, Project project)
+    {
+        if (string.IsNullOrEmpty(profile.Email)) return null;
+
+        var email = profile.Email.ToLowerInvariant();
+        var uname = Regex.Replace(
+            profile.Name?.Split(' ')[0]?.ToLower() ?? email.Split('@')[0], @"[^a-z0-9_]", "",
+            RegexOptions.None, TimeSpan.FromMilliseconds(100));
+        if (string.IsNullOrEmpty(uname)) uname = "user";
+
+        string discriminator;
+        var discIter = 0;
+        do
+        {
+            if (++discIter > 100) throw new InvalidOperationException("discriminator_space_exhausted");
+            discriminator = Random.Shared.Next(1000, 9999).ToString();
+        }
+        while (await db.Users.AnyAsync(u =>
+            u.UserListId == project.AssignedUserListId &&
+            u.Username == uname &&
+            u.Discriminator == discriminator));
+
+        var user = new User
+        {
+            UserListId      = project.AssignedUserListId!.Value,
+            Username        = uname,
+            Discriminator   = discriminator,
+            Email           = email,
+            PasswordHash    = null,
+            EmailVerified   = true,
+            EmailVerifiedAt = DateTimeOffset.UtcNow,
+            Active          = true,
+            CreatedAt       = DateTimeOffset.UtcNow,
+            UpdatedAt       = DateTimeOffset.UtcNow,
+        };
+        db.Users.Add(user);
+        await db.SaveChangesAsync();
+
+        await keto.WriteRelationTupleAsync(
+            Roles.KetoUserListsNamespace,
+            project.AssignedUserListId!.Value.ToString(),
+            Roles.KetoMemberRelation,
+            $"user:{user.Id}");
+
+        await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.registered.social");
+        await keto.AssignDefaultRoleAsync(project, user);
         return user;
     }
 
@@ -1312,8 +1408,9 @@ public class AuthController(
     {
         var userId = HttpContext.Session.GetString(MfaPendingUser);
         if (userId == null) return BadRequest(new { error = ErrNoMfaSession });
+        if (!Guid.TryParse(userId, out var uid))
+            return BadRequest(new { error = ErrNoMfaSession });
 
-        var uid = Guid.Parse(userId);
         var allowedCreds = await db.WebAuthnCredentials
             .Where(c => c.UserId == uid)
             .Select(c => new PublicKeyCredentialDescriptor(c.CredentialId))
@@ -1337,6 +1434,8 @@ public class AuthController(
         var projectId = HttpContext.Session.GetString(MfaPendingProject);
         if (userId == null || challenge == null || projectId == null)
             return BadRequest(new { error = ErrNoMfaSession });
+        if (!Guid.TryParse(userId, out var uid))
+            return BadRequest(new { error = ErrNoMfaSession });
 
         var json = HttpContext.Session.GetString("fido2.assertionOptions");
         if (json == null) return BadRequest(new { error = "no_assertion_options" });
@@ -1347,8 +1446,6 @@ public class AuthController(
 
         var cred = await db.WebAuthnCredentials.FirstOrDefaultAsync(c => c.CredentialId == response.RawId);
         if (cred == null) return Unauthorized(new { error = "unknown_credential" });
-
-        var uid = Guid.Parse(userId);
         IsUserHandleOwnerOfCredentialIdAsync isOwner = async (args, ct) =>
             await db.WebAuthnCredentials.AnyAsync(c => c.CredentialId == args.CredentialId && c.UserId == uid, ct);
 
@@ -1364,9 +1461,9 @@ public class AuthController(
                 IsUserHandleOwnerOfCredentialIdCallback = isOwner
             });
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            return Unauthorized(new { error = "assertion_failed", detail = ex.Message });
+            return Unauthorized(new { error = "assertion_failed" });
         }
 
         cred.SignCount  = (long)result.SignCount;
@@ -1381,14 +1478,24 @@ public class AuthController(
         HttpContext.Session.Remove(MfaPendingChallenge);
         HttpContext.Session.Remove(MfaPendingProject);
 
-        var project = await db.Projects.FindAsync(Guid.Parse(projectId));
-        var subject  = $"{project!.OrgId}:{user.Id}";
-        var ctx = new Dictionary<string, object>
+        string redirectUrl;
+        if (projectId == "")
         {
-            [CtxOrgId] = project.OrgId.ToString(), [CtxProjectId] = projectId, [CtxUserId] = user.Id.ToString()
-        };
-        var redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, ctx);
-        await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.webauthn");
+            var ctx = new Dictionary<string, object> { [CtxUserId] = user.Id.ToString() };
+            redirectUrl = await hydra.AcceptLoginAsync(challenge, user.Id.ToString(), ctx);
+            await audit.RecordAsync(null, null, user.Id, "user.login.webauthn");
+        }
+        else
+        {
+            var project = await db.Projects.FindAsync(Guid.Parse(projectId));
+            var subject  = $"{project!.OrgId}:{user.Id}";
+            var ctx = new Dictionary<string, object>
+            {
+                [CtxOrgId] = project.OrgId.ToString(), [CtxProjectId] = projectId, [CtxUserId] = user.Id.ToString()
+            };
+            redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, ctx);
+            await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.webauthn");
+        }
         return Ok(new { redirect_to = redirectUrl });
     }
 }

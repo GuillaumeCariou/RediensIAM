@@ -145,8 +145,12 @@ var org = await db.Organisations.FindAsync(id);
         foreach (var listId in listIds)
         {
             var users = await db.Users.Where(u => u.UserListId == listId).ToListAsync();
-            foreach (var u in users)
-                await keto.DeleteRelationTupleAsync(Roles.KetoUserListsNamespace, listId.ToString(), "member", $"user:{u.Id}");
+            foreach (var userId in users.Select(u => u.Id))
+            {
+                await keto.DeleteRelationTupleAsync(Roles.KetoUserListsNamespace, listId.ToString(), "member", $"user:{userId}");
+                try { await hydra.RevokeSessionsAsync($"{id}:{userId}"); }
+                catch (Exception ex) { logger.LogWarning(ex, "Failed to revoke Hydra sessions for user {UserId} during org {OrgId} deletion", userId, id); }
+            }
             db.Users.RemoveRange(users);
         }
         // Save the user deletions before tackling the org+lists circular FK.
@@ -330,7 +334,12 @@ var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(u
         if (ul == null) return NotFound();
         var username = body.Username ?? body.Email.Split('@')[0];
         string discriminator;
-        do { discriminator = Random.Shared.Next(1000, 9999).ToString(); }
+        var discIter = 0;
+        do
+        {
+            if (++discIter > 100) throw new InvalidOperationException("discriminator_space_exhausted");
+            discriminator = Random.Shared.Next(1000, 9999).ToString();
+        }
         while (await db.Users.AnyAsync(u => u.UserListId == id && u.Username == username && u.Discriminator == discriminator));
         var emailVerified = body.EmailVerified ?? false;
         var isInvite = string.IsNullOrEmpty(body.Password);
@@ -825,7 +834,9 @@ var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == rid && r.ProjectId ==
     [HttpGet("audit-log")]
     public async Task<IActionResult> GetAuditLog([FromQuery] int limit = 50, [FromQuery] int offset = 0)
     {
-var logs = await db.AuditLogs
+        limit  = Math.Clamp(limit, 1, 200);
+        offset = Math.Max(0, offset);
+        var logs = await db.AuditLogs
             .OrderByDescending(l => l.CreatedAt)
             .Skip(offset).Take(limit)
             .Select(l => new { l.Id, l.Action, l.OrgId, l.ProjectId, l.ActorId, l.TargetType, l.TargetId, l.IpAddress, l.CreatedAt, l.Metadata })

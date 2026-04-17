@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Caching.Distributed;
 using RediensIAM.Config;
 
@@ -37,6 +38,7 @@ public class SocialLoginService(
     IHttpClientFactory httpClientFactory,
     IDistributedCache cache,
     AppConfig appConfig,
+    IWebHostEnvironment env,
     ILogger<SocialLoginService> logger)
 {
     // Provider-specific hardcoded endpoints (builtin)
@@ -56,6 +58,8 @@ public class SocialLoginService(
                         "https://graph.facebook.com/v18.0/me?fields=id,email,name"),
     };
 
+    private const string BearerScheme = "Bearer";
+
     private static readonly Dictionary<string, string> DefaultScopes = new()
     {
         ["google"]   = "openid email profile",
@@ -67,7 +71,8 @@ public class SocialLoginService(
     private const string Email = "email";
 
     // In-process cache for OIDC discovery documents
-    private readonly Dictionary<string, JsonDocument> _discoveryCache = [];
+    private readonly Dictionary<string, JsonDocument> _discoveryCache = new(64);
+    private const int DiscoveryCacheMaxSize = 64;
 
     public string CallbackUrl => $"{appConfig.PublicUrl}/auth/oauth2/callback";
 
@@ -218,7 +223,7 @@ public class SocialLoginService(
         var userInfoUrl = await GetUserInfoEndpointAsync(provider);
         var http = httpClientFactory.CreateClient();
         using var req = new HttpRequestMessage(HttpMethod.Get, userInfoUrl);
-        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, accessToken);
         using var resp = await http.SendAsync(req);
         if (!resp.IsSuccessStatusCode) return null;
 
@@ -236,7 +241,7 @@ public class SocialLoginService(
         async Task<JsonDocument?> CallAsync(string url)
         {
             using var r = new HttpRequestMessage(HttpMethod.Get, url);
-            r.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+            r.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, accessToken);
             r.Headers.UserAgent.ParseAdd("RediensIAM/1.0");
             r.Headers.Accept.ParseAdd("application/vnd.github+json");
             using var resp = await http.SendAsync(r);
@@ -275,9 +280,10 @@ public class SocialLoginService(
 
     private async Task<SocialUserProfile?> GetFacebookProfileAsync(string accessToken)
     {
-        var url = $"https://graph.facebook.com/v18.0/me?fields=id,email,name&access_token={Uri.EscapeDataString(accessToken)}";
         var http = httpClientFactory.CreateClient();
-        using var resp = await http.GetAsync(url);
+        using var req = new HttpRequestMessage(HttpMethod.Get, BuiltinEndpoints["facebook"].UserInfo);
+        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, accessToken);
+        using var resp = await http.SendAsync(req);
         if (!resp.IsSuccessStatusCode) return null;
 
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
@@ -294,7 +300,7 @@ public class SocialLoginService(
 
         var http = httpClientFactory.CreateClient();
         using var req = new HttpRequestMessage(HttpMethod.Get, userInfoUrl);
-        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, accessToken);
         using var resp = await http.SendAsync(req);
         if (!resp.IsSuccessStatusCode) return null;
 
@@ -321,7 +327,16 @@ public class SocialLoginService(
 
     private async Task<JsonDocument> GetDiscoveryAsync(string issuerUrl)
     {
+        if (!Uri.TryCreate(issuerUrl, UriKind.Absolute, out var parsed))
+            throw new ArgumentException($"OIDC issuer_url must be an absolute URL: {issuerUrl}");
+        var httpsRequired = env.IsProduction() || parsed.Host != "localhost";
+        if (parsed.Scheme != "https" && httpsRequired)
+            throw new ArgumentException($"OIDC issuer_url must be an absolute HTTPS URL: {issuerUrl}");
+
         if (_discoveryCache.TryGetValue(issuerUrl, out var cached)) return cached;
+
+        if (_discoveryCache.Count >= DiscoveryCacheMaxSize)
+            _discoveryCache.Remove(_discoveryCache.Keys.First());
 
         var url  = issuerUrl.TrimEnd('/') + "/.well-known/openid-configuration";
         var http = httpClientFactory.CreateClient();
