@@ -180,70 +180,7 @@ static async Task EnsureDbSchemaAsync(WebApplication webApp)
     {
         try
         {
-            await db.Database.EnsureCreatedAsync();
-            // Idempotent schema additions for incremental releases (EnsureCreatedAsync won't update existing DBs)
-            // Column names must be quoted PascalCase to match EF Core / Npgsql defaults.
-            await db.Database.ExecuteSqlRawAsync(@"
-                CREATE TABLE IF NOT EXISTS org_smtp_configs (
-                    ""Id""          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                    ""OrgId""       UUID NOT NULL UNIQUE REFERENCES organisations(""Id"") ON DELETE CASCADE,
-                    ""Host""        TEXT NOT NULL,
-                    ""Port""        INTEGER NOT NULL DEFAULT 587,
-                    ""StartTls""    BOOLEAN NOT NULL DEFAULT true,
-                    ""Username""    TEXT,
-                    ""PasswordEnc"" TEXT,
-                    ""FromAddress"" TEXT NOT NULL,
-                    ""FromName""    TEXT NOT NULL,
-                    ""CreatedAt""   TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    ""UpdatedAt""   TIMESTAMPTZ NOT NULL DEFAULT now()
-                );
-                ALTER TABLE projects ADD COLUMN IF NOT EXISTS ""EmailFromName"" TEXT;
-                ALTER TABLE projects ADD COLUMN IF NOT EXISTS ""RequireMfa"" BOOLEAN NOT NULL DEFAULT false;
-                ALTER TABLE projects ADD COLUMN IF NOT EXISTS ""IpAllowlist"" JSONB NOT NULL DEFAULT '[]';
-                ALTER TABLE projects ADD COLUMN IF NOT EXISTS ""CheckBreachedPasswords"" BOOLEAN NOT NULL DEFAULT false;
-                ALTER TABLE projects ADD COLUMN IF NOT EXISTS ""AllowedScopes"" TEXT[] NOT NULL DEFAULT '{{}}';
-                ALTER TABLE webhook_deliveries ADD COLUMN IF NOT EXISTS ""Payload"" JSONB NOT NULL DEFAULT '{{}}';
-                ALTER TABLE organisations ADD COLUMN IF NOT EXISTS ""AuditRetentionDays"" INTEGER;
-                ALTER TABLE users ADD COLUMN IF NOT EXISTS ""NewDeviceAlertsEnabled"" BOOLEAN NOT NULL DEFAULT true;
-                ALTER TABLE users ALTER COLUMN ""PasswordHash"" DROP NOT NULL;
-
-                CREATE TABLE IF NOT EXISTS saml_idp_configs (
-                    ""Id""                      UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-                    ""ProjectId""               UUID         NOT NULL REFERENCES projects(""Id"") ON DELETE CASCADE,
-                    ""EntityId""                TEXT         NOT NULL,
-                    ""MetadataUrl""             TEXT,
-                    ""SsoUrl""                  TEXT,
-                    ""CertificatePem""          TEXT,
-                    ""EmailAttributeName""      TEXT         NOT NULL DEFAULT 'email',
-                    ""DisplayNameAttributeName"" TEXT,
-                    ""JitProvisioning""         BOOLEAN      NOT NULL DEFAULT true,
-                    ""DefaultRoleId""           UUID         REFERENCES roles(""Id"") ON DELETE SET NULL,
-                    ""Active""                  BOOLEAN      NOT NULL DEFAULT true,
-                    ""CreatedAt""               TIMESTAMPTZ  NOT NULL DEFAULT now(),
-                    ""UpdatedAt""               TIMESTAMPTZ  NOT NULL DEFAULT now()
-                );
-                CREATE TABLE IF NOT EXISTS webhooks (
-                    ""Id""        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                    ""OrgId""     UUID REFERENCES organisations(""Id"") ON DELETE CASCADE,
-                    ""ProjectId"" UUID REFERENCES projects(""Id"") ON DELETE CASCADE,
-                    ""Url""       TEXT NOT NULL,
-                    ""SecretEnc"" TEXT NOT NULL DEFAULT '',
-                    ""Events""    JSONB NOT NULL DEFAULT '[]',
-                    ""Active""    BOOLEAN NOT NULL DEFAULT true,
-                    ""CreatedAt"" TIMESTAMPTZ NOT NULL DEFAULT now()
-                );
-                CREATE TABLE IF NOT EXISTS webhook_deliveries (
-                    ""Id""           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                    ""WebhookId""    UUID NOT NULL REFERENCES webhooks(""Id"") ON DELETE CASCADE,
-                    ""Event""        TEXT NOT NULL,
-                    ""Payload""      JSONB NOT NULL DEFAULT '{{}}',
-                    ""StatusCode""   INTEGER,
-                    ""ErrorMessage"" TEXT,
-                    ""AttemptCount"" INTEGER NOT NULL DEFAULT 0,
-                    ""DeliveredAt""  TIMESTAMPTZ,
-                    ""CreatedAt""    TIMESTAMPTZ NOT NULL DEFAULT now()
-                );
-            ");
+            await db.Database.MigrateAsync();
             logger.LogInformation("Database schema ready");
             break;
         }
