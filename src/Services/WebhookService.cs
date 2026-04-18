@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
@@ -5,6 +6,7 @@ using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
 using RediensIAM.Config;
+using RediensIAM.Controllers;
 using RediensIAM.Data;
 using RediensIAM.Data.Entities;
 
@@ -64,14 +66,12 @@ public class WebhookService(
                 && (w.ProjectId == projectId || w.ProjectId == null))
             .ToListAsync();
 
-        var encKey = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
-
         foreach (var wh in webhooks)
         {
             var secret = "";
             if (!string.IsNullOrEmpty(wh.SecretEnc))
             {
-                try { secret = TotpEncryption.DecryptString(encKey, wh.SecretEnc); }
+                try { secret = TotpEncryption.DecryptString(appConfig.WebhookEncKey, wh.SecretEnc); }
                 catch { /* corrupt key — still deliver, just without a valid signature */ }
             }
 
@@ -116,6 +116,13 @@ public class WebhookDispatcherService(
 
     private async Task ProcessJobAsync(WebhookJob job, CancellationToken ct)
     {
+        // Re-validate IP at delivery to prevent DNS rebinding (C8)
+        if (await WebhookUrlValidator.IsPrivateOrReservedAsync(job.Url))
+        {
+            logger.LogWarning("Webhook {Id} delivery blocked: URL resolved to private IP at delivery time", job.WebhookId);
+            return;
+        }
+
         var payloadBytes = Encoding.UTF8.GetBytes(job.Payload);
         var sig = ComputeSignature(job.SecretPlain, payloadBytes);
 
@@ -135,7 +142,8 @@ public class WebhookDispatcherService(
                 using var req = new HttpRequestMessage(HttpMethod.Post, job.Url);
                 req.Content = new ByteArrayContent(payloadBytes);
                 req.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-                req.Headers.Add("X-RediensIAM-Signature", $"sha256={sig}");
+                if (!string.IsNullOrEmpty(sig))
+                    req.Headers.Add("X-RediensIAM-Signature", $"sha256={sig}");
                 req.Headers.Add("X-RediensIAM-Event", job.EventType);
 
                 var resp = await client.SendAsync(req, ct);

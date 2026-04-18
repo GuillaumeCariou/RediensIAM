@@ -183,8 +183,7 @@ public class OrgController(
     private void ApplyLoginTheme(Project project, Dictionary<string, object>? theme)
     {
         if (theme == null) return;
-        var encKey = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
-        project.LoginTheme = TotpEncryption.EncryptProviderSecretsInTheme(theme, project.LoginTheme, encKey)!;
+        project.LoginTheme = TotpEncryption.EncryptProviderSecretsInTheme(theme, project.LoginTheme, appConfig.ThemeEncKey)!;
     }
 
     private static void ApplyEmailFromName(Project project, bool? clear, string? name)
@@ -394,14 +393,7 @@ public class OrgController(
         if (ul == null) return NotFound();
 
         var username = body.Username ?? body.Email.Split('@')[0];
-        string discriminator;
-        var discIter = 0;
-        do
-        {
-            if (++discIter > 100) throw new InvalidOperationException("discriminator_space_exhausted");
-            discriminator = Random.Shared.Next(1000, 9999).ToString();
-        }
-        while (await db.Users.AnyAsync(u => u.UserListId == id && u.Username == username && u.Discriminator == discriminator));
+        var discriminator = await UserHelpers.GenerateDiscriminatorAsync(db, id, username);
 
         var isInvite = string.IsNullOrEmpty(body.Password);
         var user = new User
@@ -519,37 +511,11 @@ public class OrgController(
 
     private async Task<IActionResult> ApplyUserUpdate(User user, UpdateUserRequest body)
     {
-        MutateUserFields(user, body);
+        UserHelpers.ApplyUpdate(user, body, passwords);
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         await audit.RecordAsync(OrgId, null, ActorId, "user.updated", "user", user.Id.ToString());
         return Ok(new { user.Id, user.Email, user.Username, user.Discriminator, user.DisplayName, user.Phone, user.Active, user.EmailVerified, user.LockedUntil, user.FailedLoginCount });
-    }
-
-    private void MutateUserFields(User user, UpdateUserRequest body)
-    {
-        if (body.Email != null) { user.Email = body.Email.ToLowerInvariant(); user.EmailVerified = false; user.EmailVerifiedAt = null; }
-        if (body.Username != null) user.Username = body.Username;
-        if (body.DisplayName != null) user.DisplayName = body.DisplayName == "" ? null : body.DisplayName;
-        if (body.Phone != null) user.Phone = body.Phone == "" ? null : body.Phone;
-        ApplyActiveState(user, body);
-        ApplyEmailVerifiedState(user, body);
-        if (body.ClearLock == true) { user.LockedUntil = null; user.FailedLoginCount = 0; }
-        if (!string.IsNullOrEmpty(body.NewPassword)) user.PasswordHash = passwords.Hash(body.NewPassword);
-    }
-
-    private static void ApplyActiveState(User user, UpdateUserRequest body)
-    {
-        if (!body.Active.HasValue) return;
-        user.Active = body.Active.Value;
-        user.DisabledAt = body.Active.Value ? null : DateTimeOffset.UtcNow;
-    }
-
-    private static void ApplyEmailVerifiedState(User user, UpdateUserRequest body)
-    {
-        if (!body.EmailVerified.HasValue) return;
-        user.EmailVerified = body.EmailVerified.Value;
-        user.EmailVerifiedAt = body.EmailVerified.Value ? DateTimeOffset.UtcNow : null;
     }
 
     [HttpGet("userlists/{id}/users/{uid}/sessions")]
@@ -700,8 +666,6 @@ public class OrgController(
     {
         var orgId  = OrgId;
         var config = await db.OrgSmtpConfigs.FirstOrDefaultAsync(c => c.OrgId == orgId);
-        var key    = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
-
         if (config == null)
         {
             config = new OrgSmtpConfig
@@ -712,7 +676,7 @@ public class OrgController(
                 StartTls    = body.StartTls,
                 Username    = body.Username,
                 PasswordEnc = body.Password != null
-                    ? TotpEncryption.Encrypt(key, System.Text.Encoding.UTF8.GetBytes(body.Password))
+                    ? TotpEncryption.Encrypt(appConfig.SmtpEncKey, System.Text.Encoding.UTF8.GetBytes(body.Password))
                     : null,
                 FromAddress = body.FromAddress,
                 FromName    = body.FromName,
@@ -728,7 +692,7 @@ public class OrgController(
             config.StartTls    = body.StartTls;
             config.Username    = body.Username;
             if (body.Password != null)
-                config.PasswordEnc = TotpEncryption.Encrypt(key, System.Text.Encoding.UTF8.GetBytes(body.Password));
+                config.PasswordEnc = TotpEncryption.Encrypt(appConfig.SmtpEncKey, System.Text.Encoding.UTF8.GetBytes(body.Password));
             config.FromAddress = body.FromAddress;
             config.FromName    = body.FromName;
             config.UpdatedAt   = DateTimeOffset.UtcNow;

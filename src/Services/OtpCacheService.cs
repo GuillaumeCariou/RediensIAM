@@ -8,6 +8,8 @@ namespace RediensIAM.Services;
 
 public class OtpCacheService(IConnectionMultiplexer redis, AppConfig appConfig)
 {
+    private const int MaxOtpAttempts = 5;
+
     private readonly IDatabase _db = redis.GetDatabase();
     private readonly int _ttlSeconds = appConfig.OtpTtlSeconds;
     private readonly int _maxSmsPerWindow = appConfig.MaxSmsPerWindow;
@@ -21,17 +23,31 @@ public class OtpCacheService(IConnectionMultiplexer redis, AppConfig appConfig)
 
     public async Task<bool> VerifyOtpAsync(string prefix, Guid userId, string code)
     {
-        var key = $"otp:{prefix}:{userId}";
+        var key     = $"otp:{prefix}:{userId}";
+        var failKey = $"otp:{prefix}:{userId}:fails";
+
         var stored = await _db.StringGetAsync(key);
         if (stored.IsNull) return false;
+
+        var fails = (long?)await _db.StringGetAsync(failKey) ?? 0;
+        if (fails >= MaxOtpAttempts)
+        {
+            await _db.KeyDeleteAsync(key);
+            return false;
+        }
 
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code)));
         if (!CryptographicOperations.FixedTimeEquals(
             Encoding.UTF8.GetBytes(stored.ToString()),
             Encoding.UTF8.GetBytes(hash)))
+        {
+            var newCount = await _db.StringIncrementAsync(failKey);
+            if (newCount == 1) await _db.KeyExpireAsync(failKey, TimeSpan.FromSeconds(_ttlSeconds));
             return false;
+        }
 
         await _db.KeyDeleteAsync(key);
+        await _db.KeyDeleteAsync(failKey);
         return true;
     }
 
@@ -66,15 +82,31 @@ public class OtpCacheService(IConnectionMultiplexer redis, AppConfig appConfig)
 
     public async Task<bool> VerifySessionOtpAsync(string prefix, string sessionId, string code)
     {
-        var key = $"otp:{prefix}:{sessionId}";
+        var key     = $"otp:{prefix}:{sessionId}";
+        var failKey = $"otp:{prefix}:{sessionId}:fails";
+
         var stored = await _db.StringGetAsync(key);
         if (stored.IsNull) return false;
+
+        var fails = (long?)await _db.StringGetAsync(failKey) ?? 0;
+        if (fails >= MaxOtpAttempts)
+        {
+            await _db.KeyDeleteAsync(key);
+            return false;
+        }
+
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code)));
         if (!CryptographicOperations.FixedTimeEquals(
             Encoding.UTF8.GetBytes(stored.ToString()),
             Encoding.UTF8.GetBytes(hash)))
+        {
+            var newCount = await _db.StringIncrementAsync(failKey);
+            if (newCount == 1) await _db.KeyExpireAsync(failKey, TimeSpan.FromSeconds(_ttlSeconds));
             return false;
+        }
+
         await _db.KeyDeleteAsync(key);
+        await _db.KeyDeleteAsync(failKey);
         return true;
     }
 

@@ -1,6 +1,9 @@
+using System.Net;
 using System.Security.Cryptography.X509Certificates;
+using System.ServiceModel.Security;
 using ITfoxtec.Identity.Saml2;
 using ITfoxtec.Identity.Saml2.Schemas.Metadata;
+using RediensIAM.Controllers;
 using RediensIAM.Data.Entities;
 
 namespace RediensIAM.Services;
@@ -21,6 +24,9 @@ public class SamlService(
             Issuer                    = spEntityId,
             SingleSignOnDestination   = null!,   // set below
             AllowedIssuer             = idp.EntityId,
+            // We explicitly provide SignatureValidationCertificates, so skip chain validation.
+            // Self-signed IdP certs are common in enterprise SAML deployments.
+            CertificateValidationMode = X509CertificateValidationMode.None,
         };
         config.AllowedAudienceUris.Add(spEntityId);
 
@@ -40,6 +46,9 @@ public class SamlService(
             if (metaUri.Scheme != Uri.UriSchemeHttps)
                 throw new InvalidOperationException("SAML metadata URL must use HTTPS");
 
+            if (await WebhookUrlValidator.IsPrivateOrReservedAsync(idp.MetadataUrl!))
+                throw new InvalidOperationException("SAML metadata URL must not point to a private or reserved IP address");
+
             var descriptor = new EntityDescriptor();
             await descriptor.ReadIdPSsoDescriptorFromUrlAsync(httpClientFactory, metaUri);
 
@@ -53,7 +62,9 @@ public class SamlService(
                 config.SignatureValidationCertificates.Add(cert);
 
             if (config.SignatureValidationCertificates.Count == 0)
-                logger.LogWarning("SAML IdP {IdpId}: no valid signing certs in metadata", idp.Id);
+                throw new InvalidOperationException(
+                    $"SAML IdP {idp.Id}: metadata contains no valid signing certificates. " +
+                    "Cannot validate SAML assertions without at least one signing certificate.");
         }
         catch (Exception ex)
         {
@@ -80,8 +91,7 @@ public class SamlService(
         if (identity == null) return null;
         return identity.FindFirst(emailAttributeName)?.Value
             ?? identity.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
-            ?? identity.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress")?.Value
-            ?? identity.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            ?? identity.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress")?.Value;
     }
 
     /// <summary>Extracts the display name from a claims identity using the configured attribute name.</summary>

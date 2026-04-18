@@ -23,7 +23,7 @@ public class StubEmailService(ILogger<StubEmailService> logger) : IEmailService
 {
     public Task SendOtpAsync(string to, string code, string purpose, Guid? orgId = null, Guid? projectId = null)
     {
-        logger.LogWarning("[STUB EMAIL] To={To} Purpose={Purpose} Code={Code}", to, purpose, code);
+        logger.LogWarning("[STUB EMAIL] To={To} Purpose={Purpose}", to, purpose);
         return Task.CompletedTask;
     }
 
@@ -70,7 +70,7 @@ public class SmtpEmailService(
             username    = orgConfig.Username;
             password    = orgConfig.PasswordEnc != null
                 ? Encoding.UTF8.GetString(TotpEncryption.Decrypt(
-                    Convert.FromHexString(appConfig.TotpSecretEncryptionKey), orgConfig.PasswordEnc))
+                    appConfig.SmtpEncKey, orgConfig.PasswordEnc))
                 : null;
             fromAddress = orgConfig.FromAddress;
             fromName    = orgConfig.FromName;
@@ -87,7 +87,7 @@ public class SmtpEmailService(
         }
         else
         {
-            logger.LogWarning("[EMAIL NO-OP] No SMTP configured. To={To} Purpose={Purpose} Code={Code}", to, purpose, code);
+            logger.LogWarning("[EMAIL NO-OP] No SMTP configured. To={To} Purpose={Purpose}", to, purpose);
             return;
         }
 
@@ -119,9 +119,9 @@ public class SmtpEmailService(
         // ── Send ─────────────────────────────────────────────────────────────
         using var client = new SmtpClient();
         await client.ConnectAsync(host, port,
-            startTls ? SecureSocketOptions.StartTls : SecureSocketOptions.Auto);
+            startTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None);
 
-        if (!string.IsNullOrEmpty(username))
+        if (!string.IsNullOrEmpty(username) && !string.IsNullOrEmpty(password))
             await client.AuthenticateAsync(username, password);
 
         await client.SendAsync(message);
@@ -154,7 +154,7 @@ public class SmtpEmailService(
             username    = orgConfig.Username;
             password    = orgConfig.PasswordEnc != null
                 ? Encoding.UTF8.GetString(TotpEncryption.Decrypt(
-                    Convert.FromHexString(appConfig.TotpSecretEncryptionKey), orgConfig.PasswordEnc))
+                    appConfig.SmtpEncKey, orgConfig.PasswordEnc))
                 : null;
             fromAddress = orgConfig.FromAddress;
             fromName    = orgConfig.FromName;
@@ -186,9 +186,9 @@ public class SmtpEmailService(
 
         using var client = new SmtpClient();
         await client.ConnectAsync(host, port,
-            startTls ? SecureSocketOptions.StartTls : SecureSocketOptions.Auto);
+            startTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None);
 
-        if (!string.IsNullOrEmpty(username))
+        if (!string.IsNullOrEmpty(username) && !string.IsNullOrEmpty(password))
             await client.AuthenticateAsync(username, password);
 
         await client.SendAsync(message);
@@ -210,9 +210,9 @@ public class SmtpEmailService(
 
         using var client = new SmtpClient();
         await client.ConnectAsync(appConfig.SmtpHost, appConfig.SmtpPort,
-            appConfig.SmtpStartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.Auto);
+            appConfig.SmtpStartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None);
         if (!string.IsNullOrEmpty(appConfig.SmtpUsername))
-            await client.AuthenticateAsync(appConfig.SmtpUsername, appConfig.SmtpPassword);
+            await client.AuthenticateAsync(appConfig.SmtpUsername, appConfig.SmtpPassword!);
         await client.SendAsync(message);
         await client.DisconnectAsync(true);
     }
@@ -223,9 +223,9 @@ public class SmtpEmailService(
             throw new InvalidOperationException("SMTP not configured");
         using var client = new SmtpClient();
         await client.ConnectAsync(appConfig.SmtpHost, appConfig.SmtpPort,
-            appConfig.SmtpStartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.Auto);
+            appConfig.SmtpStartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None);
         if (!string.IsNullOrEmpty(appConfig.SmtpUsername))
-            await client.AuthenticateAsync(appConfig.SmtpUsername, appConfig.SmtpPassword);
+            await client.AuthenticateAsync(appConfig.SmtpUsername, appConfig.SmtpPassword!);
         await client.DisconnectAsync(true);
     }
 }
@@ -241,7 +241,7 @@ public class StubSmsService(ILogger<StubSmsService> logger) : ISmsService
 {
     public Task SendOtpAsync(string to, string code, string purpose)
     {
-        logger.LogWarning("[STUB SMS] To={To} Purpose={Purpose} Code={Code}", to, purpose, code);
+        logger.LogWarning("[STUB SMS] To={To} Purpose={Purpose}", to, purpose);
         return Task.CompletedTask;
     }
 }

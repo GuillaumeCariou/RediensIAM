@@ -15,8 +15,16 @@ builder.Services.AddSingleton<AppConfig>();
 var appConfig = new AppConfig(builder.Configuration);
 
 // Validate encryption key before DI is locked (uses builder.Environment, available pre-Build)
-if (appConfig.TotpSecretEncryptionKey == new string('0', 64) && builder.Environment.IsProduction())
-    throw new InvalidOperationException("TotpSecretEncryptionKey must not be the default all-zero value in production.");
+{
+    var encKeyVal = appConfig.TotpSecretEncryptionKey;
+    if (encKeyVal.Length != 64 || !encKeyVal.All(Uri.IsHexDigit))
+        throw new InvalidOperationException(
+            "Security:TotpSecretEncryptionKey must be exactly 64 hex characters (32 bytes). " +
+            "Generate one with: openssl rand -hex 32");
+    if (encKeyVal == new string('0', 64) && builder.Environment.IsProduction())
+        throw new InvalidOperationException(
+            "TotpSecretEncryptionKey must not be the default all-zero dev placeholder in production.");
+}
 
 // ── Database ───────────────────────────────────────────────────────────────
 builder.Services.AddDbContext<RediensIamDbContext>(options =>
@@ -150,7 +158,7 @@ var app = builder.Build();
 var logger = app.Services.GetRequiredService<ILogger<Program>>();
 
 if (appConfig.TotpSecretEncryptionKey == new string('0', 64))
-    logger.LogWarning("WARNING: TotpSecretEncryptionKey is the default all-zero dev key. Do not use in production.");
+    logger.LogWarning("WARNING: TotpSecretEncryptionKey is the default all-zero dev placeholder. Override via Security__TotpSecretEncryptionKey before production.");
 
 // ── Ensure DB schema exists ─────────────────────────────────────────────────
 await EnsureDbSchemaAsync(app);
@@ -185,7 +193,8 @@ static async Task EnsureDbSchemaAsync(WebApplication webApp)
                 ALTER TABLE projects ADD COLUMN IF NOT EXISTS ""RequireMfa"" BOOLEAN NOT NULL DEFAULT false;
                 ALTER TABLE projects ADD COLUMN IF NOT EXISTS ""IpAllowlist"" JSONB NOT NULL DEFAULT '[]';
                 ALTER TABLE projects ADD COLUMN IF NOT EXISTS ""CheckBreachedPasswords"" BOOLEAN NOT NULL DEFAULT false;
-                ALTER TABLE projects ADD COLUMN IF NOT EXISTS ""AllowedScopes"" TEXT[] NOT NULL DEFAULT '{}';
+                ALTER TABLE projects ADD COLUMN IF NOT EXISTS ""AllowedScopes"" TEXT[] NOT NULL DEFAULT '{{}}';
+                ALTER TABLE webhook_deliveries ADD COLUMN IF NOT EXISTS ""Payload"" JSONB NOT NULL DEFAULT '{{}}';
                 ALTER TABLE organisations ADD COLUMN IF NOT EXISTS ""AuditRetentionDays"" INTEGER;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS ""NewDeviceAlertsEnabled"" BOOLEAN NOT NULL DEFAULT true;
                 ALTER TABLE users ALTER COLUMN ""PasswordHash"" DROP NOT NULL;
@@ -219,7 +228,7 @@ static async Task EnsureDbSchemaAsync(WebApplication webApp)
                     ""Id""           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                     ""WebhookId""    UUID NOT NULL REFERENCES webhooks(""Id"") ON DELETE CASCADE,
                     ""Event""        TEXT NOT NULL,
-                    ""Payload""      JSONB NOT NULL DEFAULT '{}',
+                    ""Payload""      JSONB NOT NULL DEFAULT '{{}}',
                     ""StatusCode""   INTEGER,
                     ""ErrorMessage"" TEXT,
                     ""AttemptCount"" INTEGER NOT NULL DEFAULT 0,

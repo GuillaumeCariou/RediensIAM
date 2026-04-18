@@ -1,136 +1,156 @@
-# ── Public URL (login SPA, Hydra issuer, user-facing endpoints) ──────────────
-# dev:  http://localhost
-# prod: https://auth.rediens.net
-appUrl: "http://localhost"
+rediensiam:
 
-# ── Admin SPA URL (NodePort / SSH tunnel / private ingress) ──────────────────
-# dev:  http://localhost:30501
-# prod: https://admin.rediens.net
-adminUrl: "http://localhost:30501"
+  # ── URLs — single source of truth ────────────────────────────────────────────
+  # publicUrl : auth routes, login SPA, Hydra issuer, cookie domain
+  # adminUrl  : admin console — keep on private network / localhost only
+  publicUrl: "http://localhost"
+  adminUrl:  "http://localhost:30501"
 
-# ── RediensIAM ───────────────────────────────────────────────────────────────
-image:
-  repository: rediensiam
-  tag: "0.0.1"
-  pullPolicy: IfNotPresent
+  # ── App image ─────────────────────────────────────────────────────────────────
+  image:
+    repository: rediensiam
+    tag: "0.0.1"
+    pullPolicy: IfNotPresent
 
-replicaCount: 1
+  replicaCount: 1
 
-service:
-  public:
-    port: 5000
-  admin:
-    port: 5001
-    # NodePort 30501 is the ONLY external access point for the admin SPA (by design).
-    # The public ingress no longer exposes /admin — access via:
-    #   dev:  http://localhost:30501/admin/  (direct NodePort)
-    #   ops:  kubectl port-forward svc/rediensiam-admin 30501:5001
-    #   prod: SSH tunnel or private ingress (see adminIngress below)
-    nodePort: 30501
-
-# ── Optional private admin ingress (production only) ─────────────────────────
-# Set adminIngress.enabled=true in values.prod-admin.yaml to expose the admin SPA
-# via a private hostname (e.g. admin.rediens.net) with IP allowlist enforcement.
-# Disabled by default — NodePort is sufficient for dev/staging.
-adminIngress:
-  enabled: false
-  host: "admin.rediens.net"   # private DNS only — must not resolve on public internet
-
-ingress:
-  enabled: true
-  className: traefik
-  host: localhost
-
-env:
-  IAM_ADMIN_PATH: "/admin"
-
-  # ── Ory stack — override to point at external (off-cluster) instances ───────
-  # To use external Hydra: set hydra.enabled=false and override these two.
-  Hydra__AdminUrl: "http://rediensiam-hydra-admin:4445"
-  Hydra__PublicUrl: "http://rediensiam-hydra-public:4444"
-  # To use external Keto: set keto.enabled=false and override these two.
-  Keto__ReadUrl: "http://rediensiam-keto-read:4466"
-  Keto__WriteUrl: "http://rediensiam-keto-write:4467"
-
-  # ── Database — override to point at an external PostgreSQL instance ─────────
-  # To use external DB: set postgres.enabled=false and set this in values.secret.yaml:
-  #   ConnectionStrings__Default: "Host=db.example.com;Database=rediensiam;Username=iam;Password=..."
-  # (the app uses EF Core and will auto-migrate on first start)
-
-  # ── Cache — override to point at an external Redis/Dragonfly instance ───────
-  # To use external cache: set dragonfly.enabled=false and set this in values.secret.yaml:
-  #   Cache__ConnectionString: "redis.example.com:6379,password=..."
-
-  # ── App ─────────────────────────────────────────────────────────────────────
-  App__PublicUrl: "http://localhost"
-  # Must match adminUrl above; also update hydra.hydra.config.serve.public.cors.allowed_origins
-  App__AdminSpaOrigin: "http://localhost"
-  App__Domain: "localhost"
-
-  # ── SMTP — optional; per-org SMTP works without this ────────────────────────
-  Smtp__Host: ""
-  Smtp__Port: "587"
-  Smtp__StartTls: "true"
-  Smtp__Username: ""
-  Smtp__FromAddress: "noreply@localhost"
-  Smtp__FromName: "RediensIAM"
-
-secrets: {}  # override via values.secret.yaml
-
-resources:
-  requests:
-    cpu: 100m
-    memory: 128Mi
-    ephemeral-storage: 1Gi
-  limits:
-    cpu: 500m
-    memory: 512Mi
-    ephemeral-storage: 2Gi
-
-# ── PostgreSQL ────────────────────────────────────────────────────────────────
-postgres:
-  image: postgres:16-alpine
-  password: ""  # override via values.secret.yaml
-  storage: 2Gi
   resources:
     requests:
       cpu: 100m
-      memory: 256Mi
-      ephemeral-storage: 1Gi
-    limits:
-      cpu: 1000m
-      memory: 1Gi
-      ephemeral-storage: 2Gi
-
-# ── Dragonfly ─────────────────────────────────────────────────────────────────
-dragonfly:
-  image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.25.0
-  resources:
-    requests:
-      cpu: 50m
       memory: 128Mi
-      ephemeral-storage: 100Mi
+      ephemeral-storage: 1Gi
     limits:
       cpu: 500m
       memory: 512Mi
-      ephemeral-storage: 500Mi
+      ephemeral-storage: 2Gi
 
-# ── Hydra (subchart) ─────────────────────────────────────────────────────────
+  # ── App config ────────────────────────────────────────────────────────────────
+  app:
+    adminPath: "/admin"
+
+  # ── Networking ────────────────────────────────────────────────────────────────
+  service:
+    public:
+      port: 5000
+    admin:
+      port: 5001
+      # NodePort is the ONLY external access point for the admin SPA.
+      # dev: http://localhost:30501/admin/
+      # ops: kubectl port-forward svc/rediensiam-admin 30501:5001
+      nodePort: 30501
+
+  ingress:
+    className: traefik
+    public:
+      enabled: true
+      # Leave empty to auto-derive host from publicUrl
+      host: ""
+    admin:
+      # Enable for private-DNS + IP-allowlist production access.
+      # Disabled by default — NodePort is sufficient for dev/staging.
+      enabled: false
+      # Leave empty to auto-derive host from adminUrl
+      host: ""
+
+  # ── SMTP (optional; per-org SMTP overrides this) ──────────────────────────────
+  smtp:
+    host: ""
+    port: 587
+    startTls: true
+    username: ""
+    fromAddress: "noreply@localhost"
+    fromName: "RediensIAM"
+
+  # ── Secrets (override via values.secret.yaml) ─────────────────────────────────
+  # encryptionKey : 64-char hex — encrypts TOTP secrets, SMTP passwords, webhook secrets
+  # databaseUrl   : full PostgreSQL connection string (include password)
+  # cacheUrl      : full Redis/Dragonfly connection string (include password if auth enabled)
+  # When postgres.local.enabled=false : set databaseUrl to your external DB connection string
+  # When dragonfly.local.enabled=false: set cacheUrl to your external Redis connection string
+  secrets:
+    encryptionKey: ""
+    databaseUrl: ""
+    cacheUrl: ""
+    smtpPassword: ""
+    bootstrapEmail: ""
+    bootstrapPassword: ""
+
+  # ── PostgreSQL ────────────────────────────────────────────────────────────────
+  # local.enabled=false → no local Postgres deployed; set secrets.databaseUrl to external DB
+  postgres:
+    local:
+      enabled: true
+      image: postgres:16-alpine
+      storage: 2Gi
+      password: ""    # stored in K8s secret as postgres-password
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+          ephemeral-storage: 1Gi
+        limits:
+          cpu: 1000m
+          memory: 1Gi
+          ephemeral-storage: 2Gi
+
+  # ── Dragonfly (Redis-compatible cache) ────────────────────────────────────────
+  # local.enabled=false → no local Dragonfly deployed; set secrets.cacheUrl to external Redis
+  dragonfly:
+    local:
+      enabled: true
+      image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.25.0
+      password: ""    # stored in K8s secret as dragonfly-password
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+          ephemeral-storage: 100Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+          ephemeral-storage: 500Mi
+
+  # ── Hydra ─────────────────────────────────────────────────────────────────────
+  # local.enabled=false → no local Hydra deployed; app uses external.* URLs
+  hydra:
+    local:
+      enabled: true
+    external:
+      adminUrl: "http://localhost:4445"
+      publicUrl: "http://localhost:4444"
+
+  # ── Keto ──────────────────────────────────────────────────────────────────────
+  # local.enabled=false → no local Keto deployed; app uses external.* URLs
+  keto:
+    local:
+      enabled: true
+    external:
+      readUrl:  "http://localhost:4466"
+      writeUrl: "http://localhost:4467"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Hydra subchart pass-through — controlled by rediensiam.hydra.local.enabled
+# AUTO: keep hydra.hydra.config.urls.* in sync with rediensiam.publicUrl / adminUrl
+# AUTO: keep hydra.hydra.config.serve.public.cors.allowed_origins in sync with rediensiam.adminUrl
+# ══════════════════════════════════════════════════════════════════════════════
 hydra:
   hydra:
     config:
-      dsn: ""  # override via values.secret.yaml
       urls:
         self:
-          issuer: "http://localhost"
-        login: "http://localhost/login"
-        consent: "http://localhost/auth/consent"
-        logout: "http://localhost/auth/logout"
-        post_logout_redirect: "http://localhost:30501/admin/"  # keep in sync with adminUrl
+          issuer: "http://localhost"           # = rediensiam.publicUrl
+        login:                "http://localhost/login"
+        consent:              "http://localhost/auth/consent"
+        logout:               "http://localhost/auth/logout"
+        post_logout_redirect: "http://localhost:30501/admin/"  # = rediensiam.adminUrl + /admin/
       strategies:
         access_token: jwt
       secrets:
-        system: []  # override via values.secret.yaml
+        # REQUIRED: set a stable random secret in values.secret.yaml — empty list causes Hydra to
+        # generate a new random key on every pod restart, invalidating all sessions and tokens.
+        # Generate: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+        system: []            # override via values.secret.yaml — MUST NOT be empty in production
       log:
         level: info
         format: json
@@ -141,15 +161,10 @@ hydra:
           cors:
             enabled: true
             allowed_origins:
-              - "http://localhost:30501"
-            allowed_methods:
-              - GET
-              - POST
-            allowed_headers:
-              - Authorization
-              - Content-Type
-            exposed_headers:
-              - Content-Type
+              - "http://localhost:30501"       # = rediensiam.adminUrl
+            allowed_methods: [GET, POST]
+            allowed_headers: [Authorization, Content-Type]
+            exposed_headers: [Content-Type]
             allow_credentials: true
             max_age: 300
         admin:
@@ -161,12 +176,8 @@ hydra:
       enabled: true
       type: initContainer
   service:
-    public:
-      type: ClusterIP
-      port: 4444
-    admin:
-      type: ClusterIP
-      port: 4445
+    public: { type: ClusterIP, port: 4444 }
+    admin:  { type: ClusterIP, port: 4445 }
   ingress:
     public:
       enabled: true
@@ -174,44 +185,33 @@ hydra:
       hosts:
         - host: localhost
           paths:
-            - path: /oauth2
-              pathType: Prefix
-            - path: /.well-known
-              pathType: Prefix
-            - path: /userinfo
-              pathType: Prefix
+            - { path: /oauth2,      pathType: Prefix }
+            - { path: /.well-known, pathType: Prefix }
+            - { path: /userinfo,    pathType: Prefix }
     admin:
       enabled: false
 
-# ── Keto (subchart) ──────────────────────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Keto subchart pass-through — controlled by rediensiam.keto.local.enabled
+# ══════════════════════════════════════════════════════════════════════════════
 keto:
   keto:
     config:
-      dsn: ""  # override via values.secret.yaml
       namespaces:
-        - id: 0
-          name: System
-        - id: 1
-          name: Organisations
-        - id: 2
-          name: Projects
-        - id: 3
-          name: UserLists
+        - { id: 0, name: System }
+        - { id: 1, name: Organisations }
+        - { id: 2, name: Projects }
+        - { id: 3, name: UserLists }
       log:
         level: info
         format: json
       serve:
-        read:
-          port: 4466
-        write:
-          port: 4467
+        read:  { port: 4466 }
+        write: { port: 4467 }
     automigration:
       enabled: true
       type: initContainer
   service:
-    read:
-      type: ClusterIP
-      port: 4466
-    write:
-      type: ClusterIP
-      port: 4467
+    read:  { type: ClusterIP, port: 4466 }
+    write: { type: ClusterIP, port: 4467 }

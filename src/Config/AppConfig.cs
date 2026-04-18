@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+
 namespace RediensIAM.Config;
 
 public class AppConfig(IConfiguration config)
@@ -48,6 +51,26 @@ public class AppConfig(IConfiguration config)
     public int    ArgonMemoryCost         => config.GetValue<int>("Security:ArgonMemoryCost", 65536);
     public int    ArgonParallelism        => config.GetValue<int>("Security:ArgonParallelism", 4);
     public string PatPrefix               => config["Security:PatPrefix"] ?? "rediens_pat_";
+
+    // ── Per-purpose derived keys (HKDF-SHA256 from TotpSecretEncryptionKey) ──
+    // Each purpose gets an independent 32-byte subkey; compromise of one does not
+    // expose data encrypted under other purposes.
+    private byte[]? _totpEncKey;
+    private byte[]? _webhookEncKey;
+    private byte[]? _smtpEncKey;
+    private byte[]? _themeEncKey;
+    private byte[]? _deviceFpKey;
+
+    public byte[] TotpEncKey     => _totpEncKey     ??= DeriveKey("rediensiam-totp-secret-v1");
+    public byte[] WebhookEncKey  => _webhookEncKey  ??= DeriveKey("rediensiam-webhook-secret-v1");
+    public byte[] SmtpEncKey     => _smtpEncKey     ??= DeriveKey("rediensiam-smtp-password-v1");
+    public byte[] ThemeEncKey    => _themeEncKey    ??= DeriveKey("rediensiam-theme-secret-v1");
+    public byte[] DeviceFpKey    => _deviceFpKey    ??= DeriveKey("rediensiam-device-fingerprint-v1");
+
+    private byte[] DeriveKey(string purpose) =>
+        HKDF.DeriveKey(HashAlgorithmName.SHA256,
+            Convert.FromHexString(TotpSecretEncryptionKey), 32,
+            info: Encoding.UTF8.GetBytes(purpose));
 
     // ── Audit ─────────────────────────────────────────────────────────────────
     public int AuditRetentionDays => config.GetValue<int>("Audit:RetentionDays", 365);

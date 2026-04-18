@@ -340,35 +340,7 @@ public class AuthController(
 
         code.UsedAt = DateTimeOffset.UtcNow;
         var user = await db.Users.FindAsync(userGuid);
-        user!.LastLoginAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync();
-        await rateLimiter.ResetAsync(Ip, userGuid);
-
-        HttpContext.Session.Remove(MfaPendingUser);
-        HttpContext.Session.Remove(MfaPendingChallenge);
-        HttpContext.Session.Remove(MfaPendingProject);
-
-        string redirectUrl;
-        if (projectId == "")
-        {
-            var ctx = new Dictionary<string, object> { [CtxUserId] = user.Id.ToString() };
-            redirectUrl = await hydra.AcceptLoginAsync(challenge, user.Id.ToString(), ctx);
-            await audit.RecordAsync(null, null, user.Id, "user.login.backup_code");
-        }
-        else
-        {
-            var project = await db.Projects.FindAsync(Guid.Parse(projectId));
-            var subject = $"{project!.OrgId}:{user.Id}";
-            var context = new Dictionary<string, object>
-            {
-                [CtxOrgId]     = project.OrgId.ToString(),
-                [CtxProjectId] = projectId,
-                [CtxUserId]    = user.Id.ToString()
-            };
-            redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, context);
-            await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.backup_code");
-        }
-        return Ok(new { redirect_to = redirectUrl });
+        return await CompleteMfaLoginAsync(user!, userGuid, challenge, projectId, "user.login.backup_code");
     }
 
     [HttpPost("mfa/phone/send")]
@@ -411,33 +383,7 @@ public class AuthController(
 
         var user = await db.Users.FindAsync(userGuid);
         if (user == null) return NotFound();
-        user.LastLoginAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync();
-        await rateLimiter.ResetAsync(Ip, userGuid);
-
-        HttpContext.Session.Remove(MfaPendingUser);
-        HttpContext.Session.Remove(MfaPendingChallenge);
-        HttpContext.Session.Remove(MfaPendingProject);
-
-        string redirectUrl;
-        if (projectId == "")
-        {
-            var ctx = new Dictionary<string, object> { [CtxUserId] = user.Id.ToString() };
-            redirectUrl = await hydra.AcceptLoginAsync(challenge, user.Id.ToString(), ctx);
-            await audit.RecordAsync(null, null, user.Id, "user.login.sms");
-        }
-        else
-        {
-            var project = await db.Projects.FindAsync(Guid.Parse(projectId));
-            var subject = $"{project!.OrgId}:{user.Id}";
-            var context = new Dictionary<string, object>
-            {
-                [CtxOrgId] = project.OrgId.ToString(), [CtxProjectId] = projectId, [CtxUserId] = user.Id.ToString()
-            };
-            redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, context);
-            await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.sms");
-        }
-        return Ok(new { redirect_to = redirectUrl });
+        return await CompleteMfaLoginAsync(user, userGuid, challenge, projectId, "user.login.sms");
     }
 
     [HttpPost("mfa/totp/verify")]
@@ -464,7 +410,7 @@ public class AuthController(
             return Unauthorized(new { error = "code_already_used" });
         }
 
-        var secret = TotpEncryption.Decrypt(Convert.FromHexString(appConfig.TotpSecretEncryptionKey), user.TotpSecret);
+        var secret = TotpEncryption.Decrypt(appConfig.TotpEncKey, user.TotpSecret);
         var totp = new Totp(secret);
         if (!totp.VerifyTotp(body.Code, out _, new VerificationWindow(1, 1)))
         {
@@ -473,36 +419,7 @@ public class AuthController(
         }
 
         await otp.StoreTotpUsedAsync(user.Id, body.Code);
-
-        user.LastLoginAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync();
-        await rateLimiter.ResetAsync(Ip, userGuid);
-
-        HttpContext.Session.Remove(MfaPendingUser);
-        HttpContext.Session.Remove(MfaPendingChallenge);
-        HttpContext.Session.Remove(MfaPendingProject);
-
-        string redirectUrl;
-        if (projectId == "")
-        {
-            var ctx = new Dictionary<string, object> { [CtxUserId] = user.Id.ToString() };
-            redirectUrl = await hydra.AcceptLoginAsync(challenge, user.Id.ToString(), ctx);
-            await audit.RecordAsync(null, null, user.Id, "user.login.mfa");
-        }
-        else
-        {
-            var project = await db.Projects.FindAsync(Guid.Parse(projectId));
-            var subject = $"{project!.OrgId}:{user.Id}";
-            var context = new Dictionary<string, object>
-            {
-                [CtxOrgId] = project.OrgId.ToString(),
-                [CtxProjectId] = projectId,
-                [CtxUserId] = user.Id.ToString()
-            };
-            redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, context);
-            await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.mfa");
-        }
-        return Ok(new { redirect_to = redirectUrl });
+        return await CompleteMfaLoginAsync(user, userGuid, challenge, projectId, "user.login.mfa");
     }
 
     [HttpGet("consent")]
@@ -767,14 +684,7 @@ public class AuthController(
         if (await db.Users.AnyAsync(u => u.UserListId == userListId && u.Email == email))
             return Conflict(new { error = "email_already_exists" });
 
-        string discriminator;
-        var discIter = 0;
-        do
-        {
-            if (++discIter > 100) throw new InvalidOperationException("discriminator_space_exhausted");
-            discriminator = Random.Shared.Next(1000, 9999).ToString();
-        }
-        while (await db.Users.AnyAsync(u => u.UserListId == userListId && u.Username == username && u.Discriminator == discriminator));
+        var discriminator = await UserHelpers.GenerateDiscriminatorAsync(db, userListId, username);
         var user = new User
         {
             UserListId = userListId, Username = username,
@@ -919,6 +829,7 @@ public class AuthController(
         var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(body.Token)));
         var token = await db.EmailTokens
             .Include(t => t.User).ThenInclude(u => u.UserList).ThenInclude(ul => ul.Projects)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(t => t.TokenHash == hash && t.Kind == "reset_password");
 
         if (token == null || token.ExpiresAt < DateTimeOffset.UtcNow || token.UsedAt != null)
@@ -1014,7 +925,7 @@ public class AuthController(
                 ? string.Join(".", parsed.GetAddressBytes().Take(3)) + ".0"
                 : ip;
             var raw = $"{userAgent}|{subnet}";
-            using var hmac = new HMACSHA256(Convert.FromHexString(appConfig.TotpSecretEncryptionKey)[..32]);
+            using var hmac = new HMACSHA256(appConfig.DeviceFpKey);
             var fingerprint = Convert.ToHexString(hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(raw)));
 
             var cacheKey = $"device:{user.Id}:{fingerprint}";
@@ -1267,14 +1178,16 @@ public class AuthController(
 
         if (social != null) return social.User;
 
-        // 2. Try to link to existing user by email
+        // 2. Try to link to existing user by email — only when BOTH sides have verified the email.
+        // Linking on unverified email allows account takeover via attacker-controlled OAuth providers.
         User? user = null;
-        if (!string.IsNullOrEmpty(profile.Email))
+        if (!string.IsNullOrEmpty(profile.Email) && profile.IsEmailVerified)
         {
             var emailLower = profile.Email.ToLowerInvariant();
             user = await db.Users.FirstOrDefaultAsync(u =>
                 u.UserListId == project.AssignedUserListId &&
                 u.Email == emailLower &&
+                u.EmailVerified &&
                 u.Active);
         }
 
@@ -1353,7 +1266,7 @@ public class AuthController(
         if (theme == null || !theme.TryGetValue("providers", out var raw)) return null;
         if (raw is not JsonElement el || el.ValueKind != JsonValueKind.Array) return null;
 
-        var encKey = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
+        var encKey = appConfig.ThemeEncKey;
         foreach (var p in el.EnumerateArray())
         {
             var cfg = TryBuildProviderConfig(p, providerId, encKey);
@@ -1471,30 +1384,38 @@ public class AuthController(
 
         var user = await db.Users.FindAsync(uid);
         if (user == null) return NotFound();
+        return await CompleteMfaLoginAsync(user, uid, challenge, projectId, "user.login.webauthn", resetRateLimit: false);
+    }
+
+    private async Task<IActionResult> CompleteMfaLoginAsync(User user, Guid userGuid, string challenge, string projectId, string auditEvent, bool resetRateLimit = true)
+    {
         user.LastLoginAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
+        if (resetRateLimit) await rateLimiter.ResetAsync(Ip, userGuid);
 
         HttpContext.Session.Remove(MfaPendingUser);
         HttpContext.Session.Remove(MfaPendingChallenge);
         HttpContext.Session.Remove(MfaPendingProject);
+        // Rotate session to prevent session fixation: clearing all data invalidates the pre-MFA session state.
+        HttpContext.Session.Clear();
 
         string redirectUrl;
         if (projectId == "")
         {
             var ctx = new Dictionary<string, object> { [CtxUserId] = user.Id.ToString() };
             redirectUrl = await hydra.AcceptLoginAsync(challenge, user.Id.ToString(), ctx);
-            await audit.RecordAsync(null, null, user.Id, "user.login.webauthn");
+            await audit.RecordAsync(null, null, user.Id, auditEvent);
         }
         else
         {
             var project = await db.Projects.FindAsync(Guid.Parse(projectId));
             var subject  = $"{project!.OrgId}:{user.Id}";
-            var ctx = new Dictionary<string, object>
+            var context  = new Dictionary<string, object>
             {
                 [CtxOrgId] = project.OrgId.ToString(), [CtxProjectId] = projectId, [CtxUserId] = user.Id.ToString()
             };
-            redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, ctx);
-            await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.webauthn");
+            redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, context);
+            await audit.RecordAsync(project.OrgId, project.Id, user.Id, auditEvent);
         }
         return Ok(new { redirect_to = redirectUrl });
     }

@@ -209,41 +209,15 @@ var user = await db.Users
     }
 
     [HttpPatch("users/{id}")]
-    public async Task<IActionResult> UpdateUser(Guid id, [FromBody] AdminUpdateUserRequest body)
+    public async Task<IActionResult> UpdateUser(Guid id, [FromBody] UpdateUserRequest body)
     {
         var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id == id);
         if (user == null) return NotFound();
-        ApplyUserFields(user, body);
+        UserHelpers.ApplyUpdate(user, body, passwords);
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         await audit.RecordAsync(user.UserList.OrgId, null, GetActorId(), "user.updated", "user", id.ToString());
         return Ok(new { user.Id, user.Email, user.Username, user.Discriminator, user.DisplayName, user.Phone, user.Active, user.EmailVerified, user.LockedUntil, user.FailedLoginCount });
-    }
-
-    private void ApplyUserFields(User user, AdminUpdateUserRequest body)
-    {
-        if (body.Email != null) { user.Email = body.Email.ToLowerInvariant(); user.EmailVerified = false; user.EmailVerifiedAt = null; }
-        if (body.Username != null) user.Username = body.Username;
-        if (body.DisplayName != null) user.DisplayName = body.DisplayName == "" ? null : body.DisplayName;
-        if (body.Phone != null) user.Phone = body.Phone == "" ? null : body.Phone;
-        ApplyActiveState(user, body);
-        ApplyEmailVerifiedState(user, body);
-        if (body.ClearLock == true) { user.LockedUntil = null; user.FailedLoginCount = 0; }
-        if (!string.IsNullOrEmpty(body.NewPassword)) user.PasswordHash = passwords.Hash(body.NewPassword);
-    }
-
-    private static void ApplyActiveState(User user, AdminUpdateUserRequest body)
-    {
-        if (!body.Active.HasValue) return;
-        user.Active = body.Active.Value;
-        user.DisabledAt = body.Active.Value ? null : DateTimeOffset.UtcNow;
-    }
-
-    private static void ApplyEmailVerifiedState(User user, AdminUpdateUserRequest body)
-    {
-        if (!body.EmailVerified.HasValue) return;
-        user.EmailVerified = body.EmailVerified.Value;
-        user.EmailVerifiedAt = body.EmailVerified.Value ? DateTimeOffset.UtcNow : null;
     }
 
     [HttpPost("users/{id}/unlock")]
@@ -333,14 +307,7 @@ var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(u
         var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(ul => ul.Id == id);
         if (ul == null) return NotFound();
         var username = body.Username ?? body.Email.Split('@')[0];
-        string discriminator;
-        var discIter = 0;
-        do
-        {
-            if (++discIter > 100) throw new InvalidOperationException("discriminator_space_exhausted");
-            discriminator = Random.Shared.Next(1000, 9999).ToString();
-        }
-        while (await db.Users.AnyAsync(u => u.UserListId == id && u.Username == username && u.Discriminator == discriminator));
+        var discriminator = await UserHelpers.GenerateDiscriminatorAsync(db, id, username);
         var emailVerified = body.EmailVerified ?? false;
         var isInvite = string.IsNullOrEmpty(body.Password);
         var user = new User
@@ -557,8 +524,7 @@ var project = await db.Projects.FindAsync(id);
     private void ApplyLoginTheme(Project project, Dictionary<string, object>? theme)
     {
         if (theme == null) return;
-        var encKey = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
-        project.LoginTheme = TotpEncryption.EncryptProviderSecretsInTheme(theme, project.LoginTheme, encKey)!;
+        project.LoginTheme = TotpEncryption.EncryptProviderSecretsInTheme(theme, project.LoginTheme, appConfig.ThemeEncKey)!;
     }
 
     [HttpGet("projects/{id}/scopes")]
@@ -764,8 +730,6 @@ var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == rid && r.ProjectId ==
     {
         if (!await db.Organisations.AnyAsync(o => o.Id == id)) return NotFound();
         var config = await db.OrgSmtpConfigs.FirstOrDefaultAsync(c => c.OrgId == id);
-        var key    = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
-
         if (config == null)
         {
             config = new OrgSmtpConfig
@@ -776,7 +740,7 @@ var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == rid && r.ProjectId ==
                 StartTls    = body.StartTls,
                 Username    = body.Username,
                 PasswordEnc = body.Password != null
-                    ? TotpEncryption.Encrypt(key, Encoding.UTF8.GetBytes(body.Password))
+                    ? TotpEncryption.Encrypt(appConfig.SmtpEncKey, Encoding.UTF8.GetBytes(body.Password))
                     : null,
                 FromAddress = body.FromAddress,
                 FromName    = body.FromName,
@@ -792,7 +756,7 @@ var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == rid && r.ProjectId ==
             config.StartTls    = body.StartTls;
             config.Username    = body.Username;
             if (body.Password != null)
-                config.PasswordEnc = TotpEncryption.Encrypt(key, Encoding.UTF8.GetBytes(body.Password));
+                config.PasswordEnc = TotpEncryption.Encrypt(appConfig.SmtpEncKey, Encoding.UTF8.GetBytes(body.Password));
             config.FromAddress = body.FromAddress;
             config.FromName    = body.FromName;
             config.UpdatedAt   = DateTimeOffset.UtcNow;
@@ -1074,7 +1038,6 @@ public record AdminUpdateProjectRequest(string? Name, bool? RequireRoleToLogin, 
     bool? SmsVerificationEnabled, bool? Active, Guid? DefaultRoleId, bool? ClearDefaultRole, string[]? AllowedEmailDomains, Dictionary<string, object>? LoginTheme,
     string[]? IpAllowlist, bool? CheckBreachedPasswords);
 public record AdminAssignUserListRequest([property: System.Text.Json.Serialization.JsonRequired] Guid UserListId);
-public record AdminUpdateUserRequest(string? Email, string? Username, string? DisplayName, string? Phone, bool? Active, bool? EmailVerified, bool? ClearLock, string? NewPassword);
 public record AdminCreateRoleRequest(string Name, string? Description, int? Rank);
 public record CreateHydraClientRequest(string ClientName, string[] GrantTypes, string[] RedirectUris, string? Scope);
 public record AdminUpsertSmtpRequest(string Host, [property: System.Text.Json.Serialization.JsonRequired] int Port, [property: System.Text.Json.Serialization.JsonRequired] bool StartTls, string? Username, string? Password, string FromAddress, string FromName);

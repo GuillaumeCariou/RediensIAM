@@ -44,16 +44,15 @@ public class OrgWebhookController(
         if (!body.Url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
             return BadRequest(new { error = "url_must_be_https" });
 
-        if (await IsPrivateOrReservedUrlAsync(body.Url))
+        if (await WebhookUrlValidator.IsPrivateOrReservedAsync(body.Url))
             return BadRequest(new { error = "url_not_allowed" });
 
         var invalidEvents = body.Events.Except(WebhookEvents.All).ToArray();
         if (invalidEvents.Length > 0)
             return BadRequest(new { error = "invalid_events", invalid = invalidEvents });
 
-        var encKey = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
         var rawSecret = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
-        var secretEnc = TotpEncryption.EncryptString(encKey, rawSecret);
+        var secretEnc = TotpEncryption.EncryptString(appConfig.WebhookEncKey, rawSecret);
 
         var wh = new Webhook
         {
@@ -121,9 +120,8 @@ public class OrgWebhookController(
     {
         var wh = await db.Webhooks.FirstOrDefaultAsync(w => w.Id == id && w.OrgId == OrgId && w.ProjectId == null);
         if (wh == null) return NotFound();
-        var encKey = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
         var rawSecret = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
-        wh.SecretEnc = TotpEncryption.EncryptString(encKey, rawSecret);
+        wh.SecretEnc = TotpEncryption.EncryptString(appConfig.WebhookEncKey, rawSecret);
         await db.SaveChangesAsync();
         return Ok(new { secret = rawSecret, message = "store_secret_shown_once" });
     }
@@ -137,50 +135,6 @@ public class OrgWebhookController(
         await db.SaveChangesAsync();
         await audit.RecordAsync(OrgId, null, ActorId, "webhook.deleted", AuditWebhook, id.ToString());
         return NoContent();
-    }
-
-    private static async Task<bool> IsPrivateOrReservedUrlAsync(string url)
-    {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return true;
-
-        var host = uri.Host;
-
-        // Block internal hostname patterns
-        if (host.EndsWith(".svc", StringComparison.OrdinalIgnoreCase) ||
-            host.EndsWith(".cluster.local", StringComparison.OrdinalIgnoreCase) ||
-            host.EndsWith(".internal", StringComparison.OrdinalIgnoreCase) ||
-            host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
-            host.Equals("metadata.google.internal", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        // Resolve and check all IPs — only block if resolution succeeds and returns a private IP
-        try
-        {
-            var addresses = await Dns.GetHostAddressesAsync(host);
-            if (addresses.Any(IsPrivateIp)) return true;
-        }
-        catch
-        {
-            // DNS failure = host may not exist; webhook delivery will fail naturally
-        }
-
-        return false;
-    }
-
-    private static bool IsPrivateIp(IPAddress ip)
-    {
-        if (IPAddress.IsLoopback(ip)) return true;
-        if (ip.AddressFamily == AddressFamily.InterNetworkV6)
-        {
-            if (ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal) return true;
-            return ip.Equals(IPAddress.IPv6Loopback);
-        }
-        var b = ip.GetAddressBytes();
-        return b[0] == 10
-            || (b[0] == 172 && b[1] >= 16 && b[1] <= 31)
-            || (b[0] == 192 && b[1] == 168)
-            || (b[0] == 169 && b[1] == 254)
-            || b[0] == 127;
     }
 
     [HttpPost("{id}/test")]
@@ -238,18 +192,20 @@ public class AdminWebhookController(
         if (!body.Url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
             return BadRequest(new { error = "url_must_be_https" });
 
+        if (await WebhookUrlValidator.IsPrivateOrReservedAsync(body.Url))
+            return BadRequest(new { error = "url_not_allowed" });
+
         var invalidEvents = body.Events.Except(WebhookEvents.All).ToArray();
         if (invalidEvents.Length > 0)
             return BadRequest(new { error = "invalid_events", invalid = invalidEvents });
 
-        var encKey   = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
         var rawSecret = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
 
         var wh = new Webhook
         {
             OrgId     = null,
             Url       = body.Url,
-            SecretEnc = TotpEncryption.EncryptString(encKey, rawSecret),
+            SecretEnc = TotpEncryption.EncryptString(appConfig.WebhookEncKey, rawSecret),
             Events    = body.Events,
             Active    = true,
             CreatedAt = DateTimeOffset.UtcNow
@@ -279,3 +235,50 @@ public class AdminWebhookController(
 
 public record CreateWebhookRequest(string Url, string[] Events);
 public record UpdateWebhookRequest(string? Url, string[]? Events, bool? Active);
+
+// ── Shared SSRF validator ────────────────────────────────────────────────────
+
+public static class WebhookUrlValidator
+{
+    public static async Task<bool> IsPrivateOrReservedAsync(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return true;
+
+        var host = uri.Host;
+
+        if (host.EndsWith(".svc", StringComparison.OrdinalIgnoreCase) ||
+            host.EndsWith(".cluster.local", StringComparison.OrdinalIgnoreCase) ||
+            host.EndsWith(".internal", StringComparison.OrdinalIgnoreCase) ||
+            host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+            host.Equals("metadata.google.internal", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        try
+        {
+            var addresses = await Dns.GetHostAddressesAsync(host);
+            if (addresses.Any(IsPrivateIp)) return true;
+        }
+        catch
+        {
+            // DNS failure — webhook delivery will fail naturally
+        }
+
+        return false;
+    }
+
+    public static bool IsPrivateIp(IPAddress ip)
+    {
+        if (IPAddress.IsLoopback(ip)) return true;
+        if (ip.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            if (ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal) return true;
+            return ip.Equals(IPAddress.IPv6Loopback);
+        }
+        var b = ip.GetAddressBytes();
+        return b[0] == 10
+            || (b[0] == 172 && b[1] >= 16 && b[1] <= 31)
+            || (b[0] == 192 && b[1] == 168)
+            || (b[0] == 169 && b[1] == 254)
+            || b[0] == 127;
+    }
+}

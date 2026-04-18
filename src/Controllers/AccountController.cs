@@ -79,7 +79,7 @@ public class AccountController(
         var user = await db.Users.FindAsync(Claims.ParsedUserId);
         if (user == null) return NotFound();
         var secret = KeyGeneration.GenerateRandomKey(20);
-        var encrypted = TotpEncryption.Encrypt(Convert.FromHexString(appConfig.TotpSecretEncryptionKey), secret);
+        var encrypted = TotpEncryption.Encrypt(appConfig.TotpEncKey, secret);
         HttpContext.Session.SetString("totp_setup_secret", encrypted);
         var base32 = Base32Encoding.ToString(secret);
         var issuer = "RediensIAM";
@@ -93,7 +93,7 @@ public class AccountController(
         var userId = Claims.ParsedUserId;
         var encryptedSecret = HttpContext.Session.GetString("totp_setup_secret");
         if (encryptedSecret == null) return BadRequest(new { error = "no_setup_session" });
-        var secret = TotpEncryption.Decrypt(Convert.FromHexString(appConfig.TotpSecretEncryptionKey), encryptedSecret);
+        var secret = TotpEncryption.Decrypt(appConfig.TotpEncKey, encryptedSecret);
         var totp = new Totp(secret);
         if (!totp.VerifyTotp(body.Code, out _, new VerificationWindow(1, 1)))
             return BadRequest(new { error = "invalid_code" });

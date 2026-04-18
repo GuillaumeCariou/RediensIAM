@@ -29,7 +29,8 @@ public record OAuthStateData(
 public record SocialUserProfile(
     string ProviderUserId,
     string? Email,
-    string? Name
+    string? Name,
+    bool IsEmailVerified = false
 );
 
 // ── Service ──────────────────────────────────────────────────────────────────
@@ -218,20 +219,26 @@ public class SocialLoginService(
         };
     }
 
-    private async Task<SocialUserProfile?> GetStandardProfileAsync(ProviderConfig provider, string accessToken)
+    private async Task<JsonDocument?> GetBearerJsonAsync(string url, string accessToken)
     {
-        var userInfoUrl = await GetUserInfoEndpointAsync(provider);
         var http = httpClientFactory.CreateClient();
-        using var req = new HttpRequestMessage(HttpMethod.Get, userInfoUrl);
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, accessToken);
         using var resp = await http.SendAsync(req);
         if (!resp.IsSuccessStatusCode) return null;
+        return JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+    }
 
-        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
-        var sub   = TryGet(doc, "sub", "id");
-        var email = TryGet(doc, Email);
-        var name  = TryGet(doc, "name", "display_name", "username");
-        return sub == null ? null : new SocialUserProfile(sub, email, name);
+    private async Task<SocialUserProfile?> GetStandardProfileAsync(ProviderConfig provider, string accessToken)
+    {
+        var userInfoUrl = await GetUserInfoEndpointAsync(provider);
+        using var doc = await GetBearerJsonAsync(userInfoUrl, accessToken);
+        if (doc == null) return null;
+        var sub           = TryGet(doc, "sub", "id");
+        var email         = TryGet(doc, Email);
+        var name          = TryGet(doc, "name", "display_name", "username");
+        var emailVerified = doc.RootElement.TryGetProperty("email_verified", out var ev) && ev.GetBoolean();
+        return sub == null ? null : new SocialUserProfile(sub, email, name, emailVerified);
     }
 
     private async Task<SocialUserProfile?> GetGithubProfileAsync(string accessToken)
@@ -255,60 +262,53 @@ public class SocialLoginService(
         var id   = user.RootElement.GetProperty("id").GetInt64().ToString();
         var name = TryGet(user, "name", "login");
 
-        // email may be null if private — fetch separately
-        var email = TryGet(user, Email);
-        if (string.IsNullOrEmpty(email))
+        // Always fetch from emails API to get verified status. Public profile email is unverified.
+        string? email = null;
+        var emailVerified = false;
+        using var emails = await CallAsync(appConfig.GithubEmailsApiUrl);
+        if (emails != null)
         {
-            using var emails = await CallAsync(appConfig.GithubEmailsApiUrl);
-            if (emails != null)
+            foreach (var e in emails.RootElement.EnumerateArray())
             {
-                foreach (var e in emails.RootElement.EnumerateArray())
+                if (e.TryGetProperty("primary", out var primary) && primary.GetBoolean() &&
+                    e.TryGetProperty("verified", out var verified) && verified.GetBoolean() &&
+                    e.TryGetProperty(Email, out var em))
                 {
-                    if (e.TryGetProperty("primary", out var primary) && primary.GetBoolean() &&
-                        e.TryGetProperty("verified", out var verified) && verified.GetBoolean() &&
-                        e.TryGetProperty(Email, out var em))
-                    {
-                        email = em.GetString();
-                        break;
-                    }
+                    email = em.GetString();
+                    emailVerified = true;
+                    break;
                 }
             }
         }
+        // Fallback to profile email if emails API unavailable; treat as unverified
+        if (string.IsNullOrEmpty(email))
+            email = TryGet(user, Email);
 
-        return new SocialUserProfile(id, email, name);
+        return new SocialUserProfile(id, email, name, emailVerified);
     }
 
     private async Task<SocialUserProfile?> GetFacebookProfileAsync(string accessToken)
     {
-        var http = httpClientFactory.CreateClient();
-        using var req = new HttpRequestMessage(HttpMethod.Get, BuiltinEndpoints["facebook"].UserInfo);
-        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, accessToken);
-        using var resp = await http.SendAsync(req);
-        if (!resp.IsSuccessStatusCode) return null;
-
-        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        using var doc = await GetBearerJsonAsync(BuiltinEndpoints["facebook"].UserInfo, accessToken);
+        if (doc == null) return null;
         var id    = TryGet(doc, "id");
         var email = TryGet(doc, Email);
         var name  = TryGet(doc, "name");
-        return id == null ? null : new SocialUserProfile(id, email, name);
+        // Facebook does not expose email_verified; treat emails as unverified for account linking
+        return id == null ? null : new SocialUserProfile(id, email, name, IsEmailVerified: false);
     }
 
     private async Task<SocialUserProfile?> GetOidcProfileAsync(ProviderConfig provider, string accessToken)
     {
         var disco       = await GetDiscoveryAsync(provider.IssuerUrl!);
         var userInfoUrl = disco.RootElement.GetProperty("userinfo_endpoint").GetString()!;
-
-        var http = httpClientFactory.CreateClient();
-        using var req = new HttpRequestMessage(HttpMethod.Get, userInfoUrl);
-        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, accessToken);
-        using var resp = await http.SendAsync(req);
-        if (!resp.IsSuccessStatusCode) return null;
-
-        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
-        var sub   = TryGet(doc, "sub");
-        var email = TryGet(doc, Email);
-        var name  = TryGet(doc, "name", "preferred_username");
-        return sub == null ? null : new SocialUserProfile(sub, email, name);
+        using var doc   = await GetBearerJsonAsync(userInfoUrl, accessToken);
+        if (doc == null) return null;
+        var sub           = TryGet(doc, "sub");
+        var email         = TryGet(doc, Email);
+        var name          = TryGet(doc, "name", "preferred_username");
+        var emailVerified = doc.RootElement.TryGetProperty("email_verified", out var ev) && ev.GetBoolean();
+        return sub == null ? null : new SocialUserProfile(sub, email, name, emailVerified);
     }
 
     private async Task<string> GetTokenEndpointAsync(ProviderConfig provider)

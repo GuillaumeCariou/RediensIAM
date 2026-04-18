@@ -118,8 +118,7 @@ public class ProjectController(
     private void ApplyLoginTheme(Project project, Dictionary<string, object>? theme)
     {
         if (theme == null) return;
-        var encKey = Convert.FromHexString(appConfig.TotpSecretEncryptionKey);
-        project.LoginTheme = TotpEncryption.EncryptProviderSecretsInTheme(theme, project.LoginTheme, encKey)!;
+        project.LoginTheme = TotpEncryption.EncryptProviderSecretsInTheme(theme, project.LoginTheme, appConfig.ThemeEncKey)!;
     }
 
     // ── Users ─────────────────────────────────────────────────────────────────
