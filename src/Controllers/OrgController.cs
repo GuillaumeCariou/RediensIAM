@@ -460,7 +460,7 @@ public class OrgController(
             UserId    = user.Id,
             Kind      = KindInvite,
             TokenHash = hash,
-            ExpiresAt = DateTimeOffset.UtcNow.AddHours(72),
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(appConfig.InviteExpiryHours),
             CreatedAt = DateTimeOffset.UtcNow
         });
         await db.SaveChangesAsync();

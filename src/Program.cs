@@ -58,9 +58,9 @@ builder.Services.AddSession(o =>
 });
 
 // ── HTTP Clients ───────────────────────────────────────────────────────────
-builder.Services.AddHttpClient("hydra-admin");
-builder.Services.AddHttpClient("keto-read");
-builder.Services.AddHttpClient("keto-write");
+builder.Services.AddHttpClient("hydra-admin").AddStandardResilienceHandler();
+builder.Services.AddHttpClient("keto-read").AddStandardResilienceHandler();
+builder.Services.AddHttpClient("keto-write").AddStandardResilienceHandler();
 builder.Services.AddHttpClient("health", c => c.Timeout = TimeSpan.FromSeconds(5));
 builder.Services.AddHttpClient();
 builder.Services.AddMemoryCache();
@@ -80,7 +80,7 @@ builder.Services.AddHostedService<WebhookDispatcherService>();
 builder.Services.AddHostedService<AuditLogRetentionService>();
 builder.Services.AddHttpClient("webhook");
 builder.Services.AddScoped<PatService>();
-builder.Services.AddScoped<SocialLoginService>();
+builder.Services.AddSingleton<SocialLoginService>();
 builder.Services.AddHttpContextAccessor();
 
 // ── Controller service bundles (reduce constructor param counts, S107) ────────

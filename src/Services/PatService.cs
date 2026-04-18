@@ -15,7 +15,8 @@ public class PatService(
     IConnectionMultiplexer redis,
     AppConfig appConfig,
     IServiceScopeFactory scopeFactory,
-    HydraService hydra)
+    HydraService hydra,
+    ILogger<PatService> logger)
 {
     private readonly IDatabase _cache = redis.GetDatabase();
     private readonly TimeSpan _ttl = TimeSpan.FromMinutes(appConfig.PatCacheTtlMinutes);
@@ -80,7 +81,7 @@ public class PatService(
                 await bgDb.ServiceAccounts.Where(sa => sa.Id == saId)
                     .ExecuteUpdateAsync(s => s.SetProperty(sa => sa.LastUsedAt, now));
             }
-            catch { /* non-critical */ }
+            catch (Exception ex) { logger.LogWarning(ex, "PAT LastUsedAt update failed for pat={PatId} sa={SaId}", patId, saId); }
         });
 
         var sa = pat.ServiceAccount;

@@ -1,5 +1,8 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Caching.Distributed;
 using RediensIAM.Config;
 using RediensIAM.Models;
 
@@ -52,7 +55,7 @@ public class HydraConsentSessionRequest
     [JsonPropertyName("subject")]      public string Subject { get; set; } = "";
 }
 
-public class HydraService(IHttpClientFactory http, AppConfig appConfig)
+public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistributedCache cache)
 {
     private static readonly string[] BaseScopes = ["openid", "profile", "offline_access"];
     private const string RedirectToKey = "redirect_to";
@@ -234,6 +237,14 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig)
     // Avoids fetching JWKS from the public port (4444) which may not be reachable pod-to-pod.
     public async Task<TokenClaims?> ValidateJwtAsync(string token)
     {
+        // Cache introspection results to avoid O(RPS) calls to Hydra admin API
+        var tokenHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+        var cacheKey  = $"introspect:{tokenHash}";
+
+        var cached = await cache.GetStringAsync(cacheKey);
+        if (cached != null)
+            return JsonSerializer.Deserialize<TokenClaims>(cached, _json);
+
         var form = new FormUrlEncodedContent([new("token", token)]);
         var resp = await Client.PostAsync($"{_adminUrl}/admin/oauth2/introspect", form);
         if (!resp.IsSuccessStatusCode) return null;
@@ -247,11 +258,18 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig)
         var projectId = ext?.GetString("project_id") ?? "";
         var roles     = ext?.GetRoles("roles")        ?? [];
 
-        return new TokenClaims
+        var claims = new TokenClaims
         {
             UserId = userId, OrgId = orgId, ProjectId = projectId,
             Roles = roles, IsServiceAccount = false
         };
+
+        // Cache for up to 60s; never cache invalid/expired tokens (those return null above)
+        await cache.SetStringAsync(cacheKey,
+            JsonSerializer.Serialize(claims, _json),
+            new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60) });
+
+        return claims;
     }
 
     private sealed record IntrospectResult(

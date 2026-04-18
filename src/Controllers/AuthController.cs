@@ -327,11 +327,11 @@ public class AuthController(
         if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
             return StatusCode(429, new { error = ErrRateLimited });
 
-        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
-            System.Text.Encoding.UTF8.GetBytes(body.Code.ToUpperInvariant())));
-
-        var code = await db.BackupCodes.FirstOrDefaultAsync(c =>
-            c.UserId == userGuid && c.CodeHash == hash && c.UsedAt == null);
+        var allCodes = await db.BackupCodes
+            .Where(c => c.UserId == userGuid && c.UsedAt == null)
+            .ToListAsync();
+        var submitted = body.Code.ToUpperInvariant();
+        var code = allCodes.FirstOrDefault(bc => passwords.Verify(submitted, bc.CodeHash));
         if (code == null)
         {
             await rateLimiter.RecordFailureAsync(Ip, userGuid);

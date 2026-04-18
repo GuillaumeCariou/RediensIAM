@@ -66,6 +66,8 @@ public class AccountController(
         if (user == null) return NotFound();
         if (user.PasswordHash == null || !passwords.Verify(body.CurrentPassword, user.PasswordHash))
             return BadRequest(new { error = "invalid_current_password" });
+        if (body.NewPassword.Length < 8)
+            return BadRequest(new { error = "password_too_short", min_length = 8 });
         user.PasswordHash = passwords.Hash(body.NewPassword);
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
@@ -107,7 +109,7 @@ public class AccountController(
         var backupCodes = Enumerable.Range(0, 8).Select(_ =>
         {
             var code = Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToUpper();
-            return (code, hash: Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(code))));
+            return (code, hash: passwords.Hash(code));
         }).ToList();
         db.BackupCodes.RemoveRange(db.BackupCodes.Where(c => c.UserId == userId));
         db.BackupCodes.AddRange(backupCodes.Select(c => new BackupCode
@@ -125,7 +127,7 @@ public class AccountController(
         var codes = Enumerable.Range(0, 8).Select(_ =>
         {
             var code = Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToUpper();
-            return (code, hash: Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(code))));
+            return (code, hash: passwords.Hash(code));
         }).ToList();
         db.BackupCodes.RemoveRange(db.BackupCodes.Where(c => c.UserId == userId));
         db.BackupCodes.AddRange(codes.Select(c => new BackupCode
