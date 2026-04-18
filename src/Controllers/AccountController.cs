@@ -85,6 +85,11 @@ public class AccountController(
         HttpContext.Session.SetString("totp_setup_secret", encrypted);
         var base32 = Base32Encoding.ToString(secret);
         var issuer = "RediensIAM";
+        if (Guid.TryParse(Claims.OrgId, out var orgGuid))
+        {
+            var org = await db.Organisations.FindAsync(orgGuid);
+            if (org != null) issuer = org.Name;
+        }
         var otpAuthUrl = $"otpauth://totp/{Uri.EscapeDataString(issuer)}:{Uri.EscapeDataString(user.Email)}?secret={base32}&issuer={Uri.EscapeDataString(issuer)}";
         return Ok(new { otpauth_url = otpAuthUrl, secret = base32 });
     }

@@ -166,7 +166,7 @@ public class AuthController(
             return Unauthorized(new { error = ErrInvalidCreds });
         }
 
-        var credErr = await CheckUserCredentialsAsync(user, body);
+        var credErr = await CheckUserCredentialsAsync(user, project, body);
         if (credErr != null) return credErr;
 
         var accessErr = await CheckProjectAccessAsync(user, project, body.LoginChallenge);
@@ -197,11 +197,12 @@ public class AuthController(
         return null;
     }
 
-    private async Task<IActionResult?> CheckUserCredentialsAsync(User user, LoginRequest body)
+    private async Task<IActionResult?> CheckUserCredentialsAsync(User user, Project project, LoginRequest body)
     {
         if (user.LockedUntil.HasValue && user.LockedUntil > DateTimeOffset.UtcNow)
         {
             IamMetrics.LoginAttempts.WithLabels("locked").Inc();
+            await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.locked");
             return Unauthorized(new { error = "account_locked", locked_until = user.LockedUntil });
         }
 
@@ -213,6 +214,7 @@ public class AuthController(
             await db.SaveChangesAsync();
             await rateLimiter.RecordFailureAsync(Ip, user.Id);
             IamMetrics.LoginAttempts.WithLabels("failure").Inc();
+            await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.failed");
             return Unauthorized(new { error = ErrInvalidCreds });
         }
         return null;
@@ -308,7 +310,7 @@ public class AuthController(
         var redirectUrl = await hydra.AcceptLoginAsync(loginChallenge, subject, context);
         await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login");
         IamMetrics.LoginAttempts.WithLabels("success").Inc();
-        _ = Task.Run(() => CheckNewDeviceAsync(user, Ip, Request.Headers.UserAgent.ToString()));
+        _ = Task.Run(() => CheckNewDeviceAsync(user, project.OrgId, Ip, Request.Headers.UserAgent.ToString()));
         return Ok(new { redirect_to = redirectUrl });
     }
 
@@ -378,6 +380,7 @@ public class AuthController(
         if (!await otp.VerifySessionOtpAsync("sms_mfa", userId, body.Code))
         {
             await rateLimiter.RecordFailureAsync(Ip, userGuid);
+            await audit.RecordAsync(null, null, userGuid, "user.mfa.sms.failed");
             return Unauthorized(new { error = ErrInvalidCode });
         }
 
@@ -415,6 +418,7 @@ public class AuthController(
         if (!totp.VerifyTotp(body.Code, out _, new VerificationWindow(1, 1)))
         {
             await rateLimiter.RecordFailureAsync(Ip, userGuid);
+            await audit.RecordAsync(null, null, userGuid, "user.mfa.totp.failed");
             return Unauthorized(new { error = "invalid_totp" });
         }
 
@@ -729,11 +733,6 @@ public class AuthController(
             var policyErr = await ValidatePasswordPolicyAsync(inviteProject, body.Password);
             if (policyErr != null) return policyErr;
         }
-        if (inviteProject?.CheckBreachedPasswords == true)
-        {
-            var count = await breachCheck.GetBreachCountAsync(body.Password);
-            if (count > 0) return BadRequest(new { error = "password_breached", count });
-        }
 
         token.User.PasswordHash     = passwords.Hash(body.Password);
         token.User.Active           = true;
@@ -847,6 +846,7 @@ public class AuthController(
         token.User.LockedUntil = null;
         token.UsedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
+        await audit.RecordAsync(token.User.UserList.OrgId, resetProject?.Id, token.User.Id, "user.password.reset");
         var subject = token.User.UserList.OrgId.HasValue ? $"{token.User.UserList.OrgId}:{token.User.Id}" : token.User.Id.ToString();
         await hydra.RevokeSessionsAsync(subject);
         return Ok(new { message = "password_reset" });
@@ -915,7 +915,7 @@ public class AuthController(
         return Ok(new { redirect_to = redirectUrl });
     }
 
-    private async Task CheckNewDeviceAsync(User user, string ip, string userAgent)
+    private async Task CheckNewDeviceAsync(User user, Guid? orgId, string ip, string userAgent)
     {
         if (!user.NewDeviceAlertsEnabled) return;
         try
@@ -936,7 +936,7 @@ public class AuthController(
             });
 
             if (known == null)
-                await emailService.SendNewDeviceAlertAsync(user.Email, ip, userAgent, DateTimeOffset.UtcNow);
+                await emailService.SendNewDeviceAlertAsync(user.Email, ip, userAgent, DateTimeOffset.UtcNow, orgId);
         }
         catch (Exception ex)
         {

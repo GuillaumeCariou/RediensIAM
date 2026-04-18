@@ -112,6 +112,25 @@ public class WebhookDispatcherService(
                 finally { _sem.Release(); }
             }, stoppingToken);
         }
+
+        // Drain any buffered jobs after SIGTERM (best-effort, 10s window)
+        using var drainCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (channel.Reader.TryRead(out var pending))
+        {
+            if (drainCts.IsCancellationRequested) break;
+            await _sem.WaitAsync(drainCts.Token).ConfigureAwait(false);
+            _ = Task.Run(async () =>
+            {
+                try { await ProcessJobAsync(pending, drainCts.Token); }
+                finally { _sem.Release(); }
+            });
+        }
+        // Wait for in-flight tasks to finish
+        for (var i = 0; i < 20; i++)
+        {
+            if (_sem.CurrentCount == 20) break;
+            await Task.Delay(500, CancellationToken.None);
+        }
     }
 
     private async Task ProcessJobAsync(WebhookJob job, CancellationToken ct)

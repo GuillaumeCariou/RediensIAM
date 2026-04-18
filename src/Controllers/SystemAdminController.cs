@@ -169,7 +169,9 @@ var org = await db.Organisations.FindAsync(id);
     [HttpGet("users")]
     public async Task<IActionResult> SearchUsers([FromQuery] string? q, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
-var query = db.Users.AsQueryable();
+        if (!string.IsNullOrEmpty(q) && q.Length < 3)
+            return BadRequest(new { error = "query_too_short", min_length = 3 });
+        var query = db.Users.AsQueryable();
         if (!string.IsNullOrEmpty(q))
             query = query.Where(u => u.Email.Contains(q) || u.Username.Contains(q));
         var users = await query
@@ -783,7 +785,7 @@ var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == rid && r.ProjectId ==
         if (actor == null) return BadRequest(new { error = "user_not_found" });
         try
         {
-            await emailService.SendOtpAsync(actor.Email, "123456", "registration", id);
+            await emailService.SendOtpAsync(actor.Email, "TEST-MESSAGE", "smtp_test", id);
             return Ok(new { message = "test_email_sent", to = actor.Email });
         }
         catch (Exception ex)

@@ -14,7 +14,7 @@ public interface IEmailService
 {
     Task SendOtpAsync(string to, string code, string purpose, Guid? orgId = null, Guid? projectId = null);
     Task SendInviteAsync(string to, string inviteUrl, string orgName, Guid? projectId = null);
-    Task SendNewDeviceAlertAsync(string to, string ipAddress, string userAgent, DateTimeOffset loginAt);
+    Task SendNewDeviceAlertAsync(string to, string ipAddress, string userAgent, DateTimeOffset loginAt, Guid? orgId = null);
     /// <summary>Connect, optionally authenticate, then disconnect. Throws on failure.</summary>
     Task CheckConnectivityAsync();
 }
@@ -33,7 +33,7 @@ public class StubEmailService(ILogger<StubEmailService> logger) : IEmailService
         return Task.CompletedTask;
     }
 
-    public Task SendNewDeviceAlertAsync(string to, string ipAddress, string userAgent, DateTimeOffset loginAt)
+    public Task SendNewDeviceAlertAsync(string to, string ipAddress, string userAgent, DateTimeOffset loginAt, Guid? orgId = null)
     {
         logger.LogWarning("[STUB EMAIL] NewDevice To={To} Ip={Ip}", to, ipAddress);
         return Task.CompletedTask;
@@ -195,12 +195,36 @@ public class SmtpEmailService(
         await client.DisconnectAsync(true);
     }
 
-    public async Task SendNewDeviceAlertAsync(string to, string ipAddress, string userAgent, DateTimeOffset loginAt)
+    public async Task SendNewDeviceAlertAsync(string to, string ipAddress, string userAgent, DateTimeOffset loginAt, Guid? orgId = null)
     {
-        if (string.IsNullOrEmpty(appConfig.SmtpHost)) return;
+        var orgConfig = orgId.HasValue
+            ? await db.OrgSmtpConfigs.FirstOrDefaultAsync(c => c.OrgId == orgId.Value)
+            : null;
+
+        string host; int port; bool startTls; string? username; string? password; string fromAddress; string fromName;
+        if (orgConfig != null)
+        {
+            host = orgConfig.Host; port = orgConfig.Port; startTls = orgConfig.StartTls;
+            username = orgConfig.Username;
+            password = orgConfig.PasswordEnc != null
+                ? Encoding.UTF8.GetString(TotpEncryption.Decrypt(appConfig.SmtpEncKey, orgConfig.PasswordEnc))
+                : null;
+            fromAddress = orgConfig.FromAddress; fromName = orgConfig.FromName;
+        }
+        else if (!string.IsNullOrEmpty(appConfig.SmtpHost))
+        {
+            host = appConfig.SmtpHost; port = appConfig.SmtpPort; startTls = appConfig.SmtpStartTls;
+            username = appConfig.SmtpUsername; password = appConfig.SmtpPassword;
+            fromAddress = appConfig.SmtpFromAddress; fromName = appConfig.SmtpFromName;
+        }
+        else
+        {
+            logger.LogWarning("[EMAIL NO-OP] No SMTP configured for new-device alert To={To}", to);
+            return;
+        }
 
         var message = new MimeMessage();
-        message.From.Add(new MailboxAddress(appConfig.SmtpFromName, appConfig.SmtpFromAddress));
+        message.From.Add(new MailboxAddress(fromName, fromAddress));
         message.To.Add(new MailboxAddress("", to));
         message.Subject = "New device login detected";
         message.Body = new TextPart("plain")
@@ -209,10 +233,9 @@ public class SmtpEmailService(
         };
 
         using var client = new SmtpClient();
-        await client.ConnectAsync(appConfig.SmtpHost, appConfig.SmtpPort,
-            appConfig.SmtpStartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None);
-        if (!string.IsNullOrEmpty(appConfig.SmtpUsername))
-            await client.AuthenticateAsync(appConfig.SmtpUsername, appConfig.SmtpPassword!);
+        await client.ConnectAsync(host, port, startTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None);
+        if (!string.IsNullOrEmpty(username))
+            await client.AuthenticateAsync(username, password!);
         await client.SendAsync(message);
         await client.DisconnectAsync(true);
     }

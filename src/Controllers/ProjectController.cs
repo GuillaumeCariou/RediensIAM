@@ -94,6 +94,8 @@ public class ProjectController(
         if (body.PasswordRequireSpecial.HasValue)     project.PasswordRequireSpecial     = body.PasswordRequireSpecial.Value;
         var roleErr = await ApplyDefaultRoleAsync(project, body.ClearDefaultRole, body.DefaultRoleId);
         if (roleErr != null) return roleErr;
+        var themeErr = ValidateLoginTheme(body.LoginTheme);
+        if (themeErr != null) return themeErr;
         ApplyLoginTheme(project, body.LoginTheme);
         project.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
@@ -111,6 +113,17 @@ public class ProjectController(
             var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == newRoleId && r.ProjectId == ProjectId);
             if (role == null) return BadRequest(new { error = "invalid_default_role" });
             project.DefaultRoleId = newRoleId;
+        }
+        return null;
+    }
+
+    private IActionResult? ValidateLoginTheme(Dictionary<string, object>? theme)
+    {
+        if (theme == null) return null;
+        if (theme.TryGetValue("logo_url", out var logoVal) && logoVal is string logoUrl && !string.IsNullOrEmpty(logoUrl))
+        {
+            if (!Uri.TryCreate(logoUrl, UriKind.Absolute, out var uri) || uri.Scheme != "https")
+                return BadRequest(new { error = "logo_url_must_be_https" });
         }
         return null;
     }

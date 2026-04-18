@@ -112,13 +112,13 @@ public class OtpCacheService(IConnectionMultiplexer redis, AppConfig appConfig)
 
     public async Task StoreTotpUsedAsync(Guid userId, string code)
     {
-        var keyCode = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code)))[..16];
+        var keyCode = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code)));
         await _db.StringSetAsync($"otp:totp_used:{userId}:{keyCode}", "1", TimeSpan.FromSeconds(90));
     }
 
     public async Task<bool> IsTotpUsedAsync(Guid userId, string code)
     {
-        var keyCode = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code)))[..16];
+        var keyCode = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code)));
         return await _db.KeyExistsAsync($"otp:totp_used:{userId}:{keyCode}");
     }
 }

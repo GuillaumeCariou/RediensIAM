@@ -1,4 +1,4 @@
-import { UserManager, WebStorageStateStore } from 'oidc-client-ts';
+import { UserManager, WebStorageStateStore, InMemoryWebStorage } from 'oidc-client-ts';
 
 interface AdminConfig {
   hydra_url: string;
@@ -19,15 +19,8 @@ async function getManager(): Promise<UserManager> {
     redirect_uri: cfg.redirect_uri,
     scope: 'openid offline',
     response_type: 'code',
-    userStore: new WebStorageStateStore({ store: sessionStorage }),
+    userStore: new WebStorageStateStore({ store: new InMemoryWebStorage() }),
   });
-  // Restore access token from stored session (survives page reload)
-  try {
-    const stored = await mgr.getUser();
-    if (stored && !stored.expired) {
-      accessToken = stored.access_token ?? null;
-    }
-  } catch { /* ignore — fresh login will be triggered */ }
   return mgr;
 }
 
@@ -55,7 +48,6 @@ export function getToken() { return accessToken; }
 export function isAuthenticated() { return !!accessToken; }
 export async function logout() {
   accessToken = null;
-  sessionStorage.clear();
   const m = await getManager();
   m.signoutRedirect();
 }

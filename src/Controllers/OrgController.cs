@@ -719,7 +719,7 @@ public class OrgController(
         if (actor == null) return BadRequest(new { error = "user_not_found" });
         try
         {
-            await emailService.SendOtpAsync(actor.Email, "123456", "registration", OrgId);
+            await emailService.SendOtpAsync(actor.Email, "TEST-MESSAGE", "smtp_test", OrgId);
             return Ok(new { message = "test_email_sent", to = actor.Email });
         }
         catch (Exception ex)
