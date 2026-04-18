@@ -21,15 +21,15 @@ import {
   resendInvite, unlockUser, getUserSessions, revokeAllUserSessions,
 } from '@/api';
 import { fmtDate } from '@/lib/utils';
+import EditUserDialog from '@/components/EditUserDialog';
+import type { UserEditFields } from '@/components/EditUserDialog';
+import SessionsDialog from '@/components/SessionsDialog';
+import type { OAuthSession } from '@/components/SessionsDialog';
 
 interface Member {
   id: string; email: string; username: string; discriminator: string;
   display_name: string | null; active: boolean; last_login_at: string | null;
   invite_pending?: boolean; locked_until?: string | null;
-}
-
-interface Session {
-  client_id: string; client_name?: string; granted_at?: string; expires_at?: string;
 }
 
 interface Role { id: string; name: string; }
@@ -42,6 +42,8 @@ interface Props {
   defaultRoleId?: string | null;
   onChanged?: () => void;
 }
+
+const BLANK_FORM: UserEditFields = { email: '', username: '', display_name: '', phone: '', active: true, email_verified: false, clear_lock: false, new_password: '' };
 
 function MemberStatusBadge({ member, isLocked }: Readonly<{ member: Member; isLocked: (m: Member) => boolean }>) {
   if (member.invite_pending) return <Badge variant="secondary">Invite pending</Badge>;
@@ -56,38 +58,30 @@ export default function UserListMembersPanel({
 }: Readonly<Props>) {
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
-
-  // ── Feedback banner ────────────────────────────────────────────
   const [actionMsg, setActionMsg] = useState<{ text: string; error?: boolean } | null>(null);
 
-  // ── Role state ─────────────────────────────────────────────────
   const [memberRoles, setMemberRoles] = useState<Map<string, Role[]>>(new Map());
   const [availableRoles, setAvailableRoles] = useState<Role[]>([]);
   const [selectedRole, setSelectedRole] = useState('');
   const [roleSaving, setRoleSaving] = useState(false);
 
-  // ── Add dialog ─────────────────────────────────────────────────
   const [addOpen, setAddOpen] = useState(false);
   const [addForm, setAddForm] = useState({ email: '', username: '', password: '', email_verified: false });
   const [addSaving, setAddSaving] = useState(false);
 
-  // ── Remove dialog ──────────────────────────────────────────────
   const [removeTarget, setRemoveTarget] = useState<Member | null>(null);
 
-  // ── Edit dialog ────────────────────────────────────────────────
   const [editTarget, setEditTarget] = useState<Member | null>(null);
-  const [editForm, setEditForm] = useState({ email: '', username: '', display_name: '', phone: '', active: true, email_verified: false, clear_lock: false, new_password: '' });
+  const [editForm, setEditForm] = useState<UserEditFields>(BLANK_FORM);
   const [editLoading, setEditLoading] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState('');
 
-  // ── Sessions dialog ────────────────────────────────────────────
   const [sessionsUser, setSessionsUser] = useState<Member | null>(null);
-  const [sessions, setSessions] = useState<Session[]>([]);
+  const [sessions, setSessions] = useState<OAuthSession[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [revokeAllLoading, setRevokeAllLoading] = useState(false);
 
-  // ── Helpers ────────────────────────────────────────────────────
   const ctxListId = isSystemCtx ? null : listId;
 
   function flash(text: string, error = false) {
@@ -95,22 +89,16 @@ export default function UserListMembersPanel({
     setTimeout(() => setActionMsg(null), 3500);
   }
 
-  const isLocked = (m: Member) =>
-    !!m.locked_until && new Date(m.locked_until) > new Date();
+  const isLocked = (m: Member) => !!m.locked_until && new Date(m.locked_until) > new Date();
 
   const loadMembers = async () => {
-    const res = isSystemCtx
-      ? await listSystemUserListMembers(listId)
-      : await listUserListMembers(listId);
+    const res = isSystemCtx ? await listSystemUserListMembers(listId) : await listUserListMembers(listId);
     setMembers(res.users ?? res ?? []);
   };
 
   const loadRoles = async () => {
     if (!projectId) return;
-    const [usersRes, rolesRes] = await Promise.all([
-      listProjectUsers(projectId),
-      listRoles(projectId),
-    ]);
+    const [usersRes, rolesRes] = await Promise.all([listProjectUsers(projectId), listRoles(projectId)]);
     const projectUsers: { id: string; roles: Role[] }[] = usersRes.users ?? usersRes ?? [];
     const map = new Map<string, Role[]>();
     for (const u of projectUsers) map.set(u.id, u.roles ?? []);
@@ -118,16 +106,12 @@ export default function UserListMembersPanel({
     setAvailableRoles(rolesRes.roles ?? rolesRes ?? []);
   };
 
-  const load = async () => {
-    await Promise.all([loadMembers(), loadRoles()]);
-  };
+  const load = async () => { await Promise.all([loadMembers(), loadRoles()]); };
 
   useEffect(() => {
     setLoading(true);
     load().catch(console.error).finally(() => setLoading(false));
   }, [listId, projectId]);
-
-  // ── Handlers ───────────────────────────────────────────────────
 
   const handleAdd = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -151,8 +135,7 @@ export default function UserListMembersPanel({
   };
 
   const openEdit = async (m: Member) => {
-    setEditTarget(m); setEditError(''); setEditLoading(true);
-    setSelectedRole('');
+    setEditTarget(m); setEditError(''); setEditLoading(true); setSelectedRole('');
     try {
       const u = await adminGetUser(m.id);
       setEditForm({
@@ -174,8 +157,7 @@ export default function UserListMembersPanel({
         email: editForm.email, username: editForm.username,
         display_name: editForm.display_name, phone: editForm.phone,
         active: editForm.active, email_verified: editForm.email_verified,
-        clear_lock: editForm.clear_lock,
-        new_password: editForm.new_password || undefined,
+        clear_lock: editForm.clear_lock, new_password: editForm.new_password || undefined,
       });
       setEditTarget(null);
       await load();
@@ -187,11 +169,8 @@ export default function UserListMembersPanel({
   const handleAssignRole = async () => {
     if (!editTarget || !selectedRole || !projectId) return;
     setRoleSaving(true);
-    try {
-      await assignRole(projectId, editTarget.id, selectedRole);
-      setSelectedRole('');
-      await loadRoles();
-    } finally { setRoleSaving(false); }
+    try { await assignRole(projectId, editTarget.id, selectedRole); setSelectedRole(''); await loadRoles(); }
+    finally { setRoleSaving(false); }
   };
 
   const handleRemoveRole = async (userId: string, roleId: string) => {
@@ -207,51 +186,36 @@ export default function UserListMembersPanel({
   const handleResendInvite = async (m: Member) => {
     try {
       const res = await resendInvite(listId, m.id);
-      if (res.error === 'user_already_active') {
-        flash('This user has already accepted their invitation.', true);
-      } else {
-        flash(`Invite resent to ${m.email}.`);
-      }
+      if (res.error === 'user_already_active') flash('This user has already accepted their invitation.', true);
+      else flash(`Invite resent to ${m.email}.`);
     } catch { flash('Failed to resend invite.', true); }
   };
 
   const handleUnlock = async (m: Member) => {
-    try {
-      await unlockUser(ctxListId, m.id);
-      flash('Account unlocked.');
-      await loadMembers();
-    } catch { flash('Failed to unlock account.', true); }
+    try { await unlockUser(ctxListId, m.id); flash('Account unlocked.'); await loadMembers(); }
+    catch { flash('Failed to unlock account.', true); }
   };
 
   const openSessions = async (m: Member) => {
-    setSessionsUser(m);
-    setSessions([]);
-    setSessionsLoading(true);
-    try {
-      const res = await getUserSessions(ctxListId, m.id);
-      setSessions(res.sessions ?? res ?? []);
-    } catch { setSessions([]); }
+    setSessionsUser(m); setSessions([]); setSessionsLoading(true);
+    try { const res = await getUserSessions(ctxListId, m.id); setSessions(res.sessions ?? res ?? []); }
+    catch { setSessions([]); }
     finally { setSessionsLoading(false); }
   };
 
   const handleRevokeAllSessions = async () => {
     if (!sessionsUser) return;
     setRevokeAllLoading(true);
-    try {
-      await revokeAllUserSessions(ctxListId, sessionsUser.id);
-      setSessions([]);
-      flash('All sessions revoked.');
-    } catch { flash('Failed to revoke sessions.', true); }
+    try { await revokeAllUserSessions(ctxListId, sessionsUser.id); setSessions([]); flash('All sessions revoked.'); }
+    catch { flash('Failed to revoke sessions.', true); }
     finally { setRevokeAllLoading(false); }
   };
 
   const userRoles = (userId: string) => memberRoles.get(userId) ?? [];
-  const unassignedRoles = (userId: string) =>
-    availableRoles.filter(r => !userRoles(userId).some(ur => ur.id === r.id));
+  const unassignedRoles = (userId: string) => availableRoles.filter(r => !userRoles(userId).some(ur => ur.id === r.id));
 
   return (
     <>
-      {/* ── Feedback banner ── */}
       {actionMsg && (
         <Alert variant={actionMsg.error ? 'destructive' : 'default'} className="mb-3">
           <AlertDescription>{actionMsg.text}</AlertDescription>
@@ -289,9 +253,7 @@ export default function UserListMembersPanel({
                         <p className="text-sm font-medium">{m.username}#{m.discriminator}</p>
                         <p className="text-xs text-muted-foreground">{m.email}</p>
                       </TableCell>
-                      <TableCell>
-                        <MemberStatusBadge member={m} isLocked={isLocked} />
-                      </TableCell>
+                      <TableCell><MemberStatusBadge member={m} isLocked={isLocked} /></TableCell>
                       {projectId && (
                         <TableCell>
                           <div className="flex flex-wrap gap-1">
@@ -303,19 +265,13 @@ export default function UserListMembersPanel({
                       <TableCell onClick={e => e.stopPropagation()}>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
+                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0"><MoreHorizontal className="h-4 w-4" /></Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => openEdit(m)}>Edit</DropdownMenuItem>
                             <DropdownMenuItem onClick={() => openSessions(m)}>View sessions</DropdownMenuItem>
-                            {m.invite_pending && (
-                              <DropdownMenuItem onClick={() => handleResendInvite(m)}>Resend invite</DropdownMenuItem>
-                            )}
-                            {isLocked(m) && (
-                              <DropdownMenuItem onClick={() => handleUnlock(m)}>Unlock account</DropdownMenuItem>
-                            )}
+                            {m.invite_pending && <DropdownMenuItem onClick={() => handleResendInvite(m)}>Resend invite</DropdownMenuItem>}
+                            {isLocked(m) && <DropdownMenuItem onClick={() => handleUnlock(m)}>Unlock account</DropdownMenuItem>}
                             <DropdownMenuSeparator />
                             <DropdownMenuItem className="text-destructive" onClick={() => setRemoveTarget(m)}>Remove</DropdownMenuItem>
                           </DropdownMenuContent>
@@ -352,136 +308,61 @@ export default function UserListMembersPanel({
         </DialogContent>
       </Dialog>
 
-      {/* ── Edit dialog ── */}
-      <Dialog open={!!editTarget} onOpenChange={v => { if (!v) setEditTarget(null); }}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Edit {editTarget?.username}#{editTarget?.discriminator}</DialogTitle>
-            <DialogDescription>Update this account's information. Leave password blank to keep it unchanged.</DialogDescription>
-          </DialogHeader>
-          {editLoading
-            ? <div className="space-y-3 py-2">{Array.from({ length: 5 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-8 w-full" />)}</div>
-            : (
-              <form onSubmit={handleEdit} className="space-y-4">
-                {editError && <p className="text-sm text-destructive">{editError}</p>}
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2"><Label>Email</Label><Input type="email" value={editForm.email} onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))} required /></div>
-                  <div className="space-y-2"><Label>Username</Label><Input value={editForm.username} onChange={e => setEditForm(f => ({ ...f, username: e.target.value }))} required /></div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2"><Label>Display name</Label><Input value={editForm.display_name} onChange={e => setEditForm(f => ({ ...f, display_name: e.target.value }))} placeholder="Optional" /></div>
-                  <div className="space-y-2"><Label>Phone</Label><Input value={editForm.phone} onChange={e => setEditForm(f => ({ ...f, phone: e.target.value }))} placeholder="Optional" /></div>
-                </div>
-                <div className="space-y-2">
-                  <Label>New password</Label>
-                  <Input type="password" autoComplete="new-password" value={editForm.new_password} onChange={e => setEditForm(f => ({ ...f, new_password: e.target.value }))} placeholder="Leave blank to keep current" minLength={8} />
-                </div>
-                <div className="flex flex-col gap-3 pt-1">
-                  <div className="flex items-center justify-between"><Label>Active</Label><Switch checked={editForm.active} onCheckedChange={v => setEditForm(f => ({ ...f, active: v }))} /></div>
-                  <div className="flex items-center justify-between"><Label>Email verified</Label><Switch checked={editForm.email_verified} onCheckedChange={v => setEditForm(f => ({ ...f, email_verified: v }))} /></div>
-                  <div className="flex items-center justify-between"><Label>Clear account lock</Label><Switch checked={editForm.clear_lock} onCheckedChange={v => setEditForm(f => ({ ...f, clear_lock: v }))} /></div>
-                </div>
+      <EditUserDialog
+        open={!!editTarget}
+        targetLabel={editTarget ? `${editTarget.username}#${editTarget.discriminator}` : ''}
+        form={editForm}
+        loading={editLoading}
+        saving={editSaving}
+        error={editError}
+        onChange={(field, value) => setEditForm(f => ({ ...f, [field]: value }))}
+        onSubmit={handleEdit}
+        onClose={() => setEditTarget(null)}
+        extra={projectId && editTarget ? (
+          <div className="space-y-2 pt-1 border-t">
+            <Label>Project Roles</Label>
+            <div className="flex flex-wrap gap-1 min-h-6">
+              {userRoles(editTarget.id).map(r => (
+                <Badge key={r.id} variant="secondary" className="gap-1 pr-1">
+                  {r.name}
+                  {r.id === defaultRoleId && <span className="text-[10px] opacity-60 ml-0.5">default</span>}
+                  <button type="button" onClick={() => handleRemoveRole(editTarget.id, r.id)} className="ml-0.5 rounded-full hover:bg-muted-foreground/20 p-0.5">
+                    <Trash2 className="h-2.5 w-2.5" />
+                  </button>
+                </Badge>
+              ))}
+              {userRoles(editTarget.id).length === 0 && <span className="text-xs text-muted-foreground">No roles assigned</span>}
+            </div>
+            {unassignedRoles(editTarget.id).length > 0 && (
+              <div className="flex gap-2">
+                <Select value={selectedRole} onValueChange={setSelectedRole}>
+                  <SelectTrigger className="flex-1"><SelectValue placeholder="Add a role…" /></SelectTrigger>
+                  <SelectContent>
+                    {unassignedRoles(editTarget.id).map(r => (
+                      <SelectItem key={r.id} value={r.id}>
+                        {r.name}
+                        {r.id === defaultRoleId && <span className="text-muted-foreground ml-1 text-xs">(default)</span>}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button type="button" size="sm" disabled={!selectedRole || roleSaving} onClick={handleAssignRole}>
+                  <Plus className="h-3 w-3" />{roleSaving ? '…' : 'Add'}
+                </Button>
+              </div>
+            )}
+          </div>
+        ) : undefined}
+      />
 
-                {/* ── Roles section ── */}
-                {projectId && editTarget && (
-                  <div className="space-y-2 pt-1 border-t">
-                    <Label>Project Roles</Label>
-                    <div className="flex flex-wrap gap-1 min-h-6">
-                      {userRoles(editTarget.id).map(r => (
-                        <Badge key={r.id} variant="secondary" className="gap-1 pr-1">
-                          {r.name}
-                          {r.id === defaultRoleId && <span className="text-[10px] opacity-60 ml-0.5">default</span>}
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveRole(editTarget.id, r.id)}
-                            className="ml-0.5 rounded-full hover:bg-muted-foreground/20 p-0.5"
-                          >
-                            <Trash2 className="h-2.5 w-2.5" />
-                          </button>
-                        </Badge>
-                      ))}
-                      {userRoles(editTarget.id).length === 0 && (
-                        <span className="text-xs text-muted-foreground">No roles assigned</span>
-                      )}
-                    </div>
-                    {unassignedRoles(editTarget.id).length > 0 && (
-                      <div className="flex gap-2">
-                        <Select value={selectedRole} onValueChange={setSelectedRole}>
-                          <SelectTrigger className="flex-1">
-                            <SelectValue placeholder="Add a role…" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {unassignedRoles(editTarget.id).map(r => (
-                              <SelectItem key={r.id} value={r.id}>
-                                {r.name}
-                                {r.id === defaultRoleId && <span className="text-muted-foreground ml-1 text-xs">(default)</span>}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Button type="button" size="sm" disabled={!selectedRole || roleSaving} onClick={handleAssignRole}>
-                          <Plus className="h-3 w-3" />{roleSaving ? '…' : 'Add'}
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <DialogFooter>
-                  <Button type="button" variant="outline" onClick={() => setEditTarget(null)}>Cancel</Button>
-                  <Button type="submit" disabled={editSaving}>{editSaving ? 'Saving…' : 'Save changes'}</Button>
-                </DialogFooter>
-              </form>
-            )
-          }
-        </DialogContent>
-      </Dialog>
-
-      {/* ── Sessions dialog ── */}
-      <Dialog open={!!sessionsUser} onOpenChange={v => { if (!v) setSessionsUser(null); }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Active sessions — {sessionsUser?.email}</DialogTitle>
-            <DialogDescription>OAuth2 applications this user has granted access to.</DialogDescription>
-          </DialogHeader>
-          {(() => {
-            if (sessionsLoading) return (
-              <div className="space-y-2 py-2">{Array.from({ length: 3 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-8 w-full" />)}</div>
-            );
-            if (sessions.length === 0) return (
-              <p className="text-sm text-muted-foreground py-4 text-center">No active sessions.</p>
-            );
-            return (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>App</TableHead>
-                    <TableHead>Granted</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {sessions.map(s => (
-                    <TableRow key={s.client_id}>
-                      <TableCell className="text-sm font-medium">{s.client_name ?? s.client_id}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{fmtDate(s.granted_at ?? null)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            );
-          })()}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSessionsUser(null)}>Close</Button>
-            <Button
-              variant="destructive"
-              disabled={revokeAllLoading || sessions.length === 0}
-              onClick={handleRevokeAllSessions}
-            >
-              {revokeAllLoading ? 'Revoking…' : 'Revoke all sessions'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <SessionsDialog
+        userEmail={sessionsUser?.email ?? null}
+        sessions={sessions}
+        loading={sessionsLoading}
+        revokeAllLoading={revokeAllLoading}
+        onClose={() => { setSessionsUser(null); setSessions([]); }}
+        onRevokeAll={handleRevokeAllSessions}
+      />
 
       {/* ── Remove confirmation ── */}
       <AlertDialog open={!!removeTarget} onOpenChange={v => !v && setRemoveTarget(null)}>

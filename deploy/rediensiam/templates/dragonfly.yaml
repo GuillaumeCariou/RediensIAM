@@ -1,3 +1,4 @@
+{{- if .Values.rediensiam.dragonfly.local.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -29,9 +30,24 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: dragonfly
-          image: {{ .Values.dragonfly.image }}
+          image: {{ .Values.rediensiam.dragonfly.local.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 999
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: DRAGONFLY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: dragonfly-password
           ports:
             - containerPort: 6379
-          args: ["--logtostderr"]
+          args: ["--logtostderr", "--requirepass=$(DRAGONFLY_PASSWORD)"]
           resources:
-            {{- toYaml .Values.dragonfly.resources | nindent 12 }}
+            {{- toYaml .Values.rediensiam.dragonfly.local.resources | nindent 12 }}
+{{- end }}

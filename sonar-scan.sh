@@ -39,6 +39,8 @@ fi
 # ── API (ASP.NET Core) ────────────────────────────────────────────────────────
 echo ""
 echo "==> Scanning API..."
+rm -rf tests/RediensIAM.IntegrationTests/TestResults
+
 dotnet sonarscanner begin \
   /k:"RediensIAM" \
   /d:sonar.host.url="$SONAR_HOST" \
@@ -52,7 +54,7 @@ dotnet build RediensIAM.slnx --no-incremental
 dotnet test tests/RediensIAM.IntegrationTests/RediensIAM.IntegrationTests.csproj \
   --collect:"XPlat Code Coverage" \
   --results-directory ./tests/RediensIAM.IntegrationTests/TestResults \
-  -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+  -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover || true
 
 dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN_API"
 

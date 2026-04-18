@@ -9,8 +9,8 @@ spec:
     app: {{ .Release.Name }}
   ports:
     - name: public
-      port: {{ .Values.service.public.port }}
-      targetPort: {{ .Values.service.public.port }}
+      port: {{ .Values.rediensiam.service.public.port }}
+      targetPort: {{ .Values.rediensiam.service.public.port }}
 ---
 apiVersion: v1
 kind: Service
@@ -23,6 +23,6 @@ spec:
     app: {{ .Release.Name }}
   ports:
     - name: admin
-      port: {{ .Values.service.admin.port }}
-      targetPort: {{ .Values.service.admin.port }}
-      nodePort: {{ .Values.service.admin.nodePort }}
+      port: {{ .Values.rediensiam.service.admin.port }}
+      targetPort: {{ .Values.rediensiam.service.admin.port }}
+      nodePort: {{ .Values.rediensiam.service.admin.nodePort }}

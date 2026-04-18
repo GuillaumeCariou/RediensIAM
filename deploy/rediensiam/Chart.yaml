@@ -8,6 +8,8 @@ dependencies:
   - name: hydra
     version: "0.60.1"
     repository: "https://k8s.ory.sh/helm/charts"
+    condition: rediensiam.hydra.local.enabled
   - name: keto
     version: "0.60.1"
     repository: "https://k8s.ory.sh/helm/charts"
+    condition: rediensiam.keto.local.enabled

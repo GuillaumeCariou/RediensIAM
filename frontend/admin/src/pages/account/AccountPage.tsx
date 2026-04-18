@@ -752,8 +752,8 @@ function SessionsTab() {
     if (sessions.length === 0) return <p className="text-sm text-muted-foreground py-4 text-center">No active sessions.</p>;
     return (
       <div className="space-y-2">
-        {sessions.map(s => (
-          <div key={s.client_id ?? Math.random()} className="flex items-center justify-between rounded-lg border px-4 py-3">
+        {sessions.map((s, i) => (
+          <div key={s.client_id ?? `session-${i}`} className="flex items-center justify-between rounded-lg border px-4 py-3">
             <div className="space-y-0.5">
               <div className="flex items-center gap-2">
                 <MonitorSmartphone className="h-4 w-4 text-muted-foreground" />

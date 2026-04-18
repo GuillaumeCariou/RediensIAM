@@ -1,4 +1,4 @@
-{{- if .Values.ingress.enabled }}
+{{- if .Values.rediensiam.ingress.public.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -7,9 +7,9 @@ metadata:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
 spec:
-  ingressClassName: {{ .Values.ingress.className }}
+  ingressClassName: {{ .Values.rediensiam.ingress.className }}
   rules:
-    - host: {{ .Values.ingress.host }}
+    - host: {{ include "rediensiam.ingressPublicHost" . }}
       http:
         paths:
           - path: /api/manage
@@ -18,12 +18,12 @@ spec:
               service:
                 name: {{ .Release.Name }}-public
                 port:
-                  number: 5000
+                  number: {{ .Values.rediensiam.service.public.port }}
           - path: /
             pathType: Prefix
             backend:
               service:
                 name: {{ .Release.Name }}-public
                 port:
-                  number: 5000
+                  number: {{ .Values.rediensiam.service.public.port }}
 {{- end }}

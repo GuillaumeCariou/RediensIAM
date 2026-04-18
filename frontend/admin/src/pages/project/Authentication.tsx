@@ -81,7 +81,7 @@ const DEFAULT_THEME: Theme = {
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function nanoid() { return Math.random().toString(36).slice(2, 10); }
+function nanoid() { return crypto.randomUUID().replaceAll('-', '').slice(0, 8); }
 
 function ColorRow({ label, value, onChange }: Readonly<{ label: string; value: string; onChange: (v: string) => void }>) {
   return (

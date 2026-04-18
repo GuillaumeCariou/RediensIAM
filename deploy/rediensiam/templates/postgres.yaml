@@ -1,3 +1,4 @@
+{{- if .Values.rediensiam.postgres.local.enabled }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -47,12 +48,23 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: postgres
-          image: {{ .Values.postgres.image }}
+          image: {{ .Values.rediensiam.postgres.local.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 999
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
           env:
             - name: POSTGRES_USER
               value: iam
             - name: POSTGRES_PASSWORD
-              value: {{ .Values.postgres.password | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: postgres-password
             - name: POSTGRES_DB
               value: postgres
           ports:
@@ -63,7 +75,7 @@ spec:
             - name: init
               mountPath: /docker-entrypoint-initdb.d
           resources:
-            {{- toYaml .Values.postgres.resources | nindent 12 }}
+            {{- toYaml .Values.rediensiam.postgres.local.resources | nindent 12 }}
           readinessProbe:
             exec:
               command: ["pg_isready", "-U", "iam", "-d", "postgres"]
@@ -81,4 +93,5 @@ spec:
         accessModes: ["ReadWriteOnce"]
         resources:
           requests:
-            storage: {{ .Values.postgres.storage }}
+            storage: {{ .Values.rediensiam.postgres.local.storage }}
+{{- end }}
