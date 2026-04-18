@@ -72,10 +72,11 @@ public class SystemHealthController(
                     .FirstOrDefaultAsync();
                 if (dbSize != null) stats["db_size"] = dbSize;
 
-                stats["users"]         = (await db.Users.CountAsync()).ToString();
-                stats["organisations"] = (await db.Organisations.Where(o => o.Slug != "__system__").CountAsync()).ToString();
-                stats["projects"]      = (await db.Projects.CountAsync()).ToString();
-                stats["webhooks"]      = (await db.Webhooks.CountAsync(w => w.Active)).ToString() + " active";
+                stats["users"]          = (await db.Users.CountAsync()).ToString();
+                stats["organisations"]  = (await db.Organisations.Where(o => o.Slug != "__system__").CountAsync()).ToString();
+                stats["projects"]       = (await db.Projects.CountAsync()).ToString();
+                stats["webhooks"]       = (await db.Webhooks.CountAsync(w => w.Active)).ToString() + " active";
+                stats["oauth2_clients"] = (await db.Projects.CountAsync(p => p.HydraClientId != null)).ToString();
             }
             catch { /* stats are best-effort */ }
 
@@ -114,9 +115,6 @@ public class SystemHealthController(
         {
             var version = await FetchVersion($"{appConfig.HydraAdminUrl}/version");
             if (version != null) stats[StatsVersion] = version;
-            // OAuth2 clients managed by this app
-            var clients = await db.Projects.CountAsync(p => p.HydraClientId != null);
-            stats["oauth2_clients"] = clients.ToString();
         }
         catch { /* best-effort */ }
 

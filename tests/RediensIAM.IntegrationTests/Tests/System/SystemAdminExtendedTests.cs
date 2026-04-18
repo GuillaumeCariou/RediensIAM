@@ -32,6 +32,63 @@ public class SystemAdminExtendedTests(TestFixture fixture)
     }
 
     [Fact]
+    public async Task ListSessions_WithNonEmptySessions_ReturnsMappedFields()
+    {
+        // Covers SystemAdminController line 265 — the Select lambda with 5 ?. operators (10 conditions)
+        var (org, _, client) = await SuperAdminAsync();
+        var list  = await fixture.Seed.CreateUserListAsync(org.Id);
+        var user  = await fixture.Seed.CreateUserAsync(list.Id);
+        var subject = $"{org.Id}:{user.Id}";
+
+        fixture.Hydra.SetupConsentSessions(subject, new object[]
+        {
+            // Session 1: full consent_request with non-null client (non-null path for all ?. operators)
+            new
+            {
+                consent_request = new
+                {
+                    client       = new { client_id = "app-client", client_name = "My App" },
+                    requested_at = DateTimeOffset.UtcNow.AddHours(-1)
+                },
+                granted_scopes = new[] { "openid", "profile" },
+                expires_at     = DateTimeOffset.UtcNow.AddDays(1)
+            },
+            // Session 2: null consent_request (ConsentRequest?.* → null branch)
+            new
+            {
+                consent_request = (object?)null,
+                granted_scopes  = new[] { "openid" },
+                expires_at      = (DateTimeOffset?)null
+            },
+            // Session 3: non-null consent_request but null client (?.Client?.ClientId null branch)
+            new
+            {
+                consent_request = new
+                {
+                    client       = (object?)null,
+                    requested_at = DateTimeOffset.UtcNow.AddHours(-2)
+                },
+                granted_scopes = new[] { "openid" },
+                expires_at     = (DateTimeOffset?)null
+            }
+        });
+
+        var res = await client.GetAsync($"/admin/users/{user.Id}/sessions");
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        body.ValueKind.Should().Be(JsonValueKind.Array);
+        body.GetArrayLength().Should().Be(3);
+
+        var first = body[0];
+        first.GetProperty("client_id").GetString().Should().Be("app-client");
+        first.GetProperty("client_name").GetString().Should().Be("My App");
+
+        var second = body[1];
+        second.GetProperty("client_id").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    [Fact]
     public async Task ListSessions_NonExistentUser_Returns404()
     {
         var (_, _, client) = await SuperAdminAsync();
@@ -499,6 +556,69 @@ public class SystemAdminExtendedTests(TestFixture fixture)
         var res = await client.DeleteAsync($"/admin/projects/{project.Id}/saml-providers/{providerId}");
 
         res.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    // ── PATCH saml-providers: DefaultRoleId branch (line 1030) ──────────────
+
+    [Fact]
+    public async Task UpdateSamlProvider_SetDefaultRole_Returns200()
+    {
+        // Covers line 1030: DefaultRoleId.HasValue=true, != Guid.Empty → sets value
+        var (org, _, client) = await SuperAdminAsync();
+        var project  = await fixture.Seed.CreateProjectAsync(org.Id);
+        var role     = await fixture.Seed.CreateRoleAsync(project.Id, "SamlDefault");
+
+        var createRes = await client.PostAsJsonAsync($"/admin/projects/{project.Id}/saml-providers", new
+        {
+            entity_id = "https://idp.example.com/set-role"
+        });
+        var createBody = await createRes.Content.ReadFromJsonAsync<JsonElement>();
+        var providerId = createBody.GetProperty("id").GetString();
+
+        var res = await client.PatchAsJsonAsync(
+            $"/admin/projects/{project.Id}/saml-providers/{providerId}",
+            new { default_role_id = role.Id });
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task UpdateSamlProvider_ClearDefaultRole_Returns200()
+    {
+        // Covers line 1030: DefaultRoleId.HasValue=true, == Guid.Empty → sets null
+        var (org, _, client) = await SuperAdminAsync();
+        var project  = await fixture.Seed.CreateProjectAsync(org.Id);
+
+        var createRes = await client.PostAsJsonAsync($"/admin/projects/{project.Id}/saml-providers", new
+        {
+            entity_id = "https://idp.example.com/clear-role"
+        });
+        var createBody = await createRes.Content.ReadFromJsonAsync<JsonElement>();
+        var providerId = createBody.GetProperty("id").GetString();
+
+        var res = await client.PatchAsJsonAsync(
+            $"/admin/projects/{project.Id}/saml-providers/{providerId}",
+            new { default_role_id = Guid.Empty });
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    // ── GET /admin/organizations/{id}/export/audit-log with date range ────────
+
+    [Fact]
+    public async Task ExportAuditLog_WithDateRange_Returns200()
+    {
+        // Covers SystemAdminController line 935: from?.ToString("O") and to?.ToString("O") non-null branches
+        var (org, _, client) = await SuperAdminAsync();
+        await fixture.FlushCacheAsync();
+
+        var from = DateTimeOffset.UtcNow.AddDays(-30).ToString("O");
+        var to   = DateTimeOffset.UtcNow.ToString("O");
+
+        var res = await client.GetAsync(
+            $"/admin/organizations/{org.Id}/export/audit-log?from={Uri.EscapeDataString(from)}&to={Uri.EscapeDataString(to)}");
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     // ── DELETE /admin/projects/{id} — without HydraClientId ──────────────────

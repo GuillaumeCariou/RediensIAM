@@ -1,3 +1,4 @@
+using System.Net;
 using System.Reflection;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -153,6 +154,19 @@ public class ProgramCoverageTests(TestFixture fixture)
         var stillExists = await fixture.Db.AuditLogs
             .AnyAsync(a => a.Action == "test.retention.coverage");
         stillExists.Should().BeFalse("expired audit logs should have been purged");
+    }
+
+    // ── Admin SPA fallback (Program.cs L370-373) ─────────────────────────────
+
+    [Fact]
+    public async Task AdminSpaFallback_NonApiPath_ExecutesFallbackHandler()
+    {
+        // GET /admin/ui doesn't match any API controller → MapFallback fires
+        // L371: sets ContentType; L372-373: SendFileAsync → FileNotFoundException (no wwwroot)
+        // ExceptionMiddleware catches it → 500 (not 404, which would mean no route matched)
+        var res = await fixture.Client.GetAsync("/admin/ui");
+        res.StatusCode.Should().NotBe(HttpStatusCode.NotFound,
+            "MapFallback should have matched and executed the lambda (404 = no route matched at all)");
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────

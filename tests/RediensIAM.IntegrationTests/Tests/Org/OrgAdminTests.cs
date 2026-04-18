@@ -53,6 +53,26 @@ public class OrgAdminTests(TestFixture fixture)
     }
 
     [Fact]
+    public async Task ListOrgAdmins_WithProjectAdmin_ReturnsScopeName()
+    {
+        // Covers OrgController line 615: ScopeId.HasValue && TryGetValue finds project → returns scope_name
+        var (org, _, client) = await OrgAdminClientAsync();
+        var list             = await fixture.Seed.CreateUserListAsync(org.Id);
+        var targetUser       = await fixture.Seed.CreateUserAsync(list.Id);
+        var project          = await fixture.Seed.CreateProjectAsync(org.Id);
+        await fixture.Seed.CreateOrgRoleAsync(org.Id, targetUser.Id, "project_admin", project.Id);
+
+        var res = await client.GetAsync("/org/admins");
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        var roles = body.EnumerateArray().ToList();
+        var projectAdminRole = roles.FirstOrDefault(r => r.GetProperty("role").GetString() == "project_admin");
+        projectAdminRole.ValueKind.Should().NotBe(JsonValueKind.Undefined);
+        projectAdminRole.GetProperty("scope_name").ValueKind.Should().NotBe(JsonValueKind.Null);
+    }
+
+    [Fact]
     public async Task ListOrgAdmins_Unauthenticated_Returns401()
     {
         var res = await fixture.Client.GetAsync("/org/admins");

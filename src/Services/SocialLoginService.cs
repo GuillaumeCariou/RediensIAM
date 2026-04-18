@@ -23,7 +23,8 @@ public record OAuthStateData(
     string ProviderId,
     bool LinkMode = false,
     string? LinkUserId = null,
-    string? LinkProjectId = null
+    string? LinkProjectId = null,
+    string? CodeVerifier = null
 );
 
 public record SocialUserProfile(
@@ -102,24 +103,44 @@ public class SocialLoginService(
         return JsonSerializer.Deserialize<OAuthStateData>(json);
     }
 
+    // ── PKCE ─────────────────────────────────────────────────────────────────
+
+    private static (string Verifier, string Challenge) GeneratePkce()
+    {
+        var verifier = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+            .Replace('+', '-').Replace('/', '_').TrimEnd('=');
+        var challengeBytes = SHA256.HashData(Encoding.ASCII.GetBytes(verifier));
+        var challenge = Convert.ToBase64String(challengeBytes)
+            .Replace('+', '-').Replace('/', '_').TrimEnd('=');
+        return (verifier, challenge);
+    }
+
+    private static Dictionary<string, string> AddPkce(Dictionary<string, string> query, string challenge)
+    {
+        query["code_challenge"]        = challenge;
+        query["code_challenge_method"] = "S256";
+        return query;
+    }
+
     // ── Authorization URL ────────────────────────────────────────────────────
 
     public async Task<(string Url, string State)> BuildAuthorizationUrlAsync(
         ProviderConfig provider, string loginChallenge, string projectId)
     {
-        var stateData = new OAuthStateData(loginChallenge, projectId, provider.Id);
+        var (verifier, challenge) = GeneratePkce();
+        var stateData = new OAuthStateData(loginChallenge, projectId, provider.Id, CodeVerifier: verifier);
         var state = await StoreStateAsync(stateData);
 
         var (authEndpoint, scope) = await GetAuthEndpointAndScopeAsync(provider);
 
-        var query = new Dictionary<string, string>
+        var query = AddPkce(new Dictionary<string, string>
         {
             ["response_type"] = "code",
             ["client_id"]     = provider.ClientId,
             ["redirect_uri"]  = CallbackUrl,
             ["scope"]         = scope,
             ["state"]         = state,
-        };
+        }, challenge);
 
         var qs = string.Join("&", query.Select(kv =>
             $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
@@ -130,17 +151,19 @@ public class SocialLoginService(
     public async Task<(string Url, string State)> BuildLinkAuthorizationUrlAsync(
         ProviderConfig provider, OAuthStateData stateData)
     {
+        var (verifier, challenge) = GeneratePkce();
+        stateData = stateData with { CodeVerifier = verifier };
         var state = await StoreStateAsync(stateData);
         var (authEndpoint, scope) = await GetAuthEndpointAndScopeAsync(provider);
 
-        var query = new Dictionary<string, string>
+        var query = AddPkce(new Dictionary<string, string>
         {
             ["response_type"] = "code",
             ["client_id"]     = provider.ClientId,
             ["redirect_uri"]  = CallbackUrl,
             ["scope"]         = scope,
             ["state"]         = state,
-        };
+        }, challenge);
 
         var qs = string.Join("&", query.Select(kv =>
             $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
@@ -150,11 +173,11 @@ public class SocialLoginService(
 
     // ── Code exchange + user profile ─────────────────────────────────────────
 
-    public async Task<SocialUserProfile?> ExchangeAndGetProfileAsync(ProviderConfig provider, string code)
+    public async Task<SocialUserProfile?> ExchangeAndGetProfileAsync(ProviderConfig provider, string code, string? codeVerifier = null)
     {
         try
         {
-            var accessToken = await ExchangeCodeAsync(provider, code);
+            var accessToken = await ExchangeCodeAsync(provider, code, codeVerifier);
             if (accessToken == null) return null;
             return await GetUserProfileAsync(provider, accessToken);
         }
@@ -178,19 +201,23 @@ public class SocialLoginService(
         return (authEndpoint, "openid email profile");
     }
 
-    private async Task<string?> ExchangeCodeAsync(ProviderConfig provider, string code)
+    private async Task<string?> ExchangeCodeAsync(ProviderConfig provider, string code, string? codeVerifier = null)
     {
         var tokenEndpoint = await GetTokenEndpointAsync(provider);
         var http = httpClientFactory.CreateClient();
 
-        var body = new FormUrlEncodedContent(new Dictionary<string, string>
+        var fields = new Dictionary<string, string>
         {
             ["grant_type"]    = "authorization_code",
             ["code"]          = code,
             ["redirect_uri"]  = CallbackUrl,
             ["client_id"]     = provider.ClientId,
             ["client_secret"] = provider.ClientSecret,
-        });
+        };
+        if (codeVerifier != null)
+            fields["code_verifier"] = codeVerifier;
+
+        var body = new FormUrlEncodedContent(fields);
 
         using var req = new HttpRequestMessage(HttpMethod.Post, tokenEndpoint) { Content = body };
         req.Headers.Accept.ParseAdd("application/json");

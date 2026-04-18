@@ -175,6 +175,40 @@ public class OrganisationTests(TestFixture fixture)
         res.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    [Fact]
+    public async Task UpdateOrg_SetAuditRetentionDays_PersistsValue()
+    {
+        // Covers SystemAdminController line 93: HasValue=true, value != -1 → sets int value
+        var (_, _, client) = await SuperAdminClientAsync();
+        var (org, _)       = await fixture.Seed.CreateOrgAsync();
+
+        var res = await client.PatchAsJsonAsync($"/admin/organizations/{org.Id}", new { audit_retention_days = 30 });
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        await fixture.RefreshDbAsync();
+        var updated = await fixture.Db.Organisations.FindAsync(org.Id);
+        updated!.AuditRetentionDays.Should().Be(30);
+    }
+
+    [Fact]
+    public async Task UpdateOrg_ClearAuditRetentionDays_SetsNull()
+    {
+        // Covers SystemAdminController line 93: HasValue=true, value == -1 → sets null
+        var (_, _, client) = await SuperAdminClientAsync();
+        var (org, _)       = await fixture.Seed.CreateOrgAsync();
+        org.AuditRetentionDays = 90;
+        await fixture.Db.SaveChangesAsync();
+
+        var res = await client.PatchAsJsonAsync($"/admin/organizations/{org.Id}", new { audit_retention_days = -1 });
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        await fixture.RefreshDbAsync();
+        var updated = await fixture.Db.Organisations.FindAsync(org.Id);
+        updated!.AuditRetentionDays.Should().BeNull();
+    }
+
     // ── POST /admin/organizations/{id}/suspend ────────────────────────────────
 
     [Fact]

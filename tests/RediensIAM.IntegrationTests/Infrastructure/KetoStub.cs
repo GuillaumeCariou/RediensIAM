@@ -136,6 +136,78 @@ public sealed class KetoStub : IDisposable
             .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { relation_tuples = Array.Empty<object>() }));
     }
 
+    // ── Health failure simulation ─────────────────────────────────────────────
+
+    /// <summary>Makes both /health/alive endpoints return 500 at highest priority.</summary>
+    public void SetHealthFailure()
+    {
+        _readServer
+            .Given(Request.Create().WithPath("/health/alive").UsingGet())
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(500).WithBodyAsJson(new { error = "simulated_failure" }));
+        _writeServer
+            .Given(Request.Create().WithPath("/health/alive").UsingGet())
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(500).WithBodyAsJson(new { error = "simulated_failure" }));
+    }
+
+    /// <summary>Makes only the read /health/alive return 500.</summary>
+    public void SetReadHealthFailure()
+    {
+        _readServer
+            .Given(Request.Create().WithPath("/health/alive").UsingGet())
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(500).WithBodyAsJson(new { error = "simulated_failure" }));
+    }
+
+    /// <summary>Makes only the write /health/alive return 500.</summary>
+    public void SetWriteHealthFailure()
+    {
+        _writeServer
+            .Given(Request.Create().WithPath("/health/alive").UsingGet())
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(500).WithBodyAsJson(new { error = "simulated_failure" }));
+    }
+
+    /// <summary>Restores healthy /health/alive responses (override the failure stubs).</summary>
+    public void RestoreHealth()
+    {
+        _readServer
+            .Given(Request.Create().WithPath("/health/alive").UsingGet())
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { status = "ok" }));
+        _writeServer
+            .Given(Request.Create().WithPath("/health/alive").UsingGet())
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { status = "ok" }));
+    }
+
+    /// <summary>Makes both /version endpoints return 200 with invalid JSON — causes JsonException in FetchVersion.</summary>
+    public void SetVersionBroken()
+    {
+        _readServer
+            .Given(Request.Create().WithPath("/version").UsingGet())
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(200).WithBody("!!not-json!!"));
+        _writeServer
+            .Given(Request.Create().WithPath("/version").UsingGet())
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(200).WithBody("!!not-json!!"));
+    }
+
+    /// <summary>Restores /version to healthy stub.</summary>
+    public void RestoreVersion()
+    {
+        _readServer
+            .Given(Request.Create().WithPath("/version").UsingGet())
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { version = "v0.12.0-stub" }));
+        _writeServer
+            .Given(Request.Create().WithPath("/version").UsingGet())
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { version = "v0.12.0-stub" }));
+    }
+
     public void Dispose()
     {
         _readServer.Dispose();

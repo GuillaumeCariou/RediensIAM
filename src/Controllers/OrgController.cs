@@ -124,8 +124,8 @@ public class OrgController(
             return StatusCode(502, new { error = "hydra_unavailable", detail = ex.Message });
         }
 
-        await keto.WriteRelationTupleAsync(Roles.KetoProjectsNamespace, project.Id.ToString(), "org", $"{Roles.KetoOrgsNamespace}:{orgId}");
         await db.SaveChangesAsync();
+        await keto.WriteRelationTupleAsync(Roles.KetoProjectsNamespace, project.Id.ToString(), "org", $"{Roles.KetoOrgsNamespace}:{orgId}");
         await audit.RecordAsync(orgId, project.Id, ActorId, "project.created", "project", project.Id.ToString());
         return Created($"/org/projects/{project.Id}", new { project.Id, project.Name, project.Slug });
     }

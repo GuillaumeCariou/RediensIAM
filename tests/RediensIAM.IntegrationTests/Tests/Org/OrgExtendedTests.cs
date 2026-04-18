@@ -182,6 +182,42 @@ public class OrgExtendedTests(TestFixture fixture)
         res.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    [Fact]
+    public async Task UpdateOrgUser_SetPhone_PersistsValue()
+    {
+        // Covers OrgController line 529: Phone != null, non-empty → sets value
+        var (org, _, client) = await OrgAdminClientAsync();
+        var list             = await fixture.Seed.CreateUserListAsync(org.Id);
+        var user             = await fixture.Seed.CreateUserAsync(list.Id);
+
+        var res = await client.PatchAsJsonAsync($"/org/users/{user.Id}", new { phone = "+1-555-0200" });
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        await fixture.RefreshDbAsync();
+        var updated = await fixture.Db.Users.FindAsync(user.Id);
+        updated!.Phone.Should().Be("+1-555-0200");
+    }
+
+    [Fact]
+    public async Task UpdateOrgUser_ClearPhone_SetsNull()
+    {
+        // Covers OrgController line 529: Phone == "" → null branch
+        var (org, _, client) = await OrgAdminClientAsync();
+        var list             = await fixture.Seed.CreateUserListAsync(org.Id);
+        var user             = await fixture.Seed.CreateUserAsync(list.Id);
+        user.Phone = "+1-555-0200";
+        await fixture.Db.SaveChangesAsync();
+
+        var res = await client.PatchAsJsonAsync($"/org/users/{user.Id}", new { phone = "" });
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        await fixture.RefreshDbAsync();
+        var updated = await fixture.Db.Users.FindAsync(user.Id);
+        updated!.Phone.Should().BeNull();
+    }
+
     // ── PATCH /org/userlists/{id}/users/{uid} ─────────────────────────────────
 
     [Fact]
@@ -298,6 +334,22 @@ public class OrgExtendedTests(TestFixture fixture)
         var res = await client.GetAsync("/org/audit-log/export?format=csv");
 
         res.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+    }
+
+    [Fact]
+    public async Task ExportAuditLog_WithDateRange_Returns200()
+    {
+        // Covers OrgController line 900: from?.ToString("O") and to?.ToString("O") non-null branches
+        var (_, _, client) = await OrgAdminClientAsync();
+        await fixture.FlushCacheAsync();
+
+        var from = DateTimeOffset.UtcNow.AddDays(-30).ToString("O");
+        var to   = DateTimeOffset.UtcNow.ToString("O");
+
+        var res = await client.GetAsync(
+            $"/org/audit-log/export?from={Uri.EscapeDataString(from)}&to={Uri.EscapeDataString(to)}");
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     // ── GET /org/userlists/{id}/export?format=json ────────────────────────────

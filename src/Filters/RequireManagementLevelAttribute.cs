@@ -16,7 +16,12 @@ public class RequireManagementLevelAttribute(ManagementLevel minimum) : Attribut
     public void OnActionExecuting(ActionExecutingContext context)
     {
         var claims = context.HttpContext.GetClaims();
-        var level  = claims?.GetManagementLevel() ?? ManagementLevel.None;
+        if (claims is null)
+        {
+            context.Result = new UnauthorizedObjectResult(new { error = "unauthorized" });
+            return;
+        }
+        var level = claims.GetManagementLevel();
         if (level > minimum)
             context.Result = new ObjectResult(new { error = "forbidden" }) { StatusCode = 403 };
     }

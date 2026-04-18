@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using RediensIAM.Data.Entities;
 using RediensIAM.IntegrationTests.Infrastructure;
 
 namespace RediensIAM.IntegrationTests.Tests.Auth;
@@ -121,6 +122,74 @@ public class WebAuthnLoginTests(TestFixture fixture)
         res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("error").GetString().Should().Be("no_assertion_options");
+    }
+
+    // ── POST /auth/mfa/webauthn/verify — assertion_failed (lines 1351-1369) ────
+
+    /// <summary>
+    /// Seeds a real WebAuthn credential in the DB so the unknown_credential check
+    /// passes, then sends invalid assertion bytes so MakeAssertionAsync throws →
+    /// covers AuthController lines 1351-1369 (lambda, try block, catch).
+    /// </summary>
+    [Fact]
+    public async Task WebAuthnVerify_AssertionFailed_Returns401()
+    {
+        var (org, project, list) = await ScaffoldAsync();
+        await fixture.FlushCacheAsync();
+
+        var user             = await fixture.Seed.CreateUserAsync(list.Id);
+        user.WebAuthnEnabled = true;
+
+        // Seed a WebAuthn credential so credential lookup (L1348) succeeds
+        var credId = new byte[] { 0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04 };
+        fixture.Db.WebAuthnCredentials.Add(new WebAuthnCredential
+        {
+            Id           = Guid.NewGuid(),
+            UserId       = user.Id,
+            CredentialId = credId,
+            PublicKey    = new byte[65],
+            SignCount    = 0L,
+            DeviceName   = "TestKey",
+            CreatedAt    = DateTimeOffset.UtcNow,
+        });
+        await fixture.Db.SaveChangesAsync();
+
+        var challenge = NewChallenge();
+        fixture.Hydra.SetupLoginChallengeWithProject(
+            challenge, project.HydraClientId, project.Id.ToString(), org.Id.ToString());
+
+        var client = fixture.NewSessionClient();
+        await client.PostAsJsonAsync("/auth/login", new
+        {
+            login_challenge = challenge,
+            email           = user.Email,
+            password        = "P@ssw0rd!Test"
+        });
+        await client.GetAsync("/auth/mfa/webauthn/options");
+
+        // Known credentialId (passes L1349) + invalid assertion bytes →
+        // MakeAssertionAsync throws → catch L1367-1369
+        static string B64Url(byte[] b) =>
+            Convert.ToBase64String(b).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+        var payload = new
+        {
+            id    = B64Url(credId),
+            rawId = B64Url(credId),
+            type  = "public-key",
+            response = new
+            {
+                authenticatorData = B64Url(new byte[37]),
+                clientDataJSON    = B64Url(new byte[50]),
+                signature         = B64Url(new byte[64]),
+            }
+        };
+
+        var res  = await client.PostAsJsonAsync("/auth/mfa/webauthn/verify", payload);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+
+        res.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        body.GetProperty("error").GetString().Should().Be("assertion_failed");
     }
 
     // ── POST /auth/mfa/webauthn/verify — unknown credential ───────────────────

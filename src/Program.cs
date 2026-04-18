@@ -160,6 +160,14 @@ var logger = app.Services.GetRequiredService<ILogger<Program>>();
 if (appConfig.TotpSecretEncryptionKey == new string('0', 64))
     logger.LogWarning("WARNING: TotpSecretEncryptionKey is the default all-zero dev placeholder. Override via Security__TotpSecretEncryptionKey before production.");
 
+if (app.Environment.IsProduction())
+{
+    if (!appConfig.PublicUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        logger.LogError("SECURITY: App__PublicUrl is not HTTPS in production ({Url}). OAuth2 tokens, session cookies, and redirects will be insecure.", appConfig.PublicUrl);
+    if (!appConfig.AdminSpaOrigin.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        logger.LogWarning("WARNING: App__AdminSpaOrigin is not HTTPS in production ({Url}).", appConfig.AdminSpaOrigin);
+}
+
 // ── Ensure DB schema exists ─────────────────────────────────────────────────
 await EnsureDbSchemaAsync(app);
 

@@ -364,4 +364,27 @@ public class AccountExtendedTests(TestFixture fixture)
         var res = await fixture.Client.DeleteAsync($"/account/social-accounts/{Guid.NewGuid()}");
         res.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
+
+    // ── WebAuthn — register complete — attestation_failed path (lines 257-273) ─
+
+    [Fact]
+    public async Task WebAuthnRegisterComplete_InvalidAttestation_Returns400AttestationFailed()
+    {
+        var (_, _, client) = await ScaffoldAsync();
+
+        // Step 1: call begin to set fido2.attestationOptions in session
+        var beginRes = await client.PostAsync("/account/mfa/webauthn/register/begin", null);
+        beginRes.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Step 2: call complete with invalid attestation data — fido2 throws → attestation_failed
+        var res = await client.PostAsJsonAsync("/account/mfa/webauthn/register/complete", new
+        {
+            response    = new { clientDataJSON = "INVALID_BASE64", attestationObject = "INVALID_BASE64" },
+            device_name = "My Key"
+        });
+
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("error").GetString().Should().Be("attestation_failed");
+    }
 }

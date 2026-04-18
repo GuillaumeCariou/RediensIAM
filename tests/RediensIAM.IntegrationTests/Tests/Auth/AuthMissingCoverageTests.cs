@@ -1,5 +1,7 @@
 using System.Net.Http.Json;
+using Microsoft.AspNetCore.Mvc.Testing;
 using RediensIAM.IntegrationTests.Infrastructure;
+using RediensIAM.Services;
 
 namespace RediensIAM.IntegrationTests.Tests.Auth;
 
@@ -7,6 +9,7 @@ namespace RediensIAM.IntegrationTests.Tests.Auth;
 /// Covers AuthController lines not yet hit by existing test files:
 ///   - AdminLogin lockout after MaxLoginAttempts failures (line 913)
 ///   - VerifyRegistration duplicate email (line 730)
+///   - CheckNewDeviceAsync catch block (lines 959-962)
 /// </summary>
 [Collection("RediensIAM")]
 public class AuthMissingCoverageTests(TestFixture fixture)
@@ -111,5 +114,77 @@ public class AuthMissingCoverageTests(TestFixture fixture)
         verifyRes.StatusCode.Should().Be(HttpStatusCode.Conflict);
         var body = await verifyRes.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("error").GetString().Should().Be("email_already_exists");
+    }
+
+    // ── CheckNewDeviceAsync — catch block (lines 959-962) ────────────────────
+
+    /// <summary>
+    /// Verifies that when SendNewDeviceAlertAsync throws, the catch block at
+    /// AuthController.cs:959-962 fires and login still completes successfully.
+    /// Uses a custom factory whose email service throws on SendNewDeviceAlertAsync.
+    /// </summary>
+    [Fact]
+    public async Task Login_SendNewDeviceAlertThrows_CatchesAndLoginSucceeds()
+    {
+        const string password = "P@ssw0rd!NDA";
+        var (org, orgList) = await fixture.Seed.CreateOrgAsync();
+        var project        = await fixture.Seed.CreateProjectAsync(org.Id);
+
+        // Project needs AssignedUserListId for login to proceed
+        project.AssignedUserListId = orgList.Id;
+        await fixture.Db.SaveChangesAsync();
+
+        var user = await fixture.Seed.CreateUserAsync(orgList.Id, password: password);
+        fixture.Keto.AllowAll();
+
+        // Inject an email service that throws specifically on SendNewDeviceAlertAsync
+        var throwingEmail = new ThrowingNewDeviceEmailService();
+        var (client, factory) = fixture.CreateSmtpEnabledClient(throwingEmail);
+        await using var _f = factory;
+
+        var challenge = Guid.NewGuid().ToString("N");
+        fixture.Hydra.SetupLoginChallengeWithProject(
+            challenge, project.HydraClientId, project.Id.ToString(), org.Id.ToString());
+
+        var res = await client.PostAsJsonAsync("/auth/login", new
+        {
+            login_challenge = challenge,
+            email           = user.Email,
+            password
+        });
+
+        // Login succeeds even though the background new-device alert threw
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await res.Content.ReadAsStringAsync();
+        body.Should().Contain("redirect_to");
+
+        // Wait for the Task.Run background task to complete so coverage records it.
+        // The task performs two Redis round-trips then calls the email service, so 2 s is ample.
+        await Task.Delay(2000);
+    }
+}
+
+// ── Local stubs ───────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Email service that faults SendNewDeviceAlertAsync via a faulted Task (not a synchronous throw)
+/// so OpenCover can record the await-point sequence point — triggers the catch at L959-962.
+/// </summary>
+file sealed class ThrowingNewDeviceEmailService : IEmailService
+{
+    public Task CheckConnectivityAsync() => Task.CompletedTask;
+
+    public Task SendOtpAsync(string to, string code, string purpose,
+        Guid? orgId = null, Guid? projectId = null) => Task.CompletedTask;
+
+    public Task SendInviteAsync(string to, string inviteUrl, string orgName,
+        Guid? projectId = null) => Task.CompletedTask;
+
+    public Task SendNewDeviceAlertAsync(string to, string ipAddress, string userAgent,
+        DateTimeOffset loginAt)
+    {
+        var tcs = new TaskCompletionSource<bool>();
+        tcs.SetException(new InvalidOperationException("Simulated new-device alert failure"));
+        return tcs.Task;
     }
 }

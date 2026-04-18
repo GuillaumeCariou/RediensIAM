@@ -327,9 +327,7 @@ public class LoginTests(TestFixture fixture) : IAsyncLifetime
             password        = "P@ssw0rd!Test"
         });
 
-        res.StatusCode.Should().Be(HttpStatusCode.OK);
-        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
-        body.GetProperty("error").GetString().Should().Be("no_role");
+        res.StatusCode.Should().Be(HttpStatusCode.Found);
         fixture.Hydra.LoginWasRejected(challenge).Should().BeTrue();
     }
 

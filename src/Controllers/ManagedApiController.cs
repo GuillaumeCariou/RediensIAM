@@ -163,15 +163,7 @@ public class ManagedApiController(
             return Conflict(new { error = "email_already_exists" });
 
         var username = body.Username ?? body.Email.Split('@')[0];
-        string discriminator;
-        var discIter = 0;
-        do
-        {
-            if (++discIter > 100) throw new InvalidOperationException("discriminator_space_exhausted");
-            discriminator = Random.Shared.Next(1000, 9999).ToString();
-        }
-        while (await db.Users.AnyAsync(u => u.UserListId == id && u.Username == username && u.Discriminator == discriminator));
-
+        var discriminator = await UserHelpers.GenerateDiscriminatorAsync(db, id, username);
         var emailVerified = body.EmailVerified ?? false;
         var isInvite = string.IsNullOrEmpty(body.Password);
         var user = new User

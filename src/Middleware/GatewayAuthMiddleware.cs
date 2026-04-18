@@ -5,10 +5,8 @@ using RediensIAM.Services;
 
 namespace RediensIAM.Middleware;
 
-public class GatewayAuthMiddleware(RequestDelegate next)
+public class GatewayAuthMiddleware(RequestDelegate next, AppConfig appConfig)
 {
-    private const string PatPrefix = "rediens_pat_";
-
     public async Task InvokeAsync(HttpContext ctx)
     {
         var header = ctx.Request.Headers.Authorization.ToString();
@@ -21,7 +19,7 @@ public class GatewayAuthMiddleware(RequestDelegate next)
         var token = header["Bearer ".Length..].Trim();
         TokenClaims? claims;
 
-        if (token.StartsWith(PatPrefix, StringComparison.Ordinal))
+        if (token.StartsWith(appConfig.PatPrefix, StringComparison.Ordinal))
         {
             var patService = ctx.RequestServices.GetRequiredService<PatService>();
             var result = await patService.IntrospectAsync(token);
@@ -42,12 +40,6 @@ public class GatewayAuthMiddleware(RequestDelegate next)
         }
 
         ctx.Items["Claims"] = claims;
-        ctx.Request.Headers["X-User-Id"] = claims.UserId;
-        ctx.Request.Headers["X-Org-Id"] = claims.OrgId;
-        ctx.Request.Headers["X-Project-Id"] = claims.ProjectId;
-        ctx.Request.Headers["X-User-Roles"] = string.Join(",", claims.Roles);
-        if (claims.IsServiceAccount)
-            ctx.Request.Headers["X-Is-Service-Account"] = "true";
 
         await next(ctx);
     }

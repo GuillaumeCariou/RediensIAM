@@ -261,6 +261,7 @@ public sealed class HydraStub : IDisposable
                     },
                     oidc_context = new
                     {
+                        login_hint = "test-login-hint",
                         extra = new Dictionary<string, object> { ["project_id"] = projectId, ["org_id"] = orgId }
                     }
                 }));
@@ -322,6 +323,55 @@ public sealed class HydraStub : IDisposable
                 }));
     }
 
+    /// <summary>
+    /// Sets up a login challenge with NO project_id in either oidc_context or URL.
+    /// Used to exercise the ExtractProjectId → null path (BadRequest missing_project_id).
+    /// </summary>
+    public void SetupLoginChallengeWithNoProjectId(string challenge, string? clientId)
+    {
+        _server
+            .Given(Request.Create()
+                .WithPath("/admin/oauth2/auth/requests/login")
+                .UsingGet()
+                .WithParam("login_challenge", challenge))
+            .AtPriority(1)
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithBodyAsJson(new
+                {
+                    skip        = false,
+                    subject     = "",
+                    request_url = $"http://localhost/oauth2/auth?client_id={clientId}",
+                    client      = new { client_id = clientId, metadata = new Dictionary<string, object>() },
+                    oidc_context = new { extra = new Dictionary<string, object>() }  // no project_id
+                }));
+    }
+
+    /// <summary>
+    /// Sets up a consent challenge where the context is completely null (no user_id).
+    /// Used to exercise the userIdStr == null guard (line 483).
+    /// </summary>
+    public void SetupConsentChallengeNullContext(string challenge, string? clientId)
+    {
+        _server
+            .Given(Request.Create()
+                .WithPath("/admin/oauth2/auth/requests/consent")
+                .UsingGet()
+                .WithParam("consent_challenge", challenge))
+            .AtPriority(1)
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithBodyAsJson(new
+                {
+                    skip             = false,
+                    subject          = "",
+                    login_session_id = "test-login-session-id",
+                    requested_scope  = new[] { "openid" },
+                    context          = (object?)null,
+                    client           = new { client_id = clientId }
+                }));
+    }
+
     // ── Consent challenge helpers ─────────────────────────────────────────────
 
     public void SetupConsentChallenge(string challenge, string subject, string? clientId,
@@ -341,11 +391,12 @@ public sealed class HydraStub : IDisposable
                 .WithStatusCode(200)
                 .WithBodyAsJson(new
                 {
-                    skip            = false,
+                    skip             = false,
                     subject,
-                    requested_scope = new[] { "openid", "offline" },
-                    context         = ctx,
-                    client          = new { client_id = clientId }
+                    login_session_id = "test-login-session-id",
+                    requested_scope  = new[] { "openid", "offline" },
+                    context          = ctx,
+                    client           = new { client_id = clientId }
                 }));
     }
 
@@ -418,6 +469,28 @@ public sealed class HydraStub : IDisposable
                 .WithBodyAsJson(new { client_id = clientId, client_name = "Test Client" }));
     }
 
+    /// <summary>Configures PATCH /admin/clients/{clientId} to return 500 (simulates Hydra scope update failure).</summary>
+    public void SetupClientPatchFailure(string clientId)
+    {
+        _server
+            .Given(Request.Create()
+                .WithPath($"/admin/clients/{Uri.EscapeDataString(clientId)}")
+                .UsingPatch())
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(500));
+    }
+
+    /// <summary>Restores the default PATCH /admin/clients/* → 200 response.</summary>
+    public void RestoreClientPatch()
+    {
+        _server
+            .Given(Request.Create()
+                .WithPath(new WildcardMatcher("/admin/clients/*"))
+                .UsingPatch())
+            .AtPriority(100)
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { client_id = "stub-client" }));
+    }
+
     /// <summary>Configures DELETE /admin/clients/{clientId} to return 500 (simulates Hydra failure).</summary>
     public void SetupClientDeleteFailure(string clientId)
     {
@@ -471,6 +544,24 @@ public sealed class HydraStub : IDisposable
             .Given(Request.Create().WithPath("/health/alive").UsingGet())
             .AtPriority(0)
             .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { status = "ok" }));
+    }
+
+    /// <summary>Makes /version return 200 with an invalid JSON body — causes JsonException in FetchVersion.</summary>
+    public void SetVersionBroken()
+    {
+        _server
+            .Given(Request.Create().WithPath("/version").UsingGet())
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(200).WithBody("!!not-json!!"));
+    }
+
+    /// <summary>Restores /version to the default healthy stub.</summary>
+    public void RestoreVersion()
+    {
+        _server
+            .Given(Request.Create().WithPath("/version").UsingGet())
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { version = "v2.0.0-stub" }));
     }
 
     // ── Verification helpers ──────────────────────────────────────────────────

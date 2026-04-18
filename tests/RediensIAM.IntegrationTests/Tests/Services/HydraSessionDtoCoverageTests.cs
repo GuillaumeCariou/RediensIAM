@@ -37,19 +37,43 @@ public class HydraSessionDtoCoverageTests(TestFixture fixture)
         // Subject format used by OrgController and AccountController (when OrgId is in claims)
         var subject = $"{org.Id}:{user.Id}";
 
-        // Return a fully-populated HydraConsentSession so every DTO property getter is exercised
-        fixture.Hydra.SetupConsentSessions(subject, [new
-        {
-            consent_request = new
+        // Return two sessions: one fully populated, one with null client — covers
+        // both the non-null and null branches of ?.Client?.ClientId / ?.Client?.ClientName
+        fixture.Hydra.SetupConsentSessions(subject, [
+            new
             {
-                client       = new { client_id = "test-client", client_name = "Test Application" },
-                requested_at = DateTimeOffset.UtcNow.AddDays(-1).ToString("o"),
-                subject      = subject,
+                consent_request = new
+                {
+                    client       = new { client_id = "test-client", client_name = "Test Application" },
+                    requested_at = DateTimeOffset.UtcNow.AddDays(-1).ToString("o"),
+                    subject      = subject,
+                },
+                granted_scopes = new[] { "openid", "profile" },
+                granted_at     = DateTimeOffset.UtcNow.AddDays(-1).ToString("o"),
+                expires_at     = DateTimeOffset.UtcNow.AddYears(1).ToString("o"),
             },
-            granted_scopes = new[] { "openid", "profile" },
-            granted_at     = DateTimeOffset.UtcNow.AddDays(-1).ToString("o"),
-            expires_at     = DateTimeOffset.UtcNow.AddYears(1).ToString("o"),
-        }]);
+            // Null client → covers ?.Client null branch in AccountController line 146
+            new
+            {
+                consent_request = new
+                {
+                    client       = (object?)null,
+                    requested_at = DateTimeOffset.UtcNow.AddDays(-2).ToString("o"),
+                    subject      = subject,
+                },
+                granted_scopes = new[] { "openid" },
+                granted_at     = DateTimeOffset.UtcNow.AddDays(-2).ToString("o"),
+                expires_at     = (string?)null,
+            },
+            // Null consent_request → covers s.ConsentRequest == null branch (OrgController line 558)
+            new
+            {
+                consent_request = (object?)null,
+                granted_scopes  = new[] { "openid" },
+                granted_at      = DateTimeOffset.UtcNow.AddDays(-3).ToString("o"),
+                expires_at      = (string?)null,
+            }
+        ]);
 
         fixture.Keto.AllowAll();
 

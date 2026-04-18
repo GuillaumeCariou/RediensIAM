@@ -1,6 +1,8 @@
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using RediensIAM.Config;
@@ -44,7 +46,8 @@ public sealed class SocialLoginServiceTests : IDisposable
 
         var factory = new WireMockHttpClientFactory(server.Url!);
         var cache   = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
-        return new SocialLoginService(factory, cache, config, NullLogger<SocialLoginService>.Instance);
+        var env     = new StubWebHostEnvironment("Testing");
+        return new SocialLoginService(factory, cache, config, env, NullLogger<SocialLoginService>.Instance);
     }
 
     public void Dispose() => _server.Dispose();
@@ -397,6 +400,48 @@ public sealed class SocialLoginServiceTests : IDisposable
         var profile = await _svc.ExchangeAndGetProfileAsync(provider, "code");
         profile.Should().BeNull();
     }
+
+    // ── Custom/generic OIDC provider via GetStandardProfileAsync ────────────────
+
+    /// <summary>
+    /// A provider type not in BuiltinEndpoints (e.g. "keycloak") and not "oidc"/"github"/"facebook"
+    /// falls through to GetStandardProfileAsync → GetUserInfoEndpointAsync → GetDiscoveryAsync.
+    /// This covers SocialLoginService lines 318-319.
+    /// </summary>
+    [Fact]
+    public async Task ExchangeAndGetProfile_CustomOidcProvider_UsesDiscoveryForUserInfo()
+    {
+        _server
+            .Given(Request.Create().WithPath("/.well-known/openid-configuration").UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(200)
+                .WithBodyAsJson(new
+                {
+                    authorization_endpoint = $"{_server.Url}/kc/authorize",
+                    token_endpoint         = $"{_server.Url}/kc/token",
+                    userinfo_endpoint      = $"{_server.Url}/kc/userinfo",
+                }));
+
+        _server
+            .Given(Request.Create().WithPath("/kc/token").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(200)
+                .WithBodyAsJson(new { access_token = "kc-tok" }));
+
+        _server
+            .Given(Request.Create().WithPath("/kc/userinfo").UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(200)
+                .WithBodyAsJson(new { sub = "kc-sub-1", email = "kc@example.com", name = "Keycloak User" }));
+
+        // "keycloak" is not in BuiltinEndpoints and not a special-cased type →
+        // GetUserProfileAsync hits _ => GetStandardProfileAsync → GetUserInfoEndpointAsync (L318-319)
+        var provider = new ProviderConfig("kc1", "keycloak", "cid", "sec", _server.Url);
+        var svc      = BuildSvc(_server);   // fresh instance — no shared discovery cache
+        var profile  = await svc.ExchangeAndGetProfileAsync(provider, "code");
+
+        profile.Should().NotBeNull();
+        profile!.ProviderUserId.Should().Be("kc-sub-1");
+        profile.Email.Should().Be("kc@example.com");
+        profile.Name.Should().Be("Keycloak User");
+    }
 }
 
 // ── Infrastructure: redirecting HttpClientFactory ─────────────────────────────
@@ -439,4 +484,14 @@ file sealed class WireMockRedirectingHandler(string wireMockBaseUrl) : HttpMessa
         if (disposing) _inner.Dispose();
         base.Dispose(disposing);
     }
+}
+
+file sealed class StubWebHostEnvironment(string environmentName) : IWebHostEnvironment
+{
+    public string EnvironmentName { get; set; } = environmentName;
+    public string ApplicationName { get; set; } = "Test";
+    public string ContentRootPath { get; set; } = Directory.GetCurrentDirectory();
+    public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
+    public string WebRootPath { get; set; } = Directory.GetCurrentDirectory();
+    public IFileProvider WebRootFileProvider { get; set; } = new NullFileProvider();
 }

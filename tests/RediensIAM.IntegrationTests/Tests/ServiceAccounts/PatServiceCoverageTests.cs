@@ -141,6 +141,38 @@ public class PatServiceCoverageTests(TestFixture fixture)
         cidProp.GetString().Should().StartWith("sa_");
     }
 
+    // ── IntrospectAsync expired PAT (PatService line 66) ─────────────────────
+
+    [Fact]
+    public async Task PatToken_Expired_Returns401()
+    {
+        // Covers PatService line 66: pat.ExpiresAt.HasValue && pat.ExpiresAt < UtcNow → return null
+        var (_, _, sa, managerClient) = await ScaffoldAsync();
+
+        var createRes = await managerClient.PostAsJsonAsync($"/service-accounts/{sa.Id}/pat", new
+        {
+            name       = "Expiring Token",
+            expires_in = 30
+        });
+        var patToken = (await createRes.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("token").GetString()!;
+
+        // Force the PAT to appear expired in the DB
+        await fixture.RefreshDbAsync();
+        var pat = await fixture.Db.PersonalAccessTokens.FirstOrDefaultAsync(p => p.ServiceAccountId == sa.Id);
+        pat!.ExpiresAt = DateTimeOffset.UtcNow.AddHours(-1);
+        await fixture.Db.SaveChangesAsync();
+
+        // Flush cache so IntrospectAsync hits DB, not Redis
+        await fixture.FlushCacheAsync();
+
+        // Using the expired PAT should be rejected
+        var patClient = fixture.ClientWithToken(patToken);
+        var res = await patClient.GetAsync($"/service-accounts/{sa.Id}");
+
+        res.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
     // ── GetKeysAsync with no HydraClient (line 126) ───────────────────────────
 
     [Fact]

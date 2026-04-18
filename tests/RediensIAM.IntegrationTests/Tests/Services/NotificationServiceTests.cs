@@ -324,4 +324,21 @@ public class NotificationServiceTests(TestFixture fixture)
 
         await act.Should().ThrowAsync<Exception>();
     }
+
+    // ── SendOtpAsync — switch default arm (custom purpose) ───────────────────
+
+    [Fact]
+    public async Task SendOtp_CustomPurpose_HitsSwitchDefaultArm_ThenThrowsOnConnect()
+    {
+        // purpose is not "registration" or "password_reset" → hits the _ arm (L107)
+        // SmtpConfig is non-empty → gets past the no-SMTP early return → reaches the switch
+        // Then fails at ConnectAsync (no real SMTP server) as expected.
+        var (org, _) = await SeedOrgWithSmtpAsync();
+        var svc = new SmtpEmailService(SmtpConfig(), fixture.Db,
+            NullLogger<SmtpEmailService>.Instance);
+
+        var act = () => svc.SendOtpAsync("user@test.com", "777777", "login_otp", org.Id);
+
+        await act.Should().ThrowAsync<Exception>();
+    }
 }

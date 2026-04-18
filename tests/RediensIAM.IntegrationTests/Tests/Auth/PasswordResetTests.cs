@@ -94,6 +94,21 @@ public class PasswordResetTests(TestFixture fixture)
         body.GetProperty("error").GetString().Should().Be("verification_not_configured");
     }
 
+    [Fact]
+    public async Task RequestReset_NonExistentProject_Returns400()
+    {
+        // Covers AuthController line 815: project?.AssignedUserListId == null (project not found → project is null)
+        var res = await fixture.Client.PostAsJsonAsync("/auth/password-reset/request", new
+        {
+            project_id = Guid.NewGuid(),
+            email      = "any@test.com"
+        });
+
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("error").GetString().Should().Be("verification_not_configured");
+    }
+
     // ── POST /auth/password-reset/verify ──────────────────────────────────────
 
     [Fact]

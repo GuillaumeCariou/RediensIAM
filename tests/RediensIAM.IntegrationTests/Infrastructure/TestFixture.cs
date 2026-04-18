@@ -1,3 +1,6 @@
+using DotNet.Testcontainers.Builders;
+using DotNet.Testcontainers.Containers;
+using Fido2NetLib;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.CookiePolicy;
 using Microsoft.AspNetCore.Hosting;
@@ -31,6 +34,12 @@ public sealed class TestFixture : IAsyncLifetime
 
     private readonly RedisContainer _redis = new RedisBuilder("docker.dragonflydb.io/dragonflydb/dragonfly:latest").Build();
 
+    private readonly IContainer _mailhog = new ContainerBuilder("mailhog/mailhog:v1.0.1")
+        .WithPortBinding(1025, true)
+        .WithPortBinding(8025, true)
+        .WithWaitStrategy(Wait.ForUnixContainer().UntilHttpRequestIsSucceeded(r => r.ForPort(8025)))
+        .Build();
+
     // ── Stubs ─────────────────────────────────────────────────────────────────
     public HydraStub        Hydra      { get; } = new();
     public KetoStub         Keto       { get; } = new();
@@ -59,8 +68,8 @@ public sealed class TestFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        // Start containers in parallel
-        await Task.WhenAll(_postgres.StartAsync(), _redis.StartAsync());
+        // Start containers in parallel (MailHog for real SMTP coverage tests)
+        await Task.WhenAll(_postgres.StartAsync(), _redis.StartAsync(), _mailhog.StartAsync());
 
         _mux = await ConnectionMultiplexer.ConnectAsync(_redis.GetConnectionString());
 
@@ -163,7 +172,7 @@ public sealed class TestFixture : IAsyncLifetime
         _mux?.Dispose();
         Client.Dispose();
         await _factory.DisposeAsync();
-        await Task.WhenAll(_postgres.DisposeAsync().AsTask(), _redis.DisposeAsync().AsTask());
+        await Task.WhenAll(_postgres.DisposeAsync().AsTask(), _redis.DisposeAsync().AsTask(), _mailhog.DisposeAsync().AsTask());
     }
 
     // ── Request helpers ───────────────────────────────────────────────────────
@@ -254,6 +263,154 @@ public sealed class TestFixture : IAsyncLifetime
                     var sd = services.SingleOrDefault(d => d.ServiceType == typeof(ISmsService));
                     if (sd != null) services.Remove(sd);
                     services.AddSingleton<ISmsService>(SmsStub);
+                    services.Configure<SessionOptions>(opts =>
+                    {
+                        opts.Cookie.SecurePolicy = CookieSecurePolicy.None;
+                        opts.Cookie.SameSite    = SameSiteMode.Unspecified;
+                    });
+                });
+            });
+
+        var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false,
+        });
+        return (client, factory);
+    }
+
+    /// <summary>
+    /// Creates a new WebApplicationFactory backed by the MailHog SMTP container and using the
+    /// REAL SmtpEmailService (no stub replacement). Covers SmtpEmailService send paths.
+    /// Caller must dispose the factory.
+    /// </summary>
+    public (HttpClient Client, WebApplicationFactory<Program> Factory) CreateRealSmtpClient()
+    {
+        var smtpPort = _mailhog.GetMappedPublicPort(1025);
+        var factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.UseEnvironment("Testing");
+                builder.ConfigureAppConfiguration((_, cfg) =>
+                {
+                    cfg.AddInMemoryCollection(new Dictionary<string, string?>
+                    {
+                        ["ConnectionStrings:Default"]           = _postgres.GetConnectionString(),
+                        ["Cache:ConnectionString"]              = _redis.GetConnectionString(),
+                        ["Cache:InstanceName"]                  = "test3:",
+                        ["Cache:PatTtlMinutes"]                 = "5",
+                        ["App:PublicUrl"]                       = "http://localhost",
+                        ["App:Domain"]                          = "localhost",
+                        ["App:AdminSpaOrigin"]                  = "http://localhost",
+                        ["IAM_PUBLIC_PORT"]                     = "5000",
+                        ["IAM_ADMIN_PORT"]                      = "5001",
+                        ["Security:TotpSecretEncryptionKey"]    = new string('0', 64),
+                        ["Security:MaxLoginAttempts"]           = "5",
+                        ["Security:LockoutMinutes"]             = "15",
+                        ["Security:OtpTtlSeconds"]              = "300",
+                        ["Security:MaxSmsPerWindow"]            = "3",
+                        ["Security:SmsWindowMinutes"]           = "10",
+                        ["Security:PatPrefix"]                  = "rediens_pat_",
+                        ["Security:ArgonTimeCost"]              = "1",
+                        ["Security:ArgonMemoryCost"]            = "8192",
+                        ["Security:ArgonParallelism"]           = "1",
+                        ["Hydra:AdminUrl"]                      = Hydra.Url,
+                        ["Hydra:PublicUrl"]                     = Hydra.Url,
+                        ["Keto:ReadUrl"]                        = Keto.ReadUrl,
+                        ["Keto:WriteUrl"]                       = Keto.WriteUrl,
+                        // Real SMTP via MailHog — no IEmailService stub replacement below
+                        ["Smtp:Host"]                           = "127.0.0.1",
+                        ["Smtp:Port"]                           = smtpPort.ToString(),
+                        ["Smtp:StartTls"]                       = "false",
+                        ["Smtp:Username"]                       = "mailhog-user",
+                        ["Smtp:Password"]                       = "mailhog-pass",
+                        ["Smtp:FromAddress"]                    = "noreply@test.com",
+                        ["Smtp:FromName"]                       = "Test IAM",
+                        ["Bootstrap:Email"]                     = "",
+                        ["Bootstrap:Password"]                  = "",
+                    });
+                });
+                builder.ConfigureServices(services =>
+                {
+                    // Real SmtpEmailService is kept — do NOT replace IEmailService
+                    services.AddSingleton<IStartupFilter>(new LoopbackRemoteIpStartupFilter());
+                    var sd = services.SingleOrDefault(d => d.ServiceType == typeof(ISmsService));
+                    if (sd != null) services.Remove(sd);
+                    services.AddSingleton<ISmsService>(SmsStub);
+                    services.Configure<SessionOptions>(opts =>
+                    {
+                        opts.Cookie.SecurePolicy = CookieSecurePolicy.None;
+                        opts.Cookie.SameSite    = SameSiteMode.Unspecified;
+                    });
+                });
+            });
+
+        var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false,
+        });
+        return (client, factory);
+    }
+
+    /// <summary>
+    /// Creates a new WebApplicationFactory with IFido2 replaced by the supplied stub.
+    /// The stub receives a fresh real Fido2 inner instance so RequestNewCredential /
+    /// GetAssertionOptions still produce valid JSON-able option objects.
+    /// Caller must dispose the factory.
+    /// </summary>
+    public (HttpClient Client, WebApplicationFactory<Program> Factory)
+        CreateFido2MockClient(Fido2NetLib.IFido2 fido2Mock)
+    {
+        var factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.UseEnvironment("Testing");
+                builder.ConfigureAppConfiguration((_, cfg) =>
+                {
+                    cfg.AddInMemoryCollection(new Dictionary<string, string?>
+                    {
+                        ["ConnectionStrings:Default"]           = _postgres.GetConnectionString(),
+                        ["Cache:ConnectionString"]              = _redis.GetConnectionString(),
+                        ["Cache:InstanceName"]                  = "test4:",
+                        ["Cache:PatTtlMinutes"]                 = "5",
+                        ["App:PublicUrl"]                       = "http://localhost",
+                        ["App:Domain"]                          = "localhost",
+                        ["App:AdminSpaOrigin"]                  = "http://localhost",
+                        ["IAM_PUBLIC_PORT"]                     = "5000",
+                        ["IAM_ADMIN_PORT"]                      = "5001",
+                        ["Security:TotpSecretEncryptionKey"]    = new string('0', 64),
+                        ["Security:MaxLoginAttempts"]           = "5",
+                        ["Security:LockoutMinutes"]             = "15",
+                        ["Security:OtpTtlSeconds"]              = "300",
+                        ["Security:MaxSmsPerWindow"]            = "3",
+                        ["Security:SmsWindowMinutes"]           = "10",
+                        ["Security:PatPrefix"]                  = "rediens_pat_",
+                        ["Security:ArgonTimeCost"]              = "1",
+                        ["Security:ArgonMemoryCost"]            = "8192",
+                        ["Security:ArgonParallelism"]           = "1",
+                        ["Hydra:AdminUrl"]                      = Hydra.Url,
+                        ["Hydra:PublicUrl"]                     = Hydra.Url,
+                        ["Keto:ReadUrl"]                        = Keto.ReadUrl,
+                        ["Keto:WriteUrl"]                       = Keto.WriteUrl,
+                        ["Smtp:Host"]                           = "smtp.test.local",
+                        ["Smtp:FromAddress"]                    = "noreply@test.com",
+                        ["Smtp:FromName"]                       = "Test IAM",
+                        ["Bootstrap:Email"]                     = "",
+                        ["Bootstrap:Password"]                  = "",
+                    });
+                });
+                builder.ConfigureServices(services =>
+                {
+                    services.AddSingleton<IStartupFilter>(new LoopbackRemoteIpStartupFilter());
+                    var ed = services.SingleOrDefault(d => d.ServiceType == typeof(IEmailService));
+                    if (ed != null) services.Remove(ed);
+                    services.AddSingleton<IEmailService>(EmailStub);
+                    var sd = services.SingleOrDefault(d => d.ServiceType == typeof(ISmsService));
+                    if (sd != null) services.Remove(sd);
+                    services.AddSingleton<ISmsService>(SmsStub);
+                    // Replace IFido2 with the caller-supplied mock
+                    var fd = services.SingleOrDefault(d => d.ServiceType == typeof(Fido2NetLib.IFido2));
+                    if (fd != null) services.Remove(fd);
+                    services.AddScoped<Fido2NetLib.IFido2>(_ => fido2Mock);
                     services.Configure<SessionOptions>(opts =>
                     {
                         opts.Cookie.SecurePolicy = CookieSecurePolicy.None;

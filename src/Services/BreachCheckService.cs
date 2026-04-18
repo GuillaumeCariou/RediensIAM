@@ -7,7 +7,7 @@ public class BreachCheckService(IHttpClientFactory http, ILogger<BreachCheckServ
 {
     public async Task<int> GetBreachCountAsync(string password)
     {
-        var sha1 = SHA1.HashData(Encoding.UTF8.GetBytes(password));
+        var sha1 = SHA1.HashData(Encoding.UTF8.GetBytes(password)); // NOSONAR: SHA1 is mandated by the HIBP k-anonymity API protocol
         var hex    = Convert.ToHexString(sha1).ToUpperInvariant();
         var prefix = hex[..5];
         var suffix = hex[5..];

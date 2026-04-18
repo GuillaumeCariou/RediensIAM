@@ -85,6 +85,84 @@ public class SystemHealthCoverageTests(TestFixture fixture)
         smtp.GetProperty("stats").GetProperty("host").GetString().Should().Be("smtp.test.local");
     }
 
+    // ── Keto read health failure → error path in CheckKetoRead (line 147) ──────
+
+    [Fact]
+    public async Task GetHealth_WhenKetoReadHealthFails_ReturnsErrorForKetoReadComponent()
+    {
+        var client = await SuperAdminClientAsync();
+
+        fixture.Keto.SetReadHealthFailure();
+        try
+        {
+            var res  = await client.GetAsync("/admin/system/health");
+
+            res.StatusCode.Should().Be(HttpStatusCode.OK);
+            var body   = await res.Content.ReadFromJsonAsync<JsonElement>();
+            var checks = body.GetProperty("checks").EnumerateArray().ToList();
+
+            var ketoRead = checks.First(c => c.GetProperty("name").GetString() == "Keto (read)");
+            ketoRead.GetProperty("status").GetString().Should().Be("Error");
+            body.GetProperty("overall").GetString().Should().Be("error");
+        }
+        finally
+        {
+            fixture.Keto.RestoreHealth();
+        }
+    }
+
+    // ── Keto write health failure → error path in CheckKetoWrite (line 164) ─
+
+    [Fact]
+    public async Task GetHealth_WhenKetoWriteHealthFails_ReturnsErrorForKetoWriteComponent()
+    {
+        var client = await SuperAdminClientAsync();
+
+        fixture.Keto.SetWriteHealthFailure();
+        try
+        {
+            var res  = await client.GetAsync("/admin/system/health");
+
+            res.StatusCode.Should().Be(HttpStatusCode.OK);
+            var body   = await res.Content.ReadFromJsonAsync<JsonElement>();
+            var checks = body.GetProperty("checks").EnumerateArray().ToList();
+
+            var ketoWrite = checks.First(c => c.GetProperty("name").GetString() == "Keto (write)");
+            ketoWrite.GetProperty("status").GetString().Should().Be("Error");
+            body.GetProperty("overall").GetString().Should().Be("error");
+        }
+        finally
+        {
+            fixture.Keto.RestoreHealth();
+        }
+    }
+
+    // ── Version fetch throws (invalid JSON body) → best-effort catch (lines 121, 138, 155, 172) ─
+
+    [Fact]
+    public async Task GetHealth_WhenVersionEndpointsReturnInvalidJson_CatchesAndReturnsOk()
+    {
+        var client = await SuperAdminClientAsync();
+
+        // All /version endpoints return 200 with non-JSON body → JsonException → best-effort catch
+        fixture.Hydra.SetVersionBroken();
+        fixture.Keto.SetVersionBroken();
+        try
+        {
+            var res = await client.GetAsync("/admin/system/health");
+
+            // Despite FetchVersion throwing, all components should still report health based on /health/alive
+            res.StatusCode.Should().Be(HttpStatusCode.OK);
+            var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+            body.GetProperty("overall").GetString().Should().Be("ok");
+        }
+        finally
+        {
+            fixture.Hydra.RestoreVersion();
+            fixture.Keto.RestoreVersion();
+        }
+    }
+
     // ── CheckSmtp failure path + Err helper (lines 197-200, 241-244) ─────────
 
     [Fact]

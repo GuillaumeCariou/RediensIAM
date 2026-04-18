@@ -1097,7 +1097,7 @@ public class AuthController(
         var providerCfg = GetProviderConfig(project.LoginTheme, stateData.ProviderId);
         if (providerCfg == null) return Redirect(errorRedirect);
 
-        var profile = await socialLogin.ExchangeAndGetProfileAsync(providerCfg, code);
+        var profile = await socialLogin.ExchangeAndGetProfileAsync(providerCfg, code, stateData.CodeVerifier);
         if (profile == null) return Redirect(errorRedirect);
 
         if (stateData.LinkMode && stateData.LinkUserId != null)

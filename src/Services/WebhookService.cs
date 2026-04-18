@@ -9,6 +9,7 @@ using RediensIAM.Config;
 using RediensIAM.Controllers;
 using RediensIAM.Data;
 using RediensIAM.Data.Entities;
+using StackExchange.Redis;
 
 namespace RediensIAM.Services;
 
@@ -41,10 +42,14 @@ public sealed record WebhookJob(
 public class WebhookService(
     RediensIamDbContext db,
     AppConfig appConfig,
-    Channel<WebhookJob> channel)
+    Channel<WebhookJob> channel,
+    IConnectionMultiplexer redis)
 {
     private static readonly JsonSerializerOptions JsonOpts = new()
         { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
+
+    internal static readonly JsonSerializerOptions JobOpts = new();
+    internal const string PendingKey = "webhook:pending";
 
     public async Task DispatchAsync(
         string eventType,
@@ -66,6 +71,7 @@ public class WebhookService(
                 && (w.ProjectId == projectId || w.ProjectId == null))
             .ToListAsync();
 
+        var db2 = redis.GetDatabase();
         foreach (var wh in webhooks)
         {
             var secret = "";
@@ -76,6 +82,8 @@ public class WebhookService(
             }
 
             var job = new WebhookJob(wh.Id, eventType, payload, secret, wh.Url);
+            var jobJson = JsonSerializer.Serialize(job, JobOpts);
+            await db2.SortedSetAddAsync(PendingKey, jobJson, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             await channel.Writer.WriteAsync(job);
         }
     }
@@ -95,7 +103,8 @@ public class WebhookDispatcherService(
     IServiceScopeFactory scopeFactory,
     ILogger<WebhookDispatcherService> logger,
     IHttpClientFactory httpClientFactory,
-    AppConfig appConfig) : BackgroundService
+    AppConfig appConfig,
+    IConnectionMultiplexer redis) : BackgroundService
 {
     // Retry delays: 2s, 8s, 32s
     private static readonly int[] RetryDelaysMs = [2_000, 8_000, 32_000];
@@ -103,12 +112,29 @@ public class WebhookDispatcherService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Recover jobs that were pending when the pod last restarted
+        var db = redis.GetDatabase();
+        var entries = await db.SortedSetRangeByScoreAsync(WebhookService.PendingKey);
+        var recovered = 0;
+        foreach (var entry in entries)
+        {
+            var job = JsonSerializer.Deserialize<WebhookJob>(entry.ToString(), WebhookService.JobOpts);
+            if (job != null)
+            {
+                await channel.Writer.WriteAsync(job, stoppingToken);
+                recovered++;
+            }
+        }
+        if (recovered > 0)
+            logger.LogInformation("Recovered {Count} pending webhook jobs from Redis", recovered);
+
         await foreach (var job in channel.Reader.ReadAllAsync(stoppingToken))
         {
+            var jobJson = JsonSerializer.Serialize(job, WebhookService.JobOpts);
             await _sem.WaitAsync(stoppingToken);
             _ = Task.Run(async () =>
             {
-                try { await ProcessJobAsync(job, stoppingToken); }
+                try { await ProcessJobAsync(job, jobJson, stoppingToken); }
                 finally { _sem.Release(); }
             }, stoppingToken);
         }
@@ -118,10 +144,11 @@ public class WebhookDispatcherService(
         while (channel.Reader.TryRead(out var pending))
         {
             if (drainCts.IsCancellationRequested) break;
+            var pendingJson = JsonSerializer.Serialize(pending, WebhookService.JobOpts);
             await _sem.WaitAsync(drainCts.Token).ConfigureAwait(false);
             _ = Task.Run(async () =>
             {
-                try { await ProcessJobAsync(pending, drainCts.Token); }
+                try { await ProcessJobAsync(pending, pendingJson, drainCts.Token); }
                 finally { _sem.Release(); }
             });
         }
@@ -133,7 +160,7 @@ public class WebhookDispatcherService(
         }
     }
 
-    private async Task ProcessJobAsync(WebhookJob job, CancellationToken ct)
+    private async Task ProcessJobAsync(WebhookJob job, string jobJson, CancellationToken ct)
     {
         // Re-validate IP at delivery to prevent DNS rebinding (C8)
         if (await WebhookUrlValidator.IsPrivateOrReservedAsync(job.Url))
@@ -208,6 +235,10 @@ public class WebhookDispatcherService(
         {
             logger.LogError(ex, "Failed to persist webhook delivery record for {Id}", job.WebhookId);
         }
+
+        // Remove from Redis persistent queue — job is done (delivered or exhausted)
+        try { await redis.GetDatabase().SortedSetRemoveAsync(WebhookService.PendingKey, jobJson); }
+        catch (Exception ex) { logger.LogWarning(ex, "Failed to remove webhook job from Redis queue"); }
     }
 
     private static string ComputeSignature(string secret, byte[] payload)

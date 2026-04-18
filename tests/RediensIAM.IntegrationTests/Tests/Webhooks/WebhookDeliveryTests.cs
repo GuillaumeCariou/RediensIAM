@@ -137,9 +137,10 @@ public class WebhookDeliveryTests(TestFixture fixture)
 
         var (orgId, _, client, anchorId) = await ScaffoldAsync();
 
-        // Encrypt a known plaintext secret using the test encryption key (all-zero 32 bytes)
-        var encKey    = Convert.FromHexString(new string('0', 64));
-        var secretEnc = TotpEncryption.EncryptString(encKey, "super-secret");
+        // Encrypt a base64-encoded secret — WebhookService decodes it with Convert.FromBase64String
+        var encKey      = Convert.FromHexString(new string('0', 64));
+        var rawSecret   = Convert.ToBase64String(global::System.Text.Encoding.UTF8.GetBytes("super-secret"));
+        var secretEnc   = TotpEncryption.EncryptString(encKey, rawSecret);
         await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"], secretEnc: secretEnc);
 
         await client.PostAsJsonAsync($"/org/webhooks/{anchorId}/test", new { });
