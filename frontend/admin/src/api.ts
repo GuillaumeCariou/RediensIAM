@@ -31,10 +31,10 @@ export async function searchUsers(q: string) {
   return (await apiFetch(`/admin/users?q=${encodeURIComponent(q)}`)).json();
 }
 export async function disableUser(id: string) {
-  return (await apiFetch(`/admin/users/${id}/disable`, { method: 'POST' })).json();
+  return (await apiFetch(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ active: false }) })).json();
 }
 export async function enableUser(id: string) {
-  return (await apiFetch(`/admin/users/${id}/enable`, { method: 'POST' })).json();
+  return (await apiFetch(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ active: true }) })).json();
 }
 export async function forceLogoutUser(id: string) {
   return (await apiFetch(`/admin/users/${id}/sessions`, { method: 'DELETE' })).json();

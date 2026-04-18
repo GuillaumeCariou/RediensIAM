@@ -145,11 +145,39 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
 
     // ── Clients ───────────────────────────────────────────────────────────────
 
-    public async Task<JsonElement> ListOAuth2ClientsAsync()
+    public async Task<List<JsonElement>> ListOAuth2ClientsAsync()
     {
-        var resp = await Client.GetAsync($"{_adminUrl}/admin/clients?page_size=500");
-        resp.EnsureSuccessStatusCode();
-        return await resp.Content.ReadFromJsonAsync<JsonElement>(_json);
+        var results = new List<JsonElement>();
+        string? pageToken = null;
+        do
+        {
+            var url = $"{_adminUrl}/admin/clients?page_size=250" +
+                      (pageToken != null ? $"&page_token={Uri.EscapeDataString(pageToken)}" : "");
+            var resp = await Client.GetAsync(url);
+            resp.EnsureSuccessStatusCode();
+            var page = await resp.Content.ReadFromJsonAsync<JsonElement[]>(_json) ?? [];
+            results.AddRange(page);
+            pageToken = resp.Headers.TryGetValues("link", out var links)
+                ? ParseNextPageToken(string.Join(",", links))
+                : null;
+        } while (pageToken != null);
+        return results;
+    }
+
+    private static string? ParseNextPageToken(string linkHeader)
+    {
+        // Link: <...?page_token=TOKEN>; rel="next"
+        foreach (var part in linkHeader.Split(','))
+        {
+            var segments = part.Trim().Split(';');
+            if (segments.Length < 2) continue;
+            var rel = segments[1].Trim();
+            if (!rel.Contains("rel=\"next\"", StringComparison.OrdinalIgnoreCase)) continue;
+            var url = segments[0].Trim().Trim('<', '>');
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(new Uri(url).Query);
+            return query.TryGetValue("page_token", out var tok) ? tok.ToString() : null;
+        }
+        return null;
     }
 
     public async Task<JsonElement> CreateOAuth2ClientAsync(object client)

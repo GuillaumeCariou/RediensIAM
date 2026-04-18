@@ -1,3 +1,5 @@
+# Pin base images to digests in production.
+# Refresh with: docker pull <image> && docker inspect --format='{{index .RepoDigests 0}}' <image>
 # Stage 1 — build Login SPA
 FROM node:20-alpine AS login-build
 WORKDIR /app

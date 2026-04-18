@@ -320,6 +320,8 @@ app.Use(async (ctx, next) =>
     ctx.Response.Headers["Referrer-Policy"]   = "strict-origin-when-cross-origin";
     ctx.Response.Headers.XXSSProtection       = "0";
     ctx.Response.Headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()";
+    if (ctx.Request.IsHttps)
+        ctx.Response.Headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
 
     // X-Frame-Options: skip for /preview — the admin SPA loads it in an iframe
     if (!ctx.Request.Path.StartsWithSegments("/preview"))

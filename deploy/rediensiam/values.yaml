@@ -116,6 +116,7 @@ rediensiam:
     local:
       enabled: true
     external:
+      # PRODUCTION: use https:// and real hostnames
       adminUrl: "http://localhost:4445"
       publicUrl: "http://localhost:4444"
 
@@ -125,6 +126,7 @@ rediensiam:
     local:
       enabled: true
     external:
+      # PRODUCTION: use https:// and real hostnames
       readUrl:  "http://localhost:4466"
       writeUrl: "http://localhost:4467"
 

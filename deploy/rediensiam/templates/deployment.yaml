@@ -6,7 +6,7 @@ metadata:
   labels:
     app: {{ .Release.Name }}
 spec:
-  replicas: {{ .Values.replicaCount }}
+  replicas: {{ .Values.rediensiam.replicaCount }}
   selector:
     matchLabels:
       app: {{ .Release.Name }}
@@ -18,18 +18,57 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: rediensiam
-          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: {{ .Values.rediensiam.image.repository }}:{{ .Values.rediensiam.image.tag }}
+          imagePullPolicy: {{ .Values.rediensiam.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           ports:
             - name: public
-              containerPort: 5000
+              containerPort: {{ .Values.rediensiam.service.public.port }}
             - name: admin
-              containerPort: 5001
+              containerPort: {{ .Values.rediensiam.service.admin.port }}
           env:
-            {{- range $k, $v := .Values.env }}
-            - name: {{ $k }}
-              value: {{ $v | quote }}
-            {{- end }}
+            # ── Host header validation ─────────────────────────────────────────
+            - name: AllowedHosts
+              value: {{ index (urlParse .Values.rediensiam.publicUrl) "host" | quote }}
+            # ── App ────────────────────────────────────────────────────────────
+            - name: App__PublicUrl
+              value: {{ .Values.rediensiam.publicUrl | quote }}
+            - name: App__AdminSpaOrigin
+              value: {{ .Values.rediensiam.adminUrl | quote }}
+            - name: App__Domain
+              value: {{ index (urlParse .Values.rediensiam.publicUrl) "host" | quote }}
+            - name: IAM_ADMIN_PATH
+              value: {{ .Values.rediensiam.app.adminPath | quote }}
+            # ── Ory ────────────────────────────────────────────────────────────
+            - name: Hydra__AdminUrl
+              value: {{ include "rediensiam.hydraAdminUrl" . | quote }}
+            - name: Hydra__PublicUrl
+              value: {{ include "rediensiam.hydraPublicUrl" . | quote }}
+            - name: Keto__ReadUrl
+              value: {{ include "rediensiam.ketoReadUrl" . | quote }}
+            - name: Keto__WriteUrl
+              value: {{ include "rediensiam.ketoWriteUrl" . | quote }}
+            # ── SMTP ───────────────────────────────────────────────────────────
+            - name: Smtp__Host
+              value: {{ .Values.rediensiam.smtp.host | quote }}
+            - name: Smtp__Port
+              value: {{ .Values.rediensiam.smtp.port | toString | quote }}
+            - name: Smtp__StartTls
+              value: {{ .Values.rediensiam.smtp.startTls | toString | quote }}
+            - name: Smtp__Username
+              value: {{ .Values.rediensiam.smtp.username | quote }}
+            - name: Smtp__FromAddress
+              value: {{ .Values.rediensiam.smtp.fromAddress | quote }}
+            - name: Smtp__FromName
+              value: {{ .Values.rediensiam.smtp.fromName | quote }}
+            # ── Secrets ────────────────────────────────────────────────────────
             - name: ConnectionStrings__Default
               valueFrom:
                 secretKeyRef:
@@ -40,32 +79,51 @@ spec:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secrets
                   key: cache-url
-            - name: Security__TotpEncryptionKey
+            - name: Security__TotpSecretEncryptionKey
               valueFrom:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secrets
                   key: totp-key
-            - name: Security__Argon2Pepper
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
-                  key: argon2-pepper
             - name: Smtp__Password
               valueFrom:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secrets
                   key: smtp-password
+            - name: IAM_BOOTSTRAP_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: bootstrap-email
+                  optional: true
+            - name: IAM_BOOTSTRAP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: bootstrap-password
+                  optional: true
+          startupProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.rediensiam.service.public.port }}
+            failureThreshold: 30
+            periodSeconds: 5
           readinessProbe:
             httpGet:
               path: /health
-              port: 5000
-            initialDelaySeconds: 10
+              port: {{ .Values.rediensiam.service.public.port }}
+            initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
               path: /health
-              port: 5000
+              port: {{ .Values.rediensiam.service.public.port }}
             initialDelaySeconds: 30
             periodSeconds: 30
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           resources:
-            {{- toYaml .Values.resources | nindent 12 }}
+            {{- toYaml .Values.rediensiam.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}

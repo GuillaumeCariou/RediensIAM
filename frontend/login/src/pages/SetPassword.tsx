@@ -2,6 +2,10 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { getThemeByProject, completeInvite } from '../api';
 
+function sanitizeCss(css: string): string {
+  return css.replace(/url\(\s*(['"]?)(https?:|\/\/)[^)]*\1\s*\)/gi, 'url(about:blank)');
+}
+
 function applyTheme(data: Record<string, unknown>) {
   const t = (data?.theme ?? {}) as Record<string, string>;
   const set = (v: string, val?: string) => { if (val) document.documentElement.style.setProperty(v, val); };
@@ -13,7 +17,7 @@ function applyTheme(data: Record<string, unknown>) {
   if (t.border_radius) document.documentElement.style.setProperty('--radius', `${t.border_radius}px`);
   if (t.custom_css) {
     const style = document.createElement('style');
-    style.textContent = t.custom_css;
+    style.textContent = sanitizeCss(t.custom_css);
     document.head.appendChild(style);
   }
 }

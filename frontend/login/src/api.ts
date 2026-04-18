@@ -1,15 +1,21 @@
 const BASE = import.meta.env.VITE_API_BASE_URL ?? '';
 
+async function parseJson(r: Response): Promise<unknown> {
+  const text = await r.text();
+  try { return JSON.parse(text); }
+  catch { throw new Error(`Server error ${r.status}`); }
+}
+
 export async function getLoginTheme(challenge: string) {
   const r = await fetch(`${BASE}/auth/login/theme?login_challenge=${challenge}`);
   if (!r.ok) throw new Error('Failed to load theme');
-  return r.json();
+  return parseJson(r);
 }
 
 export async function getLoginChallenge(challenge: string) {
   const r = await fetch(`${BASE}/auth/login?login_challenge=${challenge}`);
   if (!r.ok) throw new Error('Failed to load challenge');
-  return r.json();
+  return parseJson(r);
 }
 
 export async function submitLogin(body: {
@@ -24,7 +30,7 @@ export async function submitLogin(body: {
     body: JSON.stringify(body),
     credentials: 'include',
   });
-  return r.json();
+  return parseJson(r);
 }
 
 export async function verifyTotp(code: string) {
@@ -34,7 +40,7 @@ export async function verifyTotp(code: string) {
     body: JSON.stringify({ code }),
     credentials: 'include',
   });
-  return r.json();
+  return parseJson(r);
 }
 
 export async function sendSmsOtp() {
@@ -43,7 +49,7 @@ export async function sendSmsOtp() {
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
   });
-  return r.json();
+  return parseJson(r);
 }
 
 export async function verifySmsOtp(code: string) {
@@ -53,12 +59,12 @@ export async function verifySmsOtp(code: string) {
     body: JSON.stringify({ code }),
     credentials: 'include',
   });
-  return r.json();
+  return parseJson(r);
 }
 
 export async function getWebAuthnOptions() {
   const r = await fetch(`${BASE}/auth/mfa/webauthn/options`, { credentials: 'include' });
-  return r.json();
+  return parseJson(r);
 }
 
 export async function verifyWebAuthn(assertionResponse: object) {
@@ -68,7 +74,7 @@ export async function verifyWebAuthn(assertionResponse: object) {
     body: JSON.stringify(assertionResponse),
     credentials: 'include',
   });
-  return r.json();
+  return parseJson(r);
 }
 
 export async function verifyBackupCode(code: string) {
@@ -78,7 +84,7 @@ export async function verifyBackupCode(code: string) {
     body: JSON.stringify({ code }),
     credentials: 'include',
   });
-  return r.json();
+  return parseJson(r);
 }
 
 export async function registerUser(body: {
@@ -94,7 +100,7 @@ export async function registerUser(body: {
     body: JSON.stringify(body),
     credentials: 'include',
   });
-  return r.json();
+  return parseJson(r);
 }
 
 export async function verifyRegistrationOtp(sessionId: string, code: string) {
@@ -104,7 +110,7 @@ export async function verifyRegistrationOtp(sessionId: string, code: string) {
     body: JSON.stringify({ session_id: sessionId, code }),
     credentials: 'include',
   });
-  return r.json();
+  return parseJson(r);
 }
 
 export async function requestPasswordReset(projectId: string, email: string) {
@@ -113,7 +119,7 @@ export async function requestPasswordReset(projectId: string, email: string) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ project_id: projectId, email }),
   });
-  return r.json();
+  return parseJson(r);
 }
 
 export async function verifyPasswordResetOtp(sessionId: string, code: string) {
@@ -122,7 +128,7 @@ export async function verifyPasswordResetOtp(sessionId: string, code: string) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session_id: sessionId, code }),
   });
-  return r.json();
+  return parseJson(r);
 }
 
 export async function confirmPasswordReset(token: string, newPassword: string) {
@@ -131,13 +137,13 @@ export async function confirmPasswordReset(token: string, newPassword: string) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token, new_password: newPassword }),
   });
-  return r.json();
+  return parseJson(r);
 }
 
 export async function getThemeByProject(projectId: string) {
   const r = await fetch(`${BASE}/auth/login/theme?project_id=${encodeURIComponent(projectId)}`);
   if (!r.ok) throw new Error('Failed to load theme');
-  return r.json();
+  return parseJson(r);
 }
 
 export async function completeInvite(token: string, password: string) {
@@ -147,7 +153,7 @@ export async function completeInvite(token: string, password: string) {
     credentials: 'include',
     body: JSON.stringify({ token, password }),
   });
-  return r.json();
+  return parseJson(r);
 }
 
 export async function setupTotp() {
@@ -155,7 +161,7 @@ export async function setupTotp() {
     method: 'POST',
     credentials: 'include',
   });
-  return r.json();
+  return parseJson(r);
 }
 
 export async function confirmTotp(code: string) {
@@ -165,5 +171,5 @@ export async function confirmTotp(code: string) {
     credentials: 'include',
     body: JSON.stringify({ code }),
   });
-  return r.json();
+  return parseJson(r);
 }

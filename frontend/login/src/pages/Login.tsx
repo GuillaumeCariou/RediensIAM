@@ -3,6 +3,12 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { getLoginChallenge, submitLogin } from '../api';
 import { useTheme, type Theme as ColorTheme } from '../useTheme';
 
+// Strip external url() references to prevent CSS-based data exfiltration.
+// Allows data: URIs (inline images) and relative paths only.
+function sanitizeCss(css: string): string {
+  return css.replace(/url\(\s*(['"]?)(https?:|\/\/)[^)]*\1\s*\)/gi, 'url(about:blank)');
+}
+
 const themeIcons: Record<ColorTheme, string> = { light: '☀', dark: '☾', system: '⊙' };
 const themeOrder: ColorTheme[] = ['system', 'light', 'dark'];
 
@@ -74,7 +80,7 @@ export default function Login() {
     if (t.border_radius) document.documentElement.style.setProperty('--radius', `${t.border_radius}px`);
     if (t.custom_css) {
       const style = document.createElement('style');
-      style.textContent = t.custom_css;
+      style.textContent = sanitizeCss(t.custom_css);
       document.head.appendChild(style);
     }
   }, [loginTheme]);
