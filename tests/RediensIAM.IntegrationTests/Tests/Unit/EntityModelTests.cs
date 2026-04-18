@@ -686,7 +686,8 @@ public class EntityModelTests
             new WebhookNoOpScopeFactory(),
             NullLogger<WebhookDispatcherService>.Instance,
             new WebhookNoOpHttpClientFactory(),
-            BuildNoOpAppConfig());
+            BuildNoOpAppConfig(),
+            new NoOpWebhookQueue());
 
         var method = typeof(WebhookDispatcherService)
             .GetMethod("ExecuteAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
@@ -713,7 +714,8 @@ public class EntityModelTests
             scopeFactory,
             NullLogger<WebhookDispatcherService>.Instance,
             httpFactory,
-            BuildNoOpAppConfig());
+            BuildNoOpAppConfig(),
+            new NoOpWebhookQueue());
 
         // Write a job and complete the channel
         await ch.Writer.WriteAsync(new WebhookJob(
@@ -797,3 +799,11 @@ file sealed class WebhookSucceedingHttpClientFactory : IHttpClientFactory
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
     }
 }
+
+file sealed class NoOpWebhookQueue : IWebhookQueue
+{
+    public Task PersistAsync(string jobJson, long score) => Task.CompletedTask;
+    public Task<string[]> RecoverAllAsync() => Task.FromResult(Array.Empty<string>());
+    public Task RemoveAsync(string jobJson) => Task.CompletedTask;
+}
+

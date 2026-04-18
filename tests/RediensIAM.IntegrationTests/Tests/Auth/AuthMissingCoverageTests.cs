@@ -181,7 +181,7 @@ file sealed class ThrowingNewDeviceEmailService : IEmailService
         Guid? projectId = null) => Task.CompletedTask;
 
     public Task SendNewDeviceAlertAsync(string to, string ipAddress, string userAgent,
-        DateTimeOffset loginAt)
+        DateTimeOffset loginAt, Guid? orgId = null)
     {
         var tcs = new TaskCompletionSource<bool>();
         tcs.SetException(new InvalidOperationException("Simulated new-device alert failure"));

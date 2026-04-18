@@ -9,14 +9,33 @@ internal static class UserHelpers
 {
     internal static void ApplyUpdate(User user, UpdateUserRequest body, PasswordService passwords)
     {
-        if (body.Email != null) { user.Email = body.Email.ToLowerInvariant(); user.EmailVerified = false; user.EmailVerifiedAt = null; }
-        if (body.Username != null) user.Username = body.Username;
-        if (body.DisplayName != null) user.DisplayName = body.DisplayName == "" ? null : body.DisplayName;
-        if (body.Phone != null) user.Phone = body.Phone == "" ? null : body.Phone;
-        if (body.Active.HasValue) { user.Active = body.Active.Value; user.DisabledAt = body.Active.Value ? null : DateTimeOffset.UtcNow; }
-        if (body.EmailVerified.HasValue) { user.EmailVerified = body.EmailVerified.Value; user.EmailVerifiedAt = body.EmailVerified.Value ? DateTimeOffset.UtcNow : null; }
-        if (body.ClearLock == true) { user.LockedUntil = null; user.FailedLoginCount = 0; }
+        if (body.Email != null)          ApplyEmail(user, body.Email);
+        if (body.Username != null)       user.Username    = body.Username;
+        if (body.DisplayName != null)    user.DisplayName = body.DisplayName == "" ? null : body.DisplayName;
+        if (body.Phone != null)          user.Phone       = body.Phone == "" ? null : body.Phone;
+        if (body.Active.HasValue)        ApplyActive(user, body.Active.Value);
+        if (body.EmailVerified.HasValue) ApplyEmailVerified(user, body.EmailVerified.Value);
+        if (body.ClearLock == true)    { user.LockedUntil = null; user.FailedLoginCount = 0; }
         if (!string.IsNullOrEmpty(body.NewPassword)) user.PasswordHash = passwords.Hash(body.NewPassword);
+    }
+
+    private static void ApplyEmail(User user, string email)
+    {
+        user.Email = email.ToLowerInvariant();
+        user.EmailVerified = false;
+        user.EmailVerifiedAt = null;
+    }
+
+    private static void ApplyActive(User user, bool active)
+    {
+        user.Active = active;
+        user.DisabledAt = active ? null : DateTimeOffset.UtcNow;
+    }
+
+    private static void ApplyEmailVerified(User user, bool verified)
+    {
+        user.EmailVerified = verified;
+        user.EmailVerifiedAt = verified ? DateTimeOffset.UtcNow : null;
     }
 
     internal static async Task<string> GenerateDiscriminatorAsync(RediensIamDbContext db, Guid userListId, string username)

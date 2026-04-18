@@ -55,19 +55,20 @@ public class SocialLoginService(
         ["gitlab"]   = ("https://gitlab.com/oauth/authorize",
                         "https://gitlab.com/oauth/token",
                         "https://gitlab.com/api/v4/user"),
-        ["facebook"] = ("https://www.facebook.com/v18.0/dialog/oauth",
+        [Facebook]   = ("https://www.facebook.com/v18.0/dialog/oauth",
                         "https://graph.facebook.com/v18.0/oauth/access_token",
                         "https://graph.facebook.com/v18.0/me?fields=id,email,name"),
     };
 
     private const string BearerScheme = "Bearer";
+    private const string Facebook = "facebook";
 
     private static readonly Dictionary<string, string> DefaultScopes = new()
     {
         ["google"]   = "openid email profile",
         ["github"]   = "read:user user:email",
         ["gitlab"]   = "read_user",
-        ["facebook"] = Email,
+        [Facebook]   = Email,
     };
 
     private const string Email = "email";
@@ -240,7 +241,7 @@ public class SocialLoginService(
         return provider.Type switch
         {
             "github"   => await GetGithubProfileAsync(accessToken),
-            "facebook" => await GetFacebookProfileAsync(accessToken),
+            Facebook => await GetFacebookProfileAsync(accessToken),
             "oidc"     => await GetOidcProfileAsync(provider, accessToken),
             _          => await GetStandardProfileAsync(provider, accessToken),
         };
@@ -316,7 +317,7 @@ public class SocialLoginService(
 
     private async Task<SocialUserProfile?> GetFacebookProfileAsync(string accessToken)
     {
-        using var doc = await GetBearerJsonAsync(BuiltinEndpoints["facebook"].UserInfo, accessToken);
+        using var doc = await GetBearerJsonAsync(BuiltinEndpoints[Facebook].UserInfo, accessToken);
         if (doc == null) return null;
         var id    = TryGet(doc, "id");
         var email = TryGet(doc, Email);

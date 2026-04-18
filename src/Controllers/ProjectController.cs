@@ -30,11 +30,13 @@ public class ProjectController(
     {
         get
         {
+#pragma warning disable S6932 // model binding not available in a property getter
             if (Claims.GetManagementLevel() <= ManagementLevel.OrgAdmin)
             {
-                var q = HttpContext.Request.Query["project_id"].FirstOrDefault(); // NOSONAR: model binding not possible in a property getter
+                var q = HttpContext.Request.Query["project_id"].FirstOrDefault();
                 if (q != null && Guid.TryParse(q, out var g)) return g;
             }
+#pragma warning restore S6932
             return Guid.Parse(Claims.ProjectId);
         }
     }
@@ -79,6 +81,19 @@ public class ProjectController(
     {
         var project = await GetProjectAsync();
         if (project == null) return NotFound();
+        ApplyProjectFields(project, body);
+        var roleErr = await ApplyDefaultRoleAsync(project, body.ClearDefaultRole, body.DefaultRoleId);
+        if (roleErr != null) return roleErr;
+        var themeErr = ValidateLoginTheme(body.LoginTheme);
+        if (themeErr != null) return themeErr;
+        ApplyLoginTheme(project, body.LoginTheme);
+        project.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        return Ok(new { project.Id, project.Name });
+    }
+
+    private static void ApplyProjectFields(Project project, UpdateProjectInfoRequest body)
+    {
         if (body.Name != null)                     project.Name                    = body.Name;
         if (body.Active.HasValue)                  project.Active                  = body.Active.Value;
         if (body.RequireRoleToLogin.HasValue)       project.RequireRoleToLogin      = body.RequireRoleToLogin.Value;
@@ -92,14 +107,6 @@ public class ProjectController(
         if (body.PasswordRequireLowercase.HasValue)   project.PasswordRequireLowercase   = body.PasswordRequireLowercase.Value;
         if (body.PasswordRequireDigit.HasValue)       project.PasswordRequireDigit       = body.PasswordRequireDigit.Value;
         if (body.PasswordRequireSpecial.HasValue)     project.PasswordRequireSpecial     = body.PasswordRequireSpecial.Value;
-        var roleErr = await ApplyDefaultRoleAsync(project, body.ClearDefaultRole, body.DefaultRoleId);
-        if (roleErr != null) return roleErr;
-        var themeErr = ValidateLoginTheme(body.LoginTheme);
-        if (themeErr != null) return themeErr;
-        ApplyLoginTheme(project, body.LoginTheme);
-        project.UpdatedAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync();
-        return Ok(new { project.Id, project.Name });
     }
 
     private async Task<IActionResult?> ApplyDefaultRoleAsync(Project project, bool? clearRole, Guid? newRoleId)
@@ -120,11 +127,10 @@ public class ProjectController(
     private IActionResult? ValidateLoginTheme(Dictionary<string, object>? theme)
     {
         if (theme == null) return null;
-        if (theme.TryGetValue("logo_url", out var logoVal) && logoVal is string logoUrl && !string.IsNullOrEmpty(logoUrl))
-        {
-            if (!Uri.TryCreate(logoUrl, UriKind.Absolute, out var uri) || uri.Scheme != "https")
-                return BadRequest(new { error = "logo_url_must_be_https" });
-        }
+        if (theme.TryGetValue("logo_url", out var logoVal) && logoVal is string logoUrl
+            && !string.IsNullOrEmpty(logoUrl)
+            && (!Uri.TryCreate(logoUrl, UriKind.Absolute, out var uri) || uri.Scheme != "https"))
+            return BadRequest(new { error = "logo_url_must_be_https" });
         return null;
     }
 

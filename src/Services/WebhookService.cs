@@ -28,6 +28,30 @@ public static class WebhookEvents
     ];
 }
 
+// ── Redis queue abstraction (allows unit testing without IDatabase stub) ─────
+
+public interface IWebhookQueue
+{
+    Task PersistAsync(string jobJson, long score);
+    Task<string[]> RecoverAllAsync();
+    Task RemoveAsync(string jobJson);
+}
+
+public sealed class RedisWebhookQueue(IConnectionMultiplexer redis) : IWebhookQueue
+{
+    public Task PersistAsync(string jobJson, long score)
+        => redis.GetDatabase().SortedSetAddAsync(WebhookService.PendingKey, jobJson, score);
+
+    public async Task<string[]> RecoverAllAsync()
+    {
+        var entries = await redis.GetDatabase().SortedSetRangeByScoreAsync(WebhookService.PendingKey);
+        return entries.Select(e => e.ToString()).ToArray();
+    }
+
+    public Task RemoveAsync(string jobJson)
+        => redis.GetDatabase().SortedSetRemoveAsync(WebhookService.PendingKey, jobJson);
+}
+
 // ── Channel job ───────────────────────────────────────────────────────────────
 
 public sealed record WebhookJob(
@@ -43,7 +67,7 @@ public class WebhookService(
     RediensIamDbContext db,
     AppConfig appConfig,
     Channel<WebhookJob> channel,
-    IConnectionMultiplexer redis)
+    IWebhookQueue webhookQueue)
 {
     private static readonly JsonSerializerOptions JsonOpts = new()
         { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
@@ -71,7 +95,6 @@ public class WebhookService(
                 && (w.ProjectId == projectId || w.ProjectId == null))
             .ToListAsync();
 
-        var db2 = redis.GetDatabase();
         foreach (var wh in webhooks)
         {
             var secret = "";
@@ -83,7 +106,7 @@ public class WebhookService(
 
             var job = new WebhookJob(wh.Id, eventType, payload, secret, wh.Url);
             var jobJson = JsonSerializer.Serialize(job, JobOpts);
-            await db2.SortedSetAddAsync(PendingKey, jobJson, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            await webhookQueue.PersistAsync(jobJson, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             await channel.Writer.WriteAsync(job);
         }
     }
@@ -104,7 +127,7 @@ public class WebhookDispatcherService(
     ILogger<WebhookDispatcherService> logger,
     IHttpClientFactory httpClientFactory,
     AppConfig appConfig,
-    IConnectionMultiplexer redis) : BackgroundService
+    IWebhookQueue webhookQueue) : BackgroundService
 {
     // Retry delays: 2s, 8s, 32s
     private static readonly int[] RetryDelaysMs = [2_000, 8_000, 32_000];
@@ -113,12 +136,11 @@ public class WebhookDispatcherService(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // Recover jobs that were pending when the pod last restarted
-        var db = redis.GetDatabase();
-        var entries = await db.SortedSetRangeByScoreAsync(WebhookService.PendingKey);
+        var entries = await webhookQueue.RecoverAllAsync();
         var recovered = 0;
         foreach (var entry in entries)
         {
-            var job = JsonSerializer.Deserialize<WebhookJob>(entry.ToString(), WebhookService.JobOpts);
+            var job = JsonSerializer.Deserialize<WebhookJob>(entry, WebhookService.JobOpts);
             if (job != null)
             {
                 await channel.Writer.WriteAsync(job, stoppingToken);
@@ -237,7 +259,7 @@ public class WebhookDispatcherService(
         }
 
         // Remove from Redis persistent queue — job is done (delivered or exhausted)
-        try { await redis.GetDatabase().SortedSetRemoveAsync(WebhookService.PendingKey, jobJson); }
+        try { await webhookQueue.RemoveAsync(jobJson); }
         catch (Exception ex) { logger.LogWarning(ex, "Failed to remove webhook job from Redis queue"); }
     }
 

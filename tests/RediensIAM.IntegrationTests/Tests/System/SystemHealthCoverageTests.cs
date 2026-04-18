@@ -205,5 +205,5 @@ file sealed class ThrowingConnectivityEmailService : IEmailService
         Task.CompletedTask;
 
     public Task SendNewDeviceAlertAsync(string to, string ipAddress, string userAgent,
-        DateTimeOffset loginAt) => Task.CompletedTask;
+        DateTimeOffset loginAt, Guid? orgId = null) => Task.CompletedTask;
 }

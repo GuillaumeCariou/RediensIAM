@@ -15,16 +15,7 @@ builder.Services.AddSingleton<AppConfig>();
 var appConfig = new AppConfig(builder.Configuration);
 
 // Validate encryption key before DI is locked (uses builder.Environment, available pre-Build)
-{
-    var encKeyVal = appConfig.TotpSecretEncryptionKey;
-    if (encKeyVal.Length != 64 || !encKeyVal.All(Uri.IsHexDigit))
-        throw new InvalidOperationException(
-            "Security:TotpSecretEncryptionKey must be exactly 64 hex characters (32 bytes). " +
-            "Generate one with: openssl rand -hex 32");
-    if (encKeyVal == new string('0', 64) && builder.Environment.IsProduction())
-        throw new InvalidOperationException(
-            "TotpSecretEncryptionKey must not be the default all-zero dev placeholder in production.");
-}
+ValidateEncryptionKey(appConfig, builder.Environment);
 
 // ── Database ───────────────────────────────────────────────────────────────
 builder.Services.AddDbContext<RediensIamDbContext>(options =>
@@ -75,6 +66,7 @@ builder.Services.AddScoped<AuditLogService>();
 builder.Services.AddScoped<BreachCheckService>();
 builder.Services.AddScoped<SamlService>();
 builder.Services.AddSingleton(_ => System.Threading.Channels.Channel.CreateUnbounded<RediensIAM.Services.WebhookJob>());
+builder.Services.AddSingleton<IWebhookQueue, RedisWebhookQueue>();
 builder.Services.AddScoped<WebhookService>();
 builder.Services.AddHostedService<WebhookDispatcherService>();
 builder.Services.AddHostedService<AuditLogRetentionService>();
@@ -259,29 +251,7 @@ app.UseMiddleware<AppExceptionMiddleware>();
 app.UseForwardedHeaders();
 
 // ── Security headers ───────────────────────────────────────────────────────
-app.Use(async (ctx, next) =>
-{
-    ctx.Response.Headers.XContentTypeOptions  = "nosniff";
-    ctx.Response.Headers["Referrer-Policy"]   = "strict-origin-when-cross-origin";
-    ctx.Response.Headers.XXSSProtection       = "0";
-    ctx.Response.Headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()";
-    if (ctx.Request.IsHttps)
-        ctx.Response.Headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
-
-    // X-Frame-Options: skip for /preview — the admin SPA loads it in an iframe
-    if (!ctx.Request.Path.StartsWithSegments("/preview"))
-        ctx.Response.Headers.XFrameOptions = "DENY";
-
-    // CSP: admin SPA gets a relaxed policy allowing inline styles; login SPA gets a strict policy
-    if (ctx.Request.Path.StartsWithSegments("/admin"))
-        ctx.Response.Headers.ContentSecurityPolicy =
-            "script-src 'self'; style-src 'self'; object-src 'none'; frame-ancestors 'none';";
-    else
-        ctx.Response.Headers.ContentSecurityPolicy =
-            "default-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none';";
-
-    await next();
-});
+app.Use((ctx, next) => { AddSecurityHeaders(ctx); return next(); });
 
 // ── Swagger UI — admin port only ───────────────────────────────────────────
 app.UseWhen(ctx => ctx.Connection.LocalPort == appConfig.AdminPort, branch =>
@@ -339,6 +309,33 @@ app.MapFallback("/admin/{**path}", async (string path, HttpContext ctx) =>
 app.MapFallbackToFile("index.html");
 
 await app.RunAsync();
+
+static void ValidateEncryptionKey(AppConfig cfg, IWebHostEnvironment env)
+{
+    var encKeyVal = cfg.TotpSecretEncryptionKey;
+    if (encKeyVal.Length != 64 || !encKeyVal.All(Uri.IsHexDigit))
+        throw new InvalidOperationException(
+            "Security:TotpSecretEncryptionKey must be exactly 64 hex characters (32 bytes). " +
+            "Generate one with: openssl rand -hex 32");
+    if (encKeyVal == new string('0', 64) && env.IsProduction())
+        throw new InvalidOperationException(
+            "TotpSecretEncryptionKey must not be the default all-zero dev placeholder in production.");
+}
+
+static void AddSecurityHeaders(HttpContext ctx)
+{
+    ctx.Response.Headers.XContentTypeOptions   = "nosniff";
+    ctx.Response.Headers["Referrer-Policy"]    = "strict-origin-when-cross-origin";
+    ctx.Response.Headers.XXSSProtection        = "0";
+    ctx.Response.Headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()";
+    if (ctx.Request.IsHttps)
+        ctx.Response.Headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
+    if (!ctx.Request.Path.StartsWithSegments("/preview"))
+        ctx.Response.Headers.XFrameOptions = "DENY";
+    ctx.Response.Headers.ContentSecurityPolicy = ctx.Request.Path.StartsWithSegments("/admin")
+        ? "script-src 'self'; style-src 'self'; object-src 'none'; frame-ancestors 'none';"
+        : "default-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none';";
+}
 
 // Expose Program to integration test project
 public partial class Program

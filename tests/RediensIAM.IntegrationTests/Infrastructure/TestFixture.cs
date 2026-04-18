@@ -467,7 +467,7 @@ public class StubEmailService : IEmailService
         return Task.CompletedTask;
     }
 
-    public Task SendNewDeviceAlertAsync(string to, string ipAddress, string userAgent, DateTimeOffset loginAt)
+    public Task SendNewDeviceAlertAsync(string to, string ipAddress, string userAgent, DateTimeOffset loginAt, Guid? orgId = null)
     {
         NewDeviceAlerts.Add(new SentNewDeviceAlert(to, ipAddress));
         return Task.CompletedTask;

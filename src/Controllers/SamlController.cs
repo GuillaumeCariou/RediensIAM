@@ -98,7 +98,7 @@ public class SamlController(
         return Redirect(redirectUrl);
     }
 
-    private record SamlParsed(SamlIdpConfig Idp, string? LoginChallenge, System.Security.Claims.ClaimsIdentity Identity);
+    private sealed record SamlParsed(SamlIdpConfig Idp, string? LoginChallenge, System.Security.Claims.ClaimsIdentity Identity);
 
     private async Task<(SamlParsed? Parsed, string? Error)> ParseSamlResponseAsync(string relayState)
     {
@@ -142,16 +142,8 @@ public class SamlController(
     private async Task<(User? User, string? Error)> ResolveSamlUserAsync(
         Project project, SamlIdpConfig idp, string email, string? displayName, string? loginChallenge)
     {
-        if (project.AllowedEmailDomains.Length > 0)
-        {
-            var domain = email.Split('@').LastOrDefault()?.ToLowerInvariant() ?? "";
-            if (!project.AllowedEmailDomains.Any(d => d.Equals(domain, StringComparison.OrdinalIgnoreCase)))
-            {
-                if (!string.IsNullOrEmpty(loginChallenge))
-                    await hydra.RejectLoginAsync(loginChallenge, "access_denied", "email_domain_not_allowed");
-                return (null, "email_domain_not_allowed");
-            }
-        }
+        var domainErr = await CheckEmailDomainAsync(project, email, loginChallenge);
+        if (domainErr != null) return (null, domainErr);
 
         var emailLower = email.ToLowerInvariant();
         var user = await db.Users.FirstOrDefaultAsync(
@@ -161,18 +153,30 @@ public class SamlController(
         if (user == null) user = await ProvisionUserAsync(project, email, displayName, idp.DefaultRoleId);
         if (!user.Active) return (null, "account_disabled");
 
-        if (project.RequireRoleToLogin)
-        {
-            var hasRole = await db.UserProjectRoles.AnyAsync(r => r.UserId == user.Id && r.ProjectId == project.Id);
-            if (!hasRole)
-            {
-                if (!string.IsNullOrEmpty(loginChallenge))
-                    await hydra.RejectLoginAsync(loginChallenge, "access_denied", "no_role_assigned");
-                return (null, "no_role_assigned");
-            }
-        }
+        var roleErr = await CheckRoleRequirementAsync(project, user, loginChallenge);
+        if (roleErr != null) return (null, roleErr);
 
         return (user, null);
+    }
+
+    private async Task<string?> CheckEmailDomainAsync(Project project, string email, string? loginChallenge)
+    {
+        if (project.AllowedEmailDomains.Length == 0) return null;
+        var domain = email.Split('@').LastOrDefault()?.ToLowerInvariant() ?? "";
+        if (project.AllowedEmailDomains.Any(d => d.Equals(domain, StringComparison.OrdinalIgnoreCase))) return null;
+        if (!string.IsNullOrEmpty(loginChallenge))
+            await hydra.RejectLoginAsync(loginChallenge, "access_denied", "email_domain_not_allowed");
+        return "email_domain_not_allowed";
+    }
+
+    private async Task<string?> CheckRoleRequirementAsync(Project project, User user, string? loginChallenge)
+    {
+        if (!project.RequireRoleToLogin) return null;
+        var hasRole = await db.UserProjectRoles.AnyAsync(r => r.UserId == user.Id && r.ProjectId == project.Id);
+        if (hasRole) return null;
+        if (!string.IsNullOrEmpty(loginChallenge))
+            await hydra.RejectLoginAsync(loginChallenge, "access_denied", "no_role_assigned");
+        return "no_role_assigned";
     }
 
     // ── SP Metadata ───────────────────────────────────────────────────────────
