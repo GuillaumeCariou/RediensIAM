@@ -116,16 +116,7 @@ public class SmtpEmailService(
             Text = $"Your {subject.ToLower()} is: {code}\n\nThis code expires in 10 minutes."
         };
 
-        // ── Send ─────────────────────────────────────────────────────────────
-        using var client = new SmtpClient();
-        await client.ConnectAsync(host, port,
-            startTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None);
-
-        if (!string.IsNullOrEmpty(username) && !string.IsNullOrEmpty(password))
-            await client.AuthenticateAsync(username, password);
-
-        await client.SendAsync(message);
-        await client.DisconnectAsync(true);
+        await SmtpSendAsync(host, port, startTls, username, password, message);
     }
 
     public async Task SendInviteAsync(string to, string inviteUrl, string orgName, Guid? projectId = null)
@@ -184,15 +175,7 @@ public class SmtpEmailService(
             Text = $"You have been invited to join {orgName}.\n\nClick the link below to accept your invitation and set your password:\n\n{inviteUrl}\n\nThis link expires in 72 hours."
         };
 
-        using var client = new SmtpClient();
-        await client.ConnectAsync(host, port,
-            startTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None);
-
-        if (!string.IsNullOrEmpty(username) && !string.IsNullOrEmpty(password))
-            await client.AuthenticateAsync(username, password);
-
-        await client.SendAsync(message);
-        await client.DisconnectAsync(true);
+        await SmtpSendAsync(host, port, startTls, username, password, message);
     }
 
     public async Task SendNewDeviceAlertAsync(string to, string ipAddress, string userAgent, DateTimeOffset loginAt, Guid? orgId = null)
@@ -232,23 +215,28 @@ public class SmtpEmailService(
             Text = $"A new device logged into your account at {loginAt:R}.\n\nIP address: {ipAddress}\nDevice: {userAgent}\n\nIf this was not you, please reset your password immediately."
         };
 
-        using var client = new SmtpClient();
-        await client.ConnectAsync(host, port, startTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None);
-        if (!string.IsNullOrEmpty(username))
-            await client.AuthenticateAsync(username, password!);
-        await client.SendAsync(message);
-        await client.DisconnectAsync(true);
+        await SmtpSendAsync(host, port, startTls, username, password, message);
     }
 
     public async Task CheckConnectivityAsync()
     {
         if (string.IsNullOrEmpty(appConfig.SmtpHost))
             throw new InvalidOperationException("SMTP not configured");
+        await SmtpSendAsync(appConfig.SmtpHost, appConfig.SmtpPort, appConfig.SmtpStartTls,
+            appConfig.SmtpUsername, appConfig.SmtpPassword, message: null);
+    }
+
+    private static async Task SmtpSendAsync(
+        string host, int port, bool startTls,
+        string? username, string? password,
+        MimeMessage? message)
+    {
         using var client = new SmtpClient();
-        await client.ConnectAsync(appConfig.SmtpHost, appConfig.SmtpPort,
-            appConfig.SmtpStartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None);
-        if (!string.IsNullOrEmpty(appConfig.SmtpUsername))
-            await client.AuthenticateAsync(appConfig.SmtpUsername, appConfig.SmtpPassword!);
+        await client.ConnectAsync(host, port, startTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None);
+        if (!string.IsNullOrEmpty(username) && !string.IsNullOrEmpty(password))
+            await client.AuthenticateAsync(username, password);
+        if (message != null)
+            await client.SendAsync(message);
         await client.DisconnectAsync(true);
     }
 }
