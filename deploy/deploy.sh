@@ -47,11 +47,11 @@ fi
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 wait_api() {
-  for i in $(seq 1 30); do
+  for i in $(seq 1 60); do
     kubectl get nodes --request-timeout=5s &>/dev/null && return 0
-    echo "    [k3s] waiting for API… ($i/30)"; sleep 5
+    echo "    [k3s] waiting for API… ($i/60)"; sleep 10
   done
-  echo "  ERROR: cluster API not ready"; exit 1
+  echo "  ERROR: cluster API not ready after 10m"; exit 1
 }
 
 helm_deploy() {
