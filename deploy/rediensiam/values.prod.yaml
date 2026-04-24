@@ -30,6 +30,7 @@ hydra:
       serve:
         public:
           cors:
+            enabled: true
             allowed_origins:
               - "http://localhost:30501"
               - "http://192.168.1.51:30501"

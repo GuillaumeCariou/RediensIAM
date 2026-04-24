@@ -23,6 +23,7 @@ hydra:
       serve:
         public:
           cors:
+            enabled: true
             allowed_origins:
               - "http://localhost:30501"
   ingress:
