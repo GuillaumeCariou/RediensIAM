@@ -105,18 +105,27 @@ spec:
             httpGet:
               path: /health
               port: {{ .Values.rediensiam.service.public.port }}
+              httpHeaders:
+                - name: Host
+                  value: {{ index (urlParse .Values.rediensiam.publicUrl) "host" | quote }}
             failureThreshold: 30
             periodSeconds: 5
           readinessProbe:
             httpGet:
               path: /health
               port: {{ .Values.rediensiam.service.public.port }}
+              httpHeaders:
+                - name: Host
+                  value: {{ index (urlParse .Values.rediensiam.publicUrl) "host" | quote }}
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
               path: /health
               port: {{ .Values.rediensiam.service.public.port }}
+              httpHeaders:
+                - name: Host
+                  value: {{ index (urlParse .Values.rediensiam.publicUrl) "host" | quote }}
             initialDelaySeconds: 30
             periodSeconds: 30
           volumeMounts:

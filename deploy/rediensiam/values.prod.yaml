@@ -1,0 +1,42 @@
+# ── Prod environment overrides ────────────────────────────────────────────────
+# Layered on top of values.yaml. Secrets in values.prod.secret.yaml (gitignored).
+# Admin SPA stays on NodePort 30501 — no public hostname.
+# Access from outside: ssh -L 30501:localhost:30501 user@server
+
+rediensiam:
+  publicUrl: "https://authentication.rediens.net"
+  adminUrl:  "http://localhost:30501"    # NodePort — SSH tunnel only
+
+  smtp:
+    host: ""                             # set your SMTP server
+    port: 587
+    startTls: true
+    username: ""                         # set your SMTP login
+    fromAddress: "noreply@rediens.net"
+    fromName: "Rediens"
+
+hydra:
+  hydra:
+    dev: false
+    dangerousForceHttp: false
+    config:
+      urls:
+        self:
+          issuer:              "https://authentication.rediens.net"
+        login:                 "https://authentication.rediens.net/login"
+        consent:               "https://authentication.rediens.net/auth/consent"
+        logout:                "https://authentication.rediens.net/auth/logout"
+        post_logout_redirect:  "http://localhost:30501/admin/"
+      serve:
+        public:
+          cors:
+            allowed_origins:
+              - "http://localhost:30501"    # admin SPA is always NodePort
+  ingress:
+    public:
+      hosts:
+        - host: authentication.rediens.net
+          paths:
+            - { path: /oauth2,      pathType: Prefix }
+            - { path: /.well-known, pathType: Prefix }
+            - { path: /userinfo,    pathType: Prefix }

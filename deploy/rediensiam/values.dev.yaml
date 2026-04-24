@@ -1,0 +1,35 @@
+# ── Dev environment overrides ─────────────────────────────────────────────────
+# Layered on top of values.yaml. Secrets in values.secret.yaml (gitignored).
+
+rediensiam:
+  publicUrl: "http://localhost"
+  adminUrl:  "http://localhost:30501"
+  smtp:
+    fromAddress: "noreply@localhost"
+    fromName: "RediensIAM"
+
+hydra:
+  hydra:
+    dev: true
+    dangerousForceHttp: true
+    config:
+      urls:
+        self:
+          issuer:              "http://localhost"
+        login:                 "http://localhost/login"
+        consent:               "http://localhost/auth/consent"
+        logout:                "http://localhost/auth/logout"
+        post_logout_redirect:  "http://localhost:30501/admin/"
+      serve:
+        public:
+          cors:
+            allowed_origins:
+              - "http://localhost:30501"
+  ingress:
+    public:
+      hosts:
+        - host: localhost
+          paths:
+            - { path: /oauth2,      pathType: Prefix }
+            - { path: /.well-known, pathType: Prefix }
+            - { path: /userinfo,    pathType: Prefix }

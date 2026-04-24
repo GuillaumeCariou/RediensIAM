@@ -137,9 +137,13 @@ public class WebhookDeliveryTests(TestFixture fixture)
 
         var (orgId, _, client, anchorId) = await ScaffoldAsync();
 
-        // Encrypt a base64-encoded secret — WebhookService decodes it with Convert.FromBase64String
-        var encKey      = Convert.FromHexString(new string('0', 64));
-        var rawSecret   = Convert.ToBase64String(global::System.Text.Encoding.UTF8.GetBytes("super-secret"));
+        // Encrypt with the same HKDF-derived key the app uses for WebhookEncKey
+        var encKey = HKDF.DeriveKey(
+            HashAlgorithmName.SHA256,
+            Convert.FromHexString(new string('0', 64)),
+            32,
+            info: Encoding.UTF8.GetBytes("rediensiam-webhook-secret-v1"));
+        var rawSecret   = Convert.ToBase64String(Encoding.UTF8.GetBytes("super-secret"));
         var secretEnc   = TotpEncryption.EncryptString(encKey, rawSecret);
         await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"], secretEnc: secretEnc);
 

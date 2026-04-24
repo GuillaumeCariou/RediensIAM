@@ -773,9 +773,9 @@ public class SamlServiceUnitTests
     }
 
     [Fact]
-    public async Task BuildConfigAsync_MetadataWithNoSigningCerts_LogsWarningAndSucceeds()
+    public async Task BuildConfigAsync_MetadataWithNoSigningCerts_ThrowsInvalidOperation()
     {
-        // Metadata XML without a KeyDescriptor — warning logged, but no exception
+        // Metadata XML without a KeyDescriptor — SamlService throws because no signing certs found
         const string entityId = "https://meta-idp.example.com";
         const string ssoUrl   = "https://meta-idp.example.com/sso";
         var xml = $"""
@@ -799,11 +799,11 @@ public class SamlServiceUnitTests
             MetadataUrl = "https://meta-idp.example.com/metadata",
         };
 
-        var config = await svc.BuildConfigAsync(
+        var act = async () => await svc.BuildConfigAsync(
             idp, "https://sp.example.com/saml/metadata", new Uri("https://sp.example.com/saml/acs"));
 
-        config.SignatureValidationCertificates.Should().BeEmpty();
-        config.SingleSignOnDestination.Should().Be(new Uri(ssoUrl));
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*failed to load metadata*");
     }
 
     [Fact]

@@ -1,11 +1,5 @@
 rediensiam:
 
-  # ── URLs — single source of truth ────────────────────────────────────────────
-  # publicUrl : auth routes, login SPA, Hydra issuer, cookie domain
-  # adminUrl  : admin console — keep on private network / localhost only
-  publicUrl: "http://localhost"
-  adminUrl:  "http://localhost:30501"
-
   # ── App image ─────────────────────────────────────────────────────────────────
   image:
     repository: rediensiam
@@ -34,23 +28,18 @@ rediensiam:
       port: 5000
     admin:
       port: 5001
-      # NodePort is the ONLY external access point for the admin SPA.
-      # dev: http://localhost:30501/admin/
-      # ops: kubectl port-forward svc/rediensiam-admin 30501:5001
+      # Admin SPA is exposed ONLY via NodePort — no public ingress.
+      # Access: direct on local network, or SSH tunnel from remote:
+      #   ssh -L 30501:localhost:30501 user@server
       nodePort: 30501
 
   ingress:
     className: traefik
     public:
       enabled: true
-      # Leave empty to auto-derive host from publicUrl
-      host: ""
+      host: ""    # set in values.dev.yaml / values.prod.yaml
     admin:
-      # Enable for private-DNS + IP-allowlist production access.
-      # Disabled by default — NodePort is sufficient for dev/staging.
-      enabled: false
-      # Leave empty to auto-derive host from adminUrl
-      host: ""
+      enabled: false    # keep false — NodePort only
 
   # ── SMTP (optional; per-org SMTP overrides this) ──────────────────────────────
   smtp:
@@ -61,12 +50,10 @@ rediensiam:
     fromAddress: "noreply@localhost"
     fromName: "RediensIAM"
 
-  # ── Secrets (override via values.secret.yaml) ─────────────────────────────────
+  # ── Secrets — override via values.secret.yaml / values.prod.secret.yaml ───────
   # encryptionKey : 64-char hex — encrypts TOTP secrets, SMTP passwords, webhook secrets
-  # databaseUrl   : full PostgreSQL connection string (include password)
-  # cacheUrl      : full Redis/Dragonfly connection string (include password if auth enabled)
-  # When postgres.local.enabled=false : set databaseUrl to your external DB connection string
-  # When dragonfly.local.enabled=false: set cacheUrl to your external Redis connection string
+  # databaseUrl   : full PostgreSQL connection string
+  # cacheUrl      : full Redis/Dragonfly connection string
   secrets:
     encryptionKey: ""
     databaseUrl: ""
@@ -76,13 +63,12 @@ rediensiam:
     bootstrapPassword: ""
 
   # ── PostgreSQL ────────────────────────────────────────────────────────────────
-  # local.enabled=false → no local Postgres deployed; set secrets.databaseUrl to external DB
   postgres:
     local:
       enabled: true
       image: postgres:16-alpine
       storage: 2Gi
-      password: ""    # stored in K8s secret as postgres-password
+      password: ""
       resources:
         requests:
           cpu: 100m
@@ -94,12 +80,11 @@ rediensiam:
           ephemeral-storage: 2Gi
 
   # ── Dragonfly (Redis-compatible cache) ────────────────────────────────────────
-  # local.enabled=false → no local Dragonfly deployed; set secrets.cacheUrl to external Redis
   dragonfly:
     local:
       enabled: true
       image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.25.0
-      password: ""    # stored in K8s secret as dragonfly-password
+      password: ""
       resources:
         requests:
           cpu: 50m
@@ -111,48 +96,32 @@ rediensiam:
           ephemeral-storage: 500Mi
 
   # ── Hydra ─────────────────────────────────────────────────────────────────────
-  # local.enabled=false → no local Hydra deployed; app uses external.* URLs
   hydra:
     local:
       enabled: true
     external:
-      # PRODUCTION: use https:// and real hostnames
-      adminUrl: "http://localhost:4445"
-      publicUrl: "http://localhost:4444"
+      adminUrl: "http://rediensiam-hydra-admin:4445"
+      publicUrl: "http://rediensiam-hydra-public:4444"
 
   # ── Keto ──────────────────────────────────────────────────────────────────────
-  # local.enabled=false → no local Keto deployed; app uses external.* URLs
   keto:
     local:
       enabled: true
     external:
-      # PRODUCTION: use https:// and real hostnames
-      readUrl:  "http://localhost:4466"
-      writeUrl: "http://localhost:4467"
+      readUrl:  "http://rediensiam-keto-read:4466"
+      writeUrl: "http://rediensiam-keto-write:4467"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Hydra subchart pass-through — controlled by rediensiam.hydra.local.enabled
-# AUTO: keep hydra.hydra.config.urls.* in sync with rediensiam.publicUrl / adminUrl
-# AUTO: keep hydra.hydra.config.serve.public.cors.allowed_origins in sync with rediensiam.adminUrl
+# Hydra subchart — shared config (URLs set in values.dev.yaml / values.prod.yaml)
 # ══════════════════════════════════════════════════════════════════════════════
 hydra:
   hydra:
     config:
-      urls:
-        self:
-          issuer: "http://localhost"           # = rediensiam.publicUrl
-        login:                "http://localhost/login"
-        consent:              "http://localhost/auth/consent"
-        logout:               "http://localhost/auth/logout"
-        post_logout_redirect: "http://localhost:30501/admin/"  # = rediensiam.adminUrl + /admin/
       strategies:
         access_token: jwt
       secrets:
-        # REQUIRED: set a stable random secret in values.secret.yaml — empty list causes Hydra to
-        # generate a new random key on every pod restart, invalidating all sessions and tokens.
-        # Generate: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
-        system: []            # override via values.secret.yaml — MUST NOT be empty in production
+        system: []    # REQUIRED: set in values.secret.yaml / values.prod.secret.yaml
       log:
         level: info
         format: json
@@ -162,8 +131,6 @@ hydra:
           host: "0.0.0.0"
           cors:
             enabled: true
-            allowed_origins:
-              - "http://localhost:30501"       # = rediensiam.adminUrl
             allowed_methods: [GET, POST]
             allowed_headers: [Authorization, Content-Type]
             exposed_headers: [Content-Type]
@@ -184,18 +151,12 @@ hydra:
     public:
       enabled: true
       className: traefik
-      hosts:
-        - host: localhost
-          paths:
-            - { path: /oauth2,      pathType: Prefix }
-            - { path: /.well-known, pathType: Prefix }
-            - { path: /userinfo,    pathType: Prefix }
     admin:
       enabled: false
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Keto subchart pass-through — controlled by rediensiam.keto.local.enabled
+# Keto subchart — shared config
 # ══════════════════════════════════════════════════════════════════════════════
 keto:
   keto:

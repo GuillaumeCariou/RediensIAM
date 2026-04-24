@@ -49,14 +49,6 @@ spec:
       containers:
         - name: postgres
           image: {{ .Values.rediensiam.postgres.local.image }}
-          securityContext:
-            allowPrivilegeEscalation: false
-            runAsNonRoot: true
-            runAsUser: 999
-            readOnlyRootFilesystem: false
-            capabilities:
-              drop:
-                - ALL
           env:
             - name: POSTGRES_USER
               value: iam

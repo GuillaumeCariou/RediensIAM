@@ -127,7 +127,8 @@ public class WebhookDispatcherService(
     ILogger<WebhookDispatcherService> logger,
     IHttpClientFactory httpClientFactory,
     AppConfig appConfig,
-    IWebhookQueue webhookQueue) : BackgroundService
+    IWebhookQueue webhookQueue,
+    IWebhookSsrfValidator ssrfValidator) : BackgroundService
 {
     // Retry delays: 2s, 8s, 32s
     private static readonly int[] RetryDelaysMs = [2_000, 8_000, 32_000];
@@ -147,7 +148,7 @@ public class WebhookDispatcherService(
                 recovered++;
             }
         }
-        if (recovered > 0)
+        if (recovered > 0 && logger.IsEnabled(LogLevel.Information))
             logger.LogInformation("Recovered {Count} pending webhook jobs from Redis", recovered);
 
         await foreach (var job in channel.Reader.ReadAllAsync(stoppingToken))
@@ -172,7 +173,7 @@ public class WebhookDispatcherService(
             {
                 try { await ProcessJobAsync(pending, pendingJson, drainCts.Token); }
                 finally { _sem.Release(); }
-            });
+            }, drainCts.Token);
         }
         // Wait for in-flight tasks to finish
         for (var i = 0; i < 20; i++)
@@ -185,7 +186,7 @@ public class WebhookDispatcherService(
     private async Task ProcessJobAsync(WebhookJob job, string jobJson, CancellationToken ct)
     {
         // Re-validate IP at delivery to prevent DNS rebinding (C8)
-        if (await WebhookUrlValidator.IsPrivateOrReservedAsync(job.Url))
+        if (await ssrfValidator.IsPrivateOrReservedAsync(job.Url))
         {
             logger.LogWarning("Webhook {Id} delivery blocked: URL resolved to private IP at delivery time", job.WebhookId);
             return;
@@ -210,8 +211,7 @@ public class WebhookDispatcherService(
                 using var req = new HttpRequestMessage(HttpMethod.Post, job.Url);
                 req.Content = new ByteArrayContent(payloadBytes);
                 req.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-                if (!string.IsNullOrEmpty(sig))
-                    req.Headers.Add("X-RediensIAM-Signature", $"sha256={sig}");
+                req.Headers.Add("X-RediensIAM-Signature", $"sha256={sig}");
                 req.Headers.Add("X-RediensIAM-Event", job.EventType);
 
                 var resp = await client.SendAsync(req, ct);

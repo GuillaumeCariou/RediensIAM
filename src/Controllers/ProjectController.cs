@@ -124,7 +124,7 @@ public class ProjectController(
         return null;
     }
 
-    private IActionResult? ValidateLoginTheme(Dictionary<string, object>? theme)
+    private BadRequestObjectResult? ValidateLoginTheme(Dictionary<string, object>? theme)
     {
         if (theme == null) return null;
         if (theme.TryGetValue("logo_url", out var logoVal) && logoVal is string logoUrl

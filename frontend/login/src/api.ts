@@ -1,6 +1,7 @@
 const BASE = import.meta.env.VITE_API_BASE_URL ?? '';
 
-async function parseJson(r: Response): Promise<unknown> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function parseJson(r: Response): Promise<any> {
   const text = await r.text();
   try { return JSON.parse(text); }
   catch { throw new Error(`Server error ${r.status}`); }

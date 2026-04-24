@@ -238,6 +238,17 @@ public record UpdateWebhookRequest(string? Url, string[]? Events, bool? Active);
 
 // ── Shared SSRF validator ────────────────────────────────────────────────────
 
+public interface IWebhookSsrfValidator
+{
+    Task<bool> IsPrivateOrReservedAsync(string url);
+}
+
+public sealed class WebhookSsrfValidator : IWebhookSsrfValidator
+{
+    public Task<bool> IsPrivateOrReservedAsync(string url) =>
+        WebhookUrlValidator.IsPrivateOrReservedAsync(url);
+}
+
 public static class WebhookUrlValidator
 {
     public static async Task<bool> IsPrivateOrReservedAsync(string url)

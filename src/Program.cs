@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using Prometheus;
 using Microsoft.EntityFrameworkCore;
@@ -5,6 +6,7 @@ using StackExchange.Redis;
 using RediensIAM.Config;
 using RediensIAM.Data;
 using RediensIAM.Data.Entities;
+using RediensIAM.Controllers;
 using RediensIAM.Middleware;
 using RediensIAM.Services;
 
@@ -38,6 +40,13 @@ builder.Services.AddStackExchangeRedisCache(o =>
     o.InstanceName   = appConfig.CacheInstanceName;
 });
 
+// ── Data Protection — persist keys to Redis so pod restarts don't invalidate sessions ──
+builder.Services.AddDataProtection()
+    .PersistKeysToStackExchangeRedis(
+        ConnectionMultiplexer.Connect(appConfig.CacheConnectionString),
+        "rediensiam:dataprotection:keys")
+    .SetApplicationName("rediensiam");
+
 // ── Session (for MFA state) — backed by Redis so it survives pod restarts ──
 builder.Services.AddSession(o =>
 {
@@ -67,6 +76,7 @@ builder.Services.AddScoped<BreachCheckService>();
 builder.Services.AddScoped<SamlService>();
 builder.Services.AddSingleton(_ => System.Threading.Channels.Channel.CreateUnbounded<RediensIAM.Services.WebhookJob>());
 builder.Services.AddSingleton<IWebhookQueue, RedisWebhookQueue>();
+builder.Services.AddSingleton<IWebhookSsrfValidator, WebhookSsrfValidator>();
 builder.Services.AddScoped<WebhookService>();
 builder.Services.AddHostedService<WebhookDispatcherService>();
 builder.Services.AddHostedService<AuditLogRetentionService>();
@@ -329,7 +339,7 @@ static void AddSecurityHeaders(HttpContext ctx)
     ctx.Response.Headers.XXSSProtection        = "0";
     ctx.Response.Headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()";
     if (ctx.Request.IsHttps)
-        ctx.Response.Headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
+        ctx.Response.Headers.StrictTransportSecurity = "max-age=31536000; includeSubDomains";
     if (!ctx.Request.Path.StartsWithSegments("/preview"))
         ctx.Response.Headers.XFrameOptions = "DENY";
     ctx.Response.Headers.ContentSecurityPolicy = ctx.Request.Path.StartsWithSegments("/admin")

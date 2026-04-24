@@ -341,6 +341,7 @@ public class AuthController(
         }
 
         code.UsedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
         var user = await db.Users.FindAsync(userGuid);
         return await CompleteMfaLoginAsync(user!, userGuid, challenge, projectId, "user.login.backup_code");
     }

@@ -3,13 +3,20 @@ using System.Net.Http.Headers;
 using System.Reflection;
 using System.Text.Json;
 using System.Threading.Channels;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Abstractions;
+using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using RediensIAM.Config;
+using RediensIAM.Controllers;
 using RediensIAM.Data;
 using RediensIAM.Exceptions;
+using RediensIAM.Filters;
 using RediensIAM.Middleware;
 using RediensIAM.Models;
 using RediensIAM.Services;
@@ -687,7 +694,8 @@ public class EntityModelTests
             NullLogger<WebhookDispatcherService>.Instance,
             new WebhookNoOpHttpClientFactory(),
             BuildNoOpAppConfig(),
-            new NoOpWebhookQueue());
+            new NoOpWebhookQueue(),
+            new NoOpSsrfValidator());
 
         var method = typeof(WebhookDispatcherService)
             .GetMethod("ExecuteAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
@@ -715,7 +723,8 @@ public class EntityModelTests
             NullLogger<WebhookDispatcherService>.Instance,
             httpFactory,
             BuildNoOpAppConfig(),
-            new NoOpWebhookQueue());
+            new NoOpWebhookQueue(),
+            new NoOpSsrfValidator());
 
         // Write a job and complete the channel
         await ch.Writer.WriteAsync(new WebhookJob(
@@ -744,6 +753,134 @@ public class EntityModelTests
                 ["Webhook:TimeoutSeconds"]            = "5",
             })
             .Build());
+
+    // ── RequireManagementLevelAttribute — null claims path (lines 20-22) ─────
+
+    [Fact]
+    public void RequireManagementLevelAttribute_NullClaims_ReturnsUnauthorized()
+    {
+        var attr        = new RequireManagementLevelAttribute(ManagementLevel.OrgAdmin);
+        var httpContext = new DefaultHttpContext();
+        // No claims in Items → GetClaims() returns null
+
+        var actionContext = new ActionContext(
+            httpContext, new RouteData(), new ActionDescriptor());
+        var execContext = new ActionExecutingContext(
+            actionContext, new List<IFilterMetadata>(),
+            new Dictionary<string, object?>(), controller: null!);
+
+        attr.OnActionExecuting(execContext);
+
+        execContext.Result.Should().BeOfType<UnauthorizedObjectResult>();
+    }
+
+    // ── WebhookDispatcherService — Redis recovery path (lines 143-152) ───────
+
+    [Fact]
+    public async Task WebhookDispatcherService_ExecuteAsync_RecoversPendingJobsFromQueue()
+    {
+        var job     = new WebhookJob(Guid.NewGuid(), "user.created", "{}", "", "http://localhost/hook");
+        var jobJson = JsonSerializer.Serialize(job, new JsonSerializerOptions());
+        var ch      = Channel.CreateUnbounded<WebhookJob>();
+
+        var svc = new WebhookDispatcherService(
+            ch,
+            new WebhookNoOpScopeFactory(),
+            NullLogger<WebhookDispatcherService>.Instance,
+            new WebhookNoOpHttpClientFactory(),
+            BuildNoOpAppConfig(),
+            new SingleJobWebhookQueue(jobJson),
+            new NoOpSsrfValidator());
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(400));
+        var method = typeof(WebhookDispatcherService)
+            .GetMethod("ExecuteAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+        var task = (Task)method.Invoke(svc, [cts.Token])!;
+
+        // Recovery writes job to channel → foreach loop waits for more → CancellationToken fires
+        var act = async () => await task;
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    // ── WebhookDispatcherService — SSRF blocked at delivery (lines 189-192) ──
+
+    [Fact]
+    public async Task WebhookDispatcherService_ProcessJobAsync_SsrfBlocked_DoesNotCallHttp()
+    {
+        var httpFactory = new TrackingHttpClientFactory();
+        var ch = Channel.CreateUnbounded<WebhookJob>();
+        await ch.Writer.WriteAsync(
+            new WebhookJob(Guid.NewGuid(), "user.created", "{}", "", "http://127.0.0.1/hook"));
+        ch.Writer.Complete();
+
+        var svc = new WebhookDispatcherService(
+            ch,
+            new WebhookNoOpScopeFactory(),
+            NullLogger<WebhookDispatcherService>.Instance,
+            httpFactory,
+            BuildNoOpAppConfig(),
+            new NoOpWebhookQueue(),
+            new WebhookSsrfValidator());
+
+        var method = typeof(WebhookDispatcherService)
+            .GetMethod("ExecuteAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var task = (Task)method.Invoke(svc, [CancellationToken.None])!;
+        await task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.Delay(300);
+
+        httpFactory.RequestCount.Should().Be(0, "SSRF block must prevent any HTTP delivery");
+    }
+
+    // ── HydraService.ParseNextPageToken (lines 167-181) via reflection ────────
+
+    [Fact]
+    public void HydraService_ParseNextPageToken_ValidNextLink_ReturnsToken()
+    {
+        var method = typeof(HydraService)
+            .GetMethod("ParseNextPageToken", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var link   = "<http://localhost/admin/clients?page_size=250&page_token=abc123>; rel=\"next\"";
+
+        var result = (string?)method.Invoke(null, [link]);
+
+        result.Should().Be("abc123");
+    }
+
+    [Fact]
+    public void HydraService_ParseNextPageToken_NoPrevRelOnly_ReturnsNull()
+    {
+        var method = typeof(HydraService)
+            .GetMethod("ParseNextPageToken", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var link   = "<http://localhost/admin/clients?page=1>; rel=\"prev\"";
+
+        var result = (string?)method.Invoke(null, [link]);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public void HydraService_ParseNextPageToken_NextLinkWithoutPageToken_ReturnsNull()
+    {
+        var method = typeof(HydraService)
+            .GetMethod("ParseNextPageToken", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var link   = "<http://localhost/admin/clients?page_size=250>; rel=\"next\"";
+
+        var result = (string?)method.Invoke(null, [link]);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public void HydraService_ParseNextPageToken_ShortSegmentThenValidNext_SkipsShortAndReturnsToken()
+    {
+        var method = typeof(HydraService)
+            .GetMethod("ParseNextPageToken", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var link   = "nosegs, <http://localhost/admin/clients?page_token=tok99>; rel=\"next\"";
+
+        var result = (string?)method.Invoke(null, [link]);
+
+        result.Should().Be("tok99");
+    }
 }
 
 // ── Stubs used by AuditLogRetentionService and WebhookDispatcherService tests ─
@@ -805,5 +942,35 @@ file sealed class NoOpWebhookQueue : IWebhookQueue
     public Task PersistAsync(string jobJson, long score) => Task.CompletedTask;
     public Task<string[]> RecoverAllAsync() => Task.FromResult(Array.Empty<string>());
     public Task RemoveAsync(string jobJson) => Task.CompletedTask;
+}
+
+file sealed class NoOpSsrfValidator : IWebhookSsrfValidator
+{
+    public Task<bool> IsPrivateOrReservedAsync(string url) => Task.FromResult(false);
+}
+
+file sealed class SingleJobWebhookQueue(string jobJson) : IWebhookQueue
+{
+    public Task PersistAsync(string j, long score) => Task.CompletedTask;
+    public Task<string[]> RecoverAllAsync() => Task.FromResult(new[] { jobJson });
+    public Task RemoveAsync(string j) => Task.CompletedTask;
+}
+
+file sealed class TrackingHttpClientFactory : IHttpClientFactory
+{
+    public int RequestCount { get; private set; }
+
+    public HttpClient CreateClient(string name) =>
+        new(new TrackingHandler(this));
+
+    private sealed class TrackingHandler(TrackingHttpClientFactory owner) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            owner.RequestCount++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }
+    }
 }
 

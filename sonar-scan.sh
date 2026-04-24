@@ -40,6 +40,9 @@ fi
 echo ""
 echo "==> Scanning API..."
 rm -rf tests/RediensIAM.IntegrationTests/TestResults
+rm -rf .sonarqube src/bin src/obj
+# Recreate Debug stub so MSBuild glob expansion (bin/Debug) doesn't fail before Release build
+mkdir -p src/bin/Debug/net10.0
 
 dotnet sonarscanner begin \
   /k:"RediensIAM" \

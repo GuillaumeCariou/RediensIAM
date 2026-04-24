@@ -27,12 +27,10 @@ CHART="${SCRIPT_DIR}/rediensiam"
 
 if [ "${PROD}" = "true" ]; then
   IMAGE="${REGISTRY}/rediensiam:prod"
-  PROD_DOMAIN="authentication.rediens.net"
-  PROD_URL="https://${PROD_DOMAIN}"
   SECRETS_FILE="${CHART}/values.prod.secret.yaml"
   echo "════════════════════════════════════════════════"
   echo " RediensIAM — Prod Deployment"
-  echo " Domain:    ${PROD_DOMAIN}"
+  echo " Config:    values.yaml + values.prod.yaml"
   echo " Registry:  ${REGISTRY}"
   echo " Namespace: ${NAMESPACE}"
   echo "════════════════════════════════════════════════"
@@ -40,9 +38,10 @@ else
   IMAGE="${REGISTRY}/rediensiam:dev"
   echo "════════════════════════════════════════════════"
   echo " RediensIAM — Dev Deployment"
+  echo " Config:    values.yaml + values.dev.yaml"
   echo " Registry:  ${REGISTRY}"
   echo " Namespace: ${NAMESPACE}"
-  echo " Dev mode:  ${DEV} | Upgrade: ${UPGRADE}"
+  echo " Upgrade:   ${UPGRADE}"
   echo "════════════════════════════════════════════════"
 fi
 
@@ -90,7 +89,7 @@ if [ "${PROD}" = "true" ] && [ ! -f "${SECRETS_FILE}" ]; then
   echo "──── [1b/5] Generating prod secrets ─────────────"
   DB_PASS=$(openssl rand -hex 20)
   HYDRA_SECRET=$(openssl rand -hex 32)
-  TOTP_KEY=$(openssl rand -base64 32)
+  TOTP_KEY=$(openssl rand -hex 32)   # must be exactly 64 hex chars (32 bytes)
   ARGON_PEPPER=$(openssl rand -hex 32)
 
   read -rp "  Bootstrap admin email    [admin@rediens.net]: " BOOTSTRAP_EMAIL
@@ -102,18 +101,17 @@ if [ "${PROD}" = "true" ] && [ ! -f "${SECRETS_FILE}" ]; then
   fi
 
   cat > "${SECRETS_FILE}" <<EOF
-env:
-  IAM_BOOTSTRAP_EMAIL: "${BOOTSTRAP_EMAIL}"
-  IAM_BOOTSTRAP_PASSWORD: "${BOOTSTRAP_PASS}"
-
-secrets:
-  databaseUrl: "Host=rediensiam-postgres;Database=rediensiam;Username=iam;Password=${DB_PASS}"
-  cacheUrl: "rediensiam-dragonfly:6379,abortConnect=false"
-  totpEncryptionKey: "${TOTP_KEY}"
-  argon2Pepper: "${ARGON_PEPPER}"
-
-postgres:
-  password: ${DB_PASS}
+rediensiam:
+  secrets:
+    databaseUrl: "Host=rediensiam-postgres;Database=rediensiam;Username=iam;Password=${DB_PASS}"
+    cacheUrl: "rediensiam-dragonfly:6379,abortConnect=false"
+    encryptionKey: "${TOTP_KEY}"
+    smtpPassword: ""
+    bootstrapEmail: "${BOOTSTRAP_EMAIL}"
+    bootstrapPassword: "${BOOTSTRAP_PASS}"
+  postgres:
+    local:
+      password: ${DB_PASS}
 
 hydra:
   hydra:
@@ -164,37 +162,21 @@ kubectl delete job -n "${NAMESPACE}" -l "app.kubernetes.io/instance=rediensiam" 
 
 if [ "${PROD}" = "true" ]; then
   helm_deploy rediensiam "${CHART}" \
+    -f "${CHART}/values.yaml" \
+    -f "${CHART}/values.prod.yaml" \
     -f "${SECRETS_FILE}" \
-    --set image.repository="${REGISTRY}/rediensiam" \
-    --set image.tag=prod \
-    --set image.pullPolicy=Always \
-    --set appUrl="${PROD_URL}" \
-    --set ingress.host="${PROD_DOMAIN}" \
-    --set "env.App__PublicUrl=${PROD_URL}" \
-    --set "env.App__Domain=${PROD_DOMAIN}" \
-    --set "hydra.hydra.config.urls.self.issuer=${PROD_URL}" \
-    --set "hydra.hydra.config.urls.login=${PROD_URL}/login" \
-    --set "hydra.hydra.config.urls.consent=${PROD_URL}/auth/consent" \
-    --set "hydra.hydra.config.urls.logout=${PROD_URL}/auth/logout" \
-    --set "hydra.hydra.config.urls.post_logout_redirect=${PROD_URL}/admin/" \
-    --set "hydra.ingress.public.hosts[0].host=${PROD_DOMAIN}" \
-    --set "hydra.ingress.public.hosts[0].paths[0].path=/oauth2" \
-    --set "hydra.ingress.public.hosts[0].paths[0].pathType=Prefix" \
-    --set "hydra.ingress.public.hosts[0].paths[1].path=/.well-known" \
-    --set "hydra.ingress.public.hosts[0].paths[1].pathType=Prefix" \
-    --set "hydra.ingress.public.hosts[0].paths[2].path=/userinfo" \
-    --set "hydra.ingress.public.hosts[0].paths[2].pathType=Prefix" \
+    --set rediensiam.image.repository="${REGISTRY}/rediensiam" \
+    --set rediensiam.image.tag=prod \
+    --set rediensiam.image.pullPolicy=Always \
     --wait --timeout 10m
 else
-  DEV_FLAGS=""
-  [ "${DEV}" = "true" ] && DEV_FLAGS="--set hydra.hydra.dev=true --set hydra.hydra.dangerousForceHttp=true --set env.ASPNETCORE_ENVIRONMENT=Development"
-
   helm_deploy rediensiam "${CHART}" \
+    -f "${CHART}/values.yaml" \
+    -f "${CHART}/values.dev.yaml" \
     -f "${CHART}/values.secret.yaml" \
-    --set image.repository="${REGISTRY}/rediensiam" \
-    --set image.tag=dev \
-    --set image.pullPolicy=Always \
-    ${DEV_FLAGS} \
+    --set rediensiam.image.repository="${REGISTRY}/rediensiam" \
+    --set rediensiam.image.tag=dev \
+    --set rediensiam.image.pullPolicy=Always \
     --wait --timeout 10m
 fi
 
@@ -202,11 +184,8 @@ fi
 echo ""
 echo "──── [5/5] Bootstrap ────────────────────────────"
 
-if [ "${PROD}" = "true" ]; then
-  REDIRECT_URI="${PROD_URL}/admin/callback"
-else
-  REDIRECT_URI="http://localhost/admin/callback"
-fi
+# Admin SPA is always on NodePort 30501 — same redirect URI for dev and prod
+REDIRECT_URI="http://localhost:30501/admin/callback"
 
 kubectl exec -n "${NAMESPACE}" deployment/rediensiam-hydra -- \
   hydra delete oauth2-client --endpoint "http://localhost:4445" client_admin_system 2>/dev/null || true

@@ -16,10 +16,14 @@ public class MfaLoginFlowTests(TestFixture fixture)
     private static string NewChallenge() => Guid.NewGuid().ToString("N");
 
     private static readonly byte[] TestEncKey =
-        Convert.FromHexString(new string('0', 64)); // 32-byte all-zero AES key
+        HKDF.DeriveKey(
+            HashAlgorithmName.SHA256,
+            Convert.FromHexString(new string('0', 64)),
+            32,
+            info: Encoding.UTF8.GetBytes("rediensiam-totp-secret-v1"));
 
-    private static string BackupHash(string raw) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw.ToUpperInvariant())));
+    private string BackupHash(string raw) =>
+        fixture.GetService<PasswordService>().Hash(raw.ToUpperInvariant());
 
     private async Task<(Organisation org, Project project, UserList list)> ScaffoldAsync()
     {

@@ -8,6 +8,8 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Http.Resilience;
+using RediensIAM.Controllers;
 using RediensIAM.Services;
 using ISmsService = RediensIAM.Services.ISmsService;
 using StackExchange.Redis;
@@ -150,6 +152,12 @@ public sealed class TestFixture : IAsyncLifetime
                         opts.Cookie.SecurePolicy = CookieSecurePolicy.None;
                         opts.Cookie.SameSite    = SameSiteMode.Unspecified;
                     });
+
+                    DisableCircuitBreakers(services);
+                    // Allow localhost/loopback webhook delivery so tests can use WireMock as a target
+                    var ssrfDesc = services.SingleOrDefault(d => d.ServiceType == typeof(IWebhookSsrfValidator));
+                    if (ssrfDesc != null) services.Remove(ssrfDesc);
+                    services.AddSingleton<IWebhookSsrfValidator, PassthroughSsrfValidator>();
                 });
             });
 
@@ -268,6 +276,7 @@ public sealed class TestFixture : IAsyncLifetime
                         opts.Cookie.SecurePolicy = CookieSecurePolicy.None;
                         opts.Cookie.SameSite    = SameSiteMode.Unspecified;
                     });
+                    DisableCircuitBreakers(services);
                 });
             });
 
@@ -341,6 +350,7 @@ public sealed class TestFixture : IAsyncLifetime
                         opts.Cookie.SecurePolicy = CookieSecurePolicy.None;
                         opts.Cookie.SameSite    = SameSiteMode.Unspecified;
                     });
+                    DisableCircuitBreakers(services);
                 });
             });
 
@@ -416,6 +426,7 @@ public sealed class TestFixture : IAsyncLifetime
                         opts.Cookie.SecurePolicy = CookieSecurePolicy.None;
                         opts.Cookie.SameSite    = SameSiteMode.Unspecified;
                     });
+                    DisableCircuitBreakers(services);
                 });
             });
 
@@ -433,6 +444,14 @@ public sealed class TestFixture : IAsyncLifetime
             entry.State = Microsoft.EntityFrameworkCore.EntityState.Detached;
         await Task.CompletedTask;
     }
+
+    // Polly's standard resilience handler includes a circuit breaker. Tests that simulate
+    // Hydra/Keto failures generate many 500s with retries, which can trip the circuit
+    // and cause all subsequent Hydra introspect calls to fail with BrokenCircuitException.
+    // Raise MinimumThroughput to int.MaxValue so the circuit never opens in tests.
+    private static void DisableCircuitBreakers(IServiceCollection services) =>
+        services.PostConfigureAll<HttpStandardResilienceOptions>(opts =>
+            opts.CircuitBreaker.MinimumThroughput = int.MaxValue);
 }
 
 // ── Stub email service ────────────────────────────────────────────────────────
@@ -608,4 +627,10 @@ internal sealed class LoopbackRemoteIpStartupFilter : IStartupFilter
         });
         next(app);
     };
+}
+
+/// <summary>Bypasses SSRF checks so tests can deliver webhooks to local WireMock servers.</summary>
+file sealed class PassthroughSsrfValidator : IWebhookSsrfValidator
+{
+    public Task<bool> IsPrivateOrReservedAsync(string url) => Task.FromResult(false);
 }
