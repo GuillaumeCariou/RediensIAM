@@ -6,20 +6,35 @@ metadata:
   namespace: {{ .Release.Namespace }}
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
-    traefik.ingress.kubernetes.io/router.priority: "10"
 spec:
   ingressClassName: {{ .Values.rediensiam.ingress.className }}
   rules:
     - host: {{ include "rediensiam.ingressPublicHost" . }}
       http:
         paths:
-          - path: /api/manage
+          # Hydra OIDC paths — listed before / so longest-prefix wins
+          - path: /.well-known
             pathType: Prefix
             backend:
               service:
-                name: {{ .Release.Name }}-public
+                name: {{ .Release.Name }}-hydra-public
                 port:
-                  number: {{ .Values.rediensiam.service.public.port }}
+                  number: 4444
+          - path: /oauth2
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-hydra-public
+                port:
+                  number: 4444
+          - path: /userinfo
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-hydra-public
+                port:
+                  number: 4444
+          # rediensiam app — catch-all
           - path: /
             pathType: Prefix
             backend:

@@ -26,11 +26,3 @@ hydra:
             enabled: true
             allowed_origins:
               - "http://localhost:30501"
-  ingress:
-    public:
-      hosts:
-        - host: localhost
-          paths:
-            - { path: /oauth2,      pathType: Prefix }
-            - { path: /.well-known, pathType: Prefix }
-            - { path: /userinfo,    pathType: Prefix }

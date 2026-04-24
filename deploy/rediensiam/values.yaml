@@ -149,10 +149,7 @@ hydra:
     admin:  { type: ClusterIP, port: 4445 }
   ingress:
     public:
-      enabled: true
-      className: traefik
-      annotations:
-        traefik.ingress.kubernetes.io/router.priority: "100"
+      enabled: false
     admin:
       enabled: false
 

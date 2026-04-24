@@ -34,11 +34,3 @@ hydra:
             allowed_origins:
               - "http://localhost:30501"
               - "http://192.168.1.51:30501"
-  ingress:
-    public:
-      hosts:
-        - host: authentication.rediens.net
-          paths:
-            - { path: /oauth2,      pathType: Prefix }
-            - { path: /.well-known, pathType: Prefix }
-            - { path: /userinfo,    pathType: Prefix }
