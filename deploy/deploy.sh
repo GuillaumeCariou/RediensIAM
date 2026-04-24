@@ -220,13 +220,22 @@ echo ""
 echo " Pods:"
 kubectl get pods -n "${NAMESPACE}" --no-headers | awk '{printf "   %-40s %s\n", $1, $3}'
 echo ""
+# Detect server LAN IP (first non-loopback IPv4)
+SERVER_IP=$(ip -4 addr show scope global | grep -oP '(?<=inet )\d+\.\d+\.\d+\.\d+' | head -1)
+SERVER_IP="${SERVER_IP:-$(hostname -I | awk '{print $1}')}"
+
 echo " Links:"
 echo "   Login            →  ${PUBLIC_URL}/login"
+if [ -n "${SERVER_IP}" ]; then
+echo "   Login (LAN)      →  http://${SERVER_IP}/login"
+fi
 echo "   Register         →  ${PUBLIC_URL}/register"
 echo "   OIDC discovery   →  ${PUBLIC_URL}/.well-known/openid-configuration"
 echo "   Health           →  ${PUBLIC_URL}/health"
-echo "   Admin SPA        →  ${ADMIN_URL}/admin/"
-echo "   Admin (NodePort) →  http://localhost:30501/admin/"
+echo "   Admin SPA        →  http://localhost:30501/admin/"
+if [ -n "${SERVER_IP}" ]; then
+echo "   Admin (LAN)      →  http://${SERVER_IP}:30501/admin/"
+fi
 echo ""
 echo " Smoke tests:"
 
@@ -243,13 +252,12 @@ check() {
 
 # Resolve internal cluster IP for the public service
 PUBLIC_IP=$(kubectl get svc -n "${NAMESPACE}" rediensiam-public -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
-ADMIN_PORT_URL="http://localhost:30501"
 
 if [ -n "${PUBLIC_IP}" ]; then
-  check "Health"          "http://${PUBLIC_IP}:5000/health"                        "200"
+  check "Health"          "http://${PUBLIC_IP}:5000/health"                           "200"
   check "OIDC discovery"  "http://${PUBLIC_IP}:5000/.well-known/openid-configuration" "200"
-  check "Login page"      "http://${PUBLIC_IP}:5000/login"                         "200"
-  check "Admin SPA"       "${ADMIN_PORT_URL}/admin/"                               "200"
+  check "Login page"      "http://${PUBLIC_IP}:5000/login"                            "200"
+  check "Admin SPA"       "http://localhost:30501/admin/"                             "200"
 else
   echo "   (could not resolve cluster IP — skipping curl checks)"
 fi
@@ -259,6 +267,6 @@ if [ "${PROD}" = "true" ]; then
   echo " Prod reminders:"
   echo "   - Point ${PUBLIC_HOST} → this node's :80 in Traefik"
   echo "   - Keep ${SECRETS_FILE} off this machine after deploy"
-  echo "   - Admin access from outside: ssh -L 30501:localhost:30501 user@$(hostname)"
+  echo "   - Admin from outside: ssh -L 30501:localhost:30501 user@${SERVER_IP}"
 fi
 echo "════════════════════════════════════════════════"
