@@ -6,6 +6,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.priority: "10"
 spec:
   ingressClassName: {{ .Values.rediensiam.ingress.className }}
   rules:
