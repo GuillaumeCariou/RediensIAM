@@ -35,8 +35,9 @@ spec:
               containerPort: {{ .Values.rediensiam.service.admin.port }}
           env:
             # ── Host header validation ─────────────────────────────────────────
+            # Set to * — Traefik handles host filtering at ingress; app is not directly internet-exposed
             - name: AllowedHosts
-              value: {{ index (urlParse .Values.rediensiam.publicUrl) "host" | quote }}
+              value: "*"
             # ── App ────────────────────────────────────────────────────────────
             - name: App__PublicUrl
               value: {{ .Values.rediensiam.publicUrl | quote }}
