@@ -28,6 +28,7 @@ CHART="${SCRIPT_DIR}/rediensiam"
 if [ "${PROD}" = "true" ]; then
   IMAGE="${REGISTRY}/rediensiam:prod"
   SECRETS_FILE="${CHART}/values.prod.secret.yaml"
+  ENV_FILE="${CHART}/values.prod.yaml"
   echo "════════════════════════════════════════════════"
   echo " RediensIAM — Prod Deployment"
   echo " Config:    values.yaml + values.prod.yaml"
@@ -36,6 +37,7 @@ if [ "${PROD}" = "true" ]; then
   echo "════════════════════════════════════════════════"
 else
   IMAGE="${REGISTRY}/rediensiam:dev"
+  ENV_FILE="${CHART}/values.dev.yaml"
   echo "════════════════════════════════════════════════"
   echo " RediensIAM — Dev Deployment"
   echo " Config:    values.yaml + values.dev.yaml"
@@ -44,6 +46,11 @@ else
   echo " Upgrade:   ${UPGRADE}"
   echo "════════════════════════════════════════════════"
 fi
+
+# Read URLs from the env-specific values file
+PUBLIC_URL=$(grep '^\s*publicUrl:' "${ENV_FILE}" | head -1 | sed 's/.*publicUrl:[[:space:]]*//' | tr -d '"' | cut -d'#' -f1 | tr -d ' ')
+ADMIN_URL=$(grep '^\s*adminUrl:' "${ENV_FILE}" | head -1 | sed 's/.*adminUrl:[[:space:]]*//' | tr -d '"' | cut -d'#' -f1 | tr -d ' ')
+PUBLIC_HOST=$(echo "${PUBLIC_URL}" | sed 's|https\?://||' | cut -d: -f1)
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 wait_api() {
@@ -213,16 +220,45 @@ echo ""
 echo " Pods:"
 kubectl get pods -n "${NAMESPACE}" --no-headers | awk '{printf "   %-40s %s\n", $1, $3}'
 echo ""
-echo " Access:"
-if [ "${PROD}" = "true" ]; then
-  echo "   Login  →  ${PROD_URL}/login"
-  echo "   Admin  →  ${PROD_URL}/admin/"
-  echo ""
-  echo " Remember:"
-  echo "   - Update Traefik routing on the proxy host to point ${PROD_DOMAIN} → k3s node :80"
-  echo "   - Keep ${SECRETS_FILE} safe (not committed)"
+echo " Links:"
+echo "   Login            →  ${PUBLIC_URL}/login"
+echo "   Register         →  ${PUBLIC_URL}/register"
+echo "   OIDC discovery   →  ${PUBLIC_URL}/.well-known/openid-configuration"
+echo "   Health           →  ${PUBLIC_URL}/health"
+echo "   Admin SPA        →  ${ADMIN_URL}/admin/"
+echo "   Admin (NodePort) →  http://localhost:30501/admin/"
+echo ""
+echo " Smoke tests:"
+
+check() {
+  local label="$1"; local url="$2"; local expected="$3"
+  local code
+  code=$(curl -sk -o /dev/null -w "%{http_code}" -H "Host: ${PUBLIC_HOST}" --max-time 5 "${url}" 2>/dev/null)
+  if [ "${code}" = "${expected}" ]; then
+    echo "   ✓  ${label} (${code})"
+  else
+    echo "   ✗  ${label} — expected ${expected}, got ${code}  [${url}]"
+  fi
+}
+
+# Resolve internal cluster IP for the public service
+PUBLIC_IP=$(kubectl get svc -n "${NAMESPACE}" rediensiam-public -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
+ADMIN_PORT_URL="http://localhost:30501"
+
+if [ -n "${PUBLIC_IP}" ]; then
+  check "Health"          "http://${PUBLIC_IP}:5000/health"                        "200"
+  check "OIDC discovery"  "http://${PUBLIC_IP}:5000/.well-known/openid-configuration" "200"
+  check "Login page"      "http://${PUBLIC_IP}:5000/login"                         "200"
+  check "Admin SPA"       "${ADMIN_PORT_URL}/admin/"                               "200"
 else
-  echo "   Login  →  http://localhost/login"
-  echo "   Admin  →  http://localhost/admin/"
+  echo "   (could not resolve cluster IP — skipping curl checks)"
+fi
+
+if [ "${PROD}" = "true" ]; then
+  echo ""
+  echo " Prod reminders:"
+  echo "   - Point ${PUBLIC_HOST} → this node's :80 in Traefik"
+  echo "   - Keep ${SECRETS_FILE} off this machine after deploy"
+  echo "   - Admin access from outside: ssh -L 30501:localhost:30501 user@$(hostname)"
 fi
 echo "════════════════════════════════════════════════"
