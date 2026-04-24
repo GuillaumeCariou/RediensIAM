@@ -67,6 +67,9 @@ spec:
         - podSelector:
             matchLabels:
               app: {{ .Release.Name }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
       ports: [{port: 4444}]
     - from:
         - podSelector:
