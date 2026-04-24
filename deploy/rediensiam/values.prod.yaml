@@ -4,8 +4,7 @@
 # Access from outside: ssh -L 30501:localhost:30501 user@server
 
 rediensiam:
-  # Switch to https://authentication.rediens.net once DNS + SSL cert are configured
-  publicUrl: "http://192.168.1.51"
+  publicUrl: "https://authentication.rediens.net"
   adminUrl:  "http://localhost:30501"    # NodePort — SSH tunnel only
 
   smtp:
@@ -19,14 +18,14 @@ rediensiam:
 hydra:
   hydra:
     dev: false
-    dangerousForceHttp: true
+    dangerousForceHttp: false
     config:
       urls:
         self:
-          issuer:              "http://192.168.1.51"
-        login:                 "http://192.168.1.51/login"
-        consent:               "http://192.168.1.51/auth/consent"
-        logout:                "http://192.168.1.51/auth/logout"
+          issuer:              "https://authentication.rediens.net"
+        login:                 "https://authentication.rediens.net/login"
+        consent:               "https://authentication.rediens.net/auth/consent"
+        logout:                "https://authentication.rediens.net/auth/logout"
         post_logout_redirect:  "http://localhost:30501/admin/"
       serve:
         public:
@@ -37,7 +36,7 @@ hydra:
   ingress:
     public:
       hosts:
-        - host: 192.168.1.51
+        - host: authentication.rediens.net
           paths:
             - { path: /oauth2,      pathType: Prefix }
             - { path: /.well-known, pathType: Prefix }
