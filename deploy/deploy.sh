@@ -210,17 +210,14 @@ fi
 echo "   Register         →  ${PUBLIC_URL}/register"
 echo "   OIDC discovery   →  ${PUBLIC_URL}/.well-known/openid-configuration"
 echo "   Health           →  ${PUBLIC_URL}/health"
-echo "   Admin SPA        →  http://localhost:30501/admin/"
-if [ -n "${SERVER_IP}" ]; then
-echo "   Admin (LAN)      →  http://${SERVER_IP}:30501/admin/"
-fi
+echo "   Admin SPA        →  ${ADMIN_URL}/admin/  (Tailscale only)"
 echo ""
 echo " Smoke tests:"
 
 check() {
-  local label="$1"; local url="$2"; local expected="$3"
+  local label="$1"; local url="$2"; local expected="$3"; local host="${4:-${PUBLIC_HOST}}"
   local code
-  code=$(curl -sk -o /dev/null -w "%{http_code}" -H "Host: ${PUBLIC_HOST}" --max-time 5 "${url}" 2>/dev/null)
+  code=$(curl -sk -o /dev/null -w "%{http_code}" -H "Host: ${host}" --max-time 5 "${url}" 2>/dev/null)
   if [ "${code}" = "${expected}" ]; then
     echo "   ✓  ${label} (${code})"
   else
@@ -230,14 +227,19 @@ check() {
 
 # Resolve internal cluster IP for the public service
 PUBLIC_IP=$(kubectl get svc -n "${NAMESPACE}" rediensiam-public -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
+ADMIN_IP=$(kubectl get svc -n "${NAMESPACE}" rediensiam-admin -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
+ADMIN_HOST=$(echo "${ADMIN_URL}" | sed 's|https\?://||' | cut -d: -f1)
 
 if [ -n "${PUBLIC_IP}" ]; then
   check "Health"          "http://${PUBLIC_IP}:5000/health"                           "200"
   check "OIDC discovery"  "http://${PUBLIC_IP}:5000/.well-known/openid-configuration" "200"
   check "Login page"      "http://${PUBLIC_IP}:5000/login"                            "200"
-  check "Admin SPA"       "http://localhost:30501/admin/"                             "200"
-else
-  echo "   (could not resolve cluster IP — skipping curl checks)"
+fi
+if [ -n "${ADMIN_IP}" ]; then
+  check "Admin SPA"       "http://${ADMIN_IP}:5001/admin/"                            "200" "${ADMIN_HOST}"
+fi
+if [ -z "${PUBLIC_IP}" ] && [ -z "${ADMIN_IP}" ]; then
+  echo "   (could not resolve cluster IPs — skipping curl checks)"
 fi
 
 if [ "${PROD}" = "true" ]; then
@@ -245,6 +247,6 @@ if [ "${PROD}" = "true" ]; then
   echo " Prod reminders:"
   echo "   - Point ${PUBLIC_HOST} → this node's :80 in Traefik"
   echo "   - Keep ${SECRETS_FILE} off this machine after deploy"
-  echo "   - Admin from outside: ssh -L 30501:localhost:30501 user@${SERVER_IP}"
+  echo "   - Admin requires Tailscale — enroll devices via headscale"
 fi
 echo "════════════════════════════════════════════════"
