@@ -4,7 +4,7 @@
 
 rediensiam:
   publicUrl: "https://authentication.rediens.net"
-  adminUrl:  "http://auth.ts.rediens.net"    # MagicDNS — accessible from enrolled Tailscale devices only
+  adminUrl:  "https://auth.ts.rediens.net"    # Tailscale MagicDNS — HTTPS via self-signed cert, Tailscale-only
 
   ingress:
     admin:
@@ -30,11 +30,11 @@ hydra:
         login:                 "https://authentication.rediens.net/login"
         consent:               "https://authentication.rediens.net/auth/consent"
         logout:                "https://authentication.rediens.net/auth/logout"
-        post_logout_redirect:  "http://auth.ts.rediens.net/admin/"
+        post_logout_redirect:  "https://auth.ts.rediens.net/admin/"
       serve:
         public:
           cors:
             enabled: true
             allowed_origins:
-              - "http://auth.ts.rediens.net"
+              - "https://auth.ts.rediens.net"
               - "http://localhost:30501"    # keep for local SSH fallback

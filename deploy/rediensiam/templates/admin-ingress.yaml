@@ -1,14 +1,20 @@
 {{- if .Values.rediensiam.ingress.admin.enabled }}
-# Private admin ingress — internal access only (Tailscale or LAN).
+# Private admin ingress — Tailscale only (auth.ts.rediens.net).
+# HTTPS via cert-manager self-signed cert (browser warning on first visit).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: {{ .Release.Name }}-admin-internal
   namespace: {{ .Release.Namespace }}
   annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    cert-manager.io/cluster-issuer: selfsigned
 spec:
   ingressClassName: {{ .Values.rediensiam.ingress.className }}
+  tls:
+    - hosts:
+        - {{ include "rediensiam.ingressAdminHost" . }}
+      secretName: {{ .Release.Name }}-admin-tls
   rules:
     - host: {{ include "rediensiam.ingressAdminHost" . }}
       http:
