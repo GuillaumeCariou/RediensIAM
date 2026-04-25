@@ -75,7 +75,7 @@ helm_deploy() {
 
 # ── 1. Docker Registry ─────────────────────────────────────────────────────────
 echo ""
-echo "──── [1/5] Docker Registry ──────────────────────"
+echo "──── [1/4] Docker Registry ──────────────────────"
 if docker ps | grep -q "registry"; then
   echo "  Running"
 elif docker ps -a | grep -q "registry"; then
@@ -139,7 +139,7 @@ fi
 
 # ── 2. Build ───────────────────────────────────────────────────────────────────
 echo ""
-echo "──── [2/5] Build ────────────────────────────────"
+echo "──── [2/4] Build ────────────────────────────────"
 cd "${ROOT_DIR}/frontend/login" && npm ci --silent && npm run build
 echo "  Login SPA: $(du -sh dist | cut -f1)"
 cd "${ROOT_DIR}/frontend/admin" && npm ci --silent && npm run build
@@ -149,7 +149,7 @@ echo "  Image pushed: ${IMAGE}"
 
 # ── 3. Helm repos & chart deps ────────────────────────────────────────────────
 echo ""
-echo "──── [3/5] Helm ─────────────────────────────────"
+echo "──── [3/4] Helm ─────────────────────────────────"
 helm repo add ory https://k8s.ory.sh/helm/charts --force-update 2>/dev/null || true
 if [ "${UPGRADE}" = "true" ]; then
   helm repo update
@@ -162,7 +162,7 @@ fi
 
 # ── 4. Deploy ──────────────────────────────────────────────────────────────────
 echo ""
-echo "──── [4/5] Deploy ───────────────────────────────"
+echo "──── [4/4] Deploy ───────────────────────────────"
 wait_api
 
 kubectl delete job -n "${NAMESPACE}" -l "app.kubernetes.io/instance=rediensiam" 2>/dev/null || true
@@ -187,30 +187,8 @@ else
     --wait --timeout 10m
 fi
 
-# ── 5. Bootstrap Hydra admin client ───────────────────────────────────────────
-echo ""
-echo "──── [5/5] Bootstrap ────────────────────────────"
-
-# Admin SPA is always on NodePort 30501 — same redirect URI for dev and prod
-REDIRECT_URI="http://localhost:30501/admin/callback"
-
-kubectl exec -n "${NAMESPACE}" deployment/rediensiam-hydra -- \
-  hydra delete oauth2-client --endpoint "http://localhost:4445" client_admin_system 2>/dev/null || true
-
-kubectl exec -n "${NAMESPACE}" deployment/rediensiam-hydra -- \
-  hydra create oauth2-client \
-    --endpoint "http://localhost:4445" \
-    --id client_admin_system \
-    --name "RediensIAM Admin Console" \
-    --grant-type authorization_code \
-    --grant-type refresh_token \
-    --response-type code \
-    --scope openid \
-    --scope offline \
-    --redirect-uri "${REDIRECT_URI}" \
-    --token-endpoint-auth-method none \
-  && echo "  client_admin_system created (redirect: ${REDIRECT_URI})"
-
+# client_admin_system is registered by the app on startup (EnsureAdminSpaClientAsync)
+# with token_endpoint_auth_method=none and redirect_uris from App__AdminSpaOrigin.
 
 # ── Summary ────────────────────────────────────────────────────────────────────
 echo ""

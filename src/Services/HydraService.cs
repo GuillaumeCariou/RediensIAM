@@ -212,6 +212,30 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
         return await resp.Content.ReadFromJsonAsync<JsonElement>(_json);
     }
 
+    public async Task EnsureAdminSpaClientAsync(string adminSpaOrigin)
+    {
+        var redirectUris = new[] { $"{adminSpaOrigin}/admin/callback", "http://localhost:30501/admin/callback" }
+            .Distinct().ToArray();
+        var body = new
+        {
+            client_id                  = Roles.AdminClientId,
+            client_name                = "RediensIAM Admin SPA",
+            grant_types                = new[] { "authorization_code" },
+            response_types             = new[] { "code" },
+            scope                      = "openid offline",
+            redirect_uris              = redirectUris,
+            token_endpoint_auth_method = "none",
+            subject_type               = "public"
+        };
+        var exists = await Client.GetAsync($"{_adminUrl}/admin/clients/{Roles.AdminClientId}");
+        HttpResponseMessage resp;
+        if (exists.IsSuccessStatusCode)
+            resp = await Client.PutAsJsonAsync($"{_adminUrl}/admin/clients/{Roles.AdminClientId}", body);
+        else
+            resp = await Client.PostAsJsonAsync($"{_adminUrl}/admin/clients", body);
+        resp.EnsureSuccessStatusCode();
+    }
+
     public async Task CreateOrUpdateServiceAccountClientAsync(string clientId, string saName, JsonElement jwk)
     {
         var body = new

@@ -198,6 +198,9 @@ static async Task EnsureDbSchemaAsync(WebApplication webApp)
     }
 }
 
+// ── Ensure admin SPA OAuth2 client registered with correct settings ────────
+await EnsureHydraAdminClientAsync(app, appConfig);
+
 // ── Bootstrap super admin ──────────────────────────────────────────────────
 if (!string.IsNullOrEmpty(appConfig.BootstrapEmail) && !string.IsNullOrEmpty(appConfig.BootstrapPassword))
     await BootstrapSuperAdminAsync(app, appConfig);
@@ -222,6 +225,31 @@ static async Task BootstrapSuperAdminAsync(WebApplication webApp, AppConfig cfg)
             await Task.Delay(5000);
         }
         catch (Exception ex) { log.LogWarning(ex, "Bootstrap super admin failed"); }
+    }
+}
+
+static async Task EnsureHydraAdminClientAsync(WebApplication webApp, AppConfig cfg)
+{
+    var log = webApp.Services.GetRequiredService<ILogger<Program>>();
+    for (var attempt = 1; attempt <= 12; attempt++)
+    {
+        try
+        {
+            using var scope = webApp.Services.CreateScope();
+            var hydra = scope.ServiceProvider.GetRequiredService<HydraService>();
+            await hydra.EnsureAdminSpaClientAsync(cfg.AdminSpaOrigin);
+            log.LogInformation("Admin SPA OAuth2 client '{ClientId}' registered (token_endpoint_auth_method=none)", RediensIAM.Config.Roles.AdminClientId);
+            return;
+        }
+        catch (Exception ex) when (attempt < 12)
+        {
+            log.LogWarning(ex, "Hydra not ready for admin client setup (attempt {Attempt}/12), retrying in 5s", attempt);
+            await Task.Delay(5000);
+        }
+        catch (Exception ex)
+        {
+            log.LogError(ex, "Failed to register admin SPA client with Hydra after 12 attempts");
+        }
     }
 }
 
