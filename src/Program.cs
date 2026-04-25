@@ -32,8 +32,8 @@ builder.Services.Configure<ForwardedHeadersOptions>(o =>
     o.KnownProxies.Clear();
 });
 
-builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
-    ConnectionMultiplexer.Connect(appConfig.CacheConnectionString));
+var cacheMultiplexer = await ConnectionMultiplexer.ConnectAsync(appConfig.CacheConnectionString);
+builder.Services.AddSingleton<IConnectionMultiplexer>(cacheMultiplexer);
 builder.Services.AddStackExchangeRedisCache(o =>
 {
     o.Configuration  = appConfig.CacheConnectionString;
@@ -42,9 +42,7 @@ builder.Services.AddStackExchangeRedisCache(o =>
 
 // ── Data Protection — persist keys to Redis so pod restarts don't invalidate sessions ──
 builder.Services.AddDataProtection()
-    .PersistKeysToStackExchangeRedis(
-        ConnectionMultiplexer.Connect(appConfig.CacheConnectionString),
-        "rediensiam:dataprotection:keys")
+    .PersistKeysToStackExchangeRedis(cacheMultiplexer, "rediensiam:dataprotection:keys")
     .SetApplicationName("rediensiam");
 
 // ── Session (for MFA state) — backed by Redis so it survives pod restarts ──

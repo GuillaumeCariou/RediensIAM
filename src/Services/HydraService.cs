@@ -214,8 +214,7 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
 
     public async Task EnsureAdminSpaClientAsync(string adminSpaOrigin)
     {
-        var redirectUris = new[] { $"{adminSpaOrigin}/admin/callback", "http://localhost:30501/admin/callback" }
-            .Distinct().ToArray();
+        var redirectUris = new[] { $"{adminSpaOrigin}/admin/callback" };
         var body = new
         {
             client_id                  = Roles.AdminClientId,
