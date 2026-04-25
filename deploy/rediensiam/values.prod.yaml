@@ -3,7 +3,7 @@
 # Admin SPA accessible via Tailscale mesh (100.64.0.3) — no public hostname.
 
 rediensiam:
-  publicUrl: "https://authentication.rediens.net"
+  publicUrl: "https://auth.rediens.net"
   adminUrl:  "https://auth.ts.rediens.net"    # Tailscale MagicDNS — HTTPS via self-signed cert, Tailscale-only
 
   ingress:
@@ -26,10 +26,10 @@ hydra:
     config:
       urls:
         self:
-          issuer:              "https://authentication.rediens.net"
-        login:                 "https://authentication.rediens.net/login"
-        consent:               "https://authentication.rediens.net/auth/consent"
-        logout:                "https://authentication.rediens.net/auth/logout"
+          issuer:              "https://auth.rediens.net"
+        login:                 "https://auth.rediens.net/login"
+        consent:               "https://auth.rediens.net/auth/consent"
+        logout:                "https://auth.rediens.net/auth/logout"
         post_logout_redirect:  "https://auth.ts.rediens.net/admin/"
       serve:
         public:
