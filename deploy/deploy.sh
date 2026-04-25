@@ -198,15 +198,8 @@ echo ""
 echo " Pods:"
 kubectl get pods -n "${NAMESPACE}" --no-headers | awk '{printf "   %-40s %s\n", $1, $3}'
 echo ""
-# Detect server LAN IP (first non-loopback IPv4)
-SERVER_IP=$(ip -4 addr show scope global | grep -oP '(?<=inet )\d+\.\d+\.\d+\.\d+' | head -1)
-SERVER_IP="${SERVER_IP:-$(hostname -I | awk '{print $1}')}"
-
 echo " Links:"
 echo "   Login            →  ${PUBLIC_URL}/login"
-if [ -n "${SERVER_IP}" ]; then
-echo "   Login (LAN)      →  http://${SERVER_IP}/login"
-fi
 echo "   Register         →  ${PUBLIC_URL}/register"
 echo "   OIDC discovery   →  ${PUBLIC_URL}/.well-known/openid-configuration"
 echo "   Health           →  ${PUBLIC_URL}/health"
