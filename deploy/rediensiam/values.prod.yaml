@@ -1,11 +1,15 @@
 # ── Prod environment overrides ────────────────────────────────────────────────
 # Layered on top of values.yaml. Secrets in values.prod.secret.yaml (gitignored).
-# Admin SPA stays on NodePort 30501 — no public hostname.
-# Access from outside: ssh -L 30501:localhost:30501 user@server
+# Admin SPA accessible via Tailscale mesh (100.64.0.3) — no public hostname.
 
 rediensiam:
   publicUrl: "https://authentication.rediens.net"
-  adminUrl:  "http://localhost:30501"    # NodePort — SSH tunnel only
+  adminUrl:  "http://100.64.0.3"    # Tailscale IP — accessible from enrolled devices only
+
+  ingress:
+    admin:
+      enabled: true
+      host: "100.64.0.3"
 
   smtp:
     host: ""                             # set your SMTP server
@@ -26,11 +30,11 @@ hydra:
         login:                 "https://authentication.rediens.net/login"
         consent:               "https://authentication.rediens.net/auth/consent"
         logout:                "https://authentication.rediens.net/auth/logout"
-        post_logout_redirect:  "http://localhost:30501/admin/"
+        post_logout_redirect:  "http://100.64.0.3/admin/"
       serve:
         public:
           cors:
             enabled: true
             allowed_origins:
-              - "http://localhost:30501"
-              - "http://192.168.1.51:30501"
+              - "http://100.64.0.3"
+              - "http://localhost:30501"    # keep for local SSH fallback
