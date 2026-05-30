@@ -255,7 +255,7 @@ public class AuthController(
             await db.SaveChangesAsync();
             await rateLimiter.RecordFailureAsync(Ip, user.Id);
             IamMetrics.LoginAttempts.WithLabels("failure").Inc();
-            await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.failed");
+            await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.failure");
             return Unauthorized(new { error = ErrInvalidCreds });
         }
         return null;
@@ -349,7 +349,7 @@ public class AuthController(
         };
 
         var redirectUrl = await hydra.AcceptLoginAsync(loginChallenge, subject, context);
-        await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login");
+        await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.success");
         IamMetrics.LoginAttempts.WithLabels("success").Inc();
         _ = Task.Run(() => CheckNewDeviceAsync(user, project.OrgId, Ip, Request.Headers.UserAgent.ToString()));
         return Ok(new { redirect_to = redirectUrl });

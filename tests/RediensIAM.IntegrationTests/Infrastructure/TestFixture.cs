@@ -75,6 +75,25 @@ public sealed class TestFixture : IAsyncLifetime
 
         _mux = await ConnectionMultiplexer.ConnectAsync(_redis.GetConnectionString());
 
+        // Program.cs top-level statements read AppConfig values (DB connection, cache
+        // multiplexer) BEFORE builder.Build() runs, which means the InMemoryCollection
+        // added via WithWebHostBuilder is not yet applied. Set the critical keys as
+        // process env vars so they are visible to builder.Configuration at startup.
+        // WebApplication.CreateBuilder auto-loads env vars and double-underscore maps
+        // to the colon-separated config key.
+        SetTestEnvVar("ConnectionStrings__Default",        _postgres.GetConnectionString());
+        SetTestEnvVar("Cache__ConnectionString",           _redis.GetConnectionString());
+        SetTestEnvVar("Hydra__AdminUrl",                   Hydra.Url);
+        SetTestEnvVar("Hydra__PublicUrl",                  Hydra.Url);
+        SetTestEnvVar("Keto__ReadUrl",                     Keto.ReadUrl);
+        SetTestEnvVar("Keto__WriteUrl",                    Keto.WriteUrl);
+        SetTestEnvVar("Security__TotpSecretEncryptionKey", new string('0', 64));
+        SetTestEnvVar("App__PublicUrl",                    "http://localhost");
+        SetTestEnvVar("App__Domain",                       "localhost");
+        SetTestEnvVar("App__AdminSpaOrigin",               "http://localhost");
+        SetTestEnvVar("IAM_PUBLIC_PORT",                   "5000");
+        SetTestEnvVar("IAM_ADMIN_PORT",                    "5001");
+
         _factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {
@@ -181,6 +200,15 @@ public sealed class TestFixture : IAsyncLifetime
         Client.Dispose();
         await _factory.DisposeAsync();
         await Task.WhenAll(_postgres.DisposeAsync().AsTask(), _redis.DisposeAsync().AsTask(), _mailhog.DisposeAsync().AsTask());
+        foreach (var key in _testEnvVars)
+            Environment.SetEnvironmentVariable(key, null);
+    }
+
+    private readonly List<string> _testEnvVars = new();
+    private void SetTestEnvVar(string key, string? value)
+    {
+        Environment.SetEnvironmentVariable(key, value);
+        _testEnvVars.Add(key);
     }
 
     // ── Request helpers ───────────────────────────────────────────────────────

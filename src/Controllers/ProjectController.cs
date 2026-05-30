@@ -202,7 +202,7 @@ public class ProjectController(
         try
         {
             await keto.RemoveProjectRoleAsync(ActorId, id, ProjectId, roleId);
-            await audit.RecordAsync(project.OrgId, project.Id, ActorId, "role.removed", "user", id.ToString(),
+            await audit.RecordAsync(project.OrgId, project.Id, ActorId, "role.revoked", "user", id.ToString(),
                 new() { ["role_id"] = roleId.ToString() });
             return NoContent();
         }
@@ -263,7 +263,7 @@ public class ProjectController(
         if (!await db.Users.AnyAsync(u => u.Id == id && u.UserListId == project.AssignedUserListId))
             return NotFound();
         await hydra.RevokeAllConsentSessionsAsync($"{project.OrgId}:{id}");
-        await audit.RecordAsync(project.OrgId, project.Id, ActorId, "user.force_logout", "user", id.ToString());
+        await audit.RecordAsync(project.OrgId, project.Id, ActorId, "session.revoked", "user", id.ToString());
         return Ok(new { message = "sessions_revoked" });
     }
 

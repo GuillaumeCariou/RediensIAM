@@ -17,23 +17,22 @@ namespace RediensIAM.Services;
 
 public static class WebhookEvents
 {
-    // List MUST match the action strings passed to AuditLogService.RecordAsync — otherwise
-    // events are recorded but webhooks never fire (the dispatcher filters by exact match).
+    // Public webhook event names. These MUST stay stable for downstream subscribers.
+    // Code in AuditLogService.RecordAsync sites is required to emit one of these strings
+    // verbatim — otherwise the event is logged but no webhook fires.
     public static readonly string[] All =
     [
         // user lifecycle
-        "user.created", "user.updated", "user.removed",
+        "user.created", "user.updated", "user.deleted", "user.unlocked",
         "user.registered", "user.registered.social",
         "user.invited", "user.invite_resent",
-        "user.unlocked", "user.force_logout",
         // user auth
-        "user.login", "user.login.failed", "user.login.failure", "user.login.locked",
-        "user.login.saml",
+        "user.login.success", "user.login.failure", "user.login.locked", "user.login.saml",
         "user.password_changed", "user.password_reset_by_admin", "user.password.reset",
         "user.mfa.totp.failed", "user.mfa.sms.failed",
         // roles
         "role.created", "role.updated", "role.deleted",
-        "role.assigned", "role.removed",
+        "role.assigned", "role.revoked",
         "role.management.assigned", "role.management.removed",
         // service accounts
         "sa.created", "sa.deleted",
@@ -83,7 +82,7 @@ public sealed record WebhookJob(
 // ── WebhookService — enqueues jobs, used by other services ───────────────────
 
 public class WebhookService(
-    RediensIamDbContext db,
+    IServiceScopeFactory scopeFactory,
     AppConfig appConfig,
     Channel<WebhookJob> channel,
     IWebhookQueue webhookQueue)
@@ -100,6 +99,9 @@ public class WebhookService(
         Guid? orgId,
         Guid? projectId)
     {
+        // Use a fresh DbContext scope: callers invoke this fire-and-forget from inside
+        // a request, and the request-scoped DbContext is not thread-safe — sharing it
+        // races with the caller's own awaits and triggers "second operation on context".
         var payload = JsonSerializer.Serialize(new
         {
             @event = eventType,
@@ -107,6 +109,8 @@ public class WebhookService(
             data = payloadObj
         }, JsonOpts);
 
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<RediensIamDbContext>();
         var webhooks = await db.Webhooks
             .Where(w => w.Active
                 && w.Events.Contains(eventType)
@@ -130,9 +134,12 @@ public class WebhookService(
         }
     }
 
-    // Called by the dispatcher to log the attempt result
+    // Called by the dispatcher to log the attempt result. Uses its own scope to keep
+    // DbContext usage off the request thread.
     public async Task RecordDeliveryAsync(WebhookDelivery delivery)
     {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<RediensIamDbContext>();
         db.WebhookDeliveries.Add(delivery);
         await db.SaveChangesAsync();
     }

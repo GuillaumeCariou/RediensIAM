@@ -265,7 +265,7 @@ var user = await db.Users
         if (user == null) return NotFound();
         var orgId = user.UserList.OrgId?.ToString() ?? "";
         await hydra.RevokeSessionsAsync($"{orgId}:{id}");
-        await audit.RecordAsync(user.UserList.OrgId, null, GetActorId(), "user.force_logout", "user", id.ToString());
+        await audit.RecordAsync(user.UserList.OrgId, null, GetActorId(), "session.revoked", "user", id.ToString());
         return Ok(new { message = "sessions_revoked" });
     }
 

@@ -475,7 +475,8 @@ public class OrgController(
     [HttpPatch("userlists/{id}/users/{uid}")]
     public async Task<IActionResult> UpdateUser(Guid id, Guid uid, [FromBody] UpdateUserRequest body)
     {
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == uid && u.UserListId == id && u.UserList.OrgId == OrgId);
+        var user = await db.Users.Include(u => u.UserList)
+            .FirstOrDefaultAsync(u => u.Id == uid && u.UserListId == id && u.UserList.OrgId == OrgId);
         if (user == null) return NotFound();
         return await ApplyUserUpdate(user, body);
     }
@@ -574,7 +575,7 @@ public class OrgController(
         await keto.DeleteRelationTupleAsync(Roles.KetoUserListsNamespace, id.ToString(), "member", $"user:{uid}");
         db.Users.Remove(user);
         await db.SaveChangesAsync();
-        await audit.RecordAsync(OrgId, null, ActorId, "user.removed", "user", uid.ToString());
+        await audit.RecordAsync(OrgId, null, ActorId, "user.deleted", "user", uid.ToString());
         return NoContent();
     }
 
