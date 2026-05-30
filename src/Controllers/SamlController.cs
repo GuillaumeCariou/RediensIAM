@@ -62,6 +62,10 @@ public class SamlController(
     // ── ACS: receive and validate SAMLResponse ────────────────────────────────
 
     [HttpPost("acs")]
+    [Microsoft.AspNetCore.Mvc.IgnoreAntiforgeryToken]
+    // SAML ACS receives an IdP-signed assertion via the user agent; the SAML signature
+    // verification IS the integrity / replay defence. ASP.NET anti-forgery tokens (designed
+    // for browser-originated form posts) do not apply here.
     public async Task<IActionResult> AssertionConsumerService([FromForm(Name = "RelayState")] string relayState = "")
     {
         var (parsed, parseError) = await ParseSamlResponseAsync(relayState);
@@ -211,7 +215,7 @@ public class SamlController(
         do
         {
             if (++discIter > 100) throw new InvalidOperationException("discriminator_space_exhausted");
-            discriminator = Random.Shared.Next(1000, 9999).ToString();
+            discriminator = System.Security.Cryptography.RandomNumberGenerator.GetInt32(1000, 10000).ToString();
         }
         while (await db.Users.AnyAsync(u =>
             u.UserListId == project.AssignedUserListId &&

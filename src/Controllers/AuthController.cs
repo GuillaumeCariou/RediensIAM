@@ -47,11 +47,37 @@ public class AuthController(
     private const string ErrNoMfaSession     = "no_mfa_session";
     private const string ErrInvalidCode      = "invalid_code";
     private const string ErrReset            = "reset";
+    private const string ErrInvalidRedirect  = "invalid_redirect";
     private const string CtxOrgId            = "org_id";
     private const string CtxProjectId        = "project_id";
     private const string CtxUserId           = "user_id";
 
     private string Ip => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+    /// <summary>
+    /// Defence-in-depth wrapper around <see cref="ControllerBase.Redirect"/>: only forwards to
+    /// origins on the trusted allowlist (Hydra public URL, App PublicUrl, AdminSpaOrigin).
+    /// Anything else returns a 400. Silences SCS0027 by tainting the URL through a validator
+    /// and protects against open-redirect should an upstream response (e.g. Hydra) ever be
+    /// poisoned. Relative URLs are always allowed (same origin).
+    /// </summary>
+    private IActionResult SafeRedirect(string url)
+    {
+        if (!RedirectValidator.TryReconstruct(url,
+                [appConfig.PublicUrl, appConfig.AdminSpaOrigin, appConfig.HydraPublicUrl],
+                out var safeUrl))
+        {
+            logger.LogWarning("SafeRedirect refused URL {Url}", url);
+            return BadRequest(new { error = ErrInvalidRedirect });
+        }
+        // Set the Location header directly rather than calling ControllerBase.Redirect:
+        // the URL has already been parsed, validated against an allowlist, and
+        // reconstructed via UriBuilder. Writing the header manually keeps the (now-safe)
+        // value out of the static-analyser-tracked Redirect(string) sink.
+        Response.Headers.Location = safeUrl;
+        Response.StatusCode = StatusCodes.Status302Found;
+        return new EmptyResult();
+    }
 
     [HttpGet("login")]
     public async Task<IActionResult> GetLogin([FromQuery] string login_challenge)
@@ -86,7 +112,7 @@ public class AuthController(
             if (skipErr != null) return skipErr;
         }
         var redirect = await hydra.AcceptLoginAsync(login_challenge, req.Subject ?? "", []);
-        return Redirect(redirect);
+        return SafeRedirect(redirect);
     }
 
     private static Guid? ParseSubjectUserId(string? subject)
@@ -278,7 +304,7 @@ public class AuthController(
             if (!hasRole)
             {
                 var rejectUrl = await hydra.RejectLoginAsync(loginChallenge, ErrAccessDenied, "no_role_assigned");
-                return Redirect(rejectUrl);
+                return SafeRedirect(rejectUrl);
             }
         }
         return null;
@@ -500,7 +526,7 @@ public class AuthController(
             if (adminRoles.Count == 0)
             {
                 var rejectUrl = await hydra.RejectConsentAsync(consent_challenge, ErrAccessDenied, "insufficient_role");
-                return Redirect(rejectUrl);
+                return SafeRedirect(rejectUrl);
             }
 
             // Resolve the org and project scopes so the token carries them
@@ -524,7 +550,7 @@ public class AuthController(
                 }
             };
             var adminRedirect = await hydra.AcceptConsentAsync(consent_challenge, adminSession, req.RequestedScope);
-            return Redirect(adminRedirect);
+            return SafeRedirect(adminRedirect);
         }
 
         var projectIdStr = context?.GetValueOrDefault(CtxProjectId)?.ToString();
@@ -558,7 +584,7 @@ public class AuthController(
         };
 
         var redirectUrl = await hydra.AcceptConsentAsync(consent_challenge, session, req.RequestedScope);
-        return Redirect(redirectUrl);
+        return SafeRedirect(redirectUrl);
     }
 
     [HttpGet("logout")]
@@ -1051,7 +1077,7 @@ public class AuthController(
         do
         {
             if (++discIter > 100) throw new InvalidOperationException("discriminator_space_exhausted");
-            discriminator = Random.Shared.Next(1000, 9999).ToString();
+            discriminator = RandomNumberGenerator.GetInt32(1000, 10000).ToString();
         }
         while (await db.Users.AnyAsync(u => u.UserListId == userListId && u.Username == uname && u.Discriminator == discriminator));
         return new User
@@ -1277,7 +1303,7 @@ public class AuthController(
         do
         {
             if (++discIter > 100) throw new InvalidOperationException("discriminator_space_exhausted");
-            discriminator = Random.Shared.Next(1000, 9999).ToString();
+            discriminator = RandomNumberGenerator.GetInt32(1000, 10000).ToString();
         }
         while (await db.Users.AnyAsync(u =>
             u.UserListId == project.AssignedUserListId &&
