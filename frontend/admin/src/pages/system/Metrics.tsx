@@ -1,7 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid } from 'recharts';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
+import { StatCard, ActivityChart } from '@/components/iam';
 import { getMetrics } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 
@@ -26,94 +24,72 @@ export default function SystemMetrics() {
     getMetrics().then(setMetrics).catch(console.error).finally(() => setLoading(false));
   }, []);
 
-  if (loading) {
-    return (
-      <div>
-        <PageHeader title="Metrics" description="System-wide usage statistics" />
-        <div className="p-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-          {Array.from({ length: 4 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-64 rounded-xl" />)}
-        </div>
-      </div>
-    );
-  }
-
-  const summaryData = [
-    { name: 'Total Orgs', value: metrics?.organisations ?? 0 },
-    { name: 'Active Orgs', value: metrics?.active_organisations ?? 0 },
-    { name: 'Total Users', value: metrics?.total_users ?? 0 },
-    { name: 'Active Users', value: metrics?.active_users ?? 0 },
-    { name: 'Projects', value: metrics?.projects ?? 0 },
-    { name: 'Service Accts', value: metrics?.service_accounts ?? 0 },
-  ];
-
   return (
     <div>
       <PageHeader title="Metrics" description="System-wide usage statistics" />
-      <div className="p-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader><CardTitle className="text-base">System Summary</CardTitle></CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={summaryData} margin={{ top: 5, right: 5, bottom: 40, left: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-35} textAnchor="end" />
-                <YAxis tick={{ fontSize: 11 }} />
-                <Tooltip contentStyle={{ background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))', borderRadius: 8 }} />
-                <Bar dataKey="value" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
+      <div className="iam-page">
+        <div className="iam-stats-grid" style={{ marginBottom: 24 }}>
+          <StatCard label="Organisations" value={loading ? '—' : metrics?.organisations ?? 0} sub={loading ? undefined : `${metrics?.active_organisations ?? 0} active`} />
+          <StatCard label="Total Users" value={loading ? '—' : metrics?.total_users ?? 0} sub={loading ? undefined : `${metrics?.active_users ?? 0} active`} />
+          <StatCard label="Projects" value={loading ? '—' : metrics?.projects ?? 0} />
+          <StatCard label="Service Accounts" value={loading ? '—' : metrics?.service_accounts ?? 0} />
+        </div>
 
-        {metrics?.logins_by_hour && (
-          <Card>
-            <CardHeader><CardTitle className="text-base">Logins by Hour (last 24h)</CardTitle></CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={240}>
-                <LineChart data={metrics.logins_by_hour} margin={{ top: 5, right: 5, bottom: 20, left: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="hour" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} />
-                  <Tooltip contentStyle={{ background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))', borderRadius: 8 }} />
-                  <Line type="monotone" dataKey="count" stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-        )}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 24 }}>
+          <div className="iam-card iam-card-pad">
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              {'Login activity · last 24h'}
+              <span style={{ display: 'flex', gap: 14, fontSize: 12, color: 'var(--fg-muted)' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--ia-accent)', display: 'inline-block' }} />
+                  {'Success'}
+                </span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--danger)', display: 'inline-block' }} />
+                  {'Failed'}
+                </span>
+              </span>
+            </div>
+            <ActivityChart height={120} />
+          </div>
 
-        {metrics?.users_by_org && (
-          <Card>
-            <CardHeader><CardTitle className="text-base">Users per Organisation</CardTitle></CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={240}>
-                <BarChart data={metrics.users_by_org} layout="vertical" margin={{ top: 5, right: 20, bottom: 5, left: 60 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis type="number" tick={{ fontSize: 11 }} />
-                  <YAxis type="category" dataKey="org" tick={{ fontSize: 11 }} width={55} />
-                  <Tooltip contentStyle={{ background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))', borderRadius: 8 }} />
-                  <Bar dataKey="count" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-        )}
-
-        <Card>
-          <CardHeader><CardTitle className="text-base">Today</CardTitle></CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center py-2 border-b">
-                <span className="text-sm">Logins</span>
-                <span className="font-semibold">{metrics?.recent_logins ?? 0}</span>
+          <div className="iam-card iam-card-pad">
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>Today's activity</div>
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                <span style={{ fontSize: 13, color: 'var(--fg-muted)' }}>Logins</span>
+                <span style={{ fontSize: 16, fontWeight: 600 }}>{loading ? '—' : metrics?.recent_logins ?? 0}</span>
               </div>
-              <div className="flex justify-between items-center py-2">
-                <span className="text-sm">Audit Events</span>
-                <span className="font-semibold">{metrics?.audit_events_today ?? 0}</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0' }}>
+                <span style={{ fontSize: 13, color: 'var(--fg-muted)' }}>Audit events</span>
+                <span style={{ fontSize: 16, fontWeight: 600 }}>{loading ? '—' : metrics?.audit_events_today ?? 0}</span>
               </div>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
+
+        {metrics?.users_by_org && metrics.users_by_org.length > 0 && (
+          <div className="iam-card iam-card-pad">
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>Users per organisation</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+              {metrics.users_by_org.map(row => {
+                const maxCount = Math.max(...metrics.users_by_org!.map(r => r.count));
+                const pct = maxCount > 0 ? (row.count / maxCount) * 100 : 0;
+                return (
+                  <div key={row.org} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                    <div style={{ width: 120, fontSize: 12, color: 'var(--fg-muted)', flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {row.org}
+                    </div>
+                    <div style={{ flex: 1, height: 6, background: 'var(--surface-2)', borderRadius: 3, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${pct}%`, background: 'var(--ia-accent)', borderRadius: 3 }} />
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 600, width: 40, textAlign: 'right', flexShrink: 0 }}>{row.count}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -152,6 +152,12 @@ public class ServiceAccountController(
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
         if (sa == null || !await CanAccessAsync(sa)) return NotFound();
         var orgId = sa.UserList.OrgId;
+        var patHashes = await db.PersonalAccessTokens
+            .Where(p => p.ServiceAccountId == id)
+            .Select(p => p.TokenHash)
+            .ToListAsync();
+        foreach (var hash in patHashes)
+            await patService.InvalidateAsync(hash);
         db.ServiceAccounts.Remove(sa);
         await db.SaveChangesAsync();
         await audit.RecordAsync(orgId, null, ActorId, "sa.deleted", AuditSa, id.ToString());

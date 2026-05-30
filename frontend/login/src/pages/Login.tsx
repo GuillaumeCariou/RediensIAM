@@ -2,11 +2,21 @@ import { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { getLoginChallenge, submitLogin } from '../api';
 import { useTheme, type Theme as ColorTheme } from '../useTheme';
+import { safeNavigate } from '../safeNavigate';
 
-// Strip external url() references to prevent CSS-based data exfiltration.
-// Allows data: URIs (inline images) and relative paths only.
+// Strip dangerous CSS constructs from tenant-supplied custom_css before injecting into <style>.
+// Blocks @import, all url() (regardless of scheme), and selectors targeting password inputs
+// (CSS attribute-selector keylogger). The server should mirror these checks; client-side
+// stripping is defence-in-depth.
 function sanitizeCss(css: string): string {
-  return css.replace(/url\(\s*(['"]?)(https?:|\/\/)[^)]*\1\s*\)/gi, 'url(about:blank)');
+  let out = css;
+  // Drop entire @import / @charset / @namespace rules
+  out = out.replaceAll(/@(import|charset|namespace)[^;]*;?/gi, '');
+  // Neutralise url(...) — block both http(s):, //, relative, and hex-escaped forms
+  out = out.replaceAll(/url\([^)]*\)/gi, 'url(about:blank)');
+  // Block selectors that target password inputs (keylogger pattern)
+  out = out.replaceAll(/input\s*\[\s*type\s*[~|^$*]?=\s*['"]?password['"]?\s*\][^{]*\{[^}]*\}/gi, '');
+  return out;
 }
 
 const themeIcons: Record<ColorTheme, string> = { light: '☀', dark: '☾', system: '⊙' };
@@ -52,6 +62,42 @@ const PROVIDER_ICONS: Record<string, string> = {
   gitlab: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"%3E%3Cpath fill="%23FC6D26" d="m23.955 13.587-1.342-4.135-2.664-8.189a.455.455 0 0 0-.867 0L16.418 9.45H7.582L4.918 1.263a.455.455 0 0 0-.867 0L1.386 9.45.044 13.587a.924.924 0 0 0 .331 1.023L12 23.054l11.625-8.443a.92.92 0 0 0 .33-1.024"/%3E%3C/svg%3E',
 };
 
+function LoginLogo() {
+  return (
+    <div className="login-logo">
+      <div className="brand-mark">R</div>
+      <span>RediensIAM</span>
+    </div>
+  );
+}
+
+function TokenVisual() {
+  return (
+    <div className="token-visual">
+      <div style={{ fontSize: 10, letterSpacing: '0.1em', color: 'var(--fg-subtle)', textTransform: 'uppercase', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+        </svg>
+        Access Token · decoded
+      </div>
+      <div>{'{'}</div>
+      <div style={{ paddingLeft: 14 }}>
+        <span className="tok-key">"sub"</span>: <span className="tok-str">"org_acme-corp:usr_7f3c"</span>,<br/>
+        <span className="tok-key">"project_id"</span>: <span className="tok-str">"proj_01"</span>, <span className="tok-comment">{'// scope = project'}</span><br/>
+        <span className="tok-key">"project_slug"</span>: <span className="tok-str">"customer-portal"</span>,<br/>
+        <span className="tok-key">"org_id"</span>: <span className="tok-str">"org_acme-corp"</span>,<br/>
+        <span className="tok-key">"user_list_id"</span>: <span className="tok-str">"ul_02"</span>,<br/>
+        <span className="tok-key">"roles"</span>: [<span className="tok-str">"editor"</span>, <span className="tok-str">"billing"</span>],<br/>
+        <span className="tok-key">"exp"</span>: <span className="tok-val">1743595338</span><br/>
+      </div>
+      <div>{'}'}</div>
+      <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)', fontSize: 11, color: 'var(--fg-subtle)', fontFamily: 'var(--font-sans)' }}>
+        This token carries <strong style={{ color: 'var(--fg-muted)' }}>only</strong> Project context. Cross-project visibility is super-admin only.
+      </div>
+    </div>
+  );
+}
+
 export default function Login() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -59,6 +105,7 @@ export default function Login() {
   const [loginTheme, setLoginTheme] = useState<Theme | null>(null);
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { theme: colorTheme, setTheme: setColorTheme } = useTheme();
@@ -71,18 +118,37 @@ export default function Login() {
 
   useEffect(() => {
     const t = loginTheme?.theme ?? {};
-    const set = (v: string, val?: string) => { if (val) document.documentElement.style.setProperty(v, val); };
+    const el = document.documentElement;
+    const touchedProps: string[] = [];
+    const set = (v: string, val?: string) => {
+      if (val) { el.style.setProperty(v, val); touchedProps.push(v); }
+    };
     set('--primary', t.primary_color);
+    set('--accent', t.primary_color);
     set('--background', t.background_color);
+    set('--bg', t.background_color);
     set('--surface', t.surface_color);
     set('--text', t.text_color);
-    set('--font-family', t.font_family);
-    if (t.border_radius) document.documentElement.style.setProperty('--radius', `${t.border_radius}px`);
-    if (t.custom_css) {
-      const style = document.createElement('style');
-      style.textContent = sanitizeCss(t.custom_css);
-      document.head.appendChild(style);
+    set('--fg', t.text_color);
+    set('--font-sans', t.font_family);
+    if (t.border_radius) {
+      const r = Number.parseInt(t.border_radius);
+      el.style.setProperty('--radius', `${r}px`);
+      el.style.setProperty('--radius-sm', `${Math.max(4, r - 2)}px`);
+      touchedProps.push('--radius', '--radius-sm');
     }
+    let styleNode: HTMLStyleElement | null = null;
+    if (t.custom_css) {
+      styleNode = document.createElement('style');
+      styleNode.dataset['iamTheme'] = 'login';
+      styleNode.textContent = sanitizeCss(t.custom_css);
+      document.head.appendChild(styleNode);
+    }
+    return () => {
+      // Cleanup so theme doesn't leak across navigations or accumulate <style> nodes on re-render.
+      for (const p of touchedProps) el.style.removeProperty(p);
+      styleNode?.remove();
+    };
   }, [loginTheme]);
 
   async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
@@ -114,7 +180,9 @@ export default function Login() {
         navigate('/mfa-setup');
         return;
       }
-      if (res.redirect_to) { globalThis.location.href = res.redirect_to; }
+      if (res.redirect_to && !safeNavigate(res.redirect_to)) {
+        setError('Sign-in could not complete. Please try again.');
+      }
     } catch {
       setError('Something went wrong. Please try again.');
     } finally {
@@ -122,82 +190,127 @@ export default function Login() {
     }
   }
 
+  const providers = (loginTheme?.theme?.providers ?? []).filter(p => p.enabled);
+  const forgotUrl = `/password-reset?project_id=${loginTheme?.project_id ?? ''}`;
+  const registerUrl = `/register?login_challenge=${challenge}`;
+  const projectInitial = loginTheme?.project_name?.[0]?.toUpperCase() ?? 'P';
+
   return (
     <>
-    <button
-      onClick={nextTheme}
-      title={`Theme: ${colorTheme} (click to change)`}
-      style={{ position: 'fixed', top: '1rem', right: '1rem', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '0.5rem', padding: '0.4rem 0.6rem', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}
-    >
-      {themeIcons[colorTheme]}
-    </button>
-    <div className="card">
-      {loginTheme?.theme?.logo_url && (
-        <div className="card-logo"><img src={loginTheme.theme?.logo_url} alt="Logo" /></div>
-      )}
-      <h1 className="card-title">{loginTheme?.project_name ?? 'Sign in'}</h1>
-      <p className="card-subtitle">Enter your credentials to continue</p>
+      <button onClick={nextTheme} className="theme-toggle" title={`Theme: ${colorTheme} (click to change)`}>
+        {themeIcons[colorTheme]}
+      </button>
+      <div className="login-root">
+        <div className="login-left">
+          <div className="login-card fade-in">
+            <LoginLogo />
 
-      {error && <div className="alert alert-error">{error}</div>}
+            {loginTheme?.project_name && !loginTheme.is_admin_login && (
+              <div className="login-project-chip">
+                <div className="logo-dot">{projectInitial}</div>
+                <span style={{ color: 'var(--fg-muted)' }}>Sign in to</span>
+                <strong style={{ color: 'var(--fg)' }}>{loginTheme.project_name}</strong>
+              </div>
+            )}
 
-      {(() => {
-        const providers = (loginTheme?.theme?.providers ?? []).filter(p => p.enabled);
-        if (!providers.length) return null;
-        return (
-          <div style={{ marginBottom: '1rem' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {providers.map(p => (
-                <button key={p.type + p.client_id} type="button"
-                  onClick={() => {
-                    globalThis.location.href = `/auth/oauth2/start?login_challenge=${encodeURIComponent(challenge)}&provider_id=${encodeURIComponent(p.id)}`;
-                  }}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', width: '100%', padding: '0.625rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--surface)', color: 'var(--text)', fontSize: '0.875rem', fontWeight: 500, cursor: 'pointer' }}>
-                  {(p.logo_url || PROVIDER_ICONS[p.type]) && <img src={p.logo_url || PROVIDER_ICONS[p.type]} alt={p.type} style={{ height: '1rem', width: '1rem' }} />}
-                  {p.label}
-                </button>
-              ))}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: '1rem 0' }}>
-              <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>or</span>
-              <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
-            </div>
+            <h1 className="login-title">
+              {loginTheme?.is_admin_login ? 'Admin sign in.' : 'Welcome back.'}
+            </h1>
+            <p className="login-subtitle">
+              {loginTheme?.project_name && !loginTheme.is_admin_login
+                ? 'Your session will be scoped to this project.'
+                : 'Enter your credentials to continue.'}
+            </p>
+
+            {error && (
+              <div className="deny-banner deny-banner-error" style={{ marginTop: 16 }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0, marginTop: 1 }}>
+                  <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+                {error}
+              </div>
+            )}
+
+            {providers.length > 0 && (
+              <div style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {providers.map(p => (
+                  <button key={p.type + p.client_id} type="button" className="btn btn-secondary"
+                    onClick={() => { globalThis.location.href = `/auth/oauth2/start?login_challenge=${encodeURIComponent(challenge)}&provider_id=${encodeURIComponent(p.id)}`; }}
+                    style={{ justifyContent: 'center' }}>
+                    {(p.logo_url || PROVIDER_ICONS[p.type]) && (
+                      <img src={p.logo_url || PROVIDER_ICONS[p.type]} alt={p.type} style={{ height: 16, width: 16 }} />
+                    )}
+                    Continue with {p.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {providers.length > 0 && <div className="login-divider">or continue with email</div>}
+
+            <form className="login-form" style={{ marginTop: providers.length > 0 ? 0 : undefined }} onSubmit={handleSubmit}>
+              <div>
+                <label className="label">{loginTheme?.is_admin_login ? 'Email' : 'Email or username'}</label>
+                <input
+                  className="input"
+                  type={loginTheme?.is_admin_login ? 'email' : 'text'}
+                  value={identifier}
+                  onChange={e => setIdentifier(e.target.value)}
+                  required autoFocus autoComplete="username"
+                  placeholder="you@example.com"
+                />
+              </div>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <label className="label" htmlFor="login-password" style={{ marginBottom: 0 }}>Password</label>
+                  {!loginTheme?.is_admin_login && (loginTheme?.email_verification_enabled || loginTheme?.sms_verification_enabled) && (
+                    <a href={forgotUrl} className="btn btn-ghost btn-sm">Forgot?</a>
+                  )}
+                </div>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    id="login-password"
+                    className="input"
+                    type={showPw ? 'text' : 'password'}
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    required autoComplete="current-password" placeholder="••••••••"
+                    style={{ paddingRight: 38 }}
+                  />
+                  <button type="button" onClick={() => setShowPw(s => !s)}
+                    style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', color: 'var(--fg-subtle)', padding: 4, lineHeight: 0 }}
+                    aria-label="Toggle password visibility">
+                    {showPw
+                      ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                      : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    }
+                  </button>
+                </div>
+              </div>
+              <button type="submit" className="btn btn-primary btn-lg" disabled={loading} style={{ marginTop: 4 }}>
+                {loading
+                  ? 'Signing in…'
+                  : <>Continue <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12,5 19,12 12,19"/></svg></>
+                }
+              </button>
+            </form>
+
+            {!loginTheme?.is_admin_login && loginTheme?.allow_self_registration && (
+              <div style={{ marginTop: 24, textAlign: 'center', fontSize: 12.5, color: 'var(--fg-muted)' }}>
+                New to {loginTheme.project_name ?? 'this app'}?{' '}
+                <a href={registerUrl} style={{ color: 'var(--accent)', fontWeight: 500 }}>Create account</a>
+              </div>
+            )}
           </div>
-        );
-      })()}
-
-      <form onSubmit={handleSubmit}>
-        <div className="form-group">
-          <label htmlFor="identifier">{loginTheme?.is_admin_login ? 'Email' : 'Email or username'}</label>
-          <input
-            id="identifier"
-            type={loginTheme?.is_admin_login ? 'email' : 'text'}
-            value={identifier}
-            onChange={e => setIdentifier(e.target.value)}
-            required
-            autoFocus
-            autoComplete="username"
-            placeholder={loginTheme?.is_admin_login ? 'you@example.com' : 'you@example.com or username#1234'}
-          />
         </div>
-        <div className="form-group">
-          <label htmlFor="password">Password</label>
-          <input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} required placeholder="••••••••" />
-        </div>
-        <button className="btn" type="submit" disabled={loading}>
-          {loading ? 'Signing in…' : 'Sign in'}
-        </button>
-      </form>
 
-      <div className="links">
-        {!loginTheme?.is_admin_login && (loginTheme?.email_verification_enabled || loginTheme?.sms_verification_enabled) && (
-          <a href={`/password-reset?project_id=${loginTheme?.project_id ?? ''}`} className="btn-ghost">Forgot password?</a>
-        )}
-        {!loginTheme?.is_admin_login && loginTheme?.allow_self_registration && (
-          <a href={`/register?login_challenge=${challenge}`} className="btn-ghost">Create account</a>
-        )}
+        <div className="login-right">
+          <div className="grid-bg" />
+          <div className="login-right-inner">
+            <TokenVisual />
+          </div>
+        </div>
       </div>
-    </div>
     </>
   );
 }

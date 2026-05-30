@@ -1,10 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Skeleton } from '@/components/ui/skeleton';
 import { getOrgInfo, updateOrgInfo } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
+
+const RETENTION_OPTIONS = [
+  { value: '30', label: '30 days' },
+  { value: '60', label: '60 days' },
+  { value: '90', label: '90 days' },
+  { value: '180', label: '180 days' },
+  { value: '365', label: '1 year' },
+  { value: '', label: 'Forever' },
+];
 
 export default function OrgSettings() {
   const [retentionDays, setRetentionDays] = useState<number | null>(null);
@@ -27,49 +32,43 @@ export default function OrgSettings() {
       await updateOrgInfo({ audit_retention_days: retentionDays });
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   };
 
   return (
     <div>
       <PageHeader title="Settings" description="Organisation-level configuration" />
-      <div className="p-6 max-w-xl space-y-6">
+      <div className="iam-page" style={{ maxWidth: 600 }}>
         {loading ? (
-          <Skeleton className="h-40 rounded-xl" />
+          <div style={{ height: 140, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }} />
         ) : (
-          <Card>
-            <CardHeader>
-              <CardTitle>Audit Log Retention</CardTitle>
-              <CardDescription>
-                Audit logs older than the retention period are automatically deleted.
-                Set to "Forever" to disable automatic deletion.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Select
+          <div className="iam-card iam-card-pad">
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Audit Log Retention</div>
+            <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', marginBottom: 18 }}>
+              Audit logs older than the retention period are automatically deleted.
+              Set to "Forever" to disable automatic deletion.
+            </div>
+            <div style={{ marginBottom: 18 }}>
+              <label className="iam-label" htmlFor="org-retention-period">Retention period</label>
+              <select
+                id="org-retention-period"
+                className="iam-input"
+                style={{ maxWidth: 200 }}
                 value={retentionDays == null ? '' : String(retentionDays)}
-                onValueChange={v => setRetentionDays(v === '' ? null : Number(v))}
+                onChange={e => setRetentionDays(e.target.value === '' ? null : Number(e.target.value))}
               >
-                <SelectTrigger className="w-48">
-                  <SelectValue placeholder="Select period" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="30">30 days</SelectItem>
-                  <SelectItem value="60">60 days</SelectItem>
-                  <SelectItem value="90">90 days</SelectItem>
-                  <SelectItem value="180">180 days</SelectItem>
-                  <SelectItem value="365">1 year</SelectItem>
-                  <SelectItem value="">Forever</SelectItem>
-                </SelectContent>
-              </Select>
-            </CardContent>
-            <CardFooter className="flex items-center gap-3">
-              <Button onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
-              {saved && <span className="text-sm text-green-600">Saved!</span>}
-            </CardFooter>
-          </Card>
+                {RETENTION_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+              <button className="iam-btn iam-btn-primary iam-btn-sm" onClick={save} disabled={saving}>
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+              {saved && <span style={{ fontSize: 13, color: 'var(--success)' }}>Saved!</span>}
+            </div>
+          </div>
         )}
       </div>
     </div>

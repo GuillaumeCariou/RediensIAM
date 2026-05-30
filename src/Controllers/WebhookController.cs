@@ -101,6 +101,8 @@ public class OrgWebhookController(
         {
             if (!body.Url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
                 return BadRequest(new { error = "url_must_be_https" });
+            if (await WebhookUrlValidator.IsPrivateOrReservedAsync(body.Url))
+                return BadRequest(new { error = "url_blocked_by_ssrf_policy" });
             wh.Url = body.Url;
         }
         if (body.Events != null)

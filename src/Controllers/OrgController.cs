@@ -511,9 +511,15 @@ public class OrgController(
 
     private async Task<IActionResult> ApplyUserUpdate(User user, UpdateUserRequest body)
     {
-        UserHelpers.ApplyUpdate(user, body, passwords);
+        var passwordChanged = UserHelpers.ApplyUpdate(user, body, passwords);
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
+        if (passwordChanged)
+        {
+            var subject = user.UserList.OrgId.HasValue ? $"{user.UserList.OrgId}:{user.Id}" : user.Id.ToString();
+            await hydra.RevokeSessionsAsync(subject);
+            await audit.RecordAsync(OrgId, null, ActorId, "user.password_reset_by_admin", "user", user.Id.ToString());
+        }
         await audit.RecordAsync(OrgId, null, ActorId, "user.updated", "user", user.Id.ToString());
         return Ok(new { user.Id, user.Email, user.Username, user.Discriminator, user.DisplayName, user.Phone, user.Active, user.EmailVerified, user.LockedUntil, user.FailedLoginCount });
     }

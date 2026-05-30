@@ -52,19 +52,21 @@ public sealed class AuthControllerServices(AuthCoreServices core, AuthExtService
     public BreachCheckService BreachCheck => ext.BreachCheck;
 }
 
-/// <summary>Service bundle for AccountController — groups 5 dependencies to keep constructor ≤ 7 params (S107).</summary>
+/// <summary>Service bundle for AccountController — groups dependencies to keep constructor ≤ 7 params (S107).</summary>
 public sealed class AccountControllerServices(
     PasswordService passwords,
     HydraService hydra,
     ISmsService sms,
     OtpCacheService otp,
-    IFido2 fido2)
+    IFido2 fido2,
+    LoginRateLimiter rateLimiter)
 {
-    public PasswordService Passwords => passwords;
-    public HydraService Hydra        => hydra;
-    public ISmsService Sms           => sms;
-    public OtpCacheService Otp       => otp;
-    public IFido2 Fido2              => fido2;
+    public PasswordService Passwords      => passwords;
+    public HydraService Hydra             => hydra;
+    public ISmsService Sms                => sms;
+    public OtpCacheService Otp            => otp;
+    public IFido2 Fido2                   => fido2;
+    public LoginRateLimiter RateLimiter   => rateLimiter;
 }
 
 /// <summary>Service bundle for OrgController / SystemAdminController — groups 6 dependencies (S107).</summary>

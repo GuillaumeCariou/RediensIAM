@@ -7,7 +7,11 @@ namespace RediensIAM.Controllers;
 
 internal static class UserHelpers
 {
-    internal static void ApplyUpdate(User user, UpdateUserRequest body, PasswordService passwords)
+    /// <summary>
+    /// Applies the update to <paramref name="user"/>. Returns true if a password rotation occurred,
+    /// so the caller can revoke existing Hydra sessions.
+    /// </summary>
+    internal static bool ApplyUpdate(User user, UpdateUserRequest body, PasswordService passwords)
     {
         if (body.Email != null)          ApplyEmail(user, body.Email);
         if (body.Username != null)       user.Username    = body.Username;
@@ -16,7 +20,12 @@ internal static class UserHelpers
         if (body.Active.HasValue)        ApplyActive(user, body.Active.Value);
         if (body.EmailVerified.HasValue) ApplyEmailVerified(user, body.EmailVerified.Value);
         if (body.ClearLock == true)    { user.LockedUntil = null; user.FailedLoginCount = 0; }
-        if (!string.IsNullOrEmpty(body.NewPassword)) user.PasswordHash = passwords.Hash(body.NewPassword);
+        if (!string.IsNullOrEmpty(body.NewPassword))
+        {
+            user.PasswordHash = passwords.Hash(body.NewPassword);
+            return true;
+        }
+        return false;
     }
 
     private static void ApplyEmail(User user, string email)

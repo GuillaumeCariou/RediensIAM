@@ -17,6 +17,7 @@ public class ProjectController(
     KetoService keto,
     HydraService hydra,
     PasswordService passwords,
+    AuditLogService audit,
     AppConfig appConfig) : ControllerBase
 {
     private TokenClaims Claims    => HttpContext.GetClaims()!;
@@ -89,6 +90,7 @@ public class ProjectController(
         ApplyLoginTheme(project, body.LoginTheme);
         project.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
+        await audit.RecordAsync(project.OrgId, project.Id, ActorId, "project.updated", "project", project.Id.ToString());
         return Ok(new { project.Id, project.Name });
     }
 
@@ -178,10 +180,13 @@ public class ProjectController(
     {
         // KetoService re-validates authority; the org check here prevents
         // leaking project existence across tenants.
-        if (await GetProjectAsync() == null) return NotFound();
+        var project = await GetProjectAsync();
+        if (project == null) return NotFound();
         try
         {
             await keto.AssignProjectRoleAsync(ActorId, id, ProjectId, body.RoleId);
+            await audit.RecordAsync(project.OrgId, project.Id, ActorId, "role.assigned", "user", id.ToString(),
+                new() { ["role_id"] = body.RoleId.ToString() });
             return Ok(new { message = "role_assigned" });
         }
         catch (Exceptions.ForbiddenException ex)  { return StatusCode(403, new { error = ex.Message }); }
@@ -192,10 +197,13 @@ public class ProjectController(
     [HttpDelete("users/{id}/roles/{roleId}")]
     public async Task<IActionResult> RemoveRole(Guid id, Guid roleId)
     {
-        if (await GetProjectAsync() == null) return NotFound();
+        var project = await GetProjectAsync();
+        if (project == null) return NotFound();
         try
         {
             await keto.RemoveProjectRoleAsync(ActorId, id, ProjectId, roleId);
+            await audit.RecordAsync(project.OrgId, project.Id, ActorId, "role.removed", "user", id.ToString(),
+                new() { ["role_id"] = roleId.ToString() });
             return NoContent();
         }
         catch (Exceptions.ForbiddenException ex) { return StatusCode(403, new { error = ex.Message }); }
@@ -242,6 +250,7 @@ public class ProjectController(
         await db.SaveChangesAsync();
         await keto.WriteRelationTupleAsync(Roles.KetoUserListsNamespace, listId.ToString(), "member", $"user:{user.Id}");
         await keto.AssignDefaultRoleAsync(project, user);
+        await audit.RecordAsync(project.OrgId, project.Id, ActorId, "user.created", "user", user.Id.ToString());
         return Created($"/project/users/{user.Id}", new { user.Id, username = $"{user.Username}#{user.Discriminator}", user.Email });
     }
 
@@ -254,6 +263,7 @@ public class ProjectController(
         if (!await db.Users.AnyAsync(u => u.Id == id && u.UserListId == project.AssignedUserListId))
             return NotFound();
         await hydra.RevokeAllConsentSessionsAsync($"{project.OrgId}:{id}");
+        await audit.RecordAsync(project.OrgId, project.Id, ActorId, "user.force_logout", "user", id.ToString());
         return Ok(new { message = "sessions_revoked" });
     }
 
@@ -291,7 +301,8 @@ public class ProjectController(
     [HttpPost("roles")]
     public async Task<IActionResult> CreateRole([FromBody] CreateRoleRequest body)
     {
-        if (await GetProjectAsync() == null) return NotFound();
+        var project = await GetProjectAsync();
+        if (project == null) return NotFound();
         var role = new Role
         {
             ProjectId = ProjectId, Name = body.Name,
@@ -300,25 +311,30 @@ public class ProjectController(
         };
         db.Roles.Add(role);
         await db.SaveChangesAsync();
+        await audit.RecordAsync(project.OrgId, project.Id, ActorId, "role.created", "role", role.Id.ToString(),
+            new() { ["name"] = role.Name });
         return Created($"/project/roles/{role.Id}", new { role.Id, role.Name, role.Rank });
     }
 
     [HttpPatch("roles/{id}")]
     public async Task<IActionResult> UpdateRole(Guid id, [FromBody] UpdateRoleRequest body)
     {
-        if (await GetProjectAsync() == null) return NotFound();
+        var project = await GetProjectAsync();
+        if (project == null) return NotFound();
         var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == id && r.ProjectId == ProjectId);
         if (role == null) return NotFound();
         if (body.Description != null) role.Description = body.Description;
         if (body.Rank.HasValue) role.Rank = body.Rank.Value;
         await db.SaveChangesAsync();
+        await audit.RecordAsync(project.OrgId, project.Id, ActorId, "role.updated", "role", role.Id.ToString());
         return Ok(new { role.Id, role.Name, role.Rank });
     }
 
     [HttpDelete("roles/{id}")]
     public async Task<IActionResult> DeleteRole(Guid id)
     {
-        if (await GetProjectAsync() == null) return NotFound();
+        var project = await GetProjectAsync();
+        if (project == null) return NotFound();
         var role = await db.Roles
             .Include(r => r.UserProjectRoles)
             .FirstOrDefaultAsync(r => r.Id == id && r.ProjectId == ProjectId);
@@ -327,6 +343,8 @@ public class ProjectController(
             await keto.DeleteRelationTupleAsync(Roles.KetoProjectsNamespace, ProjectId.ToString(), $"role:{role.Name}", $"user:{assignment.UserId}");
         db.Roles.Remove(role);
         await db.SaveChangesAsync();
+        await audit.RecordAsync(project.OrgId, project.Id, ActorId, "role.deleted", "role", id.ToString(),
+            new() { ["name"] = role.Name });
         return NoContent();
     }
 

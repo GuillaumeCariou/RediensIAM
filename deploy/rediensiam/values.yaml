@@ -21,6 +21,15 @@ rediensiam:
   # ── App config ────────────────────────────────────────────────────────────────
   app:
     adminPath: "/admin"
+    # CSV of CIDRs allowed to set X-Forwarded-* (must contain your ingress controller's
+    # pod/node network). Empty falls back to RFC1918 + loopback. Maps to App__TrustedProxies.
+    trustedProxies: ""
+
+  # ── Argon2 password hashing ───────────────────────────────────────────────────
+  # Optional hex-encoded server-side pepper. Generate with `openssl rand -hex 32`.
+  # Set in values.secret.yaml; maps to Security__Argon2Pepper.
+  security:
+    argon2Pepper: ""
 
   # ── Networking ────────────────────────────────────────────────────────────────
   service:

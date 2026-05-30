@@ -1,15 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Plus, MoreHorizontal, Building2, CheckCircle, XCircle, Trash2, PauseCircle, PlayCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Skeleton } from '@/components/ui/skeleton';
+import { IamChip, IamAvatar, IamDialog } from '@/components/iam';
 import { listOrgs, createOrg, suspendOrg, unsuspendOrg, deleteOrg } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDateShort } from '@/lib/utils';
@@ -22,6 +13,36 @@ interface Org {
   suspended_at: string | null;
   created_at: string;
   metadata: Record<string, string>;
+}
+
+function MoreMenu({ org, onSuspend, onDelete }: Readonly<{
+  org: Org; onSuspend: () => void; onDelete: () => void;
+}>) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: 'relative' }}>
+      <button className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm"
+        onClick={e => { e.stopPropagation(); setOpen(o => !o); }}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+      </button>
+      {open && (
+        <>
+          <div role="none" style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }} />
+          <div style={{ position: 'absolute', right: 0, top: '100%', zIndex: 50, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-md)', minWidth: 140, padding: 4 }}>
+            <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }}
+              onClick={() => { setOpen(false); onSuspend(); }}>
+              {org.suspended_at ? 'Unsuspend' : 'Suspend'}
+            </button>
+            <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
+            <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13, color: 'var(--danger)' }}
+              onClick={() => { setOpen(false); onDelete(); }}>
+              Delete
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 export default function Organisations() {
@@ -48,16 +69,14 @@ export default function Organisations() {
 
   const handleCreate = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setSaving(true);
-    setError('');
+    setSaving(true); setError('');
     try {
       await createOrg(form);
       setCreateOpen(false);
       setForm({ name: '', slug: '' });
       load();
-    } catch {
-      setError('Failed to create organisation.');
-    } finally { setSaving(false); }
+    } catch { setError('Failed to create organisation.'); }
+    finally { setSaving(false); }
   };
 
   const handleSuspend = async (org: Org) => {
@@ -77,136 +96,132 @@ export default function Organisations() {
       <PageHeader
         title="Organisations"
         description="Manage all tenant organisations in the system"
-        action={<Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />New Organisation</Button>}
+        actions={[
+          <button key="new" className="iam-btn iam-btn-primary iam-btn-sm" onClick={() => setCreateOpen(true)}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New Organisation
+          </button>
+        ]}
       />
-      <div className="p-6 space-y-4">
-        <Input
-          placeholder="Search by name or slug…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="max-w-sm"
-        />
+      <div className="iam-page">
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ position: 'relative', maxWidth: 320 }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+              style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--fg-subtle)', pointerEvents: 'none' }}>
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input className="iam-input" style={{ paddingLeft: 30 }}
+              placeholder="Search by name or slug…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+          </div>
+        </div>
 
-        <div className="rounded-xl border bg-card overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Slug</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="w-12"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+        <div className="iam-card">
+          <table className="iam-tbl">
+            <thead>
+              <tr>
+                <th>Organisation</th>
+                <th>Slug</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th style={{ width: 36 }}></th>
+              </tr>
+            </thead>
+            <tbody>
               {(() => {
-                if (loading) return (
-                  Array.from({ length: 5 }, (_, i) => `sk-row-${i}`).map(rowId => (
-                      <TableRow key={rowId}>
-                        {Array.from({ length: 5 }, (_, j) => `sk-cell-${j}`).map(cellId => (
-                          <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>
-                          ))}
-                      </TableRow>
-                    ))
-                );
+                if (loading) return Array.from({ length: 5 }, (_, i) => (
+                  <tr key={i}>
+                    {Array.from({ length: 5 }, (_, j) => (
+                      <td key={j}><div style={{ height: 14, background: 'var(--surface-2)', borderRadius: 4, width: '70%' }} /></td>
+                    ))}
+                  </tr>
+                ));
                 if (filtered.length === 0) return (
-                  (
-                      <TableRow>
-                        <TableCell className="text-center text-muted-foreground py-12" colSpan={5}>
-                          <Building2 className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                          No organisations found
-                        </TableCell>
-                      </TableRow>
-                    )
+                  <tr>
+                    <td colSpan={5}>
+                      <div className="iam-empty">
+                        <div className="iam-empty-icon">
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                        </div>
+                        <div className="iam-empty-title">No organisations found</div>
+                        <div className="iam-empty-desc">Try a different search or create one.</div>
+                      </div>
+                    </td>
+                  </tr>
                 );
-                return (
-                  filtered.map(org => (
-                      <TableRow
-                        key={org.id}
-                        className="cursor-pointer hover:bg-muted/50"
-                        onClick={() => navigate(`/system/organisations/${org.id}`)}
-                      >
-                        <TableCell className="font-medium">{org.name}</TableCell>
-                        <TableCell className="font-mono text-sm text-muted-foreground">{org.slug}</TableCell>
-                        <TableCell>
-                          {(() => {
-                            if (org.suspended_at) return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Suspended</Badge>;
-                            if (org.active) return <Badge variant="success"><CheckCircle className="h-3 w-3 mr-1" />Active</Badge>;
-                            return <Badge variant="secondary">Inactive</Badge>;
-                          })()}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground text-sm">{fmtDateShort(org.created_at)}</TableCell>
-                        <TableCell onClick={e => e.stopPropagation()}>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent>
-                              <DropdownMenuItem onClick={() => handleSuspend(org)}>
-                                {org.suspended_at
-                                  ? <><PlayCircle className="h-4 w-4" />Unsuspend</>
-                                  : <><PauseCircle className="h-4 w-4" />Suspend</>
-                                }
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteTarget(org)}>
-                                <Trash2 className="h-4 w-4" />Delete
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                );
+                return filtered.map(org => {
+                  let statusChip = <IamChip tone="default">Inactive</IamChip>;
+                  if (org.suspended_at) statusChip = <IamChip tone="danger">Suspended</IamChip>;
+                  else if (org.active) statusChip = <IamChip tone="success">Active</IamChip>;
+                  return (
+                    <tr key={org.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/system/organisations/${org.id}`)}>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <IamAvatar name={org.name} size="sm" />
+                          <span style={{ fontWeight: 500 }}>{org.name}</span>
+                        </div>
+                      </td>
+                      <td><span className="iam-mono" style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{org.slug}</span></td>
+                      <td>{statusChip}</td>
+                      <td style={{ color: 'var(--fg-muted)', fontSize: 12 }}>{fmtDateShort(org.created_at)}</td>
+                      <td onClick={e => e.stopPropagation()}>
+                        <MoreMenu org={org} onSuspend={() => handleSuspend(org)} onDelete={() => setDeleteTarget(org)} />
+                      </td>
+                    </tr>
+                  );
+                });
               })()}
-            </TableBody>
-          </Table>
+            </tbody>
+          </table>
         </div>
       </div>
 
-      {/* Create dialog */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Create Organisation</DialogTitle>
-            <DialogDescription>A new tenant with its own projects and user lists.</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleCreate} className="space-y-4">
-            {error && <p className="text-sm text-destructive">{error}</p>}
-            <div className="space-y-2">
-              <Label htmlFor="name">Name</Label>
-              <Input id="name" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required placeholder="Acme Corp" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="slug">Slug</Label>
-              <Input id="slug" value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value.toLowerCase().replaceAll(/\s+/g, '-') }))} required placeholder="acme-corp" pattern="[a-z0-9]+(-[a-z0-9]+)*" />
-              <p className="text-xs text-muted-foreground">Lowercase letters, numbers and hyphens only.</p>
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={saving}>{saving ? 'Creating…' : 'Create'}</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <IamDialog
+        open={createOpen}
+        onClose={() => { setCreateOpen(false); setError(''); }}
+        title="Create Organisation"
+        desc="A new tenant with its own projects and user lists."
+        footer={
+          <>
+            <button className="iam-btn iam-btn-ghost" onClick={() => setCreateOpen(false)}>Cancel</button>
+            <button className="iam-btn iam-btn-primary" form="create-org-form" type="submit" disabled={saving}>
+              {saving ? 'Creating…' : 'Create'}
+            </button>
+          </>
+        }
+      >
+        <form id="create-org-form" onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {error && <div style={{ padding: '8px 12px', background: 'var(--danger-soft)', color: 'var(--danger)', borderRadius: 6, fontSize: 13 }}>{error}</div>}
+          <div>
+            <label className="iam-label" htmlFor="org-create-name">Name</label>
+            <input id="org-create-name" className="iam-input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required placeholder="Acme Corp" />
+          </div>
+          <div>
+            <label className="iam-label" htmlFor="org-create-slug">Slug</label>
+            <input id="org-create-slug" className="iam-input iam-mono" value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value.toLowerCase().replaceAll(/\s+/g, '-') }))} required placeholder="acme-corp" pattern="[a-z0-9]+(-[a-z0-9]+)*" />
+            <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 4 }}>Lowercase letters, numbers and hyphens only.</div>
+          </div>
+        </form>
+      </IamDialog>
 
-      {/* Delete confirm */}
-      <AlertDialog open={!!deleteTarget} onOpenChange={v => !v && setDeleteTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete {deleteTarget?.name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently delete the organisation and all associated data. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Delete permanently
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <IamDialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title={`Delete ${deleteTarget?.name}?`}
+        desc="This will permanently delete the organisation and all associated data. This cannot be undone."
+        footer={
+          <>
+            <button className="iam-btn iam-btn-ghost" onClick={() => setDeleteTarget(null)}>Cancel</button>
+            <button className="iam-btn iam-btn-danger" onClick={handleDelete}>Delete permanently</button>
+          </>
+        }
+      >
+        <div style={{ padding: '4px 0', fontSize: 13, color: 'var(--fg-muted)' }}>
+          Organisation: <strong style={{ color: 'var(--fg)' }}>{deleteTarget?.name}</strong>
+        </div>
+      </IamDialog>
     </div>
   );
 }

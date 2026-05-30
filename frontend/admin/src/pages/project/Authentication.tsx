@@ -1,18 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useProjectContext } from '@/hooks/useOrgContext';
-import { Save, Upload, X, Plus, Sun, Moon, Copy, Trash2, Shield } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Textarea } from '@/components/ui/textarea';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Badge } from '@/components/ui/badge';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { IamChip, IamDialog } from '@/components/iam';
 import { getProjectInfo, updateProject, listRoles, listSamlProviders, createSamlProvider, deleteSamlProvider } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 
@@ -24,38 +12,28 @@ interface Provider {
   label: string;
   client_id: string;
   client_secret?: string;
-  client_secret_saved?: boolean; // server returned null → secret is stored, don't overwrite unless changed
+  client_secret_saved?: boolean;
   issuer_url?: string;
   logo_url?: string;
   enabled: boolean;
 }
 
 interface SamlProvider {
-  id: string;
-  entity_id: string;
-  metadata_url?: string;
-  email_attribute_name: string;
-  name_attribute_name?: string;
-  jit_provisioning: boolean;
-  active: boolean;
+  id: string; entity_id: string; metadata_url?: string;
+  email_attribute_name: string; name_attribute_name?: string;
+  jit_provisioning: boolean; active: boolean;
 }
 
 interface Theme {
-  primary_color?: string;
-  background_color?: string;
-  surface_color?: string;
-  text_color?: string;
-  border_radius?: string;
-  font_family?: string;
-  logo_url?: string;
-  custom_css?: string;
-  providers?: Provider[];
+  primary_color?: string; background_color?: string; surface_color?: string;
+  text_color?: string; border_radius?: string; font_family?: string;
+  logo_url?: string; custom_css?: string; providers?: Provider[];
   hydra_local_login?: boolean;
 }
 
 interface Role { id: string; name: string; rank: number; }
 
-// ── Constants ────────────────────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
 
 const FONT_OPTIONS = ['Inter', 'Roboto', 'Open Sans', 'Montserrat', 'DM Sans', 'System UI', 'Custom'];
 
@@ -83,57 +61,86 @@ const DEFAULT_THEME: Theme = {
 
 function nanoid() { return crypto.randomUUID().replaceAll('-', '').slice(0, 8); }
 
+function Toggle({ checked, onChange }: Readonly<{ checked: boolean; onChange: (v: boolean) => void }>) {
+  return (
+    <button type="button" onClick={() => onChange(!checked)} style={{
+      width: 36, height: 20, borderRadius: 10,
+      background: checked ? 'var(--ia-accent)' : 'var(--border-strong)',
+      position: 'relative', border: 'none', cursor: 'pointer', flexShrink: 0, transition: 'background 150ms',
+    }}>
+      <span style={{ position: 'absolute', top: 2, left: checked ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 150ms' }} />
+    </button>
+  );
+}
+
 function ColorRow({ label, value, onChange }: Readonly<{ label: string; value: string; onChange: (v: string) => void }>) {
   return (
-    <div className="space-y-2">
-      <Label>{label}</Label>
-      <div className="flex gap-2 items-center">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <label className="iam-label">{label}</label>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <input type="color" value={value || '#000000'} onChange={e => onChange(e.target.value)}
-          className="h-9 w-12 rounded cursor-pointer border border-input p-0.5 bg-transparent" />
-        <Input value={value} onChange={e => onChange(e.target.value)} className="font-mono" placeholder="#000000" />
+          style={{ height: 36, width: 44, borderRadius: 6, cursor: 'pointer', border: '1px solid var(--border)', padding: 2, background: 'transparent', flexShrink: 0 }} />
+        <input className="iam-input iam-mono" value={value} onChange={e => onChange(e.target.value)} placeholder="#000000" />
       </div>
     </div>
   );
 }
 
+const MAX_LOGO_BYTES = 256 * 1024;
+
 function LogoUpload({ value, onChange, label = 'Logo' }: Readonly<{ value?: string; onChange: (v: string) => void; label?: string }>) {
   const [dragOver, setDragOver] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputId = `logo-file-input-${label.replaceAll(/\s+/g, '-')}`;
   const handle = (file: File) => {
-    if (!file.type.startsWith('image/')) return;
+    setError(null);
+    if (!file.type.startsWith('image/')) { setError('File must be an image.'); return; }
+    if (file.size > MAX_LOGO_BYTES) { setError(`Image must be under ${Math.floor(MAX_LOGO_BYTES / 1024)} KB.`); return; }
     const reader = new FileReader();
     reader.onload = e => onChange(e.target?.result as string);
     reader.readAsDataURL(file);
   };
+  const handleUrlInput = (v: string) => {
+    setError(null);
+    if (v !== '' && !v.startsWith('data:') && !/^https:\/\//i.test(v)) {
+      setError('URL must use https://.');
+      return;
+    }
+    onChange(v);
+  };
   return (
-    <div className="space-y-2">
-      <Label>{label}</Label>
-      <button
-        type="button"
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <label className="iam-label">{label}</label>
+      <button type="button"
         onDragOver={e => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={e => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handle(f); }}
-        onClick={() => document.getElementById('logo-file-input')?.click()}
-        className={`relative w-full border-2 border-dashed rounded-lg p-4 text-center transition-colors ${dragOver ? 'border-primary bg-primary/5' : 'border-border'}`}
-      >
+        onClick={() => document.getElementById(inputId)?.click()}
+        style={{
+          width: '100%', border: `2px dashed ${dragOver ? 'var(--ia-accent)' : 'var(--border)'}`,
+          borderRadius: 8, padding: 16, textAlign: 'center', cursor: 'pointer', transition: 'border-color 150ms',
+          background: dragOver ? 'oklch(from var(--ia-accent) l c h / 5%)' : 'transparent',
+        }}>
         {value ? (
-          <div className="flex items-center justify-center gap-3">
-            <img src={value} alt="Logo" className="max-h-10 max-w-[160px] object-contain" onError={e => (e.currentTarget.style.display = 'none')} />
-            <Button type="button" variant="ghost" size="icon" onClick={() => onChange('')}><X className="h-4 w-4" /></Button>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
+            <img src={value} alt="Logo" style={{ maxHeight: 40, maxWidth: 160, objectFit: 'contain' }} onError={e => (e.currentTarget.style.display = 'none')} />
+            <button type="button" className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm" onClick={e => { e.stopPropagation(); onChange(''); }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
           </div>
         ) : (
-          <div className="space-y-1">
-            <Upload className="h-6 w-6 mx-auto text-muted-foreground" />
-            <p className="text-xs text-muted-foreground">Drag & drop or{' '}
-              <label className="cursor-pointer text-primary underline">
-                browse{' '}
-                <input id="logo-file-input" type="file" accept="image/*" className="hidden" onChange={e => { if (e.target.files?.[0]) handle(e.target.files[0]); }} />
+          <div>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ margin: '0 auto 8px', color: 'var(--fg-muted)', display: 'block' }}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <p style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Drag & drop or{' '}
+              <label style={{ color: 'var(--ia-accent)', cursor: 'pointer', textDecoration: 'underline' }}>
+                {'browse'}<input id={inputId} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => { if (e.target.files?.[0]) handle(e.target.files[0]); }} />
               </label>
             </p>
           </div>
         )}
       </button>
-      <Input value={value?.startsWith('data:') ? '' : (value ?? '')} onChange={e => onChange(e.target.value)}
-        placeholder="https://cdn.example.com/logo.png" />
+      <input className="iam-input" value={value?.startsWith('data:') ? '' : (value ?? '')} onChange={e => handleUrlInput(e.target.value)} placeholder="https://cdn.example.com/logo.png" />
+      {error && <div role="alert" style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</div>}
     </div>
   );
 }
@@ -141,36 +148,46 @@ function LogoUpload({ value, onChange, label = 'Logo' }: Readonly<{ value?: stri
 function CopyButton({ text }: Readonly<{ text: string }>) {
   const [copied, setCopied] = useState(false);
   return (
-    <Button type="button" variant="ghost" size="icon" onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
-      {copied ? <span className="text-xs text-green-600">✓</span> : <Copy className="h-3.5 w-3.5" />}
-    </Button>
+    <button type="button" className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm"
+      onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
+      {copied
+        ? <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>
+        : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>}
+    </button>
   );
 }
 
-type PreviewMode = 'login' | 'register' | 'verify';
-
-// ── Main component ────────────────────────────────────────────────────────────
-
 function SecretInput({ value, saved: secretSaved, onChange }: Readonly<{ value: string; saved?: boolean; onChange: (v: string) => void }>) {
   return (
-    <div className="space-y-1">
-      <Label className="text-xs">Client Secret</Label>
-      <Input
-        type="password"
-        value={value}
-        onChange={e => onChange(e.target.value)}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <label className="iam-label" htmlFor="secret-input" style={{ fontSize: 11 }}>Client Secret</label>
+      <input id="secret-input" className="iam-input" type="password" value={value} onChange={e => onChange(e.target.value)}
         placeholder={secretSaved && !value ? '••••••••• (saved — enter new to replace)' : 'OAuth2 client secret'}
-        autoComplete="new-password"
-      />
+        autoComplete="new-password" />
       {secretSaved && !value && (
-        <p className="text-xs text-muted-foreground">Secret is saved. Enter a new one to replace it.</p>
+        <p style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Secret is saved. Enter a new one to replace it.</p>
       )}
     </div>
   );
 }
 
+type TabId = 'appearance' | 'providers' | 'registration' | 'verification' | 'security' | 'css';
+type PreviewMode = 'login' | 'register' | 'verify';
+
+const TABS: { id: TabId; label: string }[] = [
+  { id: 'appearance', label: 'Appearance' },
+  { id: 'providers', label: 'Providers' },
+  { id: 'registration', label: 'Registration' },
+  { id: 'verification', label: 'Verification' },
+  { id: 'security', label: 'Security' },
+  { id: 'css', label: 'Custom CSS' },
+];
+
+// ── Main component ────────────────────────────────────────────────────────────
+
 export default function Authentication() {
   const { projectId } = useProjectContext();
+  const [tab, setTab] = useState<TabId>('appearance');
   const [theme, setTheme] = useState<Theme>(DEFAULT_THEME);
   const [customFont, setCustomFont] = useState('');
   const [loading, setLoading] = useState(true);
@@ -179,42 +196,37 @@ export default function Authentication() {
   const [previewDark, setPreviewDark] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewMode>('login');
 
-  // ── Registration / policy settings ───────────────────────────────
-  const [allowSelfReg,          setAllowSelfReg]          = useState(false);
-  const [requireMfa,            setRequireMfa]            = useState(false);
-  const [checkBreachedPasswords,setCheckBreachedPasswords]= useState(false);
-  const [emailVerif,            setEmailVerif]            = useState(false);
-  const [smsVerif,              setSmsVerif]              = useState(false);
-  const [allowedDomains,        setAllowedDomains]        = useState('');
-  const [emailFromName,         setEmailFromName]         = useState('');
-  const [defaultRoleId,         setDefaultRoleId]         = useState<string | null>(null);
-  const [minPasswordLength,     setMinPasswordLength]     = useState(0);
-  const [requireUppercase,      setRequireUppercase]      = useState(false);
-  const [requireLowercase,      setRequireLowercase]      = useState(false);
-  const [requireDigit,          setRequireDigit]          = useState(false);
-  const [requireSpecial,        setRequireSpecial]        = useState(false);
-  const [roles,                 setRoles]                 = useState<Role[]>([]);
+  const [allowSelfReg,           setAllowSelfReg]           = useState(false);
+  const [requireMfa,             setRequireMfa]             = useState(false);
+  const [checkBreachedPasswords, setCheckBreachedPasswords] = useState(false);
+  const [emailVerif,             setEmailVerif]             = useState(false);
+  const [smsVerif,               setSmsVerif]               = useState(false);
+  const [allowedDomains,         setAllowedDomains]         = useState('');
+  const [emailFromName,          setEmailFromName]          = useState('');
+  const [defaultRoleId,          setDefaultRoleId]          = useState<string | null>(null);
+  const [minPasswordLength,      setMinPasswordLength]      = useState(0);
+  const [requireUppercase,       setRequireUppercase]       = useState(false);
+  const [requireLowercase,       setRequireLowercase]       = useState(false);
+  const [requireDigit,           setRequireDigit]           = useState(false);
+  const [requireSpecial,         setRequireSpecial]         = useState(false);
+  const [roles,                  setRoles]                  = useState<Role[]>([]);
 
-  // ── Security settings ─────────────────────────────────────────────
-  const [ipAllowlist,     setIpAllowlist]     = useState('');
-  const [ipAllowlistError,setIpAllowlistError]= useState('');
+  const [ipAllowlist,      setIpAllowlist]      = useState('');
+  const [ipAllowlistError, setIpAllowlistError] = useState('');
 
-  // ── Custom scopes ─────────────────────────────────────────────────
   const [customScopes, setCustomScopes] = useState<string[]>([]);
   const [newScope,     setNewScope]     = useState('');
   const [scopeError,   setScopeError]   = useState('');
 
-  // ── SAML ──────────────────────────────────────────────────────────
   const [samlProviders, setSamlProviders] = useState<SamlProvider[]>([]);
   const [addSamlOpen,   setAddSamlOpen]   = useState(false);
   const [samlForm,      setSamlForm]      = useState({
     entity_id: '', metadata_url: '', email_attribute_name: 'email',
     name_attribute_name: '', jit_provisioning: true, active: true,
   });
-  const [samlSaving,    setSamlSaving]    = useState(false);
-  const [samlError,     setSamlError]     = useState('');
+  const [samlSaving, setSamlSaving] = useState(false);
+  const [samlError,  setSamlError]  = useState('');
 
-  // ── Load ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!projectId) { setLoading(false); return; }
     Promise.all([
@@ -223,8 +235,7 @@ export default function Authentication() {
           const t = { ...DEFAULT_THEME, ...p.login_theme };
           if (t.providers) {
             t.providers = t.providers.map((pr: Provider) => ({
-              ...pr,
-              id: pr.id ?? nanoid(),
+              ...pr, id: pr.id ?? nanoid(),
               client_secret_saved: pr.client_secret === null,
               client_secret: pr.client_secret ?? '',
             }));
@@ -255,30 +266,23 @@ export default function Authentication() {
 
   const set = <K extends keyof Theme>(k: K, v: Theme[K]) => setTheme(t => ({ ...t, [k]: v }));
 
-  // ── Save ──────────────────────────────────────────────────────────
   const handleSave = async () => {
-    // Validate IP allowlist
     const ipLines = ipAllowlist.split('\n').map(s => s.trim()).filter(Boolean);
     const badIp = ipLines.find(s => !/^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$|^[0-9a-fA-F:]+\/\d{1,3}$/.test(s));
     if (badIp) { setIpAllowlistError(`Invalid CIDR: ${badIp}`); return; }
     setIpAllowlistError('');
-
     setSaving(true);
     try {
       const domains = allowedDomains.split(',').map(d => d.trim()).filter(Boolean);
-
-      // Strip client_secret_saved flag and omit secret if unchanged
       const safeProviders = (theme.providers ?? []).map(p => {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { client_secret_saved, ...rest } = p;
         if (p.client_secret_saved && !p.client_secret) {
-          // Secret saved server-side, user didn't change it — omit from payload
           const { client_secret: _cs, ...noSecret } = rest;
           return noSecret;
         }
         return rest;
       });
-
       const body: Parameters<typeof updateProject>[1] = {
         login_theme: { ...theme, providers: safeProviders } as Record<string, unknown>,
         allow_self_registration: allowSelfReg,
@@ -298,31 +302,33 @@ export default function Authentication() {
       };
       if (defaultRoleId) body.default_role_id = defaultRoleId;
       else body.clear_default_role = true;
-
       await updateProject(projectId, body);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } finally { setSaving(false); }
   };
 
-  // ── Preview URL ───────────────────────────────────────────────────
   const previewUrl = useMemo(() => {
+    // Strip per-provider secrets before embedding the theme in the URL — the preview iframe URL
+    // ends up in browser history, web-server logs, and Referer headers; OAuth client_secret values
+    // must never travel via URL.
+    const safeProviders = (theme.providers ?? []).map(p => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { client_secret, client_secret_saved, ...rest } = p as unknown as Record<string, unknown>;
+      return rest;
+    });
+    const safeTheme = { ...theme, providers: safeProviders };
     const cfg = {
-      mode: previewMode, dark: previewDark, theme,
-      allow_self_registration: allowSelfReg,
-      email_verification_enabled: emailVerif,
-      sms_verification_enabled: smsVerif,
-      min_password_length: minPasswordLength,
-      password_require_uppercase: requireUppercase,
-      password_require_lowercase: requireLowercase,
-      password_require_digit: requireDigit,
-      password_require_special: requireSpecial,
+      mode: previewMode, dark: previewDark, theme: safeTheme,
+      allow_self_registration: allowSelfReg, email_verification_enabled: emailVerif,
+      sms_verification_enabled: smsVerif, min_password_length: minPasswordLength,
+      password_require_uppercase: requireUppercase, password_require_lowercase: requireLowercase,
+      password_require_digit: requireDigit, password_require_special: requireSpecial,
     };
     return `/preview?cfg=${btoa(JSON.stringify(cfg))}`;
   }, [previewMode, previewDark, theme, allowSelfReg, emailVerif, smsVerif,
       minPasswordLength, requireUppercase, requireLowercase, requireDigit, requireSpecial]);
 
-  // ── Builtin provider helpers ──────────────────────────────────────
   const getBuiltin = (type: Provider['type']) => (theme.providers ?? []).find(p => p.type === type && p.id === type);
   const toggleBuiltin = (type: Provider['type'], def: string) => {
     const existing = theme.providers ?? [];
@@ -336,33 +342,26 @@ export default function Authentication() {
   const updateBuiltin = (type: Provider['type'], patch: Partial<Provider>) =>
     set('providers', (theme.providers ?? []).map(p => p.id === type ? { ...p, ...patch } : p));
 
-  // ── Custom OIDC helpers ───────────────────────────────────────────
   const customOidcs = (theme.providers ?? []).filter(p => p.type === 'oidc' && p.id !== 'oidc');
   const addOidc = () => {
     const id = nanoid();
-    set('providers', [...(theme.providers ?? []), {
-      id, type: 'oidc', label: 'Continue with SSO',
-      client_id: '', issuer_url: '', logo_url: '', enabled: true,
-    }]);
+    set('providers', [...(theme.providers ?? []), { id, type: 'oidc', label: 'Continue with SSO', client_id: '', issuer_url: '', logo_url: '', enabled: true }]);
   };
   const updateOidc = (id: string, patch: Partial<Provider>) =>
     set('providers', (theme.providers ?? []).map(p => p.id === id ? { ...p, ...patch } : p));
   const removeOidc = (id: string) =>
     set('providers', (theme.providers ?? []).filter(p => p.id !== id));
 
-  // ── Custom scopes helpers ─────────────────────────────────────────
   const addScope = () => {
     const s = newScope.trim();
     if (!s) return;
     if (!/^[a-z][a-z0-9:_-]*$/.test(s)) { setScopeError('Scope must be lowercase and may contain letters, numbers, colons, hyphens, underscores.'); return; }
     if (['openid', 'offline'].includes(s) || customScopes.includes(s)) { setScopeError('Scope already exists.'); return; }
     setCustomScopes(prev => [...prev, s]);
-    setNewScope('');
-    setScopeError('');
+    setNewScope(''); setScopeError('');
   };
   const removeScope = (s: string) => setCustomScopes(prev => prev.filter(x => x !== s));
 
-  // ── SAML helpers ──────────────────────────────────────────────────
   const spMetadataUrl = `${globalThis.location.origin}/admin/projects/${projectId}/saml/metadata`;
 
   const handleAddSaml = async (e: React.SyntheticEvent<HTMLFormElement>) => {
@@ -390,11 +389,12 @@ export default function Authentication() {
     setSamlProviders(prev => prev.filter(p => p.id !== idpId));
   };
 
-  // ── Loading skeleton ──────────────────────────────────────────────
   if (loading) return (
     <div>
       <PageHeader title="Authentication" />
-      <div className="p-6 space-y-4">{Array.from({ length: 4 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-12 rounded-lg" />)}</div>
+      <div className="iam-page" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {Array.from({ length: 4 }, (_, i) => <div key={i} style={{ height: 48, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }} />)}
+      </div>
     </div>
   );
 
@@ -408,536 +408,499 @@ export default function Authentication() {
       <PageHeader
         title="Authentication"
         description="Configure login appearance, providers, registration, and verification"
-        action={
-          <Button onClick={handleSave} disabled={saving}>
-            <Save className="h-4 w-4" />{saveLabel}
-          </Button>
-        }
+        actions={[
+          <button key="save" className="iam-btn iam-btn-primary iam-btn-sm" onClick={handleSave} disabled={saving}>
+            {saveLabel}
+          </button>
+        ]}
       />
 
-      <div className="p-6 grid grid-cols-1 xl:grid-cols-[1fr_460px] gap-6 items-start">
-        {/* ── Left: config tabs ── */}
-        <div>
-          <Tabs defaultValue="visual">
-            <TabsList className="flex-wrap">
-              <TabsTrigger value="visual">Appearance</TabsTrigger>
-              <TabsTrigger value="providers">Providers</TabsTrigger>
-              <TabsTrigger value="registration">Registration</TabsTrigger>
-              <TabsTrigger value="verification">Verification</TabsTrigger>
-              <TabsTrigger value="security">Security</TabsTrigger>
-              <TabsTrigger value="css">Custom CSS</TabsTrigger>
-            </TabsList>
-
-            {/* ════════════════════════════════════════════════════════
-                APPEARANCE
-            ════════════════════════════════════════════════════════ */}
-            <TabsContent value="visual" className="mt-6 space-y-6">
-              <Card>
-                <CardHeader><CardTitle className="text-base">Logo</CardTitle></CardHeader>
-                <CardContent>
-                  <LogoUpload value={theme.logo_url} onChange={v => set('logo_url', v)} />
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader><CardTitle className="text-base">Colors</CardTitle></CardHeader>
-                <CardContent className="grid grid-cols-2 gap-4">
-                  <ColorRow label="Primary" value={theme.primary_color ?? '#1a56db'} onChange={v => set('primary_color', v)} />
-                  <ColorRow label="Background" value={theme.background_color ?? '#f9fafb'} onChange={v => set('background_color', v)} />
-                  <ColorRow label="Card surface" value={theme.surface_color ?? '#ffffff'} onChange={v => set('surface_color', v)} />
-                  <ColorRow label="Text" value={theme.text_color ?? '#111827'} onChange={v => set('text_color', v)} />
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader><CardTitle className="text-base">Typography & Layout</CardTitle></CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Font Family</Label>
-                    <Select value={FONT_OPTIONS.includes(theme.font_family ?? 'Inter') ? (theme.font_family ?? 'Inter') : 'Custom'}
-                      onValueChange={v => { set('font_family', v === 'Custom' ? customFont : v); }}>
-                      <SelectTrigger className="bg-background"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {FONT_OPTIONS.map(f => <SelectItem key={f} value={f}>{f}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                    {(theme.font_family === 'Custom' || !FONT_OPTIONS.includes(theme.font_family ?? 'Inter')) && (
-                      <Input value={customFont} onChange={e => { setCustomFont(e.target.value); set('font_family', e.target.value); }}
-                        placeholder="e.g. 'Nunito', sans-serif" />
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Border Radius — {theme.border_radius ?? 8}px</Label>
-                    <input type="range" min={0} max={24} value={theme.border_radius ?? 8}
-                      onChange={e => set('border_radius', e.target.value)} className="w-full accent-primary" />
-                    <div className="flex justify-between text-xs text-muted-foreground"><span>Square</span><span>Rounded</span><span>Pill</span></div>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* ════════════════════════════════════════════════════════
-                PROVIDERS
-            ════════════════════════════════════════════════════════ */}
-            <TabsContent value="providers" className="mt-6 space-y-4">
-
-              {/* Password login */}
-              <Card>
-                <CardContent className="pt-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-medium text-sm">Password login</p>
-                      <p className="text-xs text-muted-foreground">Email/username + password form</p>
-                    </div>
-                    <Switch checked={theme.hydra_local_login ?? true} onCheckedChange={v => set('hydra_local_login', v)} />
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Built-in social providers */}
-              {BUILTIN_PROVIDERS.map(({ type, label, defaultLabel }) => {
-                const p = getBuiltin(type);
-                const enabled = p?.enabled ?? false;
-                return (
-                  <Card key={type}>
-                    <CardContent className="pt-4 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          {PROVIDER_ICONS[type] && <img src={PROVIDER_ICONS[type]} alt={type} className="h-5 w-5 object-contain" />}
-                          <div>
-                            <p className="font-medium text-sm">{label}</p>
-                            <p className="text-xs text-muted-foreground">{defaultLabel}</p>
-                          </div>
-                        </div>
-                        <Switch checked={enabled} onCheckedChange={() => toggleBuiltin(type, defaultLabel)} />
-                      </div>
-                      {enabled && (
-                        <div className="space-y-3 pt-2 border-t">
-                          <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-1">
-                              <Label className="text-xs">Button Label</Label>
-                              <Input value={p?.label ?? defaultLabel} onChange={e => updateBuiltin(type, { label: e.target.value })} />
-                            </div>
-                            <div className="space-y-1">
-                              <Label className="text-xs">Client ID</Label>
-                              <Input value={p?.client_id ?? ''} onChange={e => updateBuiltin(type, { client_id: e.target.value })} placeholder="OAuth2 client ID" />
-                            </div>
-                          </div>
-                          <SecretInput
-                            value={p?.client_secret ?? ''}
-                            saved={p?.client_secret_saved}
-                            onChange={v => updateBuiltin(type, { client_secret: v, client_secret_saved: false })}
-                          />
-                          <LogoUpload value={p?.logo_url} onChange={v => updateBuiltin(type, { logo_url: v })} label="Custom logo (optional)" />
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                );
-              })}
-
-              {/* Custom OIDC */}
-              <div className="flex items-center justify-between pt-2">
-                <p className="text-sm font-medium">Custom OIDC Providers</p>
-                <Button size="sm" variant="outline" onClick={addOidc}>
-                  <Plus className="h-3.5 w-3.5" />Add Provider
-                </Button>
-              </div>
-
-              {customOidcs.length === 0 && (
-                <p className="text-sm text-muted-foreground text-center py-4 border border-dashed rounded-lg">
-                  No custom OIDC providers configured
-                </p>
-              )}
-
-              {customOidcs.map(p => (
-                <Card key={p.id}>
-                  <CardContent className="pt-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        {p.logo_url && <img src={p.logo_url} alt={p.label} className="h-5 w-5 object-contain" onError={e => (e.currentTarget.style.display = 'none')} />}
-                        <div>
-                          <p className="font-medium text-sm">{p.label || 'New OIDC Provider'}</p>
-                          <p className="text-xs text-muted-foreground font-mono">{p.issuer_url || 'No issuer set'}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Switch checked={p.enabled} onCheckedChange={v => updateOidc(p.id, { enabled: v })} />
-                        <Button variant="ghost" size="icon" onClick={() => removeOidc(p.id)}><X className="h-4 w-4" /></Button>
-                      </div>
-                    </div>
-                    <div className="space-y-3 pt-2 border-t">
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                          <Label className="text-xs">Button Label</Label>
-                          <Input value={p.label} onChange={e => updateOidc(p.id, { label: e.target.value })} placeholder="Continue with SSO" />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs">Client ID</Label>
-                          <Input value={p.client_id} onChange={e => updateOidc(p.id, { client_id: e.target.value })} placeholder="OAuth2 client ID" />
-                        </div>
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">Issuer URL</Label>
-                        <Input value={p.issuer_url ?? ''} onChange={e => updateOidc(p.id, { issuer_url: e.target.value })} placeholder="https://accounts.example.com" />
-                      </div>
-                      <SecretInput
-                        value={p.client_secret ?? ''}
-                        saved={p.client_secret_saved}
-                        onChange={v => updateOidc(p.id, { client_secret: v, client_secret_saved: false })}
-                      />
-                      <LogoUpload value={p.logo_url} onChange={v => updateOidc(p.id, { logo_url: v })} label="Logo" />
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-
-              {/* ── SAML 2.0 ── */}
-              <div className="flex items-center justify-between pt-2">
-                <p className="text-sm font-medium">SAML 2.0 Identity Providers</p>
-                <Button size="sm" variant="outline" onClick={() => setAddSamlOpen(true)}>
-                  <Plus className="h-3.5 w-3.5" />Add IdP
-                </Button>
-              </div>
-
-              {/* SP Metadata URL */}
-              <Card>
-                <CardContent className="pt-4">
-                  <div className="space-y-1">
-                    <Label className="text-xs text-muted-foreground">SP Metadata URL — give this to your IdP</Label>
-                    <div className="flex items-center gap-2 bg-muted rounded px-3 py-2">
-                      <code className="text-xs font-mono flex-1 truncate">{spMetadataUrl}</code>
-                      <CopyButton text={spMetadataUrl} />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {samlProviders.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-4 border border-dashed rounded-lg">
-                  No SAML providers configured
-                </p>
-              ) : (
-                <Card>
-                  <CardContent className="p-0 divide-y">
-                    {samlProviders.map(idp => (
-                      <div key={idp.id} className="flex items-center justify-between px-4 py-3">
-                        <div>
-                          <p className="font-medium text-sm">{idp.entity_id}</p>
-                          <p className="text-xs text-muted-foreground">{idp.metadata_url ?? 'Manual config'}</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Badge variant={idp.active ? 'default' : 'secondary'}>{idp.active ? 'Active' : 'Inactive'}</Badge>
-                          <Button variant="ghost" size="icon" onClick={() => handleDeleteSaml(idp.id)}>
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* ── Custom OAuth2 scopes ── */}
-              <div className="pt-2">
-                <p className="text-sm font-medium mb-3">OAuth2 Scopes</p>
-              </div>
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Custom Scopes</CardTitle>
-                  <CardDescription>
-                    Define additional scopes for this project's OAuth2 client. The built-in scopes{' '}
-                    <code className="font-mono text-xs">openid</code> and <code className="font-mono text-xs">offline</code> are always included.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="flex flex-wrap gap-2 min-h-8">
-                    <Badge variant="secondary" className="font-mono">openid</Badge>
-                    <Badge variant="secondary" className="font-mono">offline</Badge>
-                    {customScopes.map(s => (
-                      <Badge key={s} variant="outline" className="font-mono gap-1">
-                        {s}
-                        <button type="button" onClick={() => removeScope(s)} className="ml-0.5 hover:text-destructive">×</button>
-                      </Badge>
-                    ))}
-                  </div>
-                  <div className="flex gap-2">
-                    <Input
-                      value={newScope}
-                      onChange={e => { setNewScope(e.target.value.toLowerCase().replaceAll(/[^a-z0-9:_-]/g, '')); setScopeError(''); }}
-                      placeholder="read:orders"
-                      className="font-mono"
-                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addScope(); } }}
-                    />
-                    <Button type="button" variant="outline" onClick={addScope}>Add</Button>
-                  </div>
-                  {scopeError && <p className="text-xs text-destructive">{scopeError}</p>}
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* ════════════════════════════════════════════════════════
-                REGISTRATION
-            ════════════════════════════════════════════════════════ */}
-            <TabsContent value="registration" className="mt-6 space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Self-Registration</CardTitle>
-                  <CardDescription>Allow users to create their own accounts on the login page.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <Label>Allow self-registration</Label>
-                    <Switch checked={allowSelfReg} onCheckedChange={setAllowSelfReg} />
-                  </div>
-                  <div className="flex items-center justify-between border-t pt-4">
-                    <div>
-                      <p className="text-sm font-medium">Require MFA</p>
-                      <p className="text-xs text-muted-foreground">Users without a second factor cannot complete login until they enroll one.</p>
-                    </div>
-                    <Switch checked={requireMfa} onCheckedChange={setRequireMfa} />
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Allowed Email Domains</CardTitle>
-                  <CardDescription>Restrict registration to specific email domains. Leave blank to allow any domain.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  <Input value={allowedDomains} onChange={e => setAllowedDomains(e.target.value)} placeholder="example.com, company.io" />
-                  <p className="text-xs text-muted-foreground">Comma-separated list of allowed domains.</p>
-                  {allowedDomains.trim() && (
-                    <div className="flex flex-wrap gap-1 pt-1">
-                      {allowedDomains.split(',').map(d => d.trim()).filter(Boolean).map(d => (
-                        <Badge key={d} variant="secondary" className="font-mono text-xs">{d}</Badge>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Password Policy</CardTitle>
-                  <CardDescription>Requirements enforced when users register or are created by an admin.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center gap-3">
-                    <Label className="shrink-0">Minimum length</Label>
-                    <Input type="number" min={0} max={128} value={minPasswordLength}
-                      onChange={e => setMinPasswordLength(Math.max(0, Math.min(128, Number(e.target.value) || 0)))}
-                      className="w-24" />
-                    <span className="text-xs text-muted-foreground">characters (0 = disabled)</span>
-                  </div>
-                  <div className="space-y-3">
-                    {([
-                      { label: 'Require uppercase letter (A–Z)', checked: requireUppercase, set: setRequireUppercase },
-                      { label: 'Require lowercase letter (a–z)', checked: requireLowercase, set: setRequireLowercase },
-                      { label: 'Require number (0–9)',           checked: requireDigit,     set: setRequireDigit },
-                      { label: 'Require special character (!@#$…)', checked: requireSpecial, set: setRequireSpecial },
-                    ] as const).map(({ label, checked, set: setter }) => (
-                      <div key={label} className="flex items-center justify-between">
-                        <Label className="font-normal">{label}</Label>
-                        <Switch checked={checked} onCheckedChange={setter} />
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex items-center justify-between border-t pt-4">
-                    <div>
-                      <p className="text-sm font-medium">Reject breached passwords</p>
-                      <p className="text-xs text-muted-foreground">
-                        Passwords found in known data breaches are rejected. Uses HaveIBeenPwned k-anonymity API — no password is transmitted.
-                      </p>
-                    </div>
-                    <Switch checked={checkBreachedPasswords} onCheckedChange={setCheckBreachedPasswords} />
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Default Role</CardTitle>
-                  <CardDescription>Role automatically assigned when a user registers or signs in via social login for the first time.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Select value={defaultRoleId ?? '__none__'} onValueChange={v => setDefaultRoleId(v === '__none__' ? null : v)}>
-                    <SelectTrigger className="w-64 bg-background"><SelectValue placeholder="No default role" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">No default role</SelectItem>
-                      {roles.map(r => (
-                        <SelectItem key={r.id} value={r.id}>{r.name} <span className="text-muted-foreground ml-1 text-xs">(rank {r.rank})</span></SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* ════════════════════════════════════════════════════════
-                VERIFICATION
-            ════════════════════════════════════════════════════════ */}
-            <TabsContent value="verification" className="mt-6 space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Account Verification</CardTitle>
-                  <CardDescription>Require new users to verify their identity with a one-time code before accessing the app.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium">Email verification</p>
-                      <p className="text-xs text-muted-foreground">Send a 6-digit OTP to the user's email address</p>
-                    </div>
-                    <Switch checked={emailVerif} onCheckedChange={setEmailVerif} />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium">SMS verification</p>
-                      <p className="text-xs text-muted-foreground">Send a 6-digit OTP to the user's phone number</p>
-                    </div>
-                    <Switch checked={smsVerif} onCheckedChange={setSmsVerif} />
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Email Branding</CardTitle>
-                  <CardDescription>Override the sender display name for emails sent from this project. Leave blank to use the organisation's setting.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-1.5">
-                    <Label>From name</Label>
-                    <Input value={emailFromName} onChange={e => setEmailFromName(e.target.value)}
-                      placeholder="e.g. Acme Dev Portal (inherits from org if blank)" />
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* ════════════════════════════════════════════════════════
-                SECURITY
-            ════════════════════════════════════════════════════════ */}
-            <TabsContent value="security" className="mt-6 space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">IP Allowlist</CardTitle>
-                  <CardDescription>
-                    Restrict logins to specific IP ranges. Leave empty to allow all IPs.
-                    Enter one CIDR range per line (e.g. <code className="font-mono text-xs">10.0.0.0/8</code>).
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <Textarea
-                    value={ipAllowlist}
-                    onChange={e => { setIpAllowlist(e.target.value); setIpAllowlistError(''); }}
-                    placeholder={"10.0.0.0/8\n192.168.1.0/24"}
-                    rows={5}
-                    className="font-mono text-sm"
-                  />
-                  {ipAllowlistError && (
-                    <Alert variant="destructive"><AlertDescription>{ipAllowlistError}</AlertDescription></Alert>
-                  )}
-                  <div className="flex items-start gap-2 text-amber-600">
-                    <Shield className="h-4 w-4 mt-0.5 shrink-0" />
-                    <p className="text-xs">If you misconfigure this, you may lock yourself out. Verify your current IP before saving.</p>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* ════════════════════════════════════════════════════════
-                CUSTOM CSS
-            ════════════════════════════════════════════════════════ */}
-            <TabsContent value="css" className="mt-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Custom CSS</CardTitle>
-                  <CardDescription>Injected into the login page &lt;head&gt;. Available CSS variables: <code className="font-mono text-xs">--primary --background --surface --text --text-muted --border --radius --font-family</code></CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Textarea
-                    value={theme.custom_css ?? ''}
-                    onChange={e => set('custom_css', e.target.value)}
-                    className="font-mono text-sm min-h-[300px]"
-                    placeholder={`.card {\n  box-shadow: 0 20px 60px rgba(0,0,0,0.2);\n}\n\n.btn {\n  text-transform: uppercase;\n  letter-spacing: 0.05em;\n}`}
-                  />
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
-        </div>
-
-        {/* ── Right: always-visible preview ── */}
-        <div className="xl:sticky xl:top-6 space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex rounded-md border overflow-hidden text-xs font-medium">
-              {(['login', 'register', 'verify'] as PreviewMode[]).map(m => (
-                <button key={m} onClick={() => setPreviewMode(m)}
-                  className={`px-3 py-1.5 capitalize transition-colors ${previewMode === m ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:text-foreground'}`}>
-                  {m}
+      <div className="iam-page" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 24 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 460px', gap: 24, alignItems: 'start' }}>
+          {/* Left: config tabs */}
+          <div>
+            {/* Tab bar */}
+            <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 20, gap: 0, flexWrap: 'wrap' }}>
+              {TABS.map(t => (
+                <button key={t.id} onClick={() => setTab(t.id)} style={{
+                  padding: '8px 16px', fontSize: 13, fontWeight: 500, border: 'none',
+                  background: 'none', cursor: 'pointer', transition: 'color 150ms, border-color 150ms',
+                  color: tab === t.id ? 'var(--ia-accent)' : 'var(--fg-muted)',
+                  borderBottom: tab === t.id ? '2px solid var(--ia-accent)' : '2px solid transparent',
+                  marginBottom: -1,
+                }}>
+                  {t.label}
                 </button>
               ))}
             </div>
-            <Button variant="outline" size="sm" onClick={() => setPreviewDark(d => !d)} title="Toggle dark/light preview">
-              {previewDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            </Button>
+
+            {/* ── Appearance ── */}
+            {tab === 'appearance' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div className="iam-card iam-card-pad">
+                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 14 }}>Logo</div>
+                  <LogoUpload value={theme.logo_url} onChange={v => set('logo_url', v)} />
+                </div>
+                <div className="iam-card iam-card-pad">
+                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 14 }}>Colors</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                    <ColorRow label="Primary" value={theme.primary_color ?? '#1a56db'} onChange={v => set('primary_color', v)} />
+                    <ColorRow label="Background" value={theme.background_color ?? '#f9fafb'} onChange={v => set('background_color', v)} />
+                    <ColorRow label="Card surface" value={theme.surface_color ?? '#ffffff'} onChange={v => set('surface_color', v)} />
+                    <ColorRow label="Text" value={theme.text_color ?? '#111827'} onChange={v => set('text_color', v)} />
+                  </div>
+                </div>
+                <div className="iam-card iam-card-pad">
+                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 14 }}>Typography & Layout</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    <div>
+                      <label className="iam-label" htmlFor="auth-font-family">Font Family</label>
+                      <select id="auth-font-family" className="iam-input"
+                        value={FONT_OPTIONS.includes(theme.font_family ?? 'Inter') ? (theme.font_family ?? 'Inter') : 'Custom'}
+                        onChange={e => { set('font_family', e.target.value === 'Custom' ? customFont : e.target.value); }}>
+                        {FONT_OPTIONS.map(f => <option key={f} value={f}>{f}</option>)}
+                      </select>
+                      {(theme.font_family === 'Custom' || !FONT_OPTIONS.includes(theme.font_family ?? 'Inter')) && (
+                        <input className="iam-input" style={{ marginTop: 8 }} value={customFont}
+                          onChange={e => { setCustomFont(e.target.value); set('font_family', e.target.value); }}
+                          placeholder="e.g. 'Nunito', sans-serif" />
+                      )}
+                    </div>
+                    <div>
+                      <label className="iam-label">Border Radius — {theme.border_radius ?? 8}px</label>
+                      <input type="range" min={0} max={24} value={theme.border_radius ?? 8}
+                        onChange={e => set('border_radius', e.target.value)} style={{ width: '100%', accentColor: 'var(--ia-accent)', marginTop: 6 }} />
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--fg-subtle)', marginTop: 2 }}>
+                        <span>Square</span><span>Rounded</span><span>Pill</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── Providers ── */}
+            {tab === 'providers' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {/* Password login */}
+                <div className="iam-card iam-card-pad">
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div>
+                      <p style={{ fontSize: 13, fontWeight: 500 }}>Password login</p>
+                      <p style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Email/username + password form</p>
+                    </div>
+                    <Toggle checked={theme.hydra_local_login ?? true} onChange={v => set('hydra_local_login', v)} />
+                  </div>
+                </div>
+
+                {/* Built-in social providers */}
+                {BUILTIN_PROVIDERS.map(({ type, label, defaultLabel }) => {
+                  const p = getBuiltin(type);
+                  const enabled = p?.enabled ?? false;
+                  return (
+                    <div key={type} className="iam-card iam-card-pad">
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          {PROVIDER_ICONS[type] && <img src={PROVIDER_ICONS[type]} alt={type} style={{ height: 20, width: 20, objectFit: 'contain' }} />}
+                          <div>
+                            <p style={{ fontSize: 13, fontWeight: 500 }}>{label}</p>
+                            <p style={{ fontSize: 11, color: 'var(--fg-muted)' }}>{defaultLabel}</p>
+                          </div>
+                        </div>
+                        <Toggle checked={enabled} onChange={() => toggleBuiltin(type, defaultLabel)} />
+                      </div>
+                      {enabled && (
+                        <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                            <div>
+                              <label className="iam-label" htmlFor={`builtin-${type}-label`} style={{ fontSize: 11 }}>Button Label</label>
+                              <input id={`builtin-${type}-label`} className="iam-input" value={p?.label ?? defaultLabel} onChange={e => updateBuiltin(type, { label: e.target.value })} />
+                            </div>
+                            <div>
+                              <label className="iam-label" htmlFor={`builtin-${type}-client-id`} style={{ fontSize: 11 }}>Client ID</label>
+                              <input id={`builtin-${type}-client-id`} className="iam-input" value={p?.client_id ?? ''} onChange={e => updateBuiltin(type, { client_id: e.target.value })} placeholder="OAuth2 client ID" />
+                            </div>
+                          </div>
+                          <SecretInput value={p?.client_secret ?? ''} saved={p?.client_secret_saved}
+                            onChange={v => updateBuiltin(type, { client_secret: v, client_secret_saved: false })} />
+                          <LogoUpload value={p?.logo_url} onChange={v => updateBuiltin(type, { logo_url: v })} label="Custom logo (optional)" />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {/* Custom OIDC */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 4 }}>
+                  <p style={{ fontSize: 13, fontWeight: 500 }}>Custom OIDC Providers</p>
+                  <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={addOidc}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Add Provider
+                  </button>
+                </div>
+
+                {customOidcs.length === 0 && (
+                  <div style={{ fontSize: 13, color: 'var(--fg-muted)', textAlign: 'center', padding: '16px', border: '1px dashed var(--border)', borderRadius: 8 }}>
+                    No custom OIDC providers configured
+                  </div>
+                )}
+
+                {customOidcs.map(p => (
+                  <div key={p.id} className="iam-card iam-card-pad">
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        {p.logo_url && <img src={p.logo_url} alt={p.label} style={{ height: 20, width: 20, objectFit: 'contain' }} onError={e => (e.currentTarget.style.display = 'none')} />}
+                        <div>
+                          <p style={{ fontSize: 13, fontWeight: 500 }}>{p.label || 'New OIDC Provider'}</p>
+                          <p className="iam-mono" style={{ fontSize: 11, color: 'var(--fg-muted)' }}>{p.issuer_url || 'No issuer set'}</p>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <Toggle checked={p.enabled} onChange={v => updateOidc(p.id, { enabled: v })} />
+                        <button type="button" className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm" onClick={() => removeOidc(p.id)}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <div>
+                          <label className="iam-label" htmlFor={`oidc-${p.id}-label`} style={{ fontSize: 11 }}>Button Label</label>
+                          <input id={`oidc-${p.id}-label`} className="iam-input" value={p.label} onChange={e => updateOidc(p.id, { label: e.target.value })} placeholder="Continue with SSO" />
+                        </div>
+                        <div>
+                          <label className="iam-label" htmlFor={`oidc-${p.id}-client-id`} style={{ fontSize: 11 }}>Client ID</label>
+                          <input id={`oidc-${p.id}-client-id`} className="iam-input" value={p.client_id} onChange={e => updateOidc(p.id, { client_id: e.target.value })} placeholder="OAuth2 client ID" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="iam-label" htmlFor={`oidc-${p.id}-issuer`} style={{ fontSize: 11 }}>Issuer URL</label>
+                        <input id={`oidc-${p.id}-issuer`} className="iam-input" value={p.issuer_url ?? ''} onChange={e => updateOidc(p.id, { issuer_url: e.target.value })} placeholder="https://accounts.example.com" />
+                      </div>
+                      <SecretInput value={p.client_secret ?? ''} saved={p.client_secret_saved}
+                        onChange={v => updateOidc(p.id, { client_secret: v, client_secret_saved: false })} />
+                      <LogoUpload value={p.logo_url} onChange={v => updateOidc(p.id, { logo_url: v })} label="Logo" />
+                    </div>
+                  </div>
+                ))}
+
+                {/* SAML 2.0 */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 4 }}>
+                  <p style={{ fontSize: 13, fontWeight: 500 }}>SAML 2.0 Identity Providers</p>
+                  <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={() => setAddSamlOpen(true)}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Add IdP
+                  </button>
+                </div>
+                <div className="iam-card iam-card-pad">
+                  <div style={{ fontSize: 11, color: 'var(--fg-muted)', marginBottom: 6 }}>SP Metadata URL — give this to your IdP</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--surface-2)', borderRadius: 6, padding: '8px 12px' }}>
+                    <code className="iam-mono" style={{ fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{spMetadataUrl}</code>
+                    <CopyButton text={spMetadataUrl} />
+                  </div>
+                </div>
+                {samlProviders.length === 0 ? (
+                  <div style={{ fontSize: 13, color: 'var(--fg-muted)', textAlign: 'center', padding: 16, border: '1px dashed var(--border)', borderRadius: 8 }}>
+                    No SAML providers configured
+                  </div>
+                ) : (
+                  <div className="iam-card">
+                    {samlProviders.map((idp, i) => (
+                      <div key={idp.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: i < samlProviders.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                        <div>
+                          <p style={{ fontSize: 13, fontWeight: 500 }}>{idp.entity_id}</p>
+                          <p style={{ fontSize: 11, color: 'var(--fg-muted)' }}>{idp.metadata_url ?? 'Manual config'}</p>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <IamChip tone={idp.active ? 'success' : 'default'}>{idp.active ? 'Active' : 'Inactive'}</IamChip>
+                          <button className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm" style={{ color: 'var(--danger)' }} onClick={() => handleDeleteSaml(idp.id)}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Custom OAuth2 Scopes */}
+                <p style={{ fontSize: 13, fontWeight: 500, paddingTop: 4 }}>OAuth2 Scopes</p>
+                <div className="iam-card iam-card-pad">
+                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Custom Scopes</div>
+                  <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', marginBottom: 12 }}>
+                    Additional scopes for this project's OAuth2 client. Built-in scopes{' '}
+                    <code className="iam-mono">openid</code> and <code className="iam-mono">offline</code> are always included.
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minHeight: 32, marginBottom: 10 }}>
+                    <IamChip tone="default" mono>openid</IamChip>
+                    <IamChip tone="default" mono>offline</IamChip>
+                    {customScopes.map(s => (
+                      <span key={s} className="iam-mono" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, padding: '2px 8px', border: '1px solid var(--border)', borderRadius: 4 }}>
+                        {s}
+                        <button type="button" onClick={() => removeScope(s)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--fg-muted)', fontSize: 14, lineHeight: 1 }}>×</button>
+                      </span>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input className="iam-input iam-mono" value={newScope}
+                      onChange={e => { setNewScope(e.target.value.toLowerCase().replaceAll(/[^a-z0-9:_-]/g, '')); setScopeError(''); }}
+                      placeholder="read:orders"
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addScope(); } }} />
+                    <button type="button" className="iam-btn iam-btn-secondary" onClick={addScope}>Add</button>
+                  </div>
+                  {scopeError && <p style={{ fontSize: 12, color: 'var(--danger)', marginTop: 4 }}>{scopeError}</p>}
+                </div>
+              </div>
+            )}
+
+            {/* ── Registration ── */}
+            {tab === 'registration' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div className="iam-card iam-card-pad">
+                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Self-Registration</div>
+                  <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', marginBottom: 14 }}>Allow users to create their own accounts on the login page.</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span className="iam-label" style={{ margin: 0 }}>Allow self-registration</span>
+                      <Toggle checked={allowSelfReg} onChange={setAllowSelfReg} />
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+                      <div>
+                        <p style={{ fontSize: 13, fontWeight: 500 }}>Require MFA</p>
+                        <p style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Users without a second factor cannot complete login until they enroll one.</p>
+                      </div>
+                      <Toggle checked={requireMfa} onChange={setRequireMfa} />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="iam-card iam-card-pad">
+                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Allowed Email Domains</div>
+                  <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', marginBottom: 12 }}>Restrict registration to specific email domains. Leave blank to allow any domain.</div>
+                  <input className="iam-input" value={allowedDomains} onChange={e => setAllowedDomains(e.target.value)} placeholder="example.com, company.io" />
+                  <p style={{ fontSize: 11, color: 'var(--fg-muted)', marginTop: 4 }}>Comma-separated list of allowed domains.</p>
+                  {allowedDomains.trim() && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                      {allowedDomains.split(',').map(d => d.trim()).filter(Boolean).map(d => (
+                        <IamChip key={d} tone="default" mono>{d}</IamChip>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="iam-card iam-card-pad">
+                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Password Policy</div>
+                  <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', marginBottom: 14 }}>Requirements enforced when users register or are created by an admin.</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <label className="iam-label" htmlFor="auth-min-length" style={{ margin: 0, flexShrink: 0 }}>Minimum length</label>
+                      <input id="auth-min-length" className="iam-input" type="number" min={0} max={128} value={minPasswordLength}
+                        onChange={e => setMinPasswordLength(Math.max(0, Math.min(128, Number(e.target.value) || 0)))}
+                        style={{ width: 80 }} />
+                      <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>characters (0 = disabled)</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {([
+                        { label: 'Require uppercase letter (A–Z)', checked: requireUppercase, setter: setRequireUppercase },
+                        { label: 'Require lowercase letter (a–z)', checked: requireLowercase, setter: setRequireLowercase },
+                        { label: 'Require number (0–9)',           checked: requireDigit,     setter: setRequireDigit },
+                        { label: 'Require special character (!@#$…)', checked: requireSpecial, setter: setRequireSpecial },
+                      ] as const).map(({ label, checked, setter }) => (
+                        <div key={label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <label className="iam-label" style={{ margin: 0, fontWeight: 400 }}>{label}</label>
+                          <Toggle checked={checked} onChange={setter} />
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+                      <div>
+                        <p style={{ fontSize: 13, fontWeight: 500 }}>Reject breached passwords</p>
+                        <p style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Passwords found in known data breaches are rejected. Uses HaveIBeenPwned k-anonymity API — no password is transmitted.</p>
+                      </div>
+                      <Toggle checked={checkBreachedPasswords} onChange={setCheckBreachedPasswords} />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="iam-card iam-card-pad">
+                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Default Role</div>
+                  <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', marginBottom: 12 }}>Role automatically assigned when a user registers or signs in via social login for the first time.</div>
+                  <select className="iam-input" style={{ maxWidth: 256 }}
+                    value={defaultRoleId ?? '__none__'} onChange={e => setDefaultRoleId(e.target.value === '__none__' ? null : e.target.value)}>
+                    <option value="__none__">No default role</option>
+                    {roles.map(r => (
+                      <option key={r.id} value={r.id}>{r.name} (rank {r.rank})</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {/* ── Verification ── */}
+            {tab === 'verification' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div className="iam-card iam-card-pad">
+                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Account Verification</div>
+                  <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', marginBottom: 14 }}>Require new users to verify their identity with a one-time code before accessing the app.</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div>
+                        <p style={{ fontSize: 13, fontWeight: 500 }}>Email verification</p>
+                        <p style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Send a 6-digit OTP to the user's email address</p>
+                      </div>
+                      <Toggle checked={emailVerif} onChange={setEmailVerif} />
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div>
+                        <p style={{ fontSize: 13, fontWeight: 500 }}>SMS verification</p>
+                        <p style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Send a 6-digit OTP to the user's phone number</p>
+                      </div>
+                      <Toggle checked={smsVerif} onChange={setSmsVerif} />
+                    </div>
+                  </div>
+                </div>
+                <div className="iam-card iam-card-pad">
+                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Email Branding</div>
+                  <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', marginBottom: 12 }}>Override the sender display name for emails sent from this project. Leave blank to use the organisation's setting.</div>
+                  <div>
+                    <label className="iam-label" htmlFor="auth-from-name">From name</label>
+                    <input id="auth-from-name" className="iam-input" value={emailFromName} onChange={e => setEmailFromName(e.target.value)}
+                      placeholder="e.g. Acme Dev Portal (inherits from org if blank)" />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── Security ── */}
+            {tab === 'security' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div className="iam-card iam-card-pad">
+                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>IP Allowlist</div>
+                  <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', marginBottom: 12 }}>
+                    Restrict logins to specific IP ranges. Leave empty to allow all IPs.
+                    Enter one CIDR range per line (e.g. <code className="iam-mono">10.0.0.0/8</code>).
+                  </div>
+                  <textarea className="iam-input iam-mono"
+                    value={ipAllowlist}
+                    onChange={e => { setIpAllowlist(e.target.value); setIpAllowlistError(''); }}
+                    placeholder={'10.0.0.0/8\n192.168.1.0/24'}
+                    rows={5}
+                    style={{ fontSize: 12, resize: 'vertical' }}
+                  />
+                  {ipAllowlistError && (
+                    <div style={{ padding: '8px 12px', background: 'var(--danger-soft)', color: 'var(--danger)', borderRadius: 6, fontSize: 13, marginTop: 8 }}>{ipAllowlistError}</div>
+                  )}
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 10, color: 'var(--warn)' }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0, marginTop: 1 }}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    <p style={{ fontSize: 12 }}>If you misconfigure this, you may lock yourself out. Verify your current IP before saving.</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── Custom CSS ── */}
+            {tab === 'css' && (
+              <div className="iam-card iam-card-pad">
+                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Custom CSS</div>
+                <div role="alert" style={{
+                  fontSize: 12.5, padding: 10, marginBottom: 12, borderRadius: 6,
+                  background: 'oklch(from var(--warn) l c h / 8%)',
+                  border: '1px dashed var(--warn)', color: 'var(--fg)',
+                }}>
+                  <strong>Security:</strong> Custom CSS runs in your users' browsers on the login page.
+                  Malicious CSS can exfiltrate typed values via attribute selectors and background-image
+                  requests. Only paste CSS you wrote or fully trust. <code>@import</code>, external <code>url()</code>,
+                  and selectors targeting password inputs are stripped server-side.
+                </div>
+                <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', marginBottom: 12 }}>
+                  Injected into the login page &lt;head&gt;. Available CSS variables:{' '}
+                  <code className="iam-mono" style={{ fontSize: 11 }}>--primary --background --surface --text --text-muted --border --radius --font-family</code>
+                </div>
+                <textarea className="iam-input iam-mono"
+                  value={theme.custom_css ?? ''}
+                  onChange={e => set('custom_css', e.target.value)}
+                  style={{ fontSize: 12, minHeight: 300, resize: 'vertical' }}
+                  placeholder={`.card {\n  box-shadow: 0 20px 60px rgba(0,0,0,0.2);\n}\n\n.btn {\n  text-transform: uppercase;\n  letter-spacing: 0.05em;\n}`}
+                />
+              </div>
+            )}
           </div>
-          <div className="rounded-xl border overflow-hidden">
-            <iframe key={previewUrl} src={previewUrl} className="w-full border-0"
-              style={{ height: '620px', pointerEvents: 'none' }} title="Login page preview" />
+
+          {/* Right: always-visible preview */}
+          <div style={{ position: 'sticky', top: 24, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', fontSize: 12, fontWeight: 500 }}>
+                {(['login', 'register', 'verify'] as PreviewMode[]).map(m => (
+                  <button key={m} onClick={() => setPreviewMode(m)} style={{
+                    padding: '6px 12px', textTransform: 'capitalize', border: 'none', cursor: 'pointer', transition: 'background 150ms, color 150ms',
+                    background: previewMode === m ? 'var(--ia-accent)' : 'var(--surface)',
+                    color: previewMode === m ? '#fff' : 'var(--fg-muted)',
+                  }}>
+                    {m}
+                  </button>
+                ))}
+              </div>
+              <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={() => setPreviewDark(d => !d)} title="Toggle dark/light preview">
+                {previewDark
+                  ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+                  : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>}
+              </button>
+            </div>
+            <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+              <iframe key={previewUrl} src={previewUrl} sandbox="allow-same-origin" style={{ width: '100%', height: 620, border: 'none', pointerEvents: 'none', display: 'block' }} title="Login page preview" />
+            </div>
           </div>
         </div>
       </div>
 
-      {/* ── Add SAML dialog ── */}
-      <Dialog open={addSamlOpen} onOpenChange={v => { setAddSamlOpen(v); setSamlError(''); }}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Add SAML 2.0 Identity Provider</DialogTitle>
-            <DialogDescription>Connect a corporate IdP (Okta, Azure AD, ADFS).</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleAddSaml} className="space-y-4">
-            {samlError && <Alert variant="destructive"><AlertDescription>{samlError}</AlertDescription></Alert>}
-            <div className="space-y-2">
-              <Label>Entity ID <span className="text-destructive">*</span></Label>
-              <Input value={samlForm.entity_id} onChange={e => setSamlForm(f => ({ ...f, entity_id: e.target.value }))} required placeholder="https://your-idp.example.com" />
+      {/* Add SAML dialog */}
+      <IamDialog
+        open={addSamlOpen}
+        onClose={() => { setAddSamlOpen(false); setSamlError(''); }}
+        title="Add SAML 2.0 Identity Provider"
+        desc="Connect a corporate IdP (Okta, Azure AD, ADFS)."
+        footer={
+          <>
+            <button className="iam-btn iam-btn-ghost" onClick={() => setAddSamlOpen(false)}>Cancel</button>
+            <button className="iam-btn iam-btn-primary" form="add-saml-form" type="submit" disabled={samlSaving}>
+              {samlSaving ? 'Adding…' : 'Add IdP'}
+            </button>
+          </>
+        }
+      >
+        <form id="add-saml-form" onSubmit={handleAddSaml} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {samlError && <div style={{ padding: '8px 12px', background: 'var(--danger-soft)', color: 'var(--danger)', borderRadius: 6, fontSize: 13 }}>{samlError}</div>}
+          <div>
+            <label className="iam-label" htmlFor="saml-entity-id">Entity ID <span style={{ color: 'var(--danger)' }}>*</span></label>
+            <input id="saml-entity-id" className="iam-input" value={samlForm.entity_id} onChange={e => setSamlForm(f => ({ ...f, entity_id: e.target.value }))} required placeholder="https://your-idp.example.com" />
+          </div>
+          <div>
+            <label className="iam-label" htmlFor="saml-metadata-url">Metadata URL <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>(recommended)</span></label>
+            <input id="saml-metadata-url" className="iam-input" value={samlForm.metadata_url} onChange={e => setSamlForm(f => ({ ...f, metadata_url: e.target.value }))} placeholder="https://your-idp.example.com/metadata" />
+            <p style={{ fontSize: 11, color: 'var(--fg-muted)', marginTop: 4 }}>Must use HTTPS. If provided, certificates are fetched automatically.</p>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div>
+              <label className="iam-label" htmlFor="saml-email-attr">Email attribute</label>
+              <input id="saml-email-attr" className="iam-input" value={samlForm.email_attribute_name} onChange={e => setSamlForm(f => ({ ...f, email_attribute_name: e.target.value }))} placeholder="email" />
             </div>
-            <div className="space-y-2">
-              <Label>Metadata URL <span className="text-xs text-muted-foreground">(recommended)</span></Label>
-              <Input value={samlForm.metadata_url} onChange={e => setSamlForm(f => ({ ...f, metadata_url: e.target.value }))} placeholder="https://your-idp.example.com/metadata" />
-              <p className="text-xs text-muted-foreground">Must use HTTPS. If provided, certificates are fetched automatically.</p>
+            <div>
+              <label className="iam-label" htmlFor="saml-name-attr">Name attribute <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>(optional)</span></label>
+              <input id="saml-name-attr" className="iam-input" value={samlForm.name_attribute_name} onChange={e => setSamlForm(f => ({ ...f, name_attribute_name: e.target.value }))} placeholder="displayName" />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Email attribute</Label>
-                <Input value={samlForm.email_attribute_name} onChange={e => setSamlForm(f => ({ ...f, email_attribute_name: e.target.value }))} placeholder="email" />
-              </div>
-              <div className="space-y-2">
-                <Label>Name attribute <span className="text-xs text-muted-foreground">(optional)</span></Label>
-                <Input value={samlForm.name_attribute_name} onChange={e => setSamlForm(f => ({ ...f, name_attribute_name: e.target.value }))} placeholder="displayName" />
-              </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <p style={{ fontSize: 13, fontWeight: 500 }}>JIT provisioning</p>
+              <p style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Automatically create users on first login</p>
             </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium">JIT provisioning</p>
-                <p className="text-xs text-muted-foreground">Automatically create users on first login</p>
-              </div>
-              <Switch checked={samlForm.jit_provisioning} onCheckedChange={v => setSamlForm(f => ({ ...f, jit_provisioning: v }))} />
-            </div>
-            <div className="flex items-center justify-between">
-              <Label>Active</Label>
-              <Switch checked={samlForm.active} onCheckedChange={v => setSamlForm(f => ({ ...f, active: v }))} />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setAddSamlOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={samlSaving}>{samlSaving ? 'Adding…' : 'Add IdP'}</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+            <Toggle checked={samlForm.jit_provisioning} onChange={v => setSamlForm(f => ({ ...f, jit_provisioning: v }))} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span className="iam-label" style={{ margin: 0 }}>Active</span>
+            <Toggle checked={samlForm.active} onChange={v => setSamlForm(f => ({ ...f, active: v }))} />
+          </div>
+        </form>
+      </IamDialog>
     </div>
   );
 }

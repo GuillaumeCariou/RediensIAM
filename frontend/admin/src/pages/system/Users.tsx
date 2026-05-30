@@ -1,12 +1,5 @@
 import { useState } from 'react';
-import { Search, CheckCircle, XCircle, MoreHorizontal, LockOpen, Monitor } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import { IamChip, IamAvatar } from '@/components/iam';
 import { searchUsers, adminGetUser, adminUpdateUser, unlockUser, getUserSessions, revokeAllUserSessions } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
@@ -23,6 +16,35 @@ interface User {
 }
 
 const BLANK_FORM: UserEditFields = { email: '', username: '', display_name: '', phone: '', active: true, email_verified: false, clear_lock: false, new_password: '' };
+
+function MoreMenu({ onEdit, onSessions, onUnlock, locked }: Readonly<{
+  onEdit: () => void; onSessions: () => void; onUnlock: () => void; locked: boolean;
+}>) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: 'relative' }}>
+      <button className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm"
+        onClick={e => { e.stopPropagation(); setOpen(o => !o); }}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+      </button>
+      {open && (
+        <>
+          <div role="none" style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }} />
+          <div style={{ position: 'absolute', right: 0, top: '100%', zIndex: 50, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-md)', minWidth: 140, padding: 4 }}>
+            <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }}
+              onClick={() => { setOpen(false); onEdit(); }}>Edit</button>
+            <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }}
+              onClick={() => { setOpen(false); onSessions(); }}>View sessions</button>
+            {locked && (
+              <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13, color: 'var(--warn)' }}
+                onClick={() => { setOpen(false); onUnlock(); }}>Unlock account</button>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 export default function SystemUsers() {
   const [users, setUsers] = useState<User[]>([]);
@@ -121,87 +143,103 @@ export default function SystemUsers() {
   return (
     <div>
       <PageHeader title="Global User Search" description="Search and manage users across all organisations" />
-      <div className="p-6 space-y-4">
+      <div className="iam-page">
         {actionMsg && (
-          <Alert variant={actionMsg.error ? 'destructive' : 'default'}>
-            <AlertDescription>{actionMsg.text}</AlertDescription>
-          </Alert>
+          <div style={{
+            padding: '8px 14px', borderRadius: 8, marginBottom: 14, fontSize: 13,
+            background: actionMsg.error ? 'var(--danger-soft)' : 'var(--success-soft)',
+            color: actionMsg.error ? 'var(--danger)' : 'var(--success)',
+            border: `1px solid ${actionMsg.error ? 'oklch(from var(--danger) l c h / 0.3)' : 'oklch(from var(--success) l c h / 0.3)'}`,
+          }}>
+            {actionMsg.text}
+          </div>
         )}
 
-        <div className="flex gap-2 max-w-md">
-          <Input placeholder="Search by email, username…" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => e.key === 'Enter' && doSearch()} />
-          <Button onClick={doSearch} disabled={loading}><Search className="h-4 w-4" />Search</Button>
+        <div style={{ display: 'flex', gap: 8, maxWidth: 420, marginBottom: 14 }}>
+          <div style={{ position: 'relative', flex: 1 }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+              style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--fg-subtle)', pointerEvents: 'none' }}>
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input
+              className="iam-input"
+              style={{ paddingLeft: 30 }}
+              placeholder="Search by email, username…"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && doSearch()}
+            />
+          </div>
+          <button className="iam-btn iam-btn-primary iam-btn-sm" onClick={doSearch} disabled={loading}>
+            Search
+          </button>
         </div>
 
         {(loading || searched) && (
-          <div className="rounded-xl border bg-card overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>User</TableHead>
-                  <TableHead>Organisation</TableHead>
-                  <TableHead>User List</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Last Login</TableHead>
-                  <TableHead className="w-12"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+          <div className="iam-card">
+            <table className="iam-tbl">
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Organisation</th>
+                  <th>User List</th>
+                  <th>Status</th>
+                  <th>Last Login</th>
+                  <th style={{ width: 36 }}></th>
+                </tr>
+              </thead>
+              <tbody>
                 {(() => {
-                  if (loading) return (
-                    Array.from({ length: 3 }, (_, i) => `sk-row-${i}`).map(rowId => (
-                      <TableRow key={rowId}>
-                        {Array.from({ length: 6 }, (_, j) => `sk-cell-${j}`).map(cellId => <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>)}
-                      </TableRow>
-                    ))
-                  );
+                  if (loading) return Array.from({ length: 3 }, (_, i) => (
+                    <tr key={i}>
+                      {Array.from({ length: 6 }, (_, j) => (
+                        <td key={j}><div style={{ height: 14, background: 'var(--surface-2)', borderRadius: 4, width: '70%' }} /></td>
+                      ))}
+                    </tr>
+                  ));
                   if (users.length === 0) return (
-                    <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No users found</TableCell></TableRow>
+                    <tr><td colSpan={6}>
+                      <div className="iam-empty">
+                        <div className="iam-empty-title">No users found</div>
+                      </div>
+                    </td></tr>
                   );
                   return users.map(user => (
-                    <TableRow key={user.id} className="cursor-pointer hover:bg-muted/50" onClick={() => openEdit(user)}>
-                      <TableCell>
-                        <div className="flex items-center gap-2 flex-wrap">
+                    <tr key={user.id} style={{ cursor: 'pointer' }} onClick={() => openEdit(user)}>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <IamAvatar name={user.display_name ?? user.username} size="sm" />
                           <div>
-                            <p className="font-medium">{user.display_name ?? user.username}</p>
-                            <p className="text-xs text-muted-foreground">{user.email}</p>
-                            <p className="text-xs text-muted-foreground font-mono">{user.username}#{user.discriminator}</p>
+                            <div style={{ fontWeight: 500, display: 'flex', alignItems: 'center', gap: 6 }}>
+                              {user.display_name ?? user.username}
+                              {isLocked(user) && <IamChip tone="danger">Locked</IamChip>}
+                            </div>
+                            <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>{user.email}</div>
+                            <div className="iam-mono" style={{ fontSize: 10, color: 'var(--fg-subtle)' }}>{user.username}#{user.discriminator}</div>
                           </div>
-                          {isLocked(user) && <Badge variant="destructive" className="text-[10px]">Locked</Badge>}
                         </div>
-                      </TableCell>
-                      <TableCell className="text-sm">{user.org_name}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{user.user_list_name}</TableCell>
-                      <TableCell>
+                      </td>
+                      <td style={{ fontSize: 13 }}>{user.org_name}</td>
+                      <td style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{user.user_list_name}</td>
+                      <td>
                         {user.active
-                          ? <Badge variant="success"><CheckCircle className="h-3 w-3 mr-1" />Active</Badge>
-                          : <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Disabled</Badge>
-                        }
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{fmtDate(user.last_login_at)}</TableCell>
-                      <TableCell onClick={e => e.stopPropagation()}>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button size="sm" variant="ghost"><MoreHorizontal className="h-4 w-4" /></Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => openEdit(user)}>Edit</DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => openSessions(user)}>
-                              <Monitor className="h-4 w-4 mr-2" />View sessions
-                            </DropdownMenuItem>
-                            {isLocked(user) && (
-                              <DropdownMenuItem onClick={() => handleUnlock(user)} className="text-amber-600">
-                                <LockOpen className="h-4 w-4 mr-2" />Unlock account
-                              </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
+                          ? <IamChip tone="success">Active</IamChip>
+                          : <IamChip tone="danger">Disabled</IamChip>}
+                      </td>
+                      <td style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{fmtDate(user.last_login_at)}</td>
+                      <td onClick={e => e.stopPropagation()}>
+                        <MoreMenu
+                          onEdit={() => openEdit(user)}
+                          onSessions={() => openSessions(user)}
+                          onUnlock={() => handleUnlock(user)}
+                          locked={isLocked(user)}
+                        />
+                      </td>
+                    </tr>
                   ));
                 })()}
-              </TableBody>
-            </Table>
+              </tbody>
+            </table>
           </div>
         )}
       </div>

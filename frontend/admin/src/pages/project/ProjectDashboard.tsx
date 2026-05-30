@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useProjectContext } from '@/hooks/useOrgContext';
-import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
+import { IamChip } from '@/components/iam';
 import { getProjectInfo, getProjectStats } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 import ProjectStatsCards from '@/components/ProjectStatsCards';
@@ -31,7 +30,7 @@ export default function ProjectDashboard() {
     return (
       <div>
         <PageHeader title="Project" />
-        <div className="p-6 text-sm text-muted-foreground">No project selected. Navigate from an organisation.</div>
+        <div className="iam-page" style={{ fontSize: 13, color: 'var(--fg-muted)' }}>No project selected. Navigate from an organisation.</div>
       </div>
     );
   }
@@ -41,18 +40,20 @@ export default function ProjectDashboard() {
       <PageHeader
         title={loading ? 'Loading…' : (project?.name ?? 'Project')}
         description={project ? `/${project.slug} · ${project.hydra_client_id}` : undefined}
-        action={
-          project && (
-            <div className="flex gap-2">
-              {project.active ? <Badge variant="success">Active</Badge> : <Badge variant="secondary">Inactive</Badge>}
-              {project.require_role_to_login && <Badge variant="warning">Role Required</Badge>}
-            </div>
-          )
-        }
+        actions={project ? [
+          project.active
+            ? <IamChip key="status" tone="success">Active</IamChip>
+            : <IamChip key="status" tone="default">Inactive</IamChip>,
+          ...(project.require_role_to_login ? [<IamChip key="role" tone="warn">Role Required</IamChip>] : []),
+        ] : []}
       />
-      <div className="p-6 space-y-6">
+      <div className="iam-page">
         {loading ? (
-          <div className="grid grid-cols-3 gap-4">{Array.from({ length: 3 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-32 rounded-xl" />)}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+            {Array.from({ length: 3 }, (_, i) => (
+              <div key={i} style={{ height: 128, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }} />
+            ))}
+          </div>
         ) : (
           <ProjectStatsCards
             stats={stats}

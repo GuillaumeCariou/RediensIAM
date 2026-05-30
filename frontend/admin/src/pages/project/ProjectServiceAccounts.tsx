@@ -1,15 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useProjectContext } from '@/hooks/useOrgContext';
-import { Plus, Trash2, Bot, Key, MoreHorizontal, Copy, Check } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Skeleton } from '@/components/ui/skeleton';
+import { IamChip, IamDialog } from '@/components/iam';
 import {
   listServiceAccounts, createServiceAccount,
   generatePat, listPats, revokePat, deleteServiceAccount,
@@ -25,9 +16,36 @@ function CopyButton({ text }: Readonly<{ text: string }>) {
   const [copied, setCopied] = useState(false);
   const copy = () => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); };
   return (
-    <Button variant="ghost" size="icon" onClick={copy} className="h-6 w-6">
-      {copied ? <Check className="h-3 w-3 text-green-600" /> : <Copy className="h-3 w-3" />}
-    </Button>
+    <button className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm" onClick={copy}>
+      {copied
+        ? <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>
+        : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>}
+    </button>
+  );
+}
+
+function SaMenu({ onViewPats, onGenPat, onDelete }: Readonly<{
+  onViewPats: () => void; onGenPat: () => void; onDelete: () => void;
+}>) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: 'relative' }}>
+      <button className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm"
+        onClick={e => { e.stopPropagation(); setOpen(o => !o); }}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+      </button>
+      {open && (
+        <>
+          <div role="none" style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }} />
+          <div style={{ position: 'absolute', right: 0, top: '100%', zIndex: 50, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-md)', minWidth: 160, padding: 4 }}>
+            <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }} onClick={() => { setOpen(false); onViewPats(); }}>View PATs</button>
+            <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }} onClick={() => { setOpen(false); onGenPat(); }}>Generate PAT</button>
+            <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
+            <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13, color: 'var(--danger)' }} onClick={() => { setOpen(false); onDelete(); }}>Delete</button>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -105,135 +123,165 @@ export default function ProjectServiceAccounts() {
       <PageHeader
         title="Service Accounts"
         description="Non-human identities for this project"
-        action={projectId ? <Button onClick={() => setCreateOpen(true)} disabled={!assignedListId}><Plus className="h-4 w-4" />New Service Account</Button> : undefined}
+        actions={projectId ? [
+          <button key="new" className="iam-btn iam-btn-primary iam-btn-sm" disabled={!assignedListId} onClick={() => setCreateOpen(true)}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New Service Account
+          </button>
+        ] : []}
       />
-      <div className="p-6 space-y-4">
-        <div className="rounded-xl border bg-card overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Last Used</TableHead>
-                <TableHead className="w-12"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {(() => {
-                if (loading) return (
-                  Array.from({ length: 3 }, (_, i) => `sk-row-${i}`).map(rowId => <TableRow key={rowId}>{Array.from({ length: 4 }, (_, j) => `sk-cell-${j}`).map(cellId => <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>)
-                );
-                if (accounts.length === 0) return (
-                  <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-12"><Bot className="h-8 w-8 mx-auto mb-2 opacity-40" />No service accounts</TableCell></TableRow>
-                );
-                return (
-                  accounts.map(sa => (
-                      <TableRow key={sa.id}>
-                        <TableCell>
-                          <p className="font-medium">{sa.name}</p>
-                          {sa.description && <p className="text-xs text-muted-foreground">{sa.description}</p>}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={sa.active ? 'success' : 'secondary'}>{sa.active ? 'Active' : 'Inactive'}</Badge>
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">{fmtDate(sa.last_used_at)}</TableCell>
-                        <TableCell>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
-                            <DropdownMenuContent>
-                              <DropdownMenuItem onClick={() => openPats(sa)}><Key className="h-4 w-4" />View PATs</DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => setGenPatOpen(sa)}><Plus className="h-4 w-4" />Generate PAT</DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteTarget(sa)}><Trash2 className="h-4 w-4" />Delete</DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                );
-              })()}
-            </TableBody>
-          </Table>
+      <div className="iam-page">
+        <div className="iam-card">
+          <table className="iam-tbl">
+            <thead>
+              <tr><th>Name</th><th>Status</th><th>Last Used</th><th style={{ width: 36 }}></th></tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                Array.from({ length: 3 }, (_, i) => (
+                  <tr key={i}>{Array.from({ length: 4 }, (_, j) => <td key={j}><div style={{ height: 14, background: 'var(--surface-2)', borderRadius: 4, width: '70%' }} /></td>)}</tr>
+                ))
+              ) : accounts.length === 0 ? (
+                <tr><td colSpan={4}>
+                  <div className="iam-empty">
+                    <div className="iam-empty-title">No service accounts</div>
+                    <div className="iam-empty-desc">{assignedListId ? 'Create one for automation.' : 'Assign a user list to this project first.'}</div>
+                  </div>
+                </td></tr>
+              ) : (
+                accounts.map(sa => (
+                  <tr key={sa.id}>
+                    <td>
+                      <div style={{ fontWeight: 500 }}>{sa.name}</div>
+                      {sa.description && <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>{sa.description}</div>}
+                    </td>
+                    <td><IamChip tone={sa.active ? 'success' : 'default'}>{sa.active ? 'Active' : 'Inactive'}</IamChip></td>
+                    <td style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{fmtDate(sa.last_used_at)}</td>
+                    <td>
+                      <SaMenu
+                        onViewPats={() => openPats(sa)}
+                        onGenPat={() => setGenPatOpen(sa)}
+                        onDelete={() => setDeleteTarget(sa)}
+                      />
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 
-      {/* Create SA */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Create Service Account</DialogTitle></DialogHeader>
-          <form onSubmit={handleCreate} className="space-y-4">
-            <div className="space-y-2"><Label>Name</Label><Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required placeholder="ci-deploy-bot" /></div>
-            <div className="space-y-2"><Label>Description (optional)</Label><Input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={saving}>{saving ? 'Creating…' : 'Create'}</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <IamDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="Create Service Account"
+        footer={
+          <>
+            <button className="iam-btn iam-btn-ghost" onClick={() => setCreateOpen(false)}>Cancel</button>
+            <button className="iam-btn iam-btn-primary" form="create-proj-sa-form" type="submit" disabled={saving}>
+              {saving ? 'Creating…' : 'Create'}
+            </button>
+          </>
+        }
+      >
+        <form id="create-proj-sa-form" onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div>
+            <label className="iam-label" htmlFor="sa-name">Name</label>
+            <input id="sa-name" className="iam-input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required placeholder="ci-deploy-bot" />
+          </div>
+          <div>
+            <label className="iam-label" htmlFor="sa-description">Description (optional)</label>
+            <input id="sa-description" className="iam-input" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+          </div>
+        </form>
+      </IamDialog>
 
-      {/* PAT list */}
-      <Dialog open={!!patSa} onOpenChange={v => !v && setPatSa(null)}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>PATs — {patSa?.name}</DialogTitle><DialogDescription>Raw tokens are shown once at generation.</DialogDescription></DialogHeader>
-          <div className="space-y-2 max-h-80 overflow-y-auto">
-            {pats.length === 0
-              ? <p className="text-sm text-muted-foreground py-4 text-center">No PATs yet.</p>
-              : pats.map(p => (
-                  <div key={p.id} className="flex items-center justify-between py-2 border-b last:border-0">
-                    <div>
-                      <p className="text-sm font-medium">{p.name}</p>
-                      <p className="text-xs text-muted-foreground">Expires: {fmtDate(p.expires_at)} · Last used: {fmtDate(p.last_used_at)}</p>
-                    </div>
-                    <Button size="sm" variant="outline" className="text-destructive" onClick={() => handleRevokePat(p.id)}>Revoke</Button>
+      <IamDialog
+        open={!!patSa}
+        onClose={() => setPatSa(null)}
+        title={`PATs — ${patSa?.name}`}
+        desc="Raw tokens are shown once at generation."
+        wide
+        footer={
+          <>
+            <button className="iam-btn iam-btn-ghost" onClick={() => setPatSa(null)}>Close</button>
+            <button className="iam-btn iam-btn-secondary" onClick={() => { const s = patSa; setPatSa(null); setGenPatOpen(s); }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Generate PAT
+            </button>
+          </>
+        }
+      >
+        <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+          {pats.length === 0
+            ? <p style={{ fontSize: 13, color: 'var(--fg-muted)', textAlign: 'center', padding: '16px 0' }}>No PATs yet.</p>
+            : pats.map((p, i) => (
+                <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: i < pats.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                  <div>
+                    <p style={{ fontSize: 13, fontWeight: 500 }}>{p.name}</p>
+                    <p style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Expires: {fmtDate(p.expires_at)} · Last used: {fmtDate(p.last_used_at)}</p>
                   </div>
-                ))
-            }
+                  <button className="iam-btn iam-btn-ghost iam-btn-sm" style={{ color: 'var(--danger)' }} onClick={() => handleRevokePat(p.id)}>Revoke</button>
+                </div>
+              ))
+          }
+        </div>
+      </IamDialog>
+
+      <IamDialog
+        open={!!genPatOpen}
+        onClose={() => setGenPatOpen(null)}
+        title="Generate PAT"
+        desc="The token will only be shown once."
+        footer={
+          <>
+            <button className="iam-btn iam-btn-ghost" onClick={() => setGenPatOpen(null)}>Cancel</button>
+            <button className="iam-btn iam-btn-primary" form="gen-pat-form" type="submit" disabled={saving}>
+              {saving ? 'Generating…' : 'Generate'}
+            </button>
+          </>
+        }
+      >
+        <form id="gen-pat-form" onSubmit={handleGenPat} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div>
+            <label className="iam-label" htmlFor="pat-name">Token Name</label>
+            <input id="pat-name" className="iam-input" value={patForm.name} onChange={e => setPatForm(f => ({ ...f, name: e.target.value }))} required placeholder="ci-pipeline-token" />
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setPatSa(null); setGenPatOpen(patSa); }}>
-              <Plus className="h-4 w-4" />Generate PAT
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Generate PAT */}
-      <Dialog open={!!genPatOpen} onOpenChange={v => !v && setGenPatOpen(null)}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Generate PAT</DialogTitle><DialogDescription>The token will only be shown once.</DialogDescription></DialogHeader>
-          <form onSubmit={handleGenPat} className="space-y-4">
-            <div className="space-y-2"><Label>Token Name</Label><Input value={patForm.name} onChange={e => setPatForm(f => ({ ...f, name: e.target.value }))} required placeholder="ci-pipeline-token" /></div>
-            <div className="space-y-2"><Label>Expires At (optional)</Label><Input type="datetime-local" value={patForm.expires_at} onChange={e => setPatForm(f => ({ ...f, expires_at: e.target.value }))} /></div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setGenPatOpen(null)}>Cancel</Button>
-              <Button type="submit" disabled={saving}>{saving ? 'Generating…' : 'Generate'}</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* New PAT reveal */}
-      <Dialog open={!!newPat} onOpenChange={v => !v && setNewPat(null)}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Your New PAT</DialogTitle><DialogDescription>Copy this token now — it will not be shown again.</DialogDescription></DialogHeader>
-          <div className="flex items-center gap-2 p-3 bg-muted rounded-lg font-mono text-sm break-all">
-            <span className="flex-1">{newPat}</span>
-            {newPat && <CopyButton text={newPat} />}
+          <div>
+            <label className="iam-label" htmlFor="pat-expires">Expires At (optional)</label>
+            <input id="pat-expires" className="iam-input" type="datetime-local" value={patForm.expires_at} onChange={e => setPatForm(f => ({ ...f, expires_at: e.target.value }))} />
           </div>
-          <DialogFooter><Button onClick={() => setNewPat(null)}>Done</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </form>
+      </IamDialog>
 
-      <AlertDialog open={!!deleteTarget} onOpenChange={v => !v && setDeleteTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>Delete {deleteTarget?.name}?</AlertDialogTitle><AlertDialogDescription>All PATs for this service account will also be revoked.</AlertDialogDescription></AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <IamDialog
+        open={!!newPat}
+        onClose={() => setNewPat(null)}
+        title="Your New PAT"
+        desc="Copy this token now — it will not be shown again."
+        footer={<button className="iam-btn iam-btn-primary" onClick={() => setNewPat(null)}>Done</button>}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', background: 'var(--surface-2)', borderRadius: 6, fontFamily: 'var(--font-mono)', fontSize: 12, wordBreak: 'break-all' }}>
+          <span style={{ flex: 1 }}>{newPat}</span>
+          {newPat && <CopyButton text={newPat} />}
+        </div>
+      </IamDialog>
+
+      <IamDialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title={`Delete ${deleteTarget?.name}?`}
+        desc="All PATs for this service account will also be revoked."
+        footer={
+          <>
+            <button className="iam-btn iam-btn-ghost" onClick={() => setDeleteTarget(null)}>Cancel</button>
+            <button className="iam-btn iam-btn-danger" onClick={handleDelete}>Delete</button>
+          </>
+        }
+      >
+        <div />
+      </IamDialog>
     </div>
   );
 }

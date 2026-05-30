@@ -59,43 +59,77 @@ public class AuthController(
         try
         {
             var req = await hydra.GetLoginRequestAsync(login_challenge);
-            if (req.Skip)
-            {
-                var redirect = await hydra.AcceptLoginAsync(login_challenge, req.Subject, []);
-                return Redirect(redirect);
-            }
-
+            if (req.Skip) return await HandleSkipLoginAsync(login_challenge, req);
             if (req.Client?.ClientId == Roles.AdminClientId)
                 return Ok(new { project_name = "RediensIAM Admin", is_admin_login = true });
-
-            var projectId = ExtractProjectId(req);
-            if (projectId == null) return BadRequest(new { error = ErrMissingProjectId });
-
-            var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId) && p.Active);
-            if (project == null) return BadRequest(new { error = "invalid_project" });
-
-            return Ok(new
-            {
-                project_id = projectId,
-                project_name = project.Name,
-                theme = StripSecretsFromTheme(project.LoginTheme),
-                has_custom_template = project.LoginTemplate != null,
-                require_role = project.RequireRoleToLogin,
-                allow_self_registration = project.AllowSelfRegistration,
-                email_verification_enabled = project.EmailVerificationEnabled,
-                sms_verification_enabled = project.SmsVerificationEnabled,
-                min_password_length          = project.MinPasswordLength,
-                password_require_uppercase   = project.PasswordRequireUppercase,
-                password_require_lowercase   = project.PasswordRequireLowercase,
-                password_require_digit       = project.PasswordRequireDigit,
-                password_require_special     = project.PasswordRequireSpecial,
-            });
+            return await BuildLoginPageInfoAsync(req);
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "GetLogin failed for challenge {Challenge}", login_challenge);
             return BadRequest(new { error = ErrInvalidChallenge });
         }
+    }
+
+    private async Task<IActionResult> HandleSkipLoginAsync(string login_challenge, HydraLoginRequest req)
+    {
+        // Re-validate the user before accepting the cached Hydra session — disabled, locked,
+        // or suspended-org users must not be able to obtain a new authorization code via skip.
+        var skipUserId = ParseSubjectUserId(req.Subject);
+        if (skipUserId.HasValue)
+        {
+            var skipUser = await db.Users
+                .Include(u => u.UserList)
+                    .ThenInclude(ul => ul!.Organisation)
+                .FirstOrDefaultAsync(u => u.Id == skipUserId.Value);
+            var skipErr = ValidateSkipUser(skipUser);
+            if (skipErr != null) return skipErr;
+        }
+        var redirect = await hydra.AcceptLoginAsync(login_challenge, req.Subject ?? "", []);
+        return Redirect(redirect);
+    }
+
+    private static Guid? ParseSubjectUserId(string? subject)
+    {
+        var s = subject ?? "";
+        var parts = s.Split(':', 2);
+        if (parts.Length == 2 && Guid.TryParse(parts[1], out var pid)) return pid;
+        if (Guid.TryParse(s, out var sid)) return sid;
+        return null;
+    }
+
+    private UnauthorizedObjectResult? ValidateSkipUser(User? user)
+    {
+        if (user == null || !user.Active) return Unauthorized(new { error = ErrInvalidCreds });
+        if (user.LockedUntil.HasValue && user.LockedUntil > DateTimeOffset.UtcNow)
+            return Unauthorized(new { error = "account_locked" });
+        if (user.UserList?.Organisation != null && !user.UserList.Organisation.Active)
+            return Unauthorized(new { error = "organisation_suspended" });
+        return null;
+    }
+
+    private async Task<IActionResult> BuildLoginPageInfoAsync(HydraLoginRequest req)
+    {
+        var projectId = ExtractProjectId(req);
+        if (projectId == null) return BadRequest(new { error = ErrMissingProjectId });
+        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId) && p.Active);
+        if (project == null) return BadRequest(new { error = "invalid_project" });
+        return Ok(new
+        {
+            project_id = projectId,
+            project_name = project.Name,
+            theme = StripSecretsFromTheme(project.LoginTheme),
+            has_custom_template = project.LoginTemplate != null,
+            require_role = project.RequireRoleToLogin,
+            allow_self_registration = project.AllowSelfRegistration,
+            email_verification_enabled = project.EmailVerificationEnabled,
+            sms_verification_enabled = project.SmsVerificationEnabled,
+            min_password_length          = project.MinPasswordLength,
+            password_require_uppercase   = project.PasswordRequireUppercase,
+            password_require_lowercase   = project.PasswordRequireLowercase,
+            password_require_digit       = project.PasswordRequireDigit,
+            password_require_special     = project.PasswordRequireSpecial,
+        });
     }
 
     [HttpGet("login/theme")]
@@ -153,14 +187,21 @@ public class AuthController(
 
         var project = await db.Projects
             .Include(p => p.AssignedUserList)
+            .Include(p => p.Organisation)
             .FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId) && p.Active);
 
         if (project?.AssignedUserListId == null)
             return BadRequest(new { error = ErrProjectNotReady });
 
+        if (project.Organisation == null || !project.Organisation.Active)
+            return Unauthorized(new { error = "organisation_suspended" });
+
         var user = await LookupUserByCredentialsAsync(project, body);
         if (user == null || !user.Active)
         {
+            // Equalise wall-clock cost on user-not-found vs wrong-password so attackers cannot
+            // enumerate valid accounts via response timing.
+            passwords.DummyVerify(body.Password);
             await rateLimiter.RecordFailureAsync(Ip, null);
             IamMetrics.LoginAttempts.WithLabels("failure").Inc();
             return Unauthorized(new { error = ErrInvalidCreds });
@@ -329,11 +370,19 @@ public class AuthController(
         if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
             return StatusCode(429, new { error = ErrRateLimited });
 
-        var allCodes = await db.BackupCodes
-            .Where(c => c.UserId == userGuid && c.UsedAt == null)
-            .ToListAsync();
         var submitted = body.Code.ToUpperInvariant();
-        var code = allCodes.FirstOrDefault(bc => passwords.Verify(submitted, bc.CodeHash));
+        // Fast path: SHA256 codes are looked up by exact hash match — O(1) in DB, no per-row Argon2.
+        var fastHash = passwords.HashBackupCode(submitted);
+        var code = await db.BackupCodes
+            .FirstOrDefaultAsync(c => c.UserId == userGuid && c.UsedAt == null && c.CodeHash == fastHash);
+        if (code == null)
+        {
+            // Legacy fallback: argon2id-hashed codes (one-time migration on next regenerate).
+            var legacy = await db.BackupCodes
+                .Where(c => c.UserId == userGuid && c.UsedAt == null && !c.CodeHash.StartsWith("sha256:"))
+                .ToListAsync();
+            code = legacy.FirstOrDefault(bc => passwords.VerifyBackupCode(submitted, bc.CodeHash));
+        }
         if (code == null)
         {
             await rateLimiter.RecordFailureAsync(Ip, userGuid);
@@ -1397,8 +1446,10 @@ public class AuthController(
         HttpContext.Session.Remove(MfaPendingUser);
         HttpContext.Session.Remove(MfaPendingChallenge);
         HttpContext.Session.Remove(MfaPendingProject);
-        // Rotate session to prevent session fixation: clearing all data invalidates the pre-MFA session state.
+        // Rotate session ID to prevent fixation: clear + delete the cookie so the next response
+        // issues a fresh session identifier rather than reusing the pre-MFA one.
         HttpContext.Session.Clear();
+        Response.Cookies.Delete(".AspNetCore.Session");
 
         string redirectUrl;
         if (projectId == "")

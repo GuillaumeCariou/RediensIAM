@@ -1,17 +1,28 @@
+import type { ReactNode } from 'react';
+
 interface PageHeaderProps {
-  title: string;
-  description?: string;
-  action?: React.ReactNode;
+  title: ReactNode;
+  description?: ReactNode;
+  desc?: ReactNode;
+  action?: ReactNode;
+  actions?: ReactNode[];
 }
 
-export default function PageHeader({ title, description, action }: Readonly<PageHeaderProps>) {
+export default function PageHeader({ title, description, desc, action, actions }: Readonly<PageHeaderProps>) {
+  const descContent = description ?? desc;
+  const actionContent = action ?? (actions && actions.length > 0 ? (
+    <div style={{ display: 'flex', gap: 8 }}>{actions}</div>
+  ) : null);
+
   return (
-    <div className="flex items-start justify-between border-b bg-background px-6 py-4">
-      <div>
-        <h1 className="text-xl font-semibold">{title}</h1>
-        {description && <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>}
+    <div className="iam-page-header">
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
+        <div style={{ flex: 1 }}>
+          <div className="iam-page-title">{title}</div>
+          {descContent && <div className="iam-page-desc">{descContent}</div>}
+        </div>
+        {actionContent && <div style={{ flexShrink: 0 }}>{actionContent}</div>}
       </div>
-      {action && <div className="ml-4 flex-shrink-0">{action}</div>}
     </div>
   );
 }

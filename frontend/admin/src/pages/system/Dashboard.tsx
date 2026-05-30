@@ -1,8 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Building2, Users, FolderKanban, Bot, Activity, TrendingUp } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Badge } from '@/components/ui/badge';
+import { StatCard, ActivityChart, IamChip } from '@/components/iam';
 import { getMetrics } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
@@ -19,29 +16,6 @@ interface Metrics {
   uptime_since?: string;
 }
 
-function StatCard({ label, value, sub, icon, trend }: Readonly<{
-  label: string; value: number | string; sub?: string; icon: React.ReactNode; trend?: number;
-}>) {
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <CardTitle className="text-sm font-medium text-muted-foreground">{label}</CardTitle>
-        <div className="text-muted-foreground">{icon}</div>
-      </CardHeader>
-      <CardContent>
-        <p className="text-2xl font-bold">{value}</p>
-        {sub && <p className="text-xs text-muted-foreground mt-1">{sub}</p>}
-        {trend !== undefined && (
-          <div className="flex items-center gap-1 mt-1">
-            <TrendingUp className="h-3 w-3 text-green-600" />
-            <span className="text-xs text-green-600">{trend} today</span>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 export default function SystemDashboard() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [loading, setLoading] = useState(true);
@@ -53,35 +27,61 @@ export default function SystemDashboard() {
   return (
     <div>
       <PageHeader title="System Dashboard" description="Overview of the entire RediensIAM platform" />
-      <div className="p-6 space-y-6">
-        {loading ? (
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            {Array.from({ length: 8 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-28 rounded-xl" />)}
-          </div>
-        ) : (
-          <>
-            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-              <StatCard label="Organisations" value={metrics?.organisations ?? 0} sub={`${metrics?.active_organisations ?? 0} active`} icon={<Building2 className="h-4 w-4" />} />
-              <StatCard label="Total Users" value={metrics?.total_users ?? 0} sub={`${metrics?.active_users ?? 0} active`} icon={<Users className="h-4 w-4" />} />
-              <StatCard label="Projects" value={metrics?.projects ?? 0} icon={<FolderKanban className="h-4 w-4" />} />
-              <StatCard label="Service Accounts" value={metrics?.service_accounts ?? 0} icon={<Bot className="h-4 w-4" />} />
-              <StatCard label="Recent Logins" value={metrics?.recent_logins ?? 0} sub="last 24h" icon={<Activity className="h-4 w-4" />} trend={metrics?.recent_logins} />
-              <StatCard label="Audit Events" value={metrics?.audit_events_today ?? 0} sub="today" icon={<Activity className="h-4 w-4" />} />
-            </div>
+      <div className="iam-page">
+        <div className="iam-stats-grid" style={{ marginBottom: 24 }}>
+          <StatCard
+            label="Organisations"
+            value={loading ? '—' : metrics?.organisations ?? 0}
+            sub={loading ? undefined : `${metrics?.active_organisations ?? 0} active`}
+          />
+          <StatCard
+            label="Total Users"
+            value={loading ? '—' : metrics?.total_users ?? 0}
+            sub={loading ? undefined : `${metrics?.active_users ?? 0} active`}
+          />
+          <StatCard
+            label="Projects"
+            value={loading ? '—' : metrics?.projects ?? 0}
+          />
+          <StatCard
+            label="Service Accounts"
+            value={loading ? '—' : metrics?.service_accounts ?? 0}
+          />
+        </div>
 
-            {metrics?.uptime_since && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-sm">System Status</CardTitle>
-                </CardHeader>
-                <CardContent className="flex items-center gap-3">
-                  <Badge variant="success">Operational</Badge>
-                  <span className="text-sm text-muted-foreground">Running since {fmtDate(metrics.uptime_since)}</span>
-                </CardContent>
-              </Card>
-            )}
-          </>
-        )}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 14, marginBottom: 24 }}>
+          <div className="iam-card iam-card-pad">
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              {'Login activity · last 24h'}
+              <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--fg-muted)' }}>
+                {loading ? '—' : metrics?.recent_logins ?? 0} logins
+              </span>
+            </div>
+            <ActivityChart height={120} />
+          </div>
+
+          <div className="iam-card iam-card-pad" style={{ minWidth: 200 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>Today</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                <span style={{ fontSize: 13, color: 'var(--fg-muted)' }}>Logins</span>
+                <span style={{ fontSize: 14, fontWeight: 600 }}>{loading ? '—' : metrics?.recent_logins ?? 0}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                <span style={{ fontSize: 13, color: 'var(--fg-muted)' }}>Audit events</span>
+                <span style={{ fontSize: 14, fontWeight: 600 }}>{loading ? '—' : metrics?.audit_events_today ?? 0}</span>
+              </div>
+              {metrics?.uptime_since && (
+                <div style={{ padding: '10px 0', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <IamChip tone="success">Operational</IamChip>
+                  </div>
+                  <span style={{ fontSize: 11, color: 'var(--fg-subtle)' }}>Since {fmtDate(metrics.uptime_since)}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

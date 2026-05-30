@@ -215,9 +215,15 @@ var user = await db.Users
     {
         var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id == id);
         if (user == null) return NotFound();
-        UserHelpers.ApplyUpdate(user, body, passwords);
+        var passwordChanged = UserHelpers.ApplyUpdate(user, body, passwords);
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
+        if (passwordChanged)
+        {
+            var subject = user.UserList.OrgId.HasValue ? $"{user.UserList.OrgId}:{user.Id}" : user.Id.ToString();
+            await hydra.RevokeSessionsAsync(subject);
+            await audit.RecordAsync(user.UserList.OrgId, null, GetActorId(), "user.password_reset_by_admin", "user", id.ToString());
+        }
         await audit.RecordAsync(user.UserList.OrgId, null, GetActorId(), "user.updated", "user", id.ToString());
         return Ok(new { user.Id, user.Email, user.Username, user.Discriminator, user.DisplayName, user.Phone, user.Active, user.EmailVerified, user.LockedUntil, user.FailedLoginCount });
     }

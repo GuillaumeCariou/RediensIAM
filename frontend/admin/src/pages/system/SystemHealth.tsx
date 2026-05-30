@@ -1,9 +1,5 @@
 import { useEffect, useState } from 'react';
-import { RefreshCw, CheckCircle2, XCircle, MinusCircle } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
+import { IamChip, IamDot } from '@/components/iam';
 import { getSystemHealth } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 
@@ -23,46 +19,51 @@ interface HealthResponse {
   checks: ComponentHealth[];
 }
 
-const STATUS_ICON: Record<HealthStatus, React.ReactNode> = {
-  ok:             <CheckCircle2 className="h-5 w-5 text-green-500 shrink-0" />,
-  error:          <XCircle      className="h-5 w-5 text-destructive shrink-0" />,
-  not_configured: <MinusCircle  className="h-5 w-5 text-muted-foreground shrink-0" />,
-};
-
-const STATUS_BADGE: Record<HealthStatus, React.ReactNode> = {
-  ok:             <Badge variant="success"   className="text-xs">OK</Badge>,
-  error:          <Badge variant="destructive" className="text-xs">Error</Badge>,
-  not_configured: <Badge variant="secondary"  className="text-xs">Not configured</Badge>,
-};
+function dotStatus(s: HealthStatus): 'success' | 'danger' | 'muted' {
+  if (s === 'ok') return 'success';
+  if (s === 'error') return 'danger';
+  return 'muted';
+}
 
 function ComponentCard({ check }: Readonly<{ check: ComponentHealth }>) {
   return (
-    <div className={`rounded-lg border p-4 space-y-3 ${check.status === 'error' ? 'border-destructive/50 bg-destructive/5' : ''}`}>
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5 min-w-0">
-          {STATUS_ICON[check.status]}
-          <span className="font-medium text-sm truncate">{check.name}</span>
+    <div style={{
+      borderRadius: 8,
+      border: `1px solid ${check.status === 'error' ? 'oklch(from var(--danger) l c h / 0.4)' : 'var(--border)'}`,
+      padding: 14,
+      background: check.status === 'error' ? 'var(--danger-soft)' : 'var(--surface)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: check.detail || check.stats ? 10 : 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <IamDot tone={dotStatus(check.status)} />
+          <span style={{ fontWeight: 500, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {check.name}
+          </span>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           {check.latency_ms != null && (
-            <span className="text-xs text-muted-foreground tabular-nums">{check.latency_ms} ms</span>
+            <span className="iam-mono" style={{ fontSize: 11, color: 'var(--fg-muted)' }}>{check.latency_ms} ms</span>
           )}
-          {STATUS_BADGE[check.status]}
+          {check.status === 'ok'
+            ? <IamChip tone="success">OK</IamChip>
+            : check.status === 'error'
+              ? <IamChip tone="danger">Error</IamChip>
+              : <IamChip tone="default">Not configured</IamChip>}
         </div>
       </div>
 
       {check.detail && (
-        <p className={`text-xs ${check.status === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}>
+        <div style={{ fontSize: 12, color: check.status === 'error' ? 'var(--danger)' : 'var(--fg-muted)', marginBottom: check.stats ? 8 : 0 }}>
           {check.detail}
-        </p>
+        </div>
       )}
 
       {check.stats && Object.keys(check.stats).length > 0 && (
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1 pt-1 border-t">
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 16px', paddingTop: 8, borderTop: '1px solid var(--border)' }}>
           {Object.entries(check.stats).map(([k, v]) => (
-            <div key={k} className="flex justify-between items-center gap-2">
-              <span className="text-xs text-muted-foreground capitalize">{k.replaceAll('_', ' ')}</span>
-              <span className="text-xs font-mono font-medium truncate max-w-[12rem] text-right">{v}</span>
+            <div key={k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 11, color: 'var(--fg-muted)', textTransform: 'capitalize' }}>{k.replaceAll('_', ' ')}</span>
+              <span className="iam-mono" style={{ fontSize: 11, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '12rem', textAlign: 'right' }}>{v}</span>
             </div>
           ))}
         </div>
@@ -72,7 +73,7 @@ function ComponentCard({ check }: Readonly<{ check: ComponentHealth }>) {
 }
 
 export default function SystemHealth() {
-  const [data, setData]       = useState<HealthResponse | null>(null);
+  const [data, setData] = useState<HealthResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastRun, setLastRun] = useState<Date | null>(null);
 
@@ -86,42 +87,37 @@ export default function SystemHealth() {
 
   useEffect(load, []);
 
-  const categories = data
-    ? [...new Set(data.checks.map(c => c.category))]
-    : [];
+  const categories = data ? [...new Set(data.checks.map(c => c.category))] : [];
 
   return (
     <div>
       <PageHeader
         title="System Health"
         description="Connectivity and status of all backend components"
-        action={
-          <div className="flex items-center gap-3">
-            {lastRun && (
-              <span className="text-xs text-muted-foreground">
-                Last checked {lastRun.toLocaleTimeString()}
-              </span>
-            )}
-            <Button size="sm" variant="outline" onClick={load} disabled={loading}>
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-              Refresh
-            </Button>
-          </div>
-        }
+        actions={[
+          lastRun
+            ? <span key="time" style={{ fontSize: 12, color: 'var(--fg-muted)', alignSelf: 'center' }}>Checked {lastRun.toLocaleTimeString()}</span>
+            : null,
+          <button key="refresh" className="iam-btn iam-btn-secondary iam-btn-sm" onClick={load} disabled={loading}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+              style={{ animation: loading ? 'spin 1s linear infinite' : undefined }}>
+              <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+            </svg>
+            Refresh
+          </button>,
+        ].filter(Boolean) as React.ReactNode[]}
       />
-
-      <div className="p-6 space-y-6">
-        {/* Overall status banner */}
+      <div className="iam-page">
         {!loading && data && (
-          <div className={`flex items-center gap-3 rounded-lg border px-4 py-3 ${
-            data.overall === 'ok'
-              ? 'border-green-200 bg-green-50 dark:border-green-900 dark:bg-green-950/30'
-              : 'border-destructive/40 bg-destructive/5'
-          }`}>
-            {data.overall === 'ok'
-              ? <CheckCircle2 className="h-5 w-5 text-green-600" />
-              : <XCircle      className="h-5 w-5 text-destructive" />}
-            <span className="text-sm font-medium">
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            borderRadius: 8, padding: '10px 14px', marginBottom: 20,
+            border: `1px solid ${data.overall === 'ok' ? 'oklch(from var(--success) l c h / 0.3)' : 'oklch(from var(--danger) l c h / 0.3)'}`,
+            background: data.overall === 'ok' ? 'var(--success-soft)' : 'var(--danger-soft)',
+          }}>
+            <IamDot tone={data.overall === 'ok' ? 'success' : 'danger'} />
+            <span style={{ fontSize: 13, fontWeight: 500 }}>
               {data.overall === 'ok'
                 ? 'All systems operational'
                 : `${data.checks.filter(c => c.status === 'error').length} component(s) have errors`}
@@ -129,35 +125,31 @@ export default function SystemHealth() {
           </div>
         )}
 
-        {(() => {
-          if (loading) return (
-            <div className="grid gap-4 md:grid-cols-2">
-              {Array.from({ length: 6 }, (_, i) => `sk-row-${i}`).map(rowId => (
-                <Skeleton key={rowId} className="h-24 w-full" />
-              ))}
-            </div>
-          );
-          if (data) return (
-            <div className="space-y-6">
-              {categories.map(cat => (
-                <Card key={cat}>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                      {cat}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="grid gap-3 md:grid-cols-2">
-                    {data.checks.filter(c => c.category === cat).map(check => (
-                      <ComponentCard key={check.name} check={check} />
-                    ))}
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          );
-          return null;
-        })()}
+        {loading ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            {Array.from({ length: 6 }, (_, i) => (
+              <div key={i} style={{ height: 80, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }} />
+            ))}
+          </div>
+        ) : data ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+            {categories.map(cat => (
+              <div key={cat}>
+                <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--fg-subtle)', marginBottom: 10 }}>
+                  {cat}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  {data.checks.filter(c => c.category === cat).map(check => (
+                    <ComponentCard key={check.name} check={check} />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
+
+      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }

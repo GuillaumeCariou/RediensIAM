@@ -1,32 +1,18 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Users, List } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { Skeleton } from '@/components/ui/skeleton';
+import { IamChip, IamDialog } from '@/components/iam';
 import { listUserLists, createUserList } from '@/api';
 import { useOrgContext } from '@/hooks/useOrgContext';
 import PageHeader from '@/components/layout/PageHeader';
 
 interface UserList {
-  id: string;
-  name: string;
-  org_id: string | null;
-  org_name: string | null;
-  immovable: boolean;
-  user_count?: number;
-  created_at: string;
+  id: string; name: string; org_id: string | null; org_name: string | null;
+  immovable: boolean; user_count?: number; created_at: string;
 }
 
 export default function UserLists() {
   const navigate = useNavigate();
   const { orgId, userListBase } = useOrgContext();
-
-  // System global route (/system/userlists) has no org param — orgId comes from token (null for super_admin)
   const isGlobal = !orgId;
   const navigateBase = isGlobal ? '/system/userlists' : userListBase;
 
@@ -58,124 +44,96 @@ export default function UserLists() {
     setSaving(true);
     try {
       await createUserList({ name: listForm.name, org_id: orgId });
-      setCreateOpen(false);
-      setListForm({ name: '' });
-      load();
+      setCreateOpen(false); setListForm({ name: '' }); load();
     } finally { setSaving(false); }
   };
-
-  const colSpan = 3;
 
   return (
     <div>
       <PageHeader
         title="User Lists"
         description={isGlobal ? 'All user lists across the system' : 'Reusable pools of users that can be assigned to projects'}
-        action={
-          isGlobal
-            ? undefined
-            : <Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" />New User List</Button>
-        }
+        actions={isGlobal ? [] : [
+          <button key="new" className="iam-btn iam-btn-primary iam-btn-sm" onClick={() => setCreateOpen(true)}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New User List
+          </button>
+        ]}
       />
-      <div className="p-6 space-y-4">
+      <div className="iam-page">
         {isGlobal && (
-          <Input
-            placeholder="Search by name or organisation…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="max-w-sm"
-          />
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ position: 'relative', maxWidth: 320 }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--fg-subtle)', pointerEvents: 'none' }}>
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              <input className="iam-input" style={{ paddingLeft: 30 }}
+                placeholder="Search by name or organisation…"
+                value={search} onChange={e => setSearch(e.target.value)} />
+            </div>
+          </div>
         )}
-        <div className="rounded-xl border bg-card overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                {isGlobal
-                  ? <TableHead>Organisation</TableHead>
-                  : <TableHead>Users</TableHead>
-                }
-                <TableHead>Type</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+
+        <div className="iam-card">
+          <table className="iam-tbl">
+            <thead>
+              <tr>
+                <th>Name</th>
+                {isGlobal ? <th>Organisation</th> : <th>Users</th>}
+                <th>Type</th>
+              </tr>
+            </thead>
+            <tbody>
               {(() => {
-                if (loading) return (
-                  Array.from({ length: 4 }, (_, i) => `sk-row-${i}`).map(rowId => (
-                      <TableRow key={rowId}>
-                        {Array.from({ length: colSpan }, (_, j) => `sk-cell-${j}`).map(cellId => (
-                          <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>
-                          ))}
-                      </TableRow>
-                    ))
-                );
+                if (loading) return Array.from({ length: 4 }, (_, i) => (
+                  <tr key={i}>{Array.from({ length: 3 }, (_, j) => <td key={j}><div style={{ height: 14, background: 'var(--surface-2)', borderRadius: 4, width: '70%' }} /></td>)}</tr>
+                ));
                 if (filtered.length === 0) return (
-                  (
-                      <TableRow>
-                        <TableCell colSpan={colSpan} className="text-center text-muted-foreground py-12">
-                          <List className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                          {isGlobal ? 'No user lists found' : 'No user lists yet'}
-                        </TableCell>
-                      </TableRow>
-                    )
+                  <tr><td colSpan={3}>
+                    <div className="iam-empty">
+                      <div className="iam-empty-title">{isGlobal ? 'No user lists found' : 'No user lists yet'}</div>
+                    </div>
+                  </td></tr>
                 );
-                return (
-                  filtered.map(list => (
-                      <TableRow
-                        key={list.id}
-                        className="cursor-pointer hover:bg-muted/50"
-                        onClick={() => navigate(`${navigateBase}/${list.id}`)}
-                      >
-                        <TableCell className="font-medium">{list.name}</TableCell>
-                        {isGlobal
-                          ? <TableCell className="text-sm text-muted-foreground">{list.org_name ?? 'System (root)'}</TableCell>
-                          : (
-                              <TableCell>
-                                <div className="flex items-center gap-1">
-                                  <Users className="h-3 w-3 text-muted-foreground" />
-                                  <span className="text-sm">{list.user_count ?? '—'}</span>
-                                </div>
-                              </TableCell>
-                            )
-                        }
-                        <TableCell>
-                          {list.immovable
-                            ? <Badge variant="secondary">Immovable</Badge>
-                            : <Badge variant="outline">Movable</Badge>
-                          }
-                        </TableCell>
-                      </TableRow>
-                    ))
-                );
+                return filtered.map(list => (
+                  <tr key={list.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`${navigateBase}/${list.id}`)}>
+                    <td style={{ fontWeight: 500 }}>{list.name}</td>
+                    {isGlobal
+                      ? <td style={{ fontSize: 13, color: 'var(--fg-muted)' }}>{list.org_name ?? 'System (root)'}</td>
+                      : <td style={{ fontSize: 13 }}>{list.user_count ?? '—'}</td>}
+                    <td>
+                      {list.immovable
+                        ? <IamChip tone="default">Immovable</IamChip>
+                        : <IamChip tone="accent">Movable</IamChip>}
+                    </td>
+                  </tr>
+                ));
               })()}
-            </TableBody>
-          </Table>
+            </tbody>
+          </table>
         </div>
       </div>
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Create User List</DialogTitle>
-            <DialogDescription>A movable pool of users you can assign to projects.</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleCreate} className="space-y-4">
-            <div className="space-y-2">
-              <Label>Name</Label>
-              <Input
-                value={listForm.name}
-                onChange={e => setListForm({ name: e.target.value })}
-                required
-                placeholder="Team Alpha"
-              />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={saving}>{saving ? 'Creating…' : 'Create'}</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <IamDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="Create User List"
+        desc="A movable pool of users you can assign to projects."
+        footer={
+          <>
+            <button className="iam-btn iam-btn-ghost" onClick={() => setCreateOpen(false)}>Cancel</button>
+            <button className="iam-btn iam-btn-primary" form="create-list-form" type="submit" disabled={saving}>
+              {saving ? 'Creating…' : 'Create'}
+            </button>
+          </>
+        }
+      >
+        <form id="create-list-form" onSubmit={handleCreate}>
+          <label className="iam-label" htmlFor="list-name">Name</label>
+          <input id="list-name" className="iam-input" value={listForm.name} onChange={e => setListForm({ name: e.target.value })} required placeholder="Team Alpha" />
+        </form>
+      </IamDialog>
     </div>
   );
 }

@@ -7,14 +7,29 @@ async function parseJson(r: Response): Promise<any> {
   catch { throw new Error(`Server error ${r.status}`); }
 }
 
+// Centralised fetch wrapper:
+//  - Always sets X-Requested-With (CSRF defence-in-depth; SameSite cookies are the primary defence).
+//  - Sets Content-Type when a JSON body is supplied.
+//  - Includes credentials by default (most endpoints need the MFA session cookie).
+async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const headers: Record<string, string> = {
+    'X-Requested-With': 'XMLHttpRequest',
+    ...(init.headers as Record<string, string> | undefined),
+  };
+  if (init.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+  return fetch(`${BASE}${path}`, { credentials: 'include', ...init, headers });
+}
+
+const enc = encodeURIComponent;
+
 export async function getLoginTheme(challenge: string) {
-  const r = await fetch(`${BASE}/auth/login/theme?login_challenge=${challenge}`);
+  const r = await apiFetch(`/auth/login/theme?login_challenge=${enc(challenge)}`, { credentials: 'omit' });
   if (!r.ok) throw new Error('Failed to load theme');
   return parseJson(r);
 }
 
 export async function getLoginChallenge(challenge: string) {
-  const r = await fetch(`${BASE}/auth/login?login_challenge=${challenge}`);
+  const r = await apiFetch(`/auth/login?login_challenge=${enc(challenge)}`, { credentials: 'omit' });
   if (!r.ok) throw new Error('Failed to load challenge');
   return parseJson(r);
 }
@@ -25,66 +40,37 @@ export async function submitLogin(body: {
   username?: string;
   password: string;
 }) {
-  const r = await fetch(`${BASE}/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    credentials: 'include',
-  });
+  const r = await apiFetch('/auth/login', { method: 'POST', body: JSON.stringify(body) });
   return parseJson(r);
 }
 
 export async function verifyTotp(code: string) {
-  const r = await fetch(`${BASE}/auth/mfa/totp/verify`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code }),
-    credentials: 'include',
-  });
+  const r = await apiFetch('/auth/mfa/totp/verify', { method: 'POST', body: JSON.stringify({ code }) });
   return parseJson(r);
 }
 
 export async function sendSmsOtp() {
-  const r = await fetch(`${BASE}/auth/mfa/phone/send`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-  });
+  const r = await apiFetch('/auth/mfa/phone/send', { method: 'POST' });
   return parseJson(r);
 }
 
 export async function verifySmsOtp(code: string) {
-  const r = await fetch(`${BASE}/auth/mfa/phone/verify`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code }),
-    credentials: 'include',
-  });
+  const r = await apiFetch('/auth/mfa/phone/verify', { method: 'POST', body: JSON.stringify({ code }) });
   return parseJson(r);
 }
 
 export async function getWebAuthnOptions() {
-  const r = await fetch(`${BASE}/auth/mfa/webauthn/options`, { credentials: 'include' });
+  const r = await apiFetch('/auth/mfa/webauthn/options');
   return parseJson(r);
 }
 
 export async function verifyWebAuthn(assertionResponse: object) {
-  const r = await fetch(`${BASE}/auth/mfa/webauthn/verify`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(assertionResponse),
-    credentials: 'include',
-  });
+  const r = await apiFetch('/auth/mfa/webauthn/verify', { method: 'POST', body: JSON.stringify(assertionResponse) });
   return parseJson(r);
 }
 
 export async function verifyBackupCode(code: string) {
-  const r = await fetch(`${BASE}/auth/mfa/backup-codes/verify`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code }),
-    credentials: 'include',
-  });
+  const r = await apiFetch('/auth/mfa/backup-codes/verify', { method: 'POST', body: JSON.stringify({ code }) });
   return parseJson(r);
 }
 
@@ -95,81 +81,67 @@ export async function registerUser(body: {
   username?: string;
   phone?: string;
 }) {
-  const r = await fetch(`${BASE}/auth/register`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    credentials: 'include',
-  });
+  const r = await apiFetch('/auth/register', { method: 'POST', body: JSON.stringify(body) });
   return parseJson(r);
 }
 
 export async function verifyRegistrationOtp(sessionId: string, code: string) {
-  const r = await fetch(`${BASE}/auth/register/verify`, {
+  const r = await apiFetch('/auth/register/verify', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session_id: sessionId, code }),
-    credentials: 'include',
   });
   return parseJson(r);
 }
 
 export async function requestPasswordReset(projectId: string, email: string) {
-  const r = await fetch(`${BASE}/auth/password-reset/request`, {
+  const r = await apiFetch('/auth/password-reset/request', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ project_id: projectId, email }),
+    credentials: 'omit',
   });
   return parseJson(r);
 }
 
 export async function verifyPasswordResetOtp(sessionId: string, code: string) {
-  const r = await fetch(`${BASE}/auth/password-reset/verify`, {
+  const r = await apiFetch('/auth/password-reset/verify', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session_id: sessionId, code }),
+    credentials: 'omit',
   });
   return parseJson(r);
 }
 
 export async function confirmPasswordReset(token: string, newPassword: string) {
-  const r = await fetch(`${BASE}/auth/password-reset/confirm`, {
+  const r = await apiFetch('/auth/password-reset/confirm', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token, new_password: newPassword }),
+    credentials: 'omit',
   });
   return parseJson(r);
 }
 
 export async function getThemeByProject(projectId: string) {
-  const r = await fetch(`${BASE}/auth/login/theme?project_id=${encodeURIComponent(projectId)}`);
+  const r = await apiFetch(`/auth/login/theme?project_id=${enc(projectId)}`, { credentials: 'omit' });
   if (!r.ok) throw new Error('Failed to load theme');
   return parseJson(r);
 }
 
 export async function completeInvite(token: string, password: string) {
-  const r = await fetch(`${BASE}/auth/invite/complete`, {
+  const r = await apiFetch('/auth/invite/complete', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify({ token, password }),
   });
   return parseJson(r);
 }
 
 export async function setupTotp() {
-  const r = await fetch(`${BASE}/account/mfa/totp/setup`, {
-    method: 'POST',
-    credentials: 'include',
-  });
+  const r = await apiFetch('/account/mfa/totp/setup', { method: 'POST' });
   return parseJson(r);
 }
 
 export async function confirmTotp(code: string) {
-  const r = await fetch(`${BASE}/account/mfa/totp/confirm`, {
+  const r = await apiFetch('/account/mfa/totp/confirm', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
     body: JSON.stringify({ code }),
   });
   return parseJson(r);

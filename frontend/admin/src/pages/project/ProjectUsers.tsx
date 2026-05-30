@@ -2,11 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useProjectContext } from '@/hooks/useOrgContext';
 import { useAuth } from '@/context/AuthContext';
-import { List } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Skeleton } from '@/components/ui/skeleton';
+import { IamChip } from '@/components/iam';
 import {
   getProjectInfo, listUserLists,
   assignUserList, unassignUserList,
@@ -70,51 +66,33 @@ export default function ProjectUsers() {
         title="Project Users"
         description="Users and their role assignments in this project"
       />
-      <div className="p-6 space-y-4">
+      <div className="iam-page" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div className="iam-card iam-card-pad">
+          <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--fg-subtle)', marginBottom: 12 }}>Assigned User List</div>
+          {loading ? (
+            <div style={{ height: 36, width: 288, background: 'var(--surface-2)', borderRadius: 6 }} />
+          ) : isOrgAdmin ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <select className="iam-input" style={{ maxWidth: 288 }}
+                value={assignedListId ?? '__none__'} onChange={e => handleAssignList(e.target.value)}>
+                <option value="__none__">— No user list assigned —</option>
+                {movableLists.map(ul => (
+                  <option key={ul.id} value={ul.id}>{ul.name}</option>
+                ))}
+              </select>
+              {!assignedListId && (
+                <p style={{ fontSize: 12, color: 'var(--warn)' }}>No user list assigned — users cannot log in to this project.</p>
+              )}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {assignedListName
+                ? <IamChip tone="accent">{assignedListName}</IamChip>
+                : <span style={{ fontSize: 13, color: 'var(--fg-muted)', fontStyle: 'italic' }}>No user list assigned</span>}
+            </div>
+          )}
+        </div>
 
-        {/* ── Assigned User List card ── */}
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
-              <List className="h-4 w-4" />Assigned User List
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {(() => {
-              if (loading) return (
-              <Skeleton className="h-10 w-72" />
-              );
-              if (isOrgAdmin) return (
-              <div className="space-y-2">
-                <Select value={assignedListId ?? '__none__'} onValueChange={handleAssignList}>
-                  <SelectTrigger className="w-72 bg-background">
-                    <SelectValue placeholder="— No user list assigned —" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">— None —</SelectItem>
-                    {movableLists.map(ul => (
-                      <SelectItem key={ul.id} value={ul.id}>{ul.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {!assignedListId && (
-                  <p className="text-xs text-amber-500">No user list assigned — users cannot log in to this project.</p>
-                )}
-              </div>
-              );
-              return (
-              <div className="flex items-center gap-2">
-                {assignedListName
-                  ? <Badge variant="secondary">{assignedListName}</Badge>
-                  : <span className="text-sm text-muted-foreground italic">No user list assigned</span>
-                }
-              </div>
-              );
-            })()}
-          </CardContent>
-        </Card>
-
-        {/* ── Userlist member management (org/super admin) ── */}
         {isOrgAdmin && assignedListId && (
           <UserListMembersPanel
             key={assignedListId}
@@ -126,7 +104,6 @@ export default function ProjectUsers() {
             onChanged={load}
           />
         )}
-
       </div>
     </div>
   );

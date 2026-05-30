@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { isAuthenticated, startLogin, handleCallback, logout, getToken, restoreSession } from '../auth';
 
 interface AuthState {
@@ -47,7 +47,12 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
   const [orgId, setOrgId] = useState('');
   const [projectId, setProjectId] = useState('');
 
+  const initStarted = useRef(false);
   useEffect(() => {
+    // StrictMode runs effects twice in dev — guard so handleCallback isn't called with
+    // a code/state pair that's already been consumed (which would loop into startLogin).
+    if (initStarted.current) return;
+    initStarted.current = true;
     async function init() {
       const url = new URL(globalThis.location.href);
       const code = url.searchParams.get('code');
@@ -82,8 +87,11 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
     init();
   }, []);
 
+  // Don't chain startLogin after logout: signoutRedirect navigates to Hydra's logout
+  // endpoint which then redirects back via post_logout_redirect_uri. Calling startLogin
+  // races the navigation and can leave the Hydra session cookie alive (silent re-login).
   const handleLogout = () => {
-    logout().then(() => startLogin());
+    logout();
   };
 
   const ctx = useMemo<AuthState>(() => ({

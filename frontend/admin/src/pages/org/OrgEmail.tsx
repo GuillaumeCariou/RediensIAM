@@ -1,13 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Mail, Save, Trash2, SendHorizonal, Eye, EyeOff, TriangleAlert } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Badge } from '@/components/ui/badge';
+import { IamChip, IamDot } from '@/components/iam';
 import { useAuth } from '@/context/AuthContext';
 import {
   getOrgSmtp, upsertOrgSmtp, deleteOrgSmtp, testOrgSmtp,
@@ -16,35 +9,28 @@ import {
 import PageHeader from '@/components/layout/PageHeader';
 
 interface SmtpConfig {
-  configured: boolean;
-  host?: string;
-  port?: number;
-  start_tls?: boolean;
-  username?: string;
-  from_address?: string;
-  from_name?: string;
-  updated_at?: string;
+  configured: boolean; host?: string; port?: number; start_tls?: boolean;
+  username?: string; from_address?: string; from_name?: string; updated_at?: string;
 }
 
 interface FormState {
-  host: string;
-  port: string;
-  start_tls: boolean;
-  username: string;
-  password: string;
-  from_address: string;
-  from_name: string;
+  host: string; port: string; start_tls: boolean; username: string;
+  password: string; from_address: string; from_name: string;
 }
 
-const EMPTY_FORM: FormState = {
-  host: '',
-  port: '587',
-  start_tls: true,
-  username: '',
-  password: '',
-  from_address: '',
-  from_name: '',
-};
+const EMPTY_FORM: FormState = { host: '', port: '587', start_tls: true, username: '', password: '', from_address: '', from_name: '' };
+
+function Toggle({ checked, onChange }: Readonly<{ checked: boolean; onChange: (v: boolean) => void }>) {
+  return (
+    <button onClick={() => onChange(!checked)} style={{
+      width: 36, height: 20, borderRadius: 10,
+      background: checked ? 'var(--ia-accent)' : 'var(--border-strong)',
+      position: 'relative', border: 'none', cursor: 'pointer', flexShrink: 0, transition: 'background 150ms',
+    }}>
+      <span style={{ position: 'absolute', top: 2, left: checked ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 150ms' }} />
+    </button>
+  );
+}
 
 export default function OrgEmail() {
   const { id } = useParams<{ id?: string }>();
@@ -66,49 +52,23 @@ export default function OrgEmail() {
       const data: SmtpConfig = isAdmin ? await adminGetOrgSmtp(id) : await getOrgSmtp();
       setConfig(data);
       if (data.configured) {
-        setForm({
-          host:         data.host ?? '',
-          port:         String(data.port ?? 587),
-          start_tls:    data.start_tls ?? true,
-          username:     data.username ?? '',
-          password:     '',
-          from_address: data.from_address ?? '',
-          from_name:    data.from_name ?? '',
-        });
-      } else {
-        setForm(EMPTY_FORM);
-      }
-    } catch {
-      setError('Failed to load SMTP configuration.');
-    } finally {
-      setLoading(false);
-    }
+        setForm({ host: data.host ?? '', port: String(data.port ?? 587), start_tls: data.start_tls ?? true, username: data.username ?? '', password: '', from_address: data.from_address ?? '', from_name: data.from_name ?? '' });
+      } else { setForm(EMPTY_FORM); }
+    } catch { setError('Failed to load SMTP configuration.'); }
+    finally { setLoading(false); }
   };
 
   useEffect(() => { fetchConfig(); }, []);
 
   const handleSave = async () => {
-    setSaving(true);
-    setError('');
+    setSaving(true); setError('');
     try {
-      const body = {
-        host:         form.host,
-        port:         Number(form.port),
-        start_tls:    form.start_tls,
-        username:     form.username || undefined,
-        password:     form.password || undefined,
-        from_address: form.from_address,
-        from_name:    form.from_name,
-      };
+      const body = { host: form.host, port: Number(form.port), start_tls: form.start_tls, username: form.username || undefined, password: form.password || undefined, from_address: form.from_address, from_name: form.from_name };
       if (isAdmin) await adminUpsertOrgSmtp(id, body);
       else await upsertOrgSmtp(body);
-      await fetchConfig();
-      setEditing(false);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to save SMTP configuration.');
-    } finally {
-      setSaving(false);
-    }
+      await fetchConfig(); setEditing(false);
+    } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Failed to save SMTP configuration.'); }
+    finally { setSaving(false); }
   };
 
   const handleDelete = async () => {
@@ -116,215 +76,143 @@ export default function OrgEmail() {
     try {
       if (isAdmin) await adminDeleteOrgSmtp(id);
       else await deleteOrgSmtp();
-      await fetchConfig();
-      setEditing(false);
-    } catch {
-      setError('Failed to remove SMTP configuration.');
-    }
+      await fetchConfig(); setEditing(false);
+    } catch { setError('Failed to remove SMTP configuration.'); }
   };
 
   const handleTest = async () => {
-    setTesting(true);
-    setTestResult(null);
+    setTesting(true); setTestResult(null);
     try {
       const res = isAdmin ? await adminTestOrgSmtp(id) : await testOrgSmtp();
       setTestResult({ ok: true, msg: `Test email sent to ${res.to}` });
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Test failed';
-      setTestResult({ ok: false, msg });
-    } finally {
-      setTesting(false);
-    }
+    } catch (e: unknown) { setTestResult({ ok: false, msg: e instanceof Error ? e.message : 'Test failed' }); }
+    finally { setTesting(false); }
   };
 
-  const set = (k: keyof FormState, v: string | boolean) =>
-    setForm(f => ({ ...f, [k]: v }));
+  const set = (k: keyof FormState, v: string | boolean) => setForm(f => ({ ...f, [k]: v }));
 
   if (loading) return (
     <div>
       <PageHeader title="Email Settings" />
-      <div className="p-6 space-y-4">
-        {Array.from({ length: 3 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-16 rounded-lg" />)}
-      </div>
+      <div className="iam-page"><div style={{ height: 160, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }} /></div>
     </div>
   );
 
   return (
     <div>
-      <PageHeader
-        title="Email Settings"
-        description="Configure the SMTP relay used to send verification emails for this organisation"
-      />
-
-      <div className="p-6 max-w-2xl space-y-6">
-
-        {/* ── Status banner ── */}
+      <PageHeader title="Email Settings" description="Configure the SMTP relay used to send verification emails for this organisation" />
+      <div className="iam-page" style={{ maxWidth: 600 }}>
         {!config?.configured && !editing && (
-          <Card className="border-dashed">
-            <CardContent className="pt-6">
-              <div className="flex items-start gap-3">
-                <TriangleAlert className="h-5 w-5 text-muted-foreground mt-0.5 shrink-0" />
-                <div>
-                  <p className="font-medium text-sm">Using global SMTP</p>
-                  <p className="text-sm text-muted-foreground mt-0.5">
-                    No organisation-level SMTP is configured. Emails will be sent using the global relay
-                    set by the system administrator.
-                  </p>
-                  <Button size="sm" className="mt-3" onClick={() => setEditing(true)}>
-                    Configure custom SMTP
-                  </Button>
+          <div className="iam-card iam-card-pad" style={{ borderStyle: 'dashed' }}>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+              <IamDot tone="warn" />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4 }}>Using global SMTP</div>
+                <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', lineHeight: 1.5 }}>
+                  No organisation-level SMTP is configured. Emails will be sent using the global relay set by the system administrator.
                 </div>
+                <button className="iam-btn iam-btn-secondary iam-btn-sm" style={{ marginTop: 12 }} onClick={() => setEditing(true)}>
+                  Configure custom SMTP
+                </button>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         )}
 
         {config?.configured && !editing && (
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <CardTitle className="text-base">Custom SMTP</CardTitle>
-                  <Badge variant="secondary" className="text-xs">Active</Badge>
-                </div>
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={handleTest} disabled={testing}>
-                    <SendHorizonal className="h-3.5 w-3.5" />
-                    {testing ? 'Sending…' : 'Test'}
-                  </Button>
-                  <Button size="sm" onClick={() => setEditing(true)}>Edit</Button>
-                </div>
+          <div className="iam-card iam-card-pad">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>Custom SMTP</div>
+                <IamChip tone="success">Active</IamChip>
               </div>
-              <CardDescription>
-                {config.host}:{config.port} · {config.start_tls ? 'StartTLS' : 'No TLS'}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-                <span className="text-muted-foreground">From address</span>
-                <span className="font-mono">{config.from_address}</span>
-                <span className="text-muted-foreground">From name</span>
-                <span>{config.from_name}</span>
-                {config.username && (
-                  <>
-                    <span className="text-muted-foreground">Username</span>
-                    <span className="font-mono">{config.username}</span>
-                  </>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={handleTest} disabled={testing}>
+                  {testing ? 'Sending…' : 'Test'}
+                </button>
+                <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={() => setEditing(true)}>Edit</button>
+              </div>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginBottom: 14 }}>
+              {config.host}:{config.port} · {config.start_tls ? 'StartTLS' : 'No TLS'}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '6px 12px', fontSize: 13 }}>
+              <span style={{ color: 'var(--fg-muted)' }}>From address</span><span className="iam-mono">{config.from_address}</span>
+              <span style={{ color: 'var(--fg-muted)' }}>From name</span><span>{config.from_name}</span>
+              {config.username && (<><span style={{ color: 'var(--fg-muted)' }}>Username</span><span className="iam-mono">{config.username}</span></>)}
+            </div>
+            {testResult && (
+              <div style={{ marginTop: 12, fontSize: 12.5, color: testResult.ok ? 'var(--success)' : 'var(--danger)' }}>
+                {testResult.msg}
+              </div>
+            )}
+          </div>
+        )}
+
+        {editing && (
+          <div className="iam-card iam-card-pad">
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
+              {config?.configured ? 'Edit SMTP Configuration' : 'Configure SMTP'}
+            </div>
+            <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', marginBottom: 20 }}>
+              Emails will be sent using this relay. Leave password blank to keep the existing one.
+            </div>
+
+            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--fg-subtle)', marginBottom: 12 }}>Connection</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px', gap: 12, marginBottom: 14 }}>
+              <div><label className="iam-label" htmlFor="email-host">Host</label><input id="email-host" className="iam-input" value={form.host} onChange={e => set('host', e.target.value)} placeholder="smtp.example.com" /></div>
+              <div><label className="iam-label" htmlFor="email-port">Port</label><input id="email-port" className="iam-input" type="number" value={form.port} onChange={e => set('port', e.target.value)} placeholder="587" /></div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 500 }}>STARTTLS</div>
+                <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Use STARTTLS negotiation (port 587). Disable for SSL on port 465.</div>
+              </div>
+              <Toggle checked={form.start_tls} onChange={v => set('start_tls', v)} />
+            </div>
+
+            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--fg-subtle)', marginBottom: 12 }}>Authentication</div>
+            <div style={{ marginBottom: 12 }}><label className="iam-label" htmlFor="email-username">Username</label><input id="email-username" className="iam-input" value={form.username} onChange={e => set('username', e.target.value)} placeholder="noreply@example.com" autoComplete="off" /></div>
+            <div style={{ marginBottom: 20 }}>
+              <label className="iam-label" htmlFor="email-password">Password</label>
+              <div style={{ position: 'relative' }}>
+                <input id="email-password" className="iam-input" type={showPassword ? 'text' : 'password'} value={form.password} onChange={e => set('password', e.target.value)} placeholder={config?.configured ? '(unchanged)' : 'SMTP password'} autoComplete="new-password" style={{ paddingRight: 36 }} />
+                <button type="button" onClick={() => setShowPassword(v => !v)}
+                  style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--fg-muted)', cursor: 'pointer' }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    {showPassword
+                      ? <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>
+                      : <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>}
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--fg-subtle)', marginBottom: 12 }}>From</div>
+            <div style={{ marginBottom: 12 }}><label className="iam-label" htmlFor="email-from-address">From address</label><input id="email-from-address" className="iam-input" value={form.from_address} onChange={e => set('from_address', e.target.value)} placeholder="noreply@yourorg.com" /></div>
+            <div style={{ marginBottom: 20 }}>
+              <label className="iam-label" htmlFor="email-from-name">From name</label>
+              <input id="email-from-name" className="iam-input" value={form.from_name} onChange={e => set('from_name', e.target.value)} placeholder="Acme Platform" />
+              <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 4 }}>Can be overridden per project in project Authentication settings.</div>
+            </div>
+
+            {error && <div style={{ padding: '8px 12px', background: 'var(--danger-soft)', color: 'var(--danger)', borderRadius: 6, fontSize: 13, marginBottom: 14 }}>{error}</div>}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+              <div>
+                {config?.configured && (
+                  <button className="iam-btn iam-btn-danger iam-btn-sm" onClick={handleDelete}>Reset to global</button>
                 )}
               </div>
-              {testResult && (
-                <p className={`text-sm mt-2 ${testResult.ok ? 'text-green-600 dark:text-green-400' : 'text-destructive'}`}>
-                  {testResult.msg}
-                </p>
-              )}
-            </CardContent>
-          </Card>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="iam-btn iam-btn-ghost iam-btn-sm" onClick={() => { setEditing(false); setError(''); }}>Cancel</button>
+                <button className="iam-btn iam-btn-primary iam-btn-sm" onClick={handleSave} disabled={saving}>
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
-
-        {/* ── Edit form ── */}
-        {editing && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <Mail className="h-4 w-4" />
-                {config?.configured ? 'Edit SMTP Configuration' : 'Configure SMTP'}
-              </CardTitle>
-              <CardDescription>
-                Emails will be sent using this relay. Leave password blank to keep the existing one.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-
-              {/* Connection */}
-              <div className="space-y-3">
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Connection</p>
-                <div className="grid grid-cols-[1fr_100px] gap-3">
-                  <div className="space-y-1.5">
-                    <Label>Host</Label>
-                    <Input value={form.host} onChange={e => set('host', e.target.value)} placeholder="smtp.example.com" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Port</Label>
-                    <Input type="number" value={form.port} onChange={e => set('port', e.target.value)} placeholder="587" />
-                  </div>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium">STARTTLS</p>
-                    <p className="text-xs text-muted-foreground">Use STARTTLS negotiation (port 587). Disable for SSL on port 465.</p>
-                  </div>
-                  <Switch checked={form.start_tls} onCheckedChange={v => set('start_tls', v)} />
-                </div>
-              </div>
-
-              {/* Auth */}
-              <div className="space-y-3">
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Authentication</p>
-                <div className="space-y-1.5">
-                  <Label>Username</Label>
-                  <Input value={form.username} onChange={e => set('username', e.target.value)} placeholder="noreply@example.com" autoComplete="off" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Password</Label>
-                  <div className="relative">
-                    <Input
-                      type={showPassword ? 'text' : 'password'}
-                      value={form.password}
-                      onChange={e => set('password', e.target.value)}
-                      placeholder={config?.configured ? '(unchanged)' : 'SMTP password'}
-                      autoComplete="new-password"
-                      className="pr-10"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(v => !v)}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    >
-                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* From */}
-              <div className="space-y-3">
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">From</p>
-                <div className="space-y-1.5">
-                  <Label>From address</Label>
-                  <Input value={form.from_address} onChange={e => set('from_address', e.target.value)} placeholder="noreply@yourorg.com" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>From name</Label>
-                  <Input value={form.from_name} onChange={e => set('from_name', e.target.value)} placeholder="Acme Platform" />
-                  <p className="text-xs text-muted-foreground">Can be overridden per project in project Authentication settings.</p>
-                </div>
-              </div>
-
-              {error && <p className="text-sm text-destructive">{error}</p>}
-
-              <div className="flex items-center justify-between pt-2 border-t">
-                <div className="flex gap-2">
-                  {config?.configured && (
-                    <Button variant="destructive" size="sm" onClick={handleDelete}>
-                      <Trash2 className="h-3.5 w-3.5" />
-                      Reset to global
-                    </Button>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={() => { setEditing(false); setError(''); }}>
-                    Cancel
-                  </Button>
-                  <Button size="sm" onClick={handleSave} disabled={saving}>
-                    <Save className="h-3.5 w-3.5" />
-                    {saving ? 'Saving…' : 'Save'}
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
       </div>
     </div>
   );

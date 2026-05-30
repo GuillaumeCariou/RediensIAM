@@ -315,16 +315,25 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
             Roles = roles, IsServiceAccount = false
         };
 
-        // Cache for up to 60s; never cache invalid/expired tokens (those return null above)
+        // Cache for up to 60s, bounded above by the token's actual expiry so revocation
+        // and natural expiry both take effect within the configured TTL.
+        var ttl = TimeSpan.FromSeconds(60);
+        if (body.Exp.HasValue)
+        {
+            var remaining = DateTimeOffset.FromUnixTimeSeconds(body.Exp.Value) - DateTimeOffset.UtcNow;
+            if (remaining <= TimeSpan.Zero) return null;
+            if (remaining < ttl) ttl = remaining;
+        }
         await cache.SetStringAsync(cacheKey,
             JsonSerializer.Serialize(claims, _json),
-            new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60) });
+            new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = ttl });
 
         return claims;
     }
 
     private sealed record IntrospectResult(
         bool Active, string? Sub,
+        [property: JsonPropertyName("exp")] long? Exp,
         [property: JsonPropertyName("ext")] ExtClaims? Ext);
 
     private sealed class ExtClaims : Dictionary<string, JsonElement>

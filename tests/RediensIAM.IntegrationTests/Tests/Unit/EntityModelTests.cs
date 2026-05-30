@@ -26,6 +26,8 @@ namespace RediensIAM.IntegrationTests.Tests.Unit;
 // No [Collection] — pure in-process tests, no I/O, no shared fixture.
 public class EntityModelTests
 {
+    private static readonly JsonSerializerOptions _jsonOptions = new();
+
     // ── Entity property coverage ──────────────────────────────────────────────
 
     [Fact]
@@ -780,7 +782,7 @@ public class EntityModelTests
     public async Task WebhookDispatcherService_ExecuteAsync_RecoversPendingJobsFromQueue()
     {
         var job     = new WebhookJob(Guid.NewGuid(), "user.created", "{}", "", "http://localhost/hook");
-        var jobJson = JsonSerializer.Serialize(job, new JsonSerializerOptions());
+        var jobJson = JsonSerializer.Serialize(job, _jsonOptions);
         var ch      = Channel.CreateUnbounded<WebhookJob>();
 
         var svc = new WebhookDispatcherService(

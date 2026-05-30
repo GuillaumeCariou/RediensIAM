@@ -17,14 +17,33 @@ namespace RediensIAM.Services;
 
 public static class WebhookEvents
 {
+    // List MUST match the action strings passed to AuditLogService.RecordAsync — otherwise
+    // events are recorded but webhooks never fire (the dispatcher filters by exact match).
     public static readonly string[] All =
     [
-        "user.created", "user.updated", "user.deleted", "user.locked", "user.unlocked",
-        "user.login.success", "user.login.failure",
-        "role.assigned", "role.revoked",
+        // user lifecycle
+        "user.created", "user.updated", "user.removed",
+        "user.registered", "user.registered.social",
+        "user.invited", "user.invite_resent",
+        "user.unlocked", "user.force_logout",
+        // user auth
+        "user.login", "user.login.failed", "user.login.failure", "user.login.locked",
+        "user.login.saml",
+        "user.password_changed", "user.password_reset_by_admin", "user.password.reset",
+        "user.mfa.totp.failed", "user.mfa.sms.failed",
+        // roles
+        "role.created", "role.updated", "role.deleted",
+        "role.assigned", "role.removed",
+        "role.management.assigned", "role.management.removed",
+        // service accounts
+        "sa.created", "sa.deleted",
+        "sa.role.assigned", "sa.role.removed",
+        // org / project
+        "org.created", "org.suspended", "org.unsuspended", "org.settings_updated",
+        "project.created", "project.updated", "project.deleted", "project.scopes_updated",
+        // session / export
         "session.revoked",
-        "project.updated",
-        "invite.sent",
+        "export.users", "export.audit_log",
     ];
 }
 

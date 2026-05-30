@@ -50,6 +50,9 @@ public class AppConfig(IConfiguration config)
     public int    ArgonTimeCost           => config.GetValue<int>("Security:ArgonTimeCost", 3);
     public int    ArgonMemoryCost         => config.GetValue<int>("Security:ArgonMemoryCost", 65536);
     public int    ArgonParallelism        => config.GetValue<int>("Security:ArgonParallelism", 4);
+    /// <summary>Optional hex-encoded server-side pepper mixed via HMAC-SHA256 into Argon2 input.
+    /// Empty value means no pepper (back-compat with existing hashes).</summary>
+    public string Argon2Pepper            => config["Security:Argon2Pepper"] ?? "";
     public string PatPrefix               => config["Security:PatPrefix"] ?? "rediens_pat_";
 
     // ── Per-purpose derived keys (HKDF-SHA256 from TotpSecretEncryptionKey) ──

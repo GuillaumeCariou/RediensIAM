@@ -22,11 +22,13 @@ public class AccountController(
     AppConfig appConfig) : ControllerBase
 {
     // Unwrap bundle (S107)
-    private PasswordService passwords => svc.Passwords;
-    private HydraService hydra        => svc.Hydra;
-    private ISmsService smsService    => svc.Sms;
-    private OtpCacheService otpCache  => svc.Otp;
-    private IFido2 fido2              => svc.Fido2;
+    private PasswordService passwords    => svc.Passwords;
+    private HydraService hydra           => svc.Hydra;
+    private ISmsService smsService       => svc.Sms;
+    private OtpCacheService otpCache     => svc.Otp;
+    private IFido2 fido2                 => svc.Fido2;
+    private LoginRateLimiter rateLimiter => svc.RateLimiter;
+    private string Ip => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
     // /account/* routes are protected by GatewayAuthMiddleware — Claims is always non-null here.
     private TokenClaims Claims => HttpContext.GetClaims()!;
 
@@ -62,16 +64,24 @@ public class AccountController(
     public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest body)
     {
         var userId = Claims.ParsedUserId;
+        if (await rateLimiter.IsBlockedAsync(Ip, userId, "pwchange"))
+            return StatusCode(429, new { error = "rate_limited" });
         var user = await db.Users.FindAsync(userId);
         if (user == null) return NotFound();
         if (user.PasswordHash == null || !passwords.Verify(body.CurrentPassword, user.PasswordHash))
+        {
+            await rateLimiter.RecordFailureAsync(Ip, userId, "pwchange");
             return BadRequest(new { error = "invalid_current_password" });
+        }
         if (body.NewPassword.Length < 8)
             return BadRequest(new { error = "password_too_short", min_length = 8 });
         user.PasswordHash = passwords.Hash(body.NewPassword);
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
-        await audit.RecordAsync(Guid.TryParse(Claims.OrgId, out var oid) ? oid : null, null, userId, "user.password_changed");
+        var orgId = Guid.TryParse(Claims.OrgId, out var oid) ? oid : (Guid?)null;
+        var subject = orgId.HasValue ? $"{orgId}:{user.Id}" : user.Id.ToString();
+        await hydra.RevokeSessionsAsync(subject);
+        await audit.RecordAsync(orgId, null, userId, "user.password_changed");
         return Ok(new { message = "password_changed" });
     }
 
@@ -114,7 +124,7 @@ public class AccountController(
         var backupCodes = Enumerable.Range(0, 8).Select(_ =>
         {
             var code = Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToUpper();
-            return (code, hash: passwords.Hash(code));
+            return (code, hash: passwords.HashBackupCode(code));
         }).ToList();
         db.BackupCodes.RemoveRange(db.BackupCodes.Where(c => c.UserId == userId));
         db.BackupCodes.AddRange(backupCodes.Select(c => new BackupCode
@@ -132,7 +142,7 @@ public class AccountController(
         var codes = Enumerable.Range(0, 8).Select(_ =>
         {
             var code = Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToUpper();
-            return (code, hash: passwords.Hash(code));
+            return (code, hash: passwords.HashBackupCode(code));
         }).ToList();
         db.BackupCodes.RemoveRange(db.BackupCodes.Where(c => c.UserId == userId));
         db.BackupCodes.AddRange(codes.Select(c => new BackupCode

@@ -13,6 +13,17 @@ async function getManager(): Promise<UserManager> {
   if (mgr) return mgr;
   const res = await fetch('/admin/config');
   const cfg: AdminConfig = await res.json();
+  // Defence-in-depth: even though Hydra also validates the registered redirect_uri,
+  // never trust a server-provided redirect_uri whose origin differs from this SPA's origin.
+  // A compromised config endpoint could otherwise hand the auth code to another origin.
+  try {
+    const cfgOrigin = new URL(cfg.redirect_uri).origin;
+    if (cfgOrigin !== globalThis.location.origin) {
+      throw new Error(`redirect_uri origin (${cfgOrigin}) does not match SPA origin (${globalThis.location.origin})`);
+    }
+  } catch (e) {
+    throw new Error(`Invalid OIDC redirect_uri from /admin/config: ${(e as Error).message}`);
+  }
   mgr = new UserManager({
     authority: cfg.hydra_url,
     client_id: cfg.client_id,

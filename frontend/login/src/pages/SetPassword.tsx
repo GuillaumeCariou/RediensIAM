@@ -3,23 +3,55 @@ import { useSearchParams } from 'react-router-dom';
 import { getThemeByProject, completeInvite } from '../api';
 
 function sanitizeCss(css: string): string {
-  return css.replace(/url\(\s*(['"]?)(https?:|\/\/)[^)]*\1\s*\)/gi, 'url(about:blank)');
+  let out = css;
+  out = out.replaceAll(/@(import|charset|namespace)[^;]*;?/gi, '');
+  out = out.replaceAll(/url\([^)]*\)/gi, 'url(about:blank)');
+  out = out.replaceAll(/input\s*\[\s*type\s*[~|^$*]?=\s*['"]?password['"]?\s*\][^{]*\{[^}]*\}/gi, '');
+  return out;
 }
 
-function applyTheme(data: Record<string, unknown>) {
+// Returns a cleanup function that removes the applied CSS vars and <style> node.
+function applyTheme(data: Record<string, unknown>): () => void {
   const t = (data?.theme ?? {}) as Record<string, string>;
-  const set = (v: string, val?: string) => { if (val) document.documentElement.style.setProperty(v, val); };
+  const el = document.documentElement;
+  const touched: string[] = [];
+  const set = (v: string, val?: string) => {
+    if (val) { el.style.setProperty(v, val); touched.push(v); }
+  };
   set('--primary', t.primary_color);
+  set('--accent', t.primary_color);
   set('--background', t.background_color);
+  set('--bg', t.background_color);
   set('--surface', t.surface_color);
   set('--text', t.text_color);
-  set('--font-family', t.font_family);
-  if (t.border_radius) document.documentElement.style.setProperty('--radius', `${t.border_radius}px`);
-  if (t.custom_css) {
-    const style = document.createElement('style');
-    style.textContent = sanitizeCss(t.custom_css);
-    document.head.appendChild(style);
+  set('--fg', t.text_color);
+  set('--font-sans', t.font_family);
+  if (t.border_radius) {
+    const r = Number.parseInt(t.border_radius);
+    el.style.setProperty('--radius', `${r}px`);
+    el.style.setProperty('--radius-sm', `${Math.max(4, r - 2)}px`);
+    touched.push('--radius', '--radius-sm');
   }
+  let styleNode: HTMLStyleElement | null = null;
+  if (t.custom_css) {
+    styleNode = document.createElement('style');
+    styleNode.dataset['iamTheme'] = 'set-password';
+    styleNode.textContent = sanitizeCss(t.custom_css);
+    document.head.appendChild(styleNode);
+  }
+  return () => {
+    for (const p of touched) el.style.removeProperty(p);
+    styleNode?.remove();
+  };
+}
+
+function LoginLogo() {
+  return (
+    <div className="login-logo">
+      <div className="brand-mark">R</div>
+      <span>RediensIAM</span>
+    </div>
+  );
 }
 
 export default function SetPassword() {
@@ -33,24 +65,46 @@ export default function SetPassword() {
   const [loading,  setLoading]  = useState(false);
   const [done,     setDone]     = useState(false);
 
+  // Scrub the invite token from the address bar and browser history so it doesn't
+  // leak via Referer headers (e.g. to Google Fonts) or stay in shared screenshots.
+  useEffect(() => {
+    if (!token) return;
+    const cleaned = new URL(globalThis.location.href);
+    cleaned.searchParams.delete('token');
+    globalThis.history.replaceState({}, '', cleaned.toString());
+  }, [token]);
+
   useEffect(() => {
     if (!projectId) return;
-    getThemeByProject(projectId).then(applyTheme).catch(() => {});
+    let cleanup: (() => void) | null = null;
+    let cancelled = false;
+    getThemeByProject(projectId).then(data => {
+      if (cancelled) return;
+      cleanup = applyTheme(data);
+    }).catch(() => {});
+    return () => { cancelled = true; cleanup?.(); };
   }, [projectId]);
 
   if (!token) return (
-    <div className="card">
-      <h1 className="card-title">Invalid link</h1>
-      <p className="card-subtitle">This invite link is invalid or has already been used. Ask your administrator to send a new one.</p>
+    <div className="login-center">
+      <div className="login-card fade-in">
+        <LoginLogo />
+        <h1 className="login-title">Invalid link.</h1>
+        <p className="login-subtitle">This invite link is invalid or has already been used. Ask your administrator to send a new one.</p>
+      </div>
     </div>
   );
 
   if (done) return (
-    <div className="card">
-      <h1 className="card-title">Password set!</h1>
-      <div className="alert alert-success">Your account is ready. You can now sign in.</div>
-      <div className="links">
-        <a href="/login" className="btn-ghost">Go to sign in</a>
+    <div className="login-center">
+      <div className="login-card fade-in">
+        <LoginLogo />
+        <h1 className="login-title">Password set!</h1>
+        <div className="deny-banner" style={{ background: 'var(--success-soft)', color: 'var(--success)', borderColor: 'oklch(from var(--success) l c h / 0.4)', marginTop: 20 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ flexShrink: 0 }}><polyline points="20,6 9,17 4,12"/></svg>
+          Your account is ready. You can now sign in.
+        </div>
+        <a href="/login" className="btn btn-primary btn-lg" style={{ marginTop: 16, textDecoration: 'none' }}>Go to sign in</a>
       </div>
     </div>
   );
@@ -63,7 +117,7 @@ export default function SetPassword() {
     try {
       const res = await completeInvite(token, password);
       if (res.error === 'password_breached') {
-        setError(`This password has appeared in ${res.count ? res.count.toLocaleString() : 'multiple'} data breaches. Please choose a different password.`);
+        setError(`This password has appeared in ${res.count ? res.count.toLocaleString() : 'multiple'} data breaches. Choose a different password.`);
         return;
       }
       if (res.error === 'token_expired' || res.error === 'token_not_found') {
@@ -74,10 +128,7 @@ export default function SetPassword() {
         setError(res.detail ?? 'Password does not meet the requirements. Please try a stronger password.');
         return;
       }
-      if (res.error) {
-        setError('Something went wrong. Please try again.');
-        return;
-      }
+      if (res.error) { setError('Something went wrong. Please try again.'); return; }
       setDone(true);
     } catch {
       setError('Something went wrong. Please try again.');
@@ -87,43 +138,35 @@ export default function SetPassword() {
   }
 
   return (
-    <div className="card">
-      <h1 className="card-title">Set your password</h1>
-      <p className="card-subtitle">Create a password to activate your account</p>
+    <div className="login-center">
+      <div className="login-card fade-in">
+        <LoginLogo />
+        <h1 className="login-title">You've been invited.</h1>
+        <p className="login-subtitle">Set a password to activate your account.</p>
 
-      {error && <div className="alert alert-error">{error}</div>}
+        {error && (
+          <div className="deny-banner deny-banner-error" style={{ marginTop: 16 }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            {error}
+          </div>
+        )}
 
-      <form onSubmit={handleSubmit}>
-        <div className="form-group">
-          <label htmlFor="password">New password</label>
-          <input
-            id="password"
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            required
-            minLength={8}
-            autoFocus
-            autoComplete="new-password"
-            placeholder="••••••••"
-          />
-        </div>
-        <div className="form-group">
-          <label htmlFor="confirm">Confirm password</label>
-          <input
-            id="confirm"
-            type="password"
-            value={confirm}
-            onChange={e => setConfirm(e.target.value)}
-            required
-            autoComplete="new-password"
-            placeholder="••••••••"
-          />
-        </div>
-        <button className="btn" type="submit" disabled={loading}>
-          {loading ? 'Setting password…' : 'Set password'}
-        </button>
-      </form>
+        <form className="login-form" onSubmit={handleSubmit}>
+          <div>
+            <label className="label" htmlFor="sp-new-password">New password</label>
+            <input id="sp-new-password" className="input" type="password" value={password} onChange={e => setPassword(e.target.value)}
+              required minLength={8} autoFocus autoComplete="new-password" placeholder="At least 8 characters" />
+          </div>
+          <div>
+            <label className="label" htmlFor="sp-confirm-password">Confirm password</label>
+            <input id="sp-confirm-password" className="input" type="password" value={confirm} onChange={e => setConfirm(e.target.value)}
+              required autoComplete="new-password" placeholder="••••••••" />
+          </div>
+          <button className="btn btn-primary btn-lg" type="submit" disabled={loading} style={{ marginTop: 4 }}>
+            {loading ? 'Setting password…' : <>Accept invite & sign in <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12,5 19,12 12,19"/></svg></>}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }

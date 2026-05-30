@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
+import { ScopeProvider } from './context/ScopeContext';
 import Shell from './components/layout/Shell';
 
 // Account page
@@ -55,11 +56,31 @@ function defaultPath(isSuperAdmin: boolean, isOrgAdmin: boolean) {
   return '/project';
 }
 
+function NoRolesError({ onLogout }: Readonly<{ onLogout: () => void }>) {
+  return (
+    <div className="flex h-screen flex-col items-center justify-center gap-4 p-8 text-center">
+      <h1 className="text-xl font-semibold">No access</h1>
+      <p className="max-w-md text-sm text-muted-foreground">
+        Your account has no roles assigned in this system. An administrator must grant you a role
+        before you can use the admin console.
+      </p>
+      <button className="iam-btn iam-btn-secondary" onClick={onLogout}>Log out</button>
+    </div>
+  );
+}
+
 function AppRoutes() {
-  const { ready, authenticated, isSuperAdmin, isOrgAdmin, isProjectManager } = useAuth();
+  const { ready, authenticated, isSuperAdmin, isOrgAdmin, isProjectManager, roles, logout } = useAuth();
 
   if (!ready) return <Loading />;
   if (!authenticated) return <Loading />;
+
+  // Prevent infinite Navigate loop for tokens with empty roles: defaultPath returns /project,
+  // but the project guard would Navigate back to home (also /project) — render an error
+  // page with a logout button instead.
+  if (roles.length === 0 || (!isSuperAdmin && !isOrgAdmin && !isProjectManager)) {
+    return <NoRolesError onLogout={logout} />;
+  }
 
   const home = defaultPath(isSuperAdmin, isOrgAdmin);
 
@@ -140,9 +161,11 @@ export default function App() {
   return (
     <BrowserRouter basename="/admin">
       <ThemeProvider>
-        <AuthProvider>
-          <AppRoutes />
-        </AuthProvider>
+        <ScopeProvider>
+          <AuthProvider>
+            <AppRoutes />
+          </AuthProvider>
+        </ScopeProvider>
       </ThemeProvider>
     </BrowserRouter>
   );

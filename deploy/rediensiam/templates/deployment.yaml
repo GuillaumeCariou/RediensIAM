@@ -47,6 +47,8 @@ spec:
               value: {{ index (urlParse .Values.rediensiam.publicUrl) "host" | quote }}
             - name: IAM_ADMIN_PATH
               value: {{ .Values.rediensiam.app.adminPath | quote }}
+            - name: App__TrustedProxies
+              value: {{ .Values.rediensiam.app.trustedProxies | default "" | quote }}
             # ── Ory ────────────────────────────────────────────────────────────
             - name: Hydra__AdminUrl
               value: {{ include "rediensiam.hydraAdminUrl" . | quote }}
@@ -85,6 +87,12 @@ spec:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secrets
                   key: totp-key
+            - name: Security__Argon2Pepper
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: argon2-pepper
+                  optional: true
             - name: Smtp__Password
               valueFrom:
                 secretKeyRef:

@@ -1,35 +1,17 @@
 import { useEffect, useState } from 'react';
-import { Plus, MoreHorizontal, Trash2, Play, List as ListIcon, ChevronDown, ChevronRight } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Switch } from '@/components/ui/switch';
-import { Input } from '@/components/ui/input';
-import { Alert } from '@/components/ui/alert';
-import { Skeleton } from '@/components/ui/skeleton';
+import { IamChip, IamDialog } from '@/components/iam';
 import { listWebhooks, createWebhook, updateWebhook, deleteWebhook, testWebhook, listWebhookDeliveries } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
 
 interface Webhook {
-  id: string;
-  url: string;
-  events: string[];
-  active: boolean;
-  last_delivery_status?: number | null;
-  created_at: string;
+  id: string; url: string; events: string[]; active: boolean;
+  last_delivery_status?: number | null; created_at: string;
 }
 
 interface Delivery {
-  id: string;
-  event: string;
-  status_code: number | null;
-  attempt_count: number;
-  delivered_at: string | null;
-  payload?: string | null;
+  id: string; event: string; status_code: number | null;
+  attempt_count: number; delivered_at: string | null; payload?: string | null;
 }
 
 const EVENT_GROUPS: { label: string; events: string[] }[] = [
@@ -38,28 +20,36 @@ const EVENT_GROUPS: { label: string; events: string[] }[] = [
   { label: 'Session events', events: ['session.revoked'] },
   { label: 'Project events', events: ['project.updated'] },
 ];
+
+function Toggle({ checked, onChange }: Readonly<{ checked: boolean; onChange: () => void }>) {
+  return (
+    <button onClick={onChange} style={{
+      width: 36, height: 20, borderRadius: 10,
+      background: checked ? 'var(--ia-accent)' : 'var(--border-strong)',
+      position: 'relative', border: 'none', cursor: 'pointer', flexShrink: 0, transition: 'background 150ms',
+    }}>
+      <span style={{
+        position: 'absolute', top: 2, left: checked ? 18 : 2,
+        width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 150ms',
+      }} />
+    </button>
+  );
+}
+
 export default function OrgWebhooks() {
   const [webhooks, setWebhooks] = useState<Webhook[]>([]);
   const [loading, setLoading] = useState(true);
-
-  // Create dialog
   const [addOpen, setAddOpen] = useState(false);
   const [newUrl, setNewUrl] = useState('');
   const [newEvents, setNewEvents] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
-
-  // Secret reveal after creation
   const [secretOpen, setSecretOpen] = useState(false);
   const [newSecret, setNewSecret] = useState('');
-
-  // Deliveries dialog
   const [deliveriesOpen, setDeliveriesOpen] = useState(false);
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [deliveriesLoading, setDeliveriesLoading] = useState(false);
   const [expandedDelivery, setExpandedDelivery] = useState<string | null>(null);
-
-  // Test feedback
   const [testMsg, setTestMsg] = useState<{ id: string; ok: boolean; text: string } | null>(null);
 
   const load = () => {
@@ -79,10 +69,17 @@ export default function OrgWebhooks() {
     try {
       const res = await createWebhook({ url: newUrl, events: newEvents });
       if (res.error) { setCreateError(res.error_description ?? 'Failed to create webhook.'); return; }
-      setAddOpen(false);
-      setNewUrl(''); setNewEvents([]);
-      if (res.secret) { setNewSecret(res.secret); setSecretOpen(true); }
-      load();
+      if (res.secret) {
+        setAddOpen(false); setNewUrl(''); setNewEvents([]);
+        setNewSecret(res.secret);
+        setSecretOpen(true);
+        load();
+      } else {
+        // Don't silently close the dialog: the user just lost their only chance to capture
+        // the signing secret. Surface the failure so they can rotate it explicitly.
+        setCreateError('Webhook created, but the server did not return a signing secret. Please rotate the secret manually before relying on signature verification.');
+        load();
+      }
     } finally { setCreating(false); }
   };
 
@@ -99,28 +96,20 @@ export default function OrgWebhooks() {
   const handleTest = async (id: string) => {
     setTestMsg(null);
     const res = await testWebhook(id);
-    if (res.error) {
-      setTestMsg({ id, ok: false, text: `Test failed: ${res.error}` });
-    } else {
-      setTestMsg({ id, ok: true, text: 'Test payload sent.' });
-    }
+    if (res.error) setTestMsg({ id, ok: false, text: `Test failed: ${res.error}` });
+    else setTestMsg({ id, ok: true, text: 'Test payload sent.' });
     setTimeout(() => setTestMsg(null), 4000);
   };
 
   const openDeliveries = (id: string) => {
-    setDeliveriesOpen(true);
-    setExpandedDelivery(null);
-    setDeliveriesLoading(true);
+    setDeliveriesOpen(true); setExpandedDelivery(null); setDeliveriesLoading(true);
     listWebhookDeliveries(id)
       .then((d: Delivery[]) => setDeliveries(Array.isArray(d) ? d : []))
       .catch(console.error)
       .finally(() => setDeliveriesLoading(false));
   };
 
-  const toggleEventSelection = (ev: string) => {
-    setNewEvents(evs => evs.includes(ev) ? evs.filter(e => e !== ev) : [...evs, ev]);
-  };
-
+  const toggleEventSelection = (ev: string) => setNewEvents(evs => evs.includes(ev) ? evs.filter(e => e !== ev) : [...evs, ev]);
   const toggleGroup = (events: string[]) => {
     const allSelected = events.every(e => newEvents.includes(e));
     if (allSelected) setNewEvents(evs => evs.filter(e => !events.includes(e)));
@@ -129,220 +118,211 @@ export default function OrgWebhooks() {
 
   return (
     <div>
-      <PageHeader title="Webhooks" description="Receive HTTP notifications when events occur" />
-      <div className="p-6 space-y-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-            <CardTitle className="text-base">Webhooks</CardTitle>
-            <Button size="sm" onClick={() => { setCreateError(''); setAddOpen(true); }}>
-              <Plus className="h-4 w-4" />Add Webhook
-            </Button>
-          </CardHeader>
-          <CardContent className="p-0">
-            {(() => {
-              if (loading) return (
-              <div className="p-4 space-y-2">{Array.from({ length: 3 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-10 w-full" />)}</div>
-              );
-              if (webhooks.length === 0) return (
-              <p className="text-center text-sm text-muted-foreground py-10">
-                No webhooks configured. Add one to receive event notifications.
-              </p>
-              );
-              return (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>URL</TableHead>
-                    <TableHead>Events</TableHead>
-                    <TableHead>Active</TableHead>
-                    <TableHead>Last status</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {webhooks.map(wh => (
-                    <TableRow key={wh.id}>
-                        <TableCell className="font-mono text-xs max-w-xs truncate">{wh.url}</TableCell>
-                        <TableCell>
-                          <div className="flex flex-wrap gap-1 max-w-xs">
-                            {wh.events.slice(0, 3).map(e => <Badge key={e} variant="secondary" className="text-xs font-mono">{e}</Badge>)}
-                            {wh.events.length > 3 && <Badge variant="outline" className="text-xs">+{wh.events.length - 3} more</Badge>}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Switch checked={wh.active} onCheckedChange={() => handleToggleActive(wh)} />
-                        </TableCell>
-                        <TableCell>
-                          {wh.last_delivery_status == null ? <span className="text-xs text-muted-foreground">—</span> : (
-                            <Badge variant={wh.last_delivery_status >= 200 && wh.last_delivery_status < 300 ? 'success' : 'destructive'} className="text-xs font-mono">
-                              {wh.last_delivery_status}
-                            </Badge>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground">{fmtDate(wh.created_at)}</TableCell>
-                        <TableCell className="text-right">
-                          {testMsg?.id === wh.id && (
-                            <span className={`text-xs mr-2 ${testMsg.ok ? 'text-green-600' : 'text-destructive'}`}>
-                              {testMsg.text}
-                            </span>
-                          )}
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-8 w-8">
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => handleTest(wh.id)}>
-                                <Play className="h-4 w-4" />Test
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => openDeliveries(wh.id)}>
-                                <ListIcon className="h-4 w-4" />View deliveries
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                className="text-destructive focus:text-destructive"
-                                onClick={() => handleDelete(wh.id)}
-                              >
-                                <Trash2 className="h-4 w-4" />Delete
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              );
-            })()}
-          </CardContent>
-        </Card>
+      <PageHeader
+        title="Webhooks"
+        description="Receive HTTP notifications when events occur"
+        actions={[
+          <button key="add" className="iam-btn iam-btn-primary iam-btn-sm" onClick={() => { setCreateError(''); setAddOpen(true); }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Add Webhook
+          </button>
+        ]}
+      />
+      <div className="iam-page">
+        <div className="iam-card">
+          {(() => {
+            if (loading) return (
+              <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {Array.from({ length: 3 }, (_, i) => <div key={i} style={{ height: 40, background: 'var(--surface-2)', borderRadius: 6 }} />)}
+              </div>
+            );
+            if (webhooks.length === 0) return (
+              <div className="iam-empty">
+                <div className="iam-empty-title">No webhooks configured</div>
+                <div className="iam-empty-desc">Add one to receive event notifications.</div>
+              </div>
+            );
+            return (
+            <table className="iam-tbl">
+              <thead>
+                <tr><th>URL</th><th>Events</th><th>Active</th><th>Last status</th><th>Created</th><th style={{ width: 36 }}></th></tr>
+              </thead>
+              <tbody>
+                {webhooks.map(wh => (
+                  <tr key={wh.id}>
+                    <td><span className="iam-mono" style={{ fontSize: 11, color: 'var(--fg-muted)', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', display: 'block', whiteSpace: 'nowrap' }}>{wh.url}</span></td>
+                    <td>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, maxWidth: 220 }}>
+                        {wh.events.slice(0, 3).map(e => (
+                          <span key={e} className="iam-chip iam-chip-default iam-chip-mono" style={{ fontSize: 10 }}>{e}</span>
+                        ))}
+                        {wh.events.length > 3 && <span className="iam-chip iam-chip-default" style={{ fontSize: 10 }}>+{wh.events.length - 3}</span>}
+                      </div>
+                    </td>
+                    <td><Toggle checked={wh.active} onChange={() => handleToggleActive(wh)} /></td>
+                    <td>
+                      {wh.last_delivery_status == null
+                        ? <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>—</span>
+                        : <IamChip tone={wh.last_delivery_status >= 200 && wh.last_delivery_status < 300 ? 'success' : 'danger'}>
+                            {wh.last_delivery_status}
+                          </IamChip>}
+                    </td>
+                    <td style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{fmtDate(wh.created_at)}</td>
+                    <td>
+                      {testMsg?.id === wh.id && (
+                        <span style={{ fontSize: 11, marginRight: 8, color: testMsg.ok ? 'var(--success)' : 'var(--danger)' }}>{testMsg.text}</span>
+                      )}
+                      <WebhookMenu
+                        onTest={() => handleTest(wh.id)}
+                        onDeliveries={() => openDeliveries(wh.id)}
+                        onDelete={() => handleDelete(wh.id)}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            );
+          })()}
+        </div>
       </div>
 
-      {/* Create dialog */}
-      <Dialog open={addOpen} onOpenChange={setAddOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Add Webhook</DialogTitle>
-            <DialogDescription>Receive HTTP POST notifications when events occur in your organisation.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            {createError && <Alert variant="destructive" className="text-sm py-2 px-3">{createError}</Alert>}
-            <div className="space-y-2">
-              <label className="text-sm font-medium" htmlFor="wh-url">URL</label>
-              <Input
-                id="wh-url"
-                type="url"
-                placeholder="https://example.com/webhook"
-                value={newUrl}
-                onChange={e => setNewUrl(e.target.value)}
-              />
+      <IamDialog
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        title="Add Webhook"
+        desc="Receive HTTP POST notifications when events occur in your organisation."
+        wide
+        footer={
+          <>
+            <button className="iam-btn iam-btn-ghost" onClick={() => setAddOpen(false)}>Cancel</button>
+            <button className="iam-btn iam-btn-primary" onClick={handleCreate} disabled={creating}>
+              {creating ? 'Creating…' : 'Create Webhook'}
+            </button>
+          </>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {createError && (
+            <div style={{ padding: '8px 12px', background: 'var(--danger-soft)', color: 'var(--danger)', borderRadius: 6, fontSize: 13 }}>{createError}</div>
+          )}
+          <div>
+            <label className="iam-label" htmlFor="webhook-url">URL</label>
+            <input id="webhook-url" className="iam-input" type="url" placeholder="https://example.com/webhook" value={newUrl} onChange={e => setNewUrl(e.target.value)} />
+          </div>
+          <div>
+            <span className="iam-label" style={{ marginBottom: 10, display: 'block' }}>Events</span>
+            {EVENT_GROUPS.map(group => {
+              const allChecked = group.events.every(e => newEvents.includes(e));
+              const someChecked = group.events.some(e => newEvents.includes(e));
+              return (
+                <div key={group.label} style={{ marginBottom: 12 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, fontWeight: 600, color: 'var(--fg-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em', cursor: 'pointer', marginBottom: 6 }}>
+                    <input type="checkbox" checked={allChecked}
+                      ref={el => { if (el) el.indeterminate = someChecked && !allChecked; }}
+                      onChange={() => toggleGroup(group.events)} />
+                    {group.label}
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, paddingLeft: 16 }}>
+                    {group.events.map(ev => (
+                      <label key={ev} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={newEvents.includes(ev)} onChange={() => toggleEventSelection(ev)} />
+                        <span className="iam-mono">{ev}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </IamDialog>
+
+      <IamDialog
+        open={secretOpen}
+        onClose={() => setSecretOpen(false)}
+        title="Webhook Secret"
+        desc="Copy this now — it won't be shown again. Use it to verify webhook signatures."
+        footer={
+          <>
+            <button className="iam-btn iam-btn-secondary" onClick={() => navigator.clipboard.writeText(newSecret)}>Copy</button>
+            <button className="iam-btn iam-btn-primary" onClick={() => { setSecretOpen(false); setNewSecret(''); }}>I've saved it</button>
+          </>
+        }
+      >
+        <div style={{ padding: 14, background: 'var(--bg-sunken)', border: '1px solid var(--border)', borderRadius: 8, fontFamily: 'var(--font-mono)', fontSize: 12, wordBreak: 'break-all' }}>
+          {newSecret}
+        </div>
+      </IamDialog>
+
+      <IamDialog
+        open={deliveriesOpen}
+        onClose={() => setDeliveriesOpen(false)}
+        title="Delivery Log"
+        desc="Last 25 deliveries for this webhook."
+        wide
+        footer={<button className="iam-btn iam-btn-ghost" onClick={() => setDeliveriesOpen(false)}>Close</button>}
+      >
+        {(() => {
+          if (deliveriesLoading) return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {Array.from({ length: 5 }, (_, i) => <div key={i} style={{ height: 40, background: 'var(--surface-2)', borderRadius: 6 }} />)}
             </div>
-            <div className="space-y-3">
-              <span className="text-sm font-medium">Events</span>
-              {EVENT_GROUPS.map(group => {
-                const allChecked = group.events.every(e => newEvents.includes(e));
-                const someChecked = group.events.some(e => newEvents.includes(e));
+          );
+          if (deliveries.length === 0) return (
+            <div className="iam-empty"><div className="iam-empty-title">No deliveries yet.</div></div>
+          );
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 380, overflowY: 'auto' }}>
+              {deliveries.map(d => {
+                const statusChip = d.status_code == null
+                  ? <IamChip tone="default">pending</IamChip>
+                  : <IamChip tone={d.status_code >= 200 && d.status_code < 300 ? 'success' : 'danger'}>{d.status_code}</IamChip>;
                 return (
-                  <div key={group.label} className="space-y-1.5">
-                    <label className="flex items-center gap-2 text-xs font-semibold text-muted-foreground cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={allChecked}
-                        ref={el => { if (el) el.indeterminate = someChecked && !allChecked; }}
-                        onChange={() => toggleGroup(group.events)}
-                      />
-                      {group.label}
-                    </label>
-                    <div className="grid grid-cols-2 gap-1 pl-4">
-                      {group.events.map(ev => (
-                        <label key={ev} className="flex items-center gap-2 text-xs cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={newEvents.includes(ev)}
-                            onChange={() => toggleEventSelection(ev)}
-                          />
-                          <span className="font-mono">{ev}</span>
-                        </label>
-                      ))}
-                    </div>
+                  <div key={d.id} style={{ border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
+                    <button
+                      style={{ display: 'flex', width: '100%', alignItems: 'center', gap: 10, padding: '8px 12px', fontSize: 12, background: 'none', cursor: 'pointer', textAlign: 'left' }}
+                      onClick={() => setExpandedDelivery(expandedDelivery === d.id ? null : d.id)}
+                    >
+                      <span className="iam-mono" style={{ flex: 1 }}>{d.event}</span>
+                      {statusChip}
+                      <span style={{ color: 'var(--fg-muted)', fontSize: 11 }}>{d.attempt_count} attempt{d.attempt_count === 1 ? '' : 's'}</span>
+                      <span style={{ color: 'var(--fg-muted)', fontSize: 11 }}>{d.delivered_at ? fmtDate(d.delivered_at) : '—'}</span>
+                    </button>
+                    {expandedDelivery === d.id && d.payload && (
+                      <pre style={{ fontSize: 11, background: 'var(--bg-sunken)', padding: 12, margin: 0, overflow: 'auto', borderTop: '1px solid var(--border)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                        {(() => { try { return JSON.stringify(JSON.parse(d.payload), null, 2); } catch { return d.payload; } })()}
+                      </pre>
+                    )}
                   </div>
                 );
               })}
             </div>
+          );
+        })()}
+      </IamDialog>
+    </div>
+  );
+}
+
+function WebhookMenu({ onTest, onDeliveries, onDelete }: Readonly<{ onTest: () => void; onDeliveries: () => void; onDelete: () => void; }>) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: 'relative' }}>
+      <button className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm" onClick={() => setOpen(o => !o)}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+      </button>
+      {open && (
+        <>
+          <div role="none" style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }} />
+          <div style={{ position: 'absolute', right: 0, top: '100%', zIndex: 50, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-md)', minWidth: 140, padding: 4 }}>
+            <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }} onClick={() => { setOpen(false); onTest(); }}>Test</button>
+            <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }} onClick={() => { setOpen(false); onDeliveries(); }}>View deliveries</button>
+            <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
+            <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13, color: 'var(--danger)' }} onClick={() => { setOpen(false); onDelete(); }}>Delete</button>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
-            <Button onClick={handleCreate} disabled={creating}>
-              {creating ? 'Creating…' : 'Create Webhook'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Secret reveal dialog */}
-      <Dialog open={secretOpen} onOpenChange={setSecretOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Webhook Secret</DialogTitle>
-            <DialogDescription>Copy this now — it won't be shown again. Use it to verify webhook signatures.</DialogDescription>
-          </DialogHeader>
-          <div className="rounded-lg bg-muted p-4 font-mono text-sm break-all">{newSecret}</div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { navigator.clipboard.writeText(newSecret); }}>Copy</Button>
-            <Button onClick={() => { setSecretOpen(false); setNewSecret(''); }}>I've saved it</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Deliveries dialog */}
-      <Dialog open={deliveriesOpen} onOpenChange={setDeliveriesOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Delivery Log</DialogTitle>
-            <DialogDescription>Last 25 deliveries for this webhook.</DialogDescription>
-          </DialogHeader>
-          {(() => {
-            if (deliveriesLoading) return (
-            <div className="space-y-2">{Array.from({ length: 5 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-10 w-full" />)}</div>
-            );
-            if (deliveries.length === 0) return (
-            <p className="text-sm text-muted-foreground py-4 text-center">No deliveries yet.</p>
-            );
-            return (
-            <div className="space-y-1 max-h-96 overflow-y-auto">
-              {deliveries.map(d => (
-                <div key={d.id} className="rounded-lg border">
-                  <button
-                    className="flex w-full items-center gap-3 px-4 py-2.5 text-sm hover:bg-muted/50 text-left"
-                    onClick={() => setExpandedDelivery(expandedDelivery === d.id ? null : d.id)}
-                  >
-                    <span className="font-mono text-xs flex-1">{d.event}</span>
-                    {d.status_code == null ? <Badge variant="secondary" className="text-xs">pending</Badge> : (
-                      <Badge variant={d.status_code >= 200 && d.status_code < 300 ? 'success' : 'destructive'} className="text-xs font-mono">
-                        {d.status_code}
-                      </Badge>
-                    )}
-                    <span className="text-xs text-muted-foreground">{d.attempt_count} attempt{d.attempt_count === 1 ? '' : 's'}</span>
-                    <span className="text-xs text-muted-foreground">{d.delivered_at ? fmtDate(d.delivered_at) : '—'}</span>
-                    {expandedDelivery === d.id ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
-                  </button>
-                  {expandedDelivery === d.id && d.payload && (
-                    <pre className="text-xs bg-muted p-4 rounded-b-lg overflow-x-auto whitespace-pre-wrap border-t">
-                      {(() => { try { return JSON.stringify(JSON.parse(d.payload), null, 2); } catch { return d.payload; } })()}
-                    </pre>
-                  )}
-                </div>
-              ))}
-            </div>
-            );
-          })()}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeliveriesOpen(false)}>Close</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </>
+      )}
     </div>
   );
 }

@@ -59,12 +59,15 @@ public class PatService(
         var pat = await db.PersonalAccessTokens
             .Include(p => p.ServiceAccount)
                 .ThenInclude(sa => sa.UserList)
+                    .ThenInclude(ul => ul!.Organisation)
             .Include(p => p.ServiceAccount)
                 .ThenInclude(sa => sa.Roles)
             .FirstOrDefaultAsync(p => p.TokenHash == hash);
 
         if (pat == null || !pat.ServiceAccount.Active) return null;
         if (pat.ExpiresAt.HasValue && pat.ExpiresAt < DateTimeOffset.UtcNow) return null;
+        if (pat.ServiceAccount.UserList?.Organisation != null && !pat.ServiceAccount.UserList.Organisation.Active)
+            return null;
 
         // Fire-and-forget: update LastUsedAt without blocking the auth path
         var patId = pat.Id;
@@ -99,7 +102,7 @@ public class PatService(
             })
             .FirstOrDefault();
 
-        var orgId     = topRole?.OrgId?.ToString() ?? sa.UserList.OrgId?.ToString() ?? "";
+        var orgId     = topRole?.OrgId?.ToString() ?? sa.UserList?.OrgId?.ToString() ?? "";
         var projectId = topRole?.ProjectId?.ToString() ?? "";
 
         var result = new IntrospectionResponse(

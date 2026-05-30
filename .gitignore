@@ -29,3 +29,8 @@ deploy/rediensiam/values.prod.secret.yaml
 # ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+
+# Build artifacts with mixed path separators (WSL/Windows quirk)
+src/bin\\Debug/
+**/bin\\Debug/
+

@@ -1,5 +1,7 @@
 using System.Net.Http.Json;
+using Microsoft.Extensions.DependencyInjection;
 using RediensIAM.IntegrationTests.Infrastructure;
+using RediensIAM.Services;
 
 namespace RediensIAM.IntegrationTests.Tests.Services;
 
@@ -98,6 +100,37 @@ public class HydraServiceCoverageTests(TestFixture fixture)
         // Empty roles → no recognised role → endpoint returns 403
         var res = await client.GetAsync("/org/info");
         res.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    // ── EnsureAdminSpaClientAsync — POST path (client does not exist) ─────────
+
+    /// <summary>
+    /// When Hydra returns 404 for GET /admin/clients/{id}, EnsureAdminSpaClientAsync
+    /// falls through to POST /admin/clients — covers the "create" branch.
+    /// </summary>
+    [Fact]
+    public async Task EnsureAdminSpaClientAsync_WhenClientNotFound_CallsPost()
+    {
+        // Default stub: GET /admin/clients/* → 404, POST /admin/clients → 201
+        using var scope = fixture.Services.CreateScope();
+        var hydra = scope.ServiceProvider.GetRequiredService<HydraService>();
+        var act = () => hydra.EnsureAdminSpaClientAsync("http://localhost");
+        await act.Should().NotThrowAsync();
+    }
+
+    /// <summary>
+    /// When Hydra returns 200 for GET /admin/clients/{id}, EnsureAdminSpaClientAsync
+    /// calls PUT /admin/clients/{id} — covers the "update" branch.
+    /// </summary>
+    [Fact]
+    public async Task EnsureAdminSpaClientAsync_WhenClientExists_CallsPut()
+    {
+        fixture.Hydra.SetupClientGetResponse(RediensIAM.Config.Roles.AdminClientId);
+
+        using var scope = fixture.Services.CreateScope();
+        var hydra = scope.ServiceProvider.GetRequiredService<HydraService>();
+        var act = () => hydra.EnsureAdminSpaClientAsync("http://localhost");
+        await act.Should().NotThrowAsync();
     }
 
     // ── CreateOrUpdateServiceAccountClientAsync — PUT path (line 197) ────────

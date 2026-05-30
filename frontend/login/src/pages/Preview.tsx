@@ -94,15 +94,31 @@ export default function Preview() {
     password_require_special,
   } = cfg;
 
+  // Strict-allowlist CSS values so attacker-controlled cfg cannot break out of the
+  // declaration: no semicolons, no parens, no quotes — kills CSS injection vectors.
+  const safeCss = (v: unknown): string | null => {
+    if (typeof v !== 'string') return null;
+    if (v.length > 120) return null;
+    if (/[;{}()<>"`']/.test(v)) return null;
+    return v;
+  };
   useEffect(() => {
     const el = document.documentElement;
     el.dataset['theme'] = dark ? 'dark' : 'light';
-    if (theme.primary_color)    el.style.setProperty('--primary', theme.primary_color);
-    if (theme.background_color) el.style.setProperty('--background', theme.background_color);
-    if (theme.surface_color)    el.style.setProperty('--surface', theme.surface_color);
-    if (theme.text_color)       el.style.setProperty('--text', theme.text_color);
-    if (theme.font_family)      el.style.setProperty('--font-family', theme.font_family);
-    if (theme.border_radius != null) el.style.setProperty('--radius', `${theme.border_radius}px`);
+    const props: [string, unknown][] = [
+      ['--primary', theme.primary_color],
+      ['--background', theme.background_color],
+      ['--surface', theme.surface_color],
+      ['--text', theme.text_color],
+      ['--font-family', theme.font_family],
+    ];
+    for (const [name, val] of props) {
+      const safe = safeCss(val);
+      if (safe) el.style.setProperty(name, safe);
+    }
+    if (typeof theme.border_radius === 'number' && theme.border_radius >= 0 && theme.border_radius <= 64) {
+      el.style.setProperty('--radius', `${theme.border_radius}px`);
+    }
   });
 
   const showLocal = theme.hydra_local_login ?? true;

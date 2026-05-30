@@ -1,12 +1,34 @@
+import { useEffect, useState } from 'react';
 import Sidebar from './Sidebar';
+import Topbar from './Topbar';
+import CommandPalette from './CommandPalette';
+import TweaksButton from './TweaksButton';
 
 export default function Shell({ children }: Readonly<{ children: React.ReactNode }>) {
+  const [cmdOpen, setCmdOpen] = useState(false);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setCmdOpen(o => !o);
+      }
+    };
+    globalThis.addEventListener('keydown', h);
+    return () => globalThis.removeEventListener('keydown', h);
+  }, []);
+
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="iam-screen">
       <Sidebar />
-      <main className="flex flex-1 flex-col overflow-y-auto bg-muted/30">
-        {children}
-      </main>
+      <div className="iam-main">
+        <Topbar onCmdK={() => setCmdOpen(true)} />
+        <div className="iam-main-scroll">
+          {children}
+        </div>
+      </div>
+      <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
+      <TweaksButton />
     </div>
   );
 }

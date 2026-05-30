@@ -25,12 +25,7 @@ builder.Services.AddDbContext<RediensIamDbContext>(options =>
     ServiceLifetime.Scoped);
 
 // ── Redis / Dragonfly ──────────────────────────────────────────────────────
-builder.Services.Configure<ForwardedHeadersOptions>(o =>
-{
-    o.ForwardedHeaders = ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedFor;
-    o.KnownIPNetworks.Clear();
-    o.KnownProxies.Clear();
-});
+builder.Services.Configure<ForwardedHeadersOptions>(o => ConfigureForwardedHeaders(o, builder.Configuration));
 
 var cacheMultiplexer = await ConnectionMultiplexer.ConnectAsync(appConfig.CacheConnectionString);
 builder.Services.AddSingleton<IConnectionMultiplexer>(cacheMultiplexer);
@@ -236,7 +231,8 @@ static async Task EnsureHydraAdminClientAsync(WebApplication webApp, AppConfig c
             using var scope = webApp.Services.CreateScope();
             var hydra = scope.ServiceProvider.GetRequiredService<HydraService>();
             await hydra.EnsureAdminSpaClientAsync(cfg.AdminSpaOrigin);
-            log.LogInformation("Admin SPA OAuth2 client '{ClientId}' registered (token_endpoint_auth_method=none)", RediensIAM.Config.Roles.AdminClientId);
+            if (log.IsEnabled(LogLevel.Information))
+                log.LogInformation("Admin SPA OAuth2 client '{ClientId}' registered (token_endpoint_auth_method=none)", Roles.AdminClientId);
             return;
         }
         catch (Exception ex) when (attempt < 12)
@@ -371,6 +367,40 @@ static void AddSecurityHeaders(HttpContext ctx)
     ctx.Response.Headers.ContentSecurityPolicy = ctx.Request.Path.StartsWithSegments("/admin")
         ? "script-src 'self'; style-src 'self'; object-src 'none'; frame-ancestors 'none';"
         : "default-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none';";
+}
+
+// Configure forwarded-headers: honour X-Forwarded-* only from operator-trusted proxies.
+// App__TrustedProxies (CSV of CIDRs) overrides the defaults. Defaults cover loopback +
+// private RFC1918 networks — well-known reserved ranges, never routable on the internet.
+static void ConfigureForwardedHeaders(ForwardedHeadersOptions o, IConfiguration cfg)
+{
+    o.ForwardedHeaders = ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedFor;
+    o.KnownIPNetworks.Clear();
+    o.KnownProxies.Clear();
+    var trusted = cfg["App:TrustedProxies"];
+    if (!string.IsNullOrWhiteSpace(trusted))
+    {
+        foreach (var cidr in trusted.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var parts = cidr.Split('/');
+            if (parts.Length == 2 && System.Net.IPAddress.TryParse(parts[0], out var ip) && int.TryParse(parts[1], out var prefix))
+                o.KnownIPNetworks.Add(new System.Net.IPNetwork(ip, prefix));
+        }
+        return;
+    }
+    AddDefaultTrustedNetworks(o);
+}
+
+static void AddDefaultTrustedNetworks(ForwardedHeadersOptions o)
+{
+    // Well-known private + loopback ranges (RFC1918 + RFC5735). Not routable on the
+    // public internet, used by k3s/k8s pod networks. Hardcoding is intentional here.
+    var defaults = new (string Address, int Prefix)[]
+    {
+        ("10.0.0.0", 8), ("172.16.0.0", 12), ("192.168.0.0", 16), ("127.0.0.0", 8),
+    };
+    foreach (var (address, prefix) in defaults)
+        o.KnownIPNetworks.Add(new System.Net.IPNetwork(System.Net.IPAddress.Parse(address), prefix));
 }
 
 // Expose Program to integration test project

@@ -1,15 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bot, Plus, Trash2, MoreHorizontal } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { IamChip, IamDialog } from '@/components/iam';
 import { listServiceAccounts, createServiceAccount, deleteServiceAccount, listUserLists } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDateShort } from '@/lib/utils';
@@ -71,113 +62,109 @@ export default function SystemServiceAccounts() {
 
   return (
     <div>
-      <PageHeader title="System Service Accounts" description="Service accounts with system-level access" />
-      <div className="p-6">
-        <div className="rounded-xl border bg-card overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b">
-            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Service Accounts</h2>
-            <Button size="sm" onClick={() => setCreateOpen(true)} disabled={!systemListId}>
-              <Plus className="h-4 w-4" />New Service Account
-            </Button>
-          </div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Last Used</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="w-12"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+      <PageHeader
+        title="System Service Accounts"
+        description="Service accounts with system-level access"
+        actions={[
+          <button key="new" className="iam-btn iam-btn-primary iam-btn-sm" onClick={() => setCreateOpen(true)} disabled={!systemListId}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New Service Account
+          </button>
+        ]}
+      />
+      <div className="iam-page">
+        <div className="iam-card">
+          <table className="iam-tbl">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Status</th>
+                <th>Last Used</th>
+                <th>Created</th>
+                <th style={{ width: 36 }}></th>
+              </tr>
+            </thead>
+            <tbody>
               {(() => {
-                if (loading) return (
-                  Array.from({ length: 3 }, (_, i) => `sk-row-${i}`).map(rowId => (
-                      <TableRow key={rowId}>{Array.from({ length: 5 }, (_, j) => `sk-cell-${j}`).map(cellId => <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
-                    ))
-                );
+                if (loading) return Array.from({ length: 3 }, (_, i) => (
+                  <tr key={i}>{Array.from({ length: 5 }, (_, j) => (
+                    <td key={j}><div style={{ height: 14, background: 'var(--surface-2)', borderRadius: 4, width: '70%' }} /></td>
+                  ))}</tr>
+                ));
                 if (accounts.length === 0) return (
-                  (
-                      <TableRow>
-                        <TableCell colSpan={5} className="text-center text-muted-foreground py-12">
-                          <Bot className="h-8 w-8 mx-auto mb-2 opacity-40" />No system service accounts yet
-                        </TableCell>
-                      </TableRow>
-                    )
+                  <tr><td colSpan={5}>
+                    <div className="iam-empty">
+                      <div className="iam-empty-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+                      </div>
+                      <div className="iam-empty-title">No system service accounts yet</div>
+                    </div>
+                  </td></tr>
                 );
-                return (
-                  accounts.map(sa => (
-                      <TableRow key={sa.id} className="cursor-pointer" onClick={() => navigate(`/system/service-accounts/${sa.id}`)}>
-                        <TableCell>
-                          <p className="font-medium">{sa.name}</p>
-                          {sa.description && <p className="text-xs text-muted-foreground">{sa.description}</p>}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={sa.active ? 'success' : 'secondary'}>{sa.active ? 'Active' : 'Inactive'}</Badge>
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">{fmtDateShort(sa.last_used_at)}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">{fmtDateShort(sa.created_at)}</TableCell>
-                        <TableCell onClick={e => e.stopPropagation()}>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent>
-                              <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteTarget(sa)}>
-                                <Trash2 className="h-4 w-4" />Delete
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                );
+                return accounts.map(sa => (
+                  <tr key={sa.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/system/service-accounts/${sa.id}`)}>
+                    <td>
+                      <div style={{ fontWeight: 500 }}>{sa.name}</div>
+                      {sa.description && <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>{sa.description}</div>}
+                    </td>
+                    <td><IamChip tone={sa.active ? 'success' : 'default'}>{sa.active ? 'Active' : 'Inactive'}</IamChip></td>
+                    <td style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{fmtDateShort(sa.last_used_at)}</td>
+                    <td style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{fmtDateShort(sa.created_at)}</td>
+                    <td onClick={e => e.stopPropagation()}>
+                      <button className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm"
+                        style={{ color: 'var(--danger)' }}
+                        onClick={() => setDeleteTarget(sa)}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                      </button>
+                    </td>
+                  </tr>
+                ));
               })()}
-            </TableBody>
-          </Table>
+            </tbody>
+          </table>
         </div>
       </div>
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>New System Service Account</DialogTitle>
-            <DialogDescription>Create a service account with system-level access.</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleCreate} className="space-y-4">
-            <div className="space-y-2">
-              <Label>Name</Label>
-              <Input value={newSa.name} onChange={e => setNewSa(s => ({ ...s, name: e.target.value }))} required placeholder="ci-deploy-bot" />
-            </div>
-            <div className="space-y-2">
-              <Label>Description</Label>
-              <Input value={newSa.description} onChange={e => setNewSa(s => ({ ...s, description: e.target.value }))} placeholder="Used by CI pipeline" />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={createSaving}>{createSaving ? 'Creating…' : 'Create'}</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <IamDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="New System Service Account"
+        desc="Create a service account with system-level access."
+        footer={
+          <>
+            <button className="iam-btn iam-btn-ghost" onClick={() => setCreateOpen(false)}>Cancel</button>
+            <button className="iam-btn iam-btn-primary" form="create-sa-form" type="submit" disabled={createSaving}>
+              {createSaving ? 'Creating…' : 'Create'}
+            </button>
+          </>
+        }
+      >
+        <form id="create-sa-form" onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div>
+            <label className="iam-label" htmlFor="sys-sa-name">Name</label>
+            <input id="sys-sa-name" className="iam-input" value={newSa.name} onChange={e => setNewSa(s => ({ ...s, name: e.target.value }))} required placeholder="ci-deploy-bot" />
+          </div>
+          <div>
+            <label className="iam-label" htmlFor="sys-sa-description">Description</label>
+            <input id="sys-sa-description" className="iam-input" value={newSa.description} onChange={e => setNewSa(s => ({ ...s, description: e.target.value }))} placeholder="Used by CI pipeline" />
+          </div>
+        </form>
+      </IamDialog>
 
-      <AlertDialog open={!!deleteTarget} onOpenChange={v => !v && setDeleteTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete "{deleteTarget?.name}"?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will revoke all PATs and remove system access. This cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <IamDialog
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title={`Delete "${deleteTarget?.name}"?`}
+        desc="This will revoke all PATs and remove system access. This cannot be undone."
+        footer={
+          <>
+            <button className="iam-btn iam-btn-ghost" onClick={() => setDeleteTarget(null)}>Cancel</button>
+            <button className="iam-btn iam-btn-danger" onClick={handleDelete}>Delete</button>
+          </>
+        }
+      >
+        <div />
+      </IamDialog>
     </div>
   );
 }
