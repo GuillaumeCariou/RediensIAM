@@ -381,21 +381,7 @@ static void ConfigureForwardedHeaders(ForwardedHeadersOptions o, IConfiguration 
     var trusted = cfg["App:TrustedProxies"];
     if (!string.IsNullOrWhiteSpace(trusted))
     {
-        var parsed = 0;
-        foreach (var cidr in trusted.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            var parts = cidr.Split('/');
-            if (parts.Length == 2 && System.Net.IPAddress.TryParse(parts[0], out var ip) && int.TryParse(parts[1], out var prefix))
-            {
-                o.KnownIPNetworks.Add(new System.Net.IPNetwork(ip, prefix));
-                parsed++;
-            }
-            else
-            {
-                Console.Error.WriteLine($"WARNING: App__TrustedProxies entry '{cidr}' is not a valid CIDR — ignored.");
-            }
-        }
-        if (parsed == 0)
+        if (ApplyTrustedProxiesFromConfig(o, trusted) == 0)
             throw new InvalidOperationException("App__TrustedProxies is set but no valid CIDR entries were parsed.");
         return;
     }
@@ -406,6 +392,38 @@ static void ConfigureForwardedHeaders(ForwardedHeadersOptions o, IConfiguration 
             "Silently trusting RFC1918 ranges allows any in-cluster pod to spoof X-Forwarded-For and bypass IP-based controls.");
     }
     AddDefaultTrustedNetworks(o);
+}
+
+static int ApplyTrustedProxiesFromConfig(ForwardedHeadersOptions o, string trusted)
+{
+    var parsed = 0;
+    foreach (var cidr in trusted.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        if (TryParseCidr(cidr, out var network))
+        {
+            o.KnownIPNetworks.Add(network);
+            parsed++;
+        }
+        else
+        {
+            Console.Error.WriteLine($"WARNING: App__TrustedProxies entry '{cidr}' is not a valid CIDR — ignored.");
+        }
+    }
+    return parsed;
+}
+
+static bool TryParseCidr(string cidr, out System.Net.IPNetwork network)
+{
+    var parts = cidr.Split('/');
+    if (parts.Length == 2
+        && System.Net.IPAddress.TryParse(parts[0], out var ip)
+        && int.TryParse(parts[1], out var prefix))
+    {
+        network = new System.Net.IPNetwork(ip, prefix);
+        return true;
+    }
+    network = default;
+    return false;
 }
 
 static void AddDefaultTrustedNetworks(ForwardedHeadersOptions o)
