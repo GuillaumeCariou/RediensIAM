@@ -24,6 +24,7 @@ public class RediensIamDbContext(DbContextOptions<RediensIamDbContext> options) 
     public DbSet<Webhook> Webhooks => Set<Webhook>();
     public DbSet<WebhookDelivery> WebhookDeliveries => Set<WebhookDelivery>();
     public DbSet<SamlIdpConfig> SamlIdpConfigs => Set<SamlIdpConfig>();
+    public DbSet<Instance> Instances => Set<Instance>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

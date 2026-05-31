@@ -9,6 +9,8 @@ Multi-tenant Identity & Access Management system built on Ory Hydra + Keto, ASP.
 - **Ory Keto** — fine-grained permission checks
 - **PostgreSQL + Dragonfly** — persistence and cache
 
+> See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design philosophy, statelessness model, and configuration flow.
+
 ---
 
 ## Prerequisites
@@ -121,6 +123,20 @@ Admin  →  http://localhost/admin/
 ```
 
 ---
+
+### Stateless config (env vs DB)
+
+Most runtime config keys (every `env.App__*`, `env.Hydra__*`, `env.Keto__*`, `env.Smtp__*`, `env.Security__MaxLoginAttempts`, etc. — anything that is not a cryptographic secret) is read from the Postgres **`instances`** table at startup. On first boot the row is seeded from env vars; subsequent boots ignore env. To push a config change after first boot:
+
+```bash
+# edit the env value in values.yaml, then
+yq -i '.rediensiam.env.RECONFIGURE_FROM_ENV = "true"' values.prod.yaml
+helm upgrade ...                  # writes env → DB row, bumps config_version
+yq -i 'del(.rediensiam.env.RECONFIGURE_FROM_ENV)' values.prod.yaml
+helm upgrade ...                  # next routine deploy
+```
+
+True secrets (`secrets.databaseUrl`, `secrets.totpEncryptionKey`, `secrets.argon2Pepper`, `secrets.bootstrapPassword`) stay env-only. Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#configuration-model--zitadel-style).
 
 ### `values.yaml` — Full reference
 

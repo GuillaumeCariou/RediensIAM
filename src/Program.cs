@@ -12,6 +12,10 @@ using RediensIAM.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Stateless runtime config: see Config/InstanceConfiguration.cs.
+// Loads non-secret values from the instances DB table on top of env/appsettings.
+builder.Configuration.AddInstanceConfiguration();
+
 // ── AppConfig (single source of truth for all env/config keys) ────────────
 builder.Services.AddSingleton<AppConfig>();
 var appConfig = new AppConfig(builder.Configuration);
