@@ -39,32 +39,63 @@ public class PasswordService(AppConfig appConfig)
         catch { return false; }
     }
 
+    private static readonly byte[] DefaultBackupCodeKey = Encoding.UTF8.GetBytes("rediensiam-backup-code-v1");
+
     /// <summary>
     /// Fast HMAC-SHA256 of a backup code. Backup codes are 8 random hex chars (~32 bits each)
     /// — the brute-force cost is bounded by rate limiting, not by per-hash work, so Argon2 is
     /// unnecessary and would amplify a DoS pivot during a brute-force attempt.
+    ///
+    /// Stored format: <c>sha256:{keyId}:{hex}</c> where keyId is <c>p</c> when a pepper is
+    /// configured, otherwise <c>0</c>. Embedding the key id lets us reject hashes that were
+    /// produced under a different key — silently verifying them would yield false negatives
+    /// after a pepper is enabled or rotated.
     /// </summary>
     public string HashBackupCode(string code)
     {
-        var key = _pepper.Length > 0 ? _pepper : Encoding.UTF8.GetBytes("rediensiam-backup-code-v1");
+        var (keyId, key) = ActiveBackupCodeKey();
         var mac = HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(code));
-        return "sha256:" + Convert.ToHexString(mac);
+        return $"sha256:{keyId}:{Convert.ToHexString(mac)}";
     }
 
     /// <summary>
-    /// Verifies a backup code against its stored hash. Supports the new sha256: format and
-    /// legacy argon2id hashes (forwarded to <see cref="Verify"/>).
+    /// Verifies a backup code against its stored hash. Supports the new sha256:{keyId}:{hex}
+    /// format, the previous keyId-less sha256:{hex} format (treated as keyId=0 — pepper-less),
+    /// and legacy argon2id hashes (forwarded to <see cref="Verify"/>).
     /// </summary>
     public bool VerifyBackupCode(string submitted, string storedHash)
     {
         if (storedHash.StartsWith("sha256:", StringComparison.Ordinal))
         {
-            var expected = Convert.FromHexString(storedHash[7..]);
-            var actual = Convert.FromHexString(HashBackupCode(submitted)[7..]);
+            var rest = storedHash[7..];
+            string storedHex;
+            byte[] keyForHash;
+            // Format variants:
+            //   sha256:{keyId}:{hex} → new versioned format
+            //   sha256:{hex}        → legacy unversioned (always pepper-less)
+            var colon = rest.IndexOf(':', StringComparison.Ordinal);
+            if (colon > 0)
+            {
+                var keyId = rest[..colon];
+                storedHex = rest[(colon + 1)..];
+                keyForHash = keyId == "p" ? _pepper : DefaultBackupCodeKey;
+                // Mismatched keyId (e.g. stored under pepper, now no pepper) → cannot verify.
+                if (keyId == "p" && _pepper.Length == 0) return false;
+            }
+            else
+            {
+                storedHex = rest;
+                keyForHash = DefaultBackupCodeKey;
+            }
+            var expected = Convert.FromHexString(storedHex);
+            var actual = HMACSHA256.HashData(keyForHash, Encoding.UTF8.GetBytes(submitted));
             return CryptographicOperations.FixedTimeEquals(actual, expected);
         }
         return Verify(submitted, storedHash);
     }
+
+    private (string KeyId, byte[] Key) ActiveBackupCodeKey() =>
+        _pepper.Length > 0 ? ("p", _pepper) : ("0", DefaultBackupCodeKey);
 
     /// <summary>
     /// Performs the same Argon2 work as <see cref="Verify"/> against a cached dummy hash

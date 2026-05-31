@@ -8,6 +8,9 @@ interface AdminConfig {
 
 let mgr: UserManager | null = null;
 let accessToken: string | null = null;
+// One-shot guard so concurrent 401 responses do not each fire signinRedirect — the
+// last redirect wins the stored state, racing the others and breaking PKCE callback.
+let signinRedirectInFlight = false;
 
 async function getManager(): Promise<UserManager> {
   if (mgr) return mgr;
@@ -84,8 +87,11 @@ export async function apiFetch(path: string, opts: RequestInit = {}) {
   });
   if (res.status === 401) {
     accessToken = null;
-    const m = await getManager();
-    await m.signinRedirect();
+    if (!signinRedirectInFlight) {
+      signinRedirectInFlight = true;
+      const m = await getManager();
+      await m.signinRedirect();
+    }
     throw new ApiError(401, null);
   }
   if (!res.ok) {

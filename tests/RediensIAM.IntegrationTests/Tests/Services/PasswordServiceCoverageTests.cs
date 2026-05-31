@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using FluentAssertions;
 using RediensIAM.IntegrationTests.Infrastructure;
 using RediensIAM.Services;
@@ -38,6 +40,31 @@ public class PasswordServiceCoverageTests(TestFixture fixture)
     {
         var svc = GetService();
         svc.HashBackupCode("ABCD").Should().StartWith("sha256:");
+    }
+
+    [Fact]
+    public void HashBackupCode_IncludesKeyIdInOutput()
+    {
+        // Format: sha256:{keyId}:{hex} — embedding keyId lets us reject hashes produced
+        // under a different key after a pepper rotation, avoiding silent false negatives.
+        var svc = GetService();
+        var hash = svc.HashBackupCode("ABCDEF1234567890");
+        hash.Split(':').Should().HaveCount(3);
+        hash.Split(':')[0].Should().Be("sha256");
+        hash.Split(':')[1].Should().BeOneOf("p", "0"); // "p" when peppered, "0" otherwise
+    }
+
+    [Fact]
+    public void VerifyBackupCode_LegacySha256_NoKeyId_StillVerifies()
+    {
+        // Backwards-compat: codes generated before the keyId format must still verify.
+        var svc = GetService();
+        // Construct a legacy-format hash manually using the same default key.
+        var legacyHash = "sha256:" + Convert.ToHexString(
+            HMACSHA256.HashData(
+                Encoding.UTF8.GetBytes("rediensiam-backup-code-v1"),
+                Encoding.UTF8.GetBytes("LEGACYCODE123456")));
+        svc.VerifyBackupCode("LEGACYCODE123456", legacyHash).Should().BeTrue();
     }
 
     // ── VerifyBackupCode — sha256 path ────────────────────────────────────────

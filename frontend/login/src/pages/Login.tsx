@@ -3,21 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { getLoginChallenge, submitLogin } from '../api';
 import { useTheme, type Theme as ColorTheme } from '../useTheme';
 import { safeNavigate } from '../safeNavigate';
-
-// Strip dangerous CSS constructs from tenant-supplied custom_css before injecting into <style>.
-// Blocks @import, all url() (regardless of scheme), and selectors targeting password inputs
-// (CSS attribute-selector keylogger). The server should mirror these checks; client-side
-// stripping is defence-in-depth.
-function sanitizeCss(css: string): string {
-  let out = css;
-  // Drop entire @import / @charset / @namespace rules
-  out = out.replaceAll(/@(import|charset|namespace)[^;]*;?/gi, '');
-  // Neutralise url(...) — block both http(s):, //, relative, and hex-escaped forms
-  out = out.replaceAll(/url\([^)]*\)/gi, 'url(about:blank)');
-  // Block selectors that target password inputs (keylogger pattern)
-  out = out.replaceAll(/input\s*\[\s*type\s*[~|^$*]?=\s*['"]?password['"]?\s*\][^{]*\{[^}]*\}/gi, '');
-  return out;
-}
+import { sanitizeCss } from '../lib/sanitizeCss';
 
 const themeIcons: Record<ColorTheme, string> = { light: '☀', dark: '☾', system: '⊙' };
 const themeOrder: ColorTheme[] = ['system', 'light', 'dark'];

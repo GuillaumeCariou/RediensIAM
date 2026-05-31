@@ -99,7 +99,16 @@ public class SamlController(
         await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.saml",
             metadata: new Dictionary<string, object> { ["idp_id"] = idp.Id.ToString() });
 
-        return Redirect(redirectUrl);
+        if (!RedirectValidator.TryReconstruct(redirectUrl,
+                [appConfig.PublicUrl, appConfig.AdminSpaOrigin, appConfig.HydraPublicUrl],
+                out var safeUrl))
+        {
+            logger.LogWarning("SAML ACS refused redirect URL {Url}", redirectUrl);
+            return BadRequest(new { error = "invalid_redirect" });
+        }
+        Response.Headers.Location = safeUrl;
+        Response.StatusCode = StatusCodes.Status302Found;
+        return new EmptyResult();
     }
 
     private sealed record SamlParsed(SamlIdpConfig Idp, string? LoginChallenge, System.Security.Claims.ClaimsIdentity Identity);

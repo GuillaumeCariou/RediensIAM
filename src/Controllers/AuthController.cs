@@ -79,6 +79,31 @@ public class AuthController(
         return new EmptyResult();
     }
 
+    /// <summary>
+    /// Server-side-constructed external redirect (e.g. social-login authorize endpoint
+    /// at Google/GitHub/etc). Validates https-only, parses through Uri, reconstructs via
+    /// UriBuilder, writes Location manually.
+    /// </summary>
+    private IActionResult SafeExternalRedirect(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url) ||
+            !Uri.TryCreate(url, UriKind.Absolute, out var u) ||
+            u.Scheme != Uri.UriSchemeHttps)
+        {
+            logger.LogWarning("SafeExternalRedirect refused URL {Url}", url);
+            return BadRequest(new { error = ErrInvalidRedirect });
+        }
+        var builder = new UriBuilder(u.Scheme, u.Host)
+        {
+            Port  = u.IsDefaultPort ? -1 : u.Port,
+            Path  = u.AbsolutePath,
+            Query = u.Query.TrimStart('?'),
+        };
+        Response.Headers.Location = builder.Uri.AbsoluteUri;
+        Response.StatusCode = StatusCodes.Status302Found;
+        return new EmptyResult();
+    }
+
     [HttpGet("login")]
     public async Task<IActionResult> GetLogin([FromQuery] string login_challenge)
     {
@@ -862,8 +887,8 @@ public class AuthController(
 
             if (project.EmailVerificationEnabled)
                 await emailService.SendOtpAsync(user.Email, code, "password_reset", project.OrgId, project.Id);
-            else if (project.SmsVerificationEnabled)
-                await smsService.SendOtpAsync(body.Phone ?? user.Email, code, "password_reset");
+            else if (project.SmsVerificationEnabled && !string.IsNullOrEmpty(user.Phone))
+                await smsService.SendOtpAsync(user.Phone, code, "password_reset");
 
             return Ok(new { session_id = sessionId });
         }
@@ -1113,7 +1138,7 @@ public class AuthController(
         if (string.IsNullOrEmpty(providerCfg.ClientId)) return BadRequest(new { error = "provider_not_configured" });
 
         var (url, _) = await socialLogin.BuildAuthorizationUrlAsync(providerCfg, login_challenge, projectId);
-        return Redirect(url);
+        return SafeExternalRedirect(url);
     }
 
     // ── Link additional social provider to an already-authenticated user ──────
@@ -1140,9 +1165,9 @@ public class AuthController(
         if (alreadyLinked) return BadRequest(new { error = "provider_already_linked" });
 
         var stateData = new OAuthStateData("", projectId, provider_id,
-            LinkMode: true, LinkUserId: claims.UserId, LinkProjectId: projectId);
+            LinkMode: true, LinkUserId: claims.ParsedUserId.ToString(), LinkProjectId: projectId);
         var (url, _) = await socialLogin.BuildLinkAuthorizationUrlAsync(providerCfg, stateData);
-        return Redirect(url);
+        return SafeExternalRedirect(url);
     }
 
     [HttpGet("oauth2/callback")]
@@ -1156,31 +1181,31 @@ public class AuthController(
         var stateData = await socialLogin.ConsumeStateAsync(state);
         if (stateData == null) return BadRequest(new { error = "invalid_or_expired_state" });
 
-        var errorRedirect = $"oauth2/error?login_challenge={Uri.EscapeDataString(stateData.LoginChallenge)}";
+        var errorRedirect = $"/oauth2/error?login_challenge={Uri.EscapeDataString(stateData.LoginChallenge)}";
 
         if (error != null || code == null)
         {
             logger.LogWarning("OAuth2 callback error for provider {Provider}: {Error}", stateData.ProviderId, error);
-            return Redirect(errorRedirect);
+            return SafeRedirect(errorRedirect);
         }
 
         var project = await db.Projects
             .Include(p => p.AssignedUserList)
             .FirstOrDefaultAsync(p => p.Id == Guid.Parse(stateData.ProjectId) && p.Active);
 
-        if (project?.AssignedUserListId == null) return Redirect(errorRedirect);
+        if (project?.AssignedUserListId == null) return SafeRedirect(errorRedirect);
 
         var providerCfg = GetProviderConfig(project.LoginTheme, stateData.ProviderId);
-        if (providerCfg == null) return Redirect(errorRedirect);
+        if (providerCfg == null) return SafeRedirect(errorRedirect);
 
         var profile = await socialLogin.ExchangeAndGetProfileAsync(providerCfg, code, stateData.CodeVerifier);
-        if (profile == null) return Redirect(errorRedirect);
+        if (profile == null) return SafeRedirect(errorRedirect);
 
         if (stateData.LinkMode && stateData.LinkUserId != null)
             return await HandleOAuthLinkModeAsync(stateData, profile);
 
         var user = await FindOrCreateSocialUserAsync(profile, stateData.ProviderId, project);
-        if (user == null) return Redirect(errorRedirect);
+        if (user == null) return SafeRedirect(errorRedirect);
 
         if (project.RequireRoleToLogin)
         {
@@ -1188,7 +1213,7 @@ public class AuthController(
             if (!hasRole)
             {
                 var rejectUrl = await hydra.RejectLoginAsync(stateData.LoginChallenge, ErrAccessDenied, "no_role_assigned");
-                return Redirect(rejectUrl);
+                return SafeRedirect(rejectUrl);
             }
         }
 
@@ -1205,17 +1230,17 @@ public class AuthController(
 
         var redirectTo = await hydra.AcceptLoginAsync(stateData.LoginChallenge, subject, ctx);
         await audit.RecordAsync(project.OrgId, project.Id, user.Id, $"user.login.social.{stateData.ProviderId}");
-        return Redirect(redirectTo);
+        return SafeRedirect(redirectTo);
     }
 
     private async Task<IActionResult> HandleOAuthLinkModeAsync(OAuthStateData stateData, SocialUserProfile profile)
     {
         if (!Guid.TryParse(stateData.LinkUserId, out var linkUserId))
-            return Redirect("/account?link_error=invalid_user");
+            return SafeRedirect("/account?link_error=invalid_user");
 
         var existing = await db.UserSocialAccounts.AnyAsync(s =>
             s.Provider == stateData.ProviderId && s.ProviderUserId == profile.ProviderUserId);
-        if (existing) return Redirect("/account?link_error=already_linked");
+        if (existing) return SafeRedirect("/account?link_error=already_linked");
 
         db.UserSocialAccounts.Add(new UserSocialAccount
         {
@@ -1234,7 +1259,7 @@ public class AuthController(
                 await audit.RecordAsync(lpProject.OrgId, lpId, linkUserId,
                     $"user.social_linked.{stateData.ProviderId}", "user", linkUserId.ToString());
         }
-        return Redirect("/account?link_success=1");
+        return SafeRedirect("/account?link_success=1");
     }
 
     private async Task<User?> FindOrCreateSocialUserAsync(SocialUserProfile profile, string provider, Project project)

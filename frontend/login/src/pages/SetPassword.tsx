@@ -2,13 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { getThemeByProject, completeInvite } from '../api';
 
-function sanitizeCss(css: string): string {
-  let out = css;
-  out = out.replaceAll(/@(import|charset|namespace)[^;]*;?/gi, '');
-  out = out.replaceAll(/url\([^)]*\)/gi, 'url(about:blank)');
-  out = out.replaceAll(/input\s*\[\s*type\s*[~|^$*]?=\s*['"]?password['"]?\s*\][^{]*\{[^}]*\}/gi, '');
-  return out;
-}
+import { sanitizeCss } from '../lib/sanitizeCss';
 
 // Returns a cleanup function that removes the applied CSS vars and <style> node.
 function applyTheme(data: Record<string, unknown>): () => void {

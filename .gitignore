@@ -34,3 +34,4 @@ Thumbs.db
 src/bin\\Debug/
 **/bin\\Debug/
 
+deploy/rediensiam/tmpcharts-*/

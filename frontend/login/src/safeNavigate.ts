@@ -6,16 +6,21 @@ const HYDRA = (import.meta.env.VITE_HYDRA_PUBLIC_ORIGIN ?? '').trim();
 
 export function isSafeRedirect(target: string | null | undefined): boolean {
   if (!target) return false;
-  // Relative paths are always same-origin.
-  if (target.startsWith('/') && !target.startsWith('//')) return true;
+  // Reject backslashes outright — browsers normalise `/\evil.com` to `//evil.com`
+  // (protocol-relative), bypassing the relative-path short-circuit.
+  if (target.includes('\\')) return false;
+  // Resolve via URL parser to canonicalise + reject schemes other than http(s).
+  // Relative paths are resolved against the SPA origin; absolute URLs keep their origin.
+  let u: URL;
   try {
-    const u = new URL(target, globalThis.location.origin);
-    if (u.origin === globalThis.location.origin) return true;
-    if (HYDRA && u.origin === HYDRA) return true;
-    return false;
+    u = new URL(target, globalThis.location.origin);
   } catch {
     return false;
   }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  if (u.origin === globalThis.location.origin) return true;
+  if (HYDRA && u.origin === HYDRA) return true;
+  return false;
 }
 
 export function safeNavigate(target: string | null | undefined): boolean {

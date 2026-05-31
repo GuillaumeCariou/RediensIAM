@@ -147,7 +147,10 @@ public class AccountBranchCoverageTests(TestFixture fixture)
 
         res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
-        body.GetProperty("error").GetString().Should().Be("invalid_current_password");
+        // Distinguish passwordless accounts (e.g. SAML/WebAuthn-only) from wrong-password.
+        // Returning a distinct error avoids charging the rate-limiter for users who can
+        // never satisfy the current_password check.
+        body.GetProperty("error").GetString().Should().Be("set_password_required");
     }
 
     // ── PATCH /account/password — null OrgId (line 72 false branch) ──────────

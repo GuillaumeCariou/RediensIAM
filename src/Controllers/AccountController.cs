@@ -19,7 +19,8 @@ public class AccountController(
     RediensIamDbContext db,
     AccountControllerServices svc,
     AuditLogService audit,
-    AppConfig appConfig) : ControllerBase
+    AppConfig appConfig,
+    ILogger<AccountController> logger) : ControllerBase
 {
     // Unwrap bundle (S107)
     private PasswordService passwords    => svc.Passwords;
@@ -68,7 +69,12 @@ public class AccountController(
             return StatusCode(429, new { error = "rate_limited" });
         var user = await db.Users.FindAsync(userId);
         if (user == null) return NotFound();
-        if (user.PasswordHash == null || !passwords.Verify(body.CurrentPassword, user.PasswordHash))
+        // Distinguish "passwordless account" from "wrong password" so we do NOT charge
+        // the rate-limiter for users who can never satisfy the current_password check
+        // (e.g. WebAuthn-only accounts).
+        if (user.PasswordHash == null)
+            return BadRequest(new { error = "set_password_required" });
+        if (!passwords.Verify(body.CurrentPassword, user.PasswordHash))
         {
             await rateLimiter.RecordFailureAsync(Ip, userId, "pwchange");
             return BadRequest(new { error = "invalid_current_password" });
@@ -79,10 +85,23 @@ public class AccountController(
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         var orgId = Guid.TryParse(Claims.OrgId, out var oid) ? oid : (Guid?)null;
-        var subject = orgId.HasValue ? $"{orgId}:{user.Id}" : user.Id.ToString();
-        await hydra.RevokeSessionsAsync(subject);
+        // Audit FIRST so a Hydra outage cannot erase the password-change record.
         await audit.RecordAsync(orgId, null, userId, "user.password_changed");
-        return Ok(new { message = "password_changed" });
+        var subject = orgId.HasValue ? $"{orgId}:{user.Id}" : user.Id.ToString();
+        var sessionsRevoked = true;
+        try
+        {
+            await hydra.RevokeSessionsAsync(subject);
+        }
+        catch (Exception ex)
+        {
+            // Password is already saved; failing the request would leave a confusing UX.
+            // Surface the revocation failure to the client (and to ops via log) so the
+            // user can self-trigger a sign-out from all devices if needed.
+            sessionsRevoked = false;
+            logger.LogWarning(ex, "ChangePassword: Hydra session revocation failed for user {UserId}", userId);
+        }
+        return Ok(new { message = "password_changed", sessions_revoked = sessionsRevoked });
     }
 
     [HttpPost("mfa/totp/setup")]

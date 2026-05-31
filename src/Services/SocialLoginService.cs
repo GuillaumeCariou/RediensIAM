@@ -74,7 +74,11 @@ public class SocialLoginService(
     private const string Email = "email";
 
     // In-process cache for OIDC discovery documents
-    private readonly Dictionary<string, JsonDocument> _discoveryCache = new(64);
+    // ConcurrentDictionary: SocialLoginService is registered as Singleton and the cache
+    // is read/written from every OIDC discovery call. A plain Dictionary races under
+    // concurrent OIDC starts (bucket-array corruption + InvalidOperationException +
+    // worst-case wrong-issuer metadata returned).
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, JsonDocument> _discoveryCache = new();
     private const int DiscoveryCacheMaxSize = 64;
 
     public string CallbackUrl => $"{appConfig.PublicUrl}/auth/oauth2/callback";
@@ -363,8 +367,12 @@ public class SocialLoginService(
 
         if (_discoveryCache.TryGetValue(issuerUrl, out var cached)) return cached;
 
+        // Best-effort eviction under contention — TryRemove is the concurrent equivalent.
         if (_discoveryCache.Count >= DiscoveryCacheMaxSize)
-            _discoveryCache.Remove(_discoveryCache.Keys.First());
+        {
+            var firstKey = _discoveryCache.Keys.FirstOrDefault();
+            if (firstKey != null) _discoveryCache.TryRemove(firstKey, out _);
+        }
 
         var url  = issuerUrl.TrimEnd('/') + "/.well-known/openid-configuration";
         var http = httpClientFactory.CreateClient();

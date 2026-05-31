@@ -92,9 +92,16 @@ function LogoUpload({ value, onChange, label = 'Logo' }: Readonly<{ value?: stri
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputId = `logo-file-input-${label.replaceAll(/\s+/g, '-')}`;
+  const isSafeImageMime = (mime: string) => {
+    // Reject SVG outright — SVG files can contain <script>/<onload> and execute
+    // when rendered via <img>/<object>/CSS background-image on the downstream
+    // login page. Allow only raster formats.
+    const allowed = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/avif']);
+    return allowed.has(mime.toLowerCase());
+  };
   const handle = (file: File) => {
     setError(null);
-    if (!file.type.startsWith('image/')) { setError('File must be an image.'); return; }
+    if (!isSafeImageMime(file.type)) { setError('Logo must be a raster image (PNG, JPEG, GIF, WebP, AVIF). SVG is not allowed.'); return; }
     if (file.size > MAX_LOGO_BYTES) { setError(`Image must be under ${Math.floor(MAX_LOGO_BYTES / 1024)} KB.`); return; }
     const reader = new FileReader();
     reader.onload = e => onChange(e.target?.result as string);
@@ -102,7 +109,23 @@ function LogoUpload({ value, onChange, label = 'Logo' }: Readonly<{ value?: stri
   };
   const handleUrlInput = (v: string) => {
     setError(null);
-    if (v !== '' && !v.startsWith('data:') && !/^https:\/\//i.test(v)) {
+    if (v === '') { onChange(v); return; }
+    if (v.startsWith('data:')) {
+      // Pasted data: URL — verify MIME prefix AND size cap (file upload limit cannot be bypassed via URL field).
+      const match = /^data:([^;,]+)[;,]/.exec(v);
+      if (!match || !isSafeImageMime(match[1])) {
+        setError('data: URL must reference a raster image (PNG, JPEG, GIF, WebP, AVIF).');
+        return;
+      }
+      // Approximate decoded size: base64 ratio 4/3. Treat raw URL length as upper bound.
+      if (v.length > MAX_LOGO_BYTES * 1.5) {
+        setError(`Embedded image must be under ${Math.floor(MAX_LOGO_BYTES / 1024)} KB.`);
+        return;
+      }
+      onChange(v);
+      return;
+    }
+    if (!/^https:\/\//i.test(v)) {
       setError('URL must use https://.');
       return;
     }
