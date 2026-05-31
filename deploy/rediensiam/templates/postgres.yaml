@@ -46,9 +46,21 @@ spec:
         app: {{ .Release.Name }}-postgres
     spec:
       automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70           # alpine postgres user
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: postgres
           image: {{ .Values.rediensiam.postgres.local.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false   # postgres writes to /tmp, /var/run; keep RW for simplicity
+            capabilities:
+              drop: ["ALL"]
           env:
             - name: POSTGRES_USER
               value: iam

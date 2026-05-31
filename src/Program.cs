@@ -25,7 +25,7 @@ builder.Services.AddDbContext<RediensIamDbContext>(options =>
     ServiceLifetime.Scoped);
 
 // ── Redis / Dragonfly ──────────────────────────────────────────────────────
-builder.Services.Configure<ForwardedHeadersOptions>(o => ConfigureForwardedHeaders(o, builder.Configuration));
+builder.Services.Configure<ForwardedHeadersOptions>(o => ConfigureForwardedHeaders(o, builder.Configuration, builder.Environment));
 
 var cacheMultiplexer = await ConnectionMultiplexer.ConnectAsync(appConfig.CacheConnectionString);
 builder.Services.AddSingleton<IConnectionMultiplexer>(cacheMultiplexer);
@@ -370,9 +370,10 @@ static void AddSecurityHeaders(HttpContext ctx)
 }
 
 // Configure forwarded-headers: honour X-Forwarded-* only from operator-trusted proxies.
-// App__TrustedProxies (CSV of CIDRs) overrides the defaults. Defaults cover loopback +
-// private RFC1918 networks — well-known reserved ranges, never routable on the internet.
-static void ConfigureForwardedHeaders(ForwardedHeadersOptions o, IConfiguration cfg)
+// App__TrustedProxies (CSV of CIDRs) overrides the defaults. In production this MUST be
+// set explicitly — silently trusting RFC1918 means any pod in a multi-tenant cluster can
+// spoof X-Forwarded-For and bypass per-IP rate limiting / IP allowlists.
+static void ConfigureForwardedHeaders(ForwardedHeadersOptions o, IConfiguration cfg, IWebHostEnvironment env)
 {
     o.ForwardedHeaders = ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedFor;
     o.KnownIPNetworks.Clear();
@@ -380,13 +381,29 @@ static void ConfigureForwardedHeaders(ForwardedHeadersOptions o, IConfiguration 
     var trusted = cfg["App:TrustedProxies"];
     if (!string.IsNullOrWhiteSpace(trusted))
     {
+        var parsed = 0;
         foreach (var cidr in trusted.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var parts = cidr.Split('/');
             if (parts.Length == 2 && System.Net.IPAddress.TryParse(parts[0], out var ip) && int.TryParse(parts[1], out var prefix))
+            {
                 o.KnownIPNetworks.Add(new System.Net.IPNetwork(ip, prefix));
+                parsed++;
+            }
+            else
+            {
+                Console.Error.WriteLine($"WARNING: App__TrustedProxies entry '{cidr}' is not a valid CIDR — ignored.");
+            }
         }
+        if (parsed == 0)
+            throw new InvalidOperationException("App__TrustedProxies is set but no valid CIDR entries were parsed.");
         return;
+    }
+    if (env.IsProduction())
+    {
+        throw new InvalidOperationException(
+            "App__TrustedProxies must be set explicitly in Production. " +
+            "Silently trusting RFC1918 ranges allows any in-cluster pod to spoof X-Forwarded-For and bypass IP-based controls.");
     }
     AddDefaultTrustedNetworks(o);
 }

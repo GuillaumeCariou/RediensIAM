@@ -61,45 +61,27 @@ public class AuthController(
     /// and protects against open-redirect should an upstream response (e.g. Hydra) ever be
     /// poisoned. Relative URLs are always allowed (same origin).
     /// </summary>
-    private IActionResult SafeRedirect(string url)
+    /// <summary>
+    /// Allowlist-validated redirect. Parses the URL, verifies its origin against the app's
+    /// trusted set (PublicUrl + AdminSpaOrigin + HydraPublicUrl), plus any caller-supplied
+    /// <paramref name="additionalTrustedOrigins"/> (e.g. a social-provider authorize host
+    /// derived from server-controlled config). Rebuilds via UriBuilder and writes the
+    /// Location header directly so the static analyser's Redirect(string) taint sink is
+    /// never reached with a user-influenced value.
+    /// </summary>
+    private IActionResult SafeRedirect(string url, params string[] additionalTrustedOrigins)
     {
-        if (!RedirectValidator.TryReconstruct(url,
-                [appConfig.PublicUrl, appConfig.AdminSpaOrigin, appConfig.HydraPublicUrl],
-                out var safeUrl))
+        var trusted = new List<string>(3 + additionalTrustedOrigins.Length)
+        {
+            appConfig.PublicUrl, appConfig.AdminSpaOrigin, appConfig.HydraPublicUrl,
+        };
+        trusted.AddRange(additionalTrustedOrigins);
+        if (!RedirectValidator.TryReconstruct(url, trusted, out var safeUrl))
         {
             logger.LogWarning("SafeRedirect refused URL {Url}", url);
             return BadRequest(new { error = ErrInvalidRedirect });
         }
-        // Set the Location header directly rather than calling ControllerBase.Redirect:
-        // the URL has already been parsed, validated against an allowlist, and
-        // reconstructed via UriBuilder. Writing the header manually keeps the (now-safe)
-        // value out of the static-analyser-tracked Redirect(string) sink.
         Response.Headers.Location = safeUrl;
-        Response.StatusCode = StatusCodes.Status302Found;
-        return new EmptyResult();
-    }
-
-    /// <summary>
-    /// Server-side-constructed external redirect (e.g. social-login authorize endpoint
-    /// at Google/GitHub/etc). Validates https-only, parses through Uri, reconstructs via
-    /// UriBuilder, writes Location manually.
-    /// </summary>
-    private IActionResult SafeExternalRedirect(string url)
-    {
-        if (string.IsNullOrWhiteSpace(url) ||
-            !Uri.TryCreate(url, UriKind.Absolute, out var u) ||
-            u.Scheme != Uri.UriSchemeHttps)
-        {
-            logger.LogWarning("SafeExternalRedirect refused URL {Url}", url);
-            return BadRequest(new { error = ErrInvalidRedirect });
-        }
-        var builder = new UriBuilder(u.Scheme, u.Host)
-        {
-            Port  = u.IsDefaultPort ? -1 : u.Port,
-            Path  = u.AbsolutePath,
-            Query = u.Query.TrimStart('?'),
-        };
-        Response.Headers.Location = builder.Uri.AbsoluteUri;
         Response.StatusCode = StatusCodes.Status302Found;
         return new EmptyResult();
     }
@@ -1138,7 +1120,8 @@ public class AuthController(
         if (string.IsNullOrEmpty(providerCfg.ClientId)) return BadRequest(new { error = "provider_not_configured" });
 
         var (url, _) = await socialLogin.BuildAuthorizationUrlAsync(providerCfg, login_challenge, projectId);
-        return SafeExternalRedirect(url);
+        var providerOrigin = await socialLogin.GetAuthEndpointOriginAsync(providerCfg);
+        return SafeRedirect(url, providerOrigin);
     }
 
     // ── Link additional social provider to an already-authenticated user ──────
@@ -1167,7 +1150,8 @@ public class AuthController(
         var stateData = new OAuthStateData("", projectId, provider_id,
             LinkMode: true, LinkUserId: claims.ParsedUserId.ToString(), LinkProjectId: projectId);
         var (url, _) = await socialLogin.BuildLinkAuthorizationUrlAsync(providerCfg, stateData);
-        return SafeExternalRedirect(url);
+        var providerOrigin = await socialLogin.GetAuthEndpointOriginAsync(providerCfg);
+        return SafeRedirect(url, providerOrigin);
     }
 
     [HttpGet("oauth2/callback")]

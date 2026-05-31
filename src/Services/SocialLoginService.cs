@@ -206,6 +206,19 @@ public class SocialLoginService(
         return (authEndpoint, "openid email profile");
     }
 
+    /// <summary>
+    /// Returns the trusted origin of the authorize endpoint for <paramref name="provider"/>
+    /// (e.g. "https://accounts.google.com"). Used by AuthController to allowlist provider
+    /// redirects without weakening the general allowlist.
+    /// </summary>
+    public async Task<string> GetAuthEndpointOriginAsync(ProviderConfig provider)
+    {
+        var (authEndpoint, _) = await GetAuthEndpointAndScopeAsync(provider);
+        return Uri.TryCreate(authEndpoint, UriKind.Absolute, out var u)
+            ? $"{u.Scheme}://{u.Authority}"
+            : "";
+    }
+
     private async Task<string?> ExchangeCodeAsync(ProviderConfig provider, string code, string? codeVerifier = null)
     {
         var tokenEndpoint = await GetTokenEndpointAsync(provider);

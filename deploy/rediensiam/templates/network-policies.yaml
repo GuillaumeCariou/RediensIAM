@@ -93,3 +93,49 @@ spec:
             matchLabels:
               app: {{ .Release.Name }}
       ports: [{port: 4466}, {port: 4467}]
+{{- if .Values.rediensiam.postgres.local.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-postgres-lockdown
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Release.Name }}-postgres
+  policyTypes: [Ingress]
+  ingress:
+    # Postgres is shared by the app, Hydra, and Keto pods — restrict ingress to those.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: {{ .Release.Name }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: hydra
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: keto
+      ports: [{port: 5432}]
+{{- end }}
+{{- if .Values.rediensiam.dragonfly.local.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-dragonfly-lockdown
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Release.Name }}-dragonfly
+  policyTypes: [Ingress]
+  ingress:
+    # Only the app talks to the cache; lock out everything else.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: {{ .Release.Name }}
+      ports: [{port: 6379}]
+{{- end }}
