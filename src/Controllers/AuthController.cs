@@ -208,15 +208,14 @@ public class AuthController(
         if (req.Client?.ClientId == Roles.AdminClientId)
             return await AdminLogin(body);
 
-        var projectId = ExtractProjectId(req);
-        if (projectId == null) return BadRequest(new { error = ErrMissingProjectId });
-
-        var registeredProjectId = req.Client?.Metadata?.GetValueOrDefault(CtxProjectId)?.ToString();
-        if (registeredProjectId != null && registeredProjectId != projectId)
+        var resolution = LoginChallengeProject.Resolve(req, out var projectId);
+        if (resolution == LoginChallengeProject.Resolution.Mismatch)
         {
             var rejectUrl = await hydra.RejectLoginAsync(body.LoginChallenge, ErrAccessDenied, "project_id mismatch");
             return Ok(new { redirect_to = rejectUrl, error = "project_id_mismatch" });
         }
+        if (resolution != LoginChallengeProject.Resolution.Ok || projectId == null)
+            return BadRequest(new { error = ErrMissingProjectId });
 
         var project = await db.Projects
             .Include(p => p.AssignedUserList)
@@ -658,23 +657,21 @@ public class AuthController(
 
     private async Task<IActionResult?> ValidatePasswordPolicyAsync(Project project, string password)
     {
-        if (project.MinPasswordLength > 0 && password.Length < project.MinPasswordLength)
-            return BadRequest(new { error = "password_too_short", min_length = project.MinPasswordLength });
-        if (project.PasswordRequireUppercase && !password.Any(char.IsUpper))
-            return BadRequest(new { error = "password_requires_uppercase" });
-        if (project.PasswordRequireLowercase && !password.Any(char.IsLower))
-            return BadRequest(new { error = "password_requires_lowercase" });
-        if (project.PasswordRequireDigit && !password.Any(char.IsDigit))
-            return BadRequest(new { error = "password_requires_digit" });
-        if (project.PasswordRequireSpecial && !password.Any(c => !char.IsLetterOrDigit(c)))
-            return BadRequest(new { error = "password_requires_special" });
-
-        if (project.CheckBreachedPasswords)
+        var (result, breachCount) = await svc.PasswordPolicy.EvaluateAsync(project, password);
+        return result switch
         {
-            var count = await breachCheck.GetBreachCountAsync(password);
-            if (count > 0) return BadRequest(new { error = "password_breached", count });
-        }
-        return null;
+            PasswordPolicyResult.Ok       => null,
+            PasswordPolicyResult.TooShort => BadRequest(new
+            {
+                error = PasswordPolicyService.ErrorCode(result),
+                min_length = PasswordPolicyService.EffectiveMinimumLength(project),
+            }),
+            PasswordPolicyResult.Breached => BadRequest(new
+            {
+                error = PasswordPolicyService.ErrorCode(result), count = breachCount,
+            }),
+            _ => BadRequest(new { error = PasswordPolicyService.ErrorCode(result) }),
+        };
     }
 
     private async Task<IActionResult?> ValidateEmailForRegistrationAsync(Project project, string email)
@@ -875,11 +872,14 @@ public class AuthController(
             return Ok(new { session_id = sessionId });
         }
 
-        // Constant-time: perform equivalent Redis writes to prevent timing-based email enumeration
+        // Unknown address: perform the equivalent Redis writes (constant time) AND return the
+        // same response shape. Returning a body without session_id was a plain enumeration
+        // oracle — the timing equalisation above was defeated by the JSON itself. The session
+        // is stored under the "reset:void" prefix, so the verify step can never resolve it.
         await otp.StorePendingAsync("reset:void", sessionId, "void");
         await otp.StoreSessionOtpAsync("reset:void", sessionId, code);
         await rateLimiter.RecordFailureAsync(Ip, null, ErrReset);
-        return Ok(new { });
+        return Ok(new { session_id = sessionId });
     }
 
     [HttpPost("password-reset/verify")]
@@ -1386,18 +1386,21 @@ public class AuthController(
     private static Dictionary<string, object>? StripSecretsFromTheme(Dictionary<string, object>? theme)
         => TotpEncryption.StripSecretsFromTheme(theme);
 
-    private static string? ExtractProjectId(HydraLoginRequest req)
-    {
-        var extra = req.OidcContext?.Extra;
-        if (extra?.TryGetValue(CtxProjectId, out var v) == true) return v?.ToString();
+    // ── Tenant resolution ─────────────────────────────────────────────────────
+    //
+    // The project a login flow belongs to is decided by the OAuth2 client that opened it,
+    // never by the request. `client.metadata.project_id` is written by RediensIAM when the
+    // client is created (OrgController/SystemAdminController/ManagedApiController) and is
+    // the only authority here.
+    //
+    // The project_id carried in oidc_context.extra / the authorize URL is caller-controlled:
+    // it is used solely to DETECT a mismatch, never as a source. Treating it as a source is
+    // what allowed a tenant to drive a login for another tenant's project onto its own
+    // login_challenge (theme disclosure, cross-tenant authorization code via social/SAML).
 
-        var url = req.RequestUrl;
-        var idx = url.IndexOf("project_id=", StringComparison.OrdinalIgnoreCase);
-        if (idx < 0) return null;
-        var start = idx + "project_id=".Length;
-        var end = url.IndexOf('&', start);
-        return end < 0 ? url[start..] : url[start..end];
-    }
+    /// <summary>See <see cref="LoginChallengeProject"/>. Null unless the challenge binds cleanly to a project.</summary>
+    private static string? ExtractProjectId(HydraLoginRequest req) =>
+        LoginChallengeProject.ResolveOrNull(req);
 
     // ── WebAuthn assertion ────────────────────────────────────────────────────
 
@@ -1417,7 +1420,9 @@ public class AuthController(
         var options = fido2.GetAssertionOptions(new GetAssertionOptionsParams
         {
             AllowedCredentials = allowedCreds,
-            UserVerification   = UserVerificationRequirement.Preferred
+            // Required, not Preferred: as a second factor, mere possession of the authenticator
+            // is not enough — the user must be verified by it (PIN / biometric).
+            UserVerification   = UserVerificationRequirement.Required
         });
 
         HttpContext.Session.SetString("fido2.assertionOptions", options.ToJson());
@@ -1442,7 +1447,12 @@ public class AuthController(
         var options  = AssertionOptions.FromJson(json);
         var response = JsonSerializer.Deserialize<AuthenticatorAssertionRawResponse>(body.GetRawText())!;
 
-        var cred = await db.WebAuthnCredentials.FirstOrDefaultAsync(c => c.CredentialId == response.RawId);
+        // Scope the lookup to the user pending MFA. A global lookup makes ANY registered
+        // authenticator on the instance satisfy the second factor for ANY account whose
+        // password is already known: Fido2NetLib only consults the ownership callback when the
+        // assertion carries a userHandle, which non-discoverable credentials do not.
+        var cred = await db.WebAuthnCredentials
+            .FirstOrDefaultAsync(c => c.CredentialId == response.RawId && c.UserId == uid);
         if (cred == null) return Unauthorized(new { error = "unknown_credential" });
         IsUserHandleOwnerOfCredentialIdAsync isOwner = async (args, ct) =>
             await db.WebAuthnCredentials.AnyAsync(c => c.CredentialId == args.CredentialId && c.UserId == uid, ct);

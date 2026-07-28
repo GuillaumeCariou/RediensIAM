@@ -156,7 +156,79 @@ public sealed class HydraStub : IDisposable
             .RespondWith(Response.Create()
                 .WithStatusCode(200)
                 .WithHeader("Content-Type", "application/json")
-                .WithBodyAsJson(new { active = true, sub = userId, ext }));
+                .WithBodyAsJson(new { active = true, sub = userId, client_id = RediensIAM.Config.Roles.AdminClientId, token_use = "access_token", ext }));
+    }
+
+    /// <summary>
+    /// Registers a token that Hydra reports as issued to <paramref name="clientId"/> with
+    /// audience <paramref name="audience"/>. Used by the audience-confusion regression test:
+    /// a token minted for a tenant's own OAuth2 client must not be accepted by the
+    /// IAM management API even when its ext claims carry management roles.
+    /// </summary>
+    public void RegisterTokenForClient(
+        string token, string userId, string? orgId, string? projectId,
+        string[] roles, string clientId, string[] audience)
+    {
+        var ext = new Dictionary<string, object?>
+        {
+            ["user_id"]    = userId,
+            ["org_id"]     = orgId,
+            ["project_id"] = projectId,
+            ["roles"]      = roles,
+        };
+
+        _server
+            .Given(Request.Create()
+                .WithPath("/admin/oauth2/introspect")
+                .UsingPost()
+                .WithBody($"*token={Uri.EscapeDataString(token)}*", WireMock.Matchers.MatchBehaviour.AcceptOnMatch))
+            .AtPriority(1)
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBodyAsJson(new
+                {
+                    active     = true,
+                    sub        = userId,
+                    client_id  = clientId,
+                    aud        = audience,
+                    token_use  = "access_token",
+                    ext
+                }));
+    }
+
+    /// <summary>
+    /// Registers a token that Hydra reports as a <c>refresh_token</c> rather than an
+    /// access token. Introspection without <c>token_type_hint</c> reports refresh tokens
+    /// as active, so the gateway must reject them explicitly.
+    /// </summary>
+    public void RegisterRefreshToken(string token, string userId, string[] roles)
+    {
+        var ext = new Dictionary<string, object?>
+        {
+            ["user_id"]    = userId,
+            ["org_id"]     = (string?)null,
+            ["project_id"] = (string?)null,
+            ["roles"]      = roles,
+        };
+
+        _server
+            .Given(Request.Create()
+                .WithPath("/admin/oauth2/introspect")
+                .UsingPost()
+                .WithBody($"*token={Uri.EscapeDataString(token)}*", WireMock.Matchers.MatchBehaviour.AcceptOnMatch))
+            .AtPriority(1)
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBodyAsJson(new
+                {
+                    active    = true,
+                    sub       = userId,
+                    client_id = "client_admin_system",
+                    token_use = "refresh_token",
+                    ext
+                }));
     }
 
     /// <summary>
@@ -182,7 +254,7 @@ public sealed class HydraStub : IDisposable
             .RespondWith(Response.Create()
                 .WithStatusCode(200)
                 .WithHeader("Content-Type", "application/json")
-                .WithBodyAsJson(new { active = true, sub = userId, ext }));
+                .WithBodyAsJson(new { active = true, sub = userId, client_id = RediensIAM.Config.Roles.AdminClientId, token_use = "access_token", ext }));
     }
 
     /// <summary>
@@ -208,7 +280,7 @@ public sealed class HydraStub : IDisposable
             .RespondWith(Response.Create()
                 .WithStatusCode(200)
                 .WithHeader("Content-Type", "application/json")
-                .WithBodyAsJson(new { active = true, sub = userId, ext }));
+                .WithBodyAsJson(new { active = true, sub = userId, client_id = RediensIAM.Config.Roles.AdminClientId, token_use = "access_token", ext }));
     }
 
     // ── Login challenge helpers ───────────────────────────────────────────────
@@ -216,7 +288,14 @@ public sealed class HydraStub : IDisposable
     /// <summary>
     /// Configures a login challenge response for the given challenge string.
     /// </summary>
-    public void SetupLoginChallenge(string challenge, string? clientId, bool skip = false, string subject = "")
+    /// <summary>
+    /// Configures a login challenge. <paramref name="projectId"/> lands in BOTH
+    /// <c>client.metadata</c> (the authority, see <c>LoginChallengeProject</c>) and
+    /// <c>oidc_context.extra</c>, mirroring what RediensIAM writes when it registers a client.
+    /// </summary>
+    public void SetupLoginChallenge(
+        string challenge, string? clientId, bool skip = false, string subject = "",
+        string projectId = "test-project")
     {
         _server
             .Given(Request.Create()
@@ -231,8 +310,8 @@ public sealed class HydraStub : IDisposable
                     skip,
                     subject,
                     request_url = $"http://localhost/oauth2/auth?client_id={clientId}",
-                    client = new { client_id = clientId, metadata = new Dictionary<string, object> { ["project_id"] = "test-project" } },
-                    oidc_context = new { extra = new Dictionary<string, object> { ["project_id"] = "test-project" } }
+                    client = new { client_id = clientId, metadata = new Dictionary<string, object> { ["project_id"] = projectId } },
+                    oidc_context = new { extra = new Dictionary<string, object> { ["project_id"] = projectId } }
                 }));
     }
 
@@ -318,7 +397,9 @@ public sealed class HydraStub : IDisposable
                     skip        = false,
                     subject     = "",
                     request_url = $"http://localhost/oauth2/auth?client_id={clientId}&project_id={projectId}",
-                    client      = new { client_id = clientId, metadata = new Dictionary<string, object>() },
+                    // The client is registered for this project (the authority); the request
+                    // repeats it in the URL only — that is the branch under test.
+                    client      = new { client_id = clientId, metadata = new Dictionary<string, object> { ["project_id"] = projectId } },
                     oidc_context = new { extra = new Dictionary<string, object>() }   // no project_id
                 }));
     }

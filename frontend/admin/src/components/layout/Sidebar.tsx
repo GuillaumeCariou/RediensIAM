@@ -293,7 +293,7 @@ export default function Sidebar() {
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="mono" style={{ fontSize: 10, color: 'var(--iam-sidebar-muted, var(--fg-subtle))' }}>
-            {isSuperAdmin ? 'super_admin' : isOrgAdmin ? 'org_admin' : 'project_manager'}
+            {isSuperAdmin ? 'super_admin' : isOrgAdmin ? 'org_admin' : 'project_admin'}
           </div>
         </div>
         <button className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm"

@@ -80,8 +80,15 @@ public class SamlService(
 
         config.SingleSignOnDestination = new Uri(idp.SsoUrl);
 
-        if (!string.IsNullOrEmpty(idp.CertificatePem))
-            config.SignatureValidationCertificates.Add(X509Certificate2.CreateFromPem(idp.CertificatePem));
+        // The signing certificate is the ONLY integrity control on a SAML assertion. Without
+        // one, an unsigned (or attacker-signed) assertion could be accepted. The metadata
+        // branch already refuses this case; refuse it here too instead of failing open.
+        if (string.IsNullOrEmpty(idp.CertificatePem))
+            throw new InvalidOperationException(
+                $"SAML IdP {idp.Id}: CertificatePem is required when no MetadataUrl is configured. " +
+                "Assertions cannot be validated without a signing certificate.");
+
+        config.SignatureValidationCertificates.Add(X509Certificate2.CreateFromPem(idp.CertificatePem));
     }
 
     /// <summary>Extracts the user's email from a claims identity using the configured attribute name.</summary>

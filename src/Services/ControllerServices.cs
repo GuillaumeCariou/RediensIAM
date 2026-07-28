@@ -27,13 +27,15 @@ public sealed class AuthExtServices(
     ISmsService sms,
     IFido2 fido2,
     SocialLoginService socialLogin,
-    BreachCheckService breachCheck)
+    BreachCheckService breachCheck,
+    PasswordPolicyService passwordPolicy)
 {
-    public IEmailService Email              => email;
-    public ISmsService Sms                  => sms;
-    public IFido2 Fido2                     => fido2;
-    public SocialLoginService SocialLogin   => socialLogin;
-    public BreachCheckService BreachCheck   => breachCheck;
+    public IEmailService Email                  => email;
+    public ISmsService Sms                      => sms;
+    public IFido2 Fido2                         => fido2;
+    public SocialLoginService SocialLogin       => socialLogin;
+    public BreachCheckService BreachCheck       => breachCheck;
+    public PasswordPolicyService PasswordPolicy => passwordPolicy;
 }
 
 /// <summary>Service bundle for AuthController — composes AuthCoreServices + AuthExtServices (S107).</summary>
@@ -50,6 +52,7 @@ public sealed class AuthControllerServices(AuthCoreServices core, AuthExtService
     public IFido2 Fido2                   => ext.Fido2;
     public SocialLoginService SocialLogin => ext.SocialLogin;
     public BreachCheckService BreachCheck => ext.BreachCheck;
+    public PasswordPolicyService PasswordPolicy => ext.PasswordPolicy;
 }
 
 /// <summary>Service bundle for AccountController — groups dependencies to keep constructor ≤ 7 params (S107).</summary>
@@ -59,14 +62,16 @@ public sealed class AccountControllerServices(
     ISmsService sms,
     OtpCacheService otp,
     IFido2 fido2,
-    LoginRateLimiter rateLimiter)
+    LoginRateLimiter rateLimiter,
+    PasswordPolicyService passwordPolicy)
 {
-    public PasswordService Passwords      => passwords;
-    public HydraService Hydra             => hydra;
-    public ISmsService Sms                => sms;
-    public OtpCacheService Otp            => otp;
-    public IFido2 Fido2                   => fido2;
-    public LoginRateLimiter RateLimiter   => rateLimiter;
+    public PasswordService Passwords            => passwords;
+    public HydraService Hydra                   => hydra;
+    public ISmsService Sms                      => sms;
+    public OtpCacheService Otp                  => otp;
+    public IFido2 Fido2                         => fido2;
+    public LoginRateLimiter RateLimiter         => rateLimiter;
+    public PasswordPolicyService PasswordPolicy => passwordPolicy;
 }
 
 /// <summary>Service bundle for OrgController / SystemAdminController — groups 6 dependencies (S107).</summary>

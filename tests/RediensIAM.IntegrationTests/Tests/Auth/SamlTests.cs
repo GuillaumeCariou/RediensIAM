@@ -32,6 +32,21 @@ public partial class SamlControllerTests(TestFixture fixture)
     [GeneratedRegex(@"value=""([^""]+)""[^>]*name=""RelayState""")]
     private static partial Regex RelayStateByValueRegex();
 
+    /// <summary>
+    /// Self-signed PEM used wherever an IdP is configured with an explicit SsoUrl.
+    /// A signing certificate is mandatory in that mode — assertions cannot be validated
+    /// without one — so every seeded IdP needs it.
+    /// </summary>
+    internal static readonly string TestCertPem = CreateTestCertPem();
+
+    private static string CreateTestCertPem()
+    {
+        using var rsa = RSA.Create(2048);
+        var req = new CertificateRequest("CN=SeedTestIdP", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        using var cert = req.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(1));
+        return cert.ExportCertificatePem();
+    }
+
     private async Task<SamlIdpConfig> SeedIdpAsync(Guid projectId,
         string ssoUrl = "https://idp.example.com/sso",
         bool active = true)
@@ -42,6 +57,7 @@ public partial class SamlControllerTests(TestFixture fixture)
             ProjectId = projectId,
             EntityId  = "https://idp.example.com",
             SsoUrl    = ssoUrl,
+            CertificatePem = TestCertPem,
             Active    = active,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow,
@@ -82,8 +98,10 @@ public partial class SamlControllerTests(TestFixture fixture)
     [Fact]
     public async Task Start_ValidChallenge_NonExistentIdp_Returns404()
     {
-        var challenge = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "some-client");
+        var (nfOrg, _)  = await fixture.Seed.CreateOrgAsync();
+        var nfProject   = await fixture.Seed.CreateProjectAsync(nfOrg.Id);
+        var challenge   = Guid.NewGuid().ToString("N");
+        fixture.Hydra.SetupLoginChallenge(challenge, "some-client", projectId: nfProject.Id.ToString());
 
         var res = await fixture.Client.GetAsync(
             $"/auth/saml/start?login_challenge={challenge}&idp_id={Guid.NewGuid()}");
@@ -96,12 +114,12 @@ public partial class SamlControllerTests(TestFixture fixture)
     [Fact]
     public async Task Start_ValidChallenge_InactiveIdp_Returns404()
     {
-        var challenge = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "some-client");
-
         var (org, _)  = await fixture.Seed.CreateOrgAsync();
         var project   = await fixture.Seed.CreateProjectAsync(org.Id);
         var idp       = await SeedIdpAsync(project.Id, active: false);  // inactive
+
+        var challenge = Guid.NewGuid().ToString("N");
+        fixture.Hydra.SetupLoginChallenge(challenge, "some-client", projectId: project.Id.ToString());
 
         var res = await fixture.Client.GetAsync(
             $"/auth/saml/start?login_challenge={challenge}&idp_id={idp.Id}");
@@ -112,12 +130,12 @@ public partial class SamlControllerTests(TestFixture fixture)
     [Fact]
     public async Task Start_ValidChallenge_ValidIdp_ReturnsRedirect()
     {
-        var challenge = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "some-client");
-
         var (org, _) = await fixture.Seed.CreateOrgAsync();
         var project  = await fixture.Seed.CreateProjectAsync(org.Id);
         var idp      = await SeedIdpAsync(project.Id);  // SsoUrl set, Active=true
+
+        var challenge = Guid.NewGuid().ToString("N");
+        fixture.Hydra.SetupLoginChallenge(challenge, "some-client", projectId: project.Id.ToString());
 
         var res = await fixture.Client.GetAsync(
             $"/auth/saml/start?login_challenge={challenge}&idp_id={idp.Id}");
@@ -352,7 +370,7 @@ public partial class SamlControllerTests(TestFixture fixture)
     {
         var (idp, cert) = await SeedAcsSamlIdpAsync(assignList: false);
         var challenge   = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
         var client = fixture.NewSessionClient();
         var form   = await BuildAcsFormAsync(client, challenge, idp, cert);
 
@@ -370,7 +388,7 @@ public partial class SamlControllerTests(TestFixture fixture)
     {
         var (idp, cert) = await SeedAcsSamlIdpAsync(jit: false);
         var challenge   = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
         var client = fixture.NewSessionClient();
         var form   = await BuildAcsFormAsync(client, challenge, idp, cert);
 
@@ -396,7 +414,7 @@ public partial class SamlControllerTests(TestFixture fixture)
         await fixture.Db.SaveChangesAsync();
 
         var challenge = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
         var client = fixture.NewSessionClient();
         var form   = await BuildAcsFormAsync(client, challenge, idp, cert);
 
@@ -415,7 +433,7 @@ public partial class SamlControllerTests(TestFixture fixture)
         // User does not exist → JIT-provisioned → login accepted → redirect
         var (idp, cert) = await SeedAcsSamlIdpAsync();
         var challenge   = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
         var client = fixture.NewSessionClient();
         var form   = await BuildAcsFormAsync(client, challenge, idp, cert);
 
@@ -442,7 +460,7 @@ public partial class SamlControllerTests(TestFixture fixture)
         await fixture.Db.SaveChangesAsync();
 
         var challenge = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
         var client = fixture.NewSessionClient();
         var form   = await BuildAcsFormAsync(client, challenge, idp, cert);
 
@@ -471,7 +489,7 @@ public partial class SamlControllerTests(TestFixture fixture)
         await fixture.Db.SaveChangesAsync();
 
         var challenge = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
         var client = fixture.NewSessionClient();
         var form   = await BuildAcsFormAsync(client, challenge, idp, cert,
             new ClaimsIdentity(new[] { new Claim("email", "saml-role-user@test.com") }));
@@ -510,7 +528,7 @@ public partial class SamlControllerTests(TestFixture fixture)
     {
         var (idp, cert) = await SeedAcsSamlIdpAsync();
         var challenge   = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
         var client = fixture.NewSessionClient();
         var form   = await BuildAcsFormAsync(client, challenge, idp, cert,
             responseStatus: Saml2StatusCodes.Requester);
@@ -547,7 +565,7 @@ public partial class SamlControllerTests(TestFixture fixture)
     {
         var (idp, cert) = await SeedAcsSamlIdpAsync();
         var challenge   = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
         var client = fixture.NewSessionClient();
 
         // Call Start to populate session with the real request ID
@@ -578,7 +596,7 @@ public partial class SamlControllerTests(TestFixture fixture)
     {
         var (idp, cert) = await SeedAcsSamlIdpAsync();
         var challenge   = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
         var client = fixture.NewSessionClient();
         // ClaimsIdentity with no email-related claims
         var identity = new ClaimsIdentity(new[] { new Claim("displayName", "No Email User") });
@@ -844,6 +862,7 @@ public class SamlServiceUnitTests
             Id       = Guid.NewGuid(),
             EntityId = "https://idp.example.com",
             SsoUrl   = "https://idp.example.com/sso",
+            CertificatePem = SamlControllerTests.TestCertPem,
         };
 
         var config = await svc.BuildConfigAsync(idp, "https://sp.example.com/saml/metadata", new Uri("https://sp.example.com/saml/acs"));

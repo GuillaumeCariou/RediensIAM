@@ -119,19 +119,47 @@ public class WebhookService(
             .ToListAsync();
 
         foreach (var wh in webhooks)
-        {
-            var secret = "";
-            if (!string.IsNullOrEmpty(wh.SecretEnc))
-            {
-                try { secret = TotpEncryption.DecryptString(appConfig.WebhookEncKey, wh.SecretEnc); }
-                catch { /* corrupt key — still deliver, just without a valid signature */ }
-            }
+            await EnqueueAsync(wh, eventType, payload);
+    }
 
-            var job = new WebhookJob(wh.Id, eventType, payload, secret, wh.Url);
-            var jobJson = JsonSerializer.Serialize(job, JobOpts);
-            await webhookQueue.PersistAsync(jobJson, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-            await channel.Writer.WriteAsync(job);
+    /// <summary>
+    /// Dispatches to one specific webhook, bypassing subscription matching.
+    ///
+    /// Used by the "send test" action: it emits <c>webhook.test</c>, which is deliberately not
+    /// in <see cref="WebhookEvents.All"/> and therefore cannot be subscribed to. Routing the
+    /// test through the normal <see cref="DispatchAsync"/> matching meant it silently matched
+    /// nothing and the button was a no-op.
+    /// </summary>
+    public async Task DispatchToWebhookAsync(Guid webhookId, string eventType, object payloadObj)
+    {
+        var payload = JsonSerializer.Serialize(new
+        {
+            @event = eventType,
+            created_at = DateTimeOffset.UtcNow,
+            data = payloadObj
+        }, JsonOpts);
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<RediensIamDbContext>();
+        var wh = await db.Webhooks.FirstOrDefaultAsync(w => w.Id == webhookId && w.Active);
+        if (wh == null) return;
+
+        await EnqueueAsync(wh, eventType, payload);
+    }
+
+    private async Task EnqueueAsync(Webhook wh, string eventType, string payload)
+    {
+        var secret = "";
+        if (!string.IsNullOrEmpty(wh.SecretEnc))
+        {
+            try { secret = TotpEncryption.DecryptString(appConfig.WebhookEncKey, wh.SecretEnc); }
+            catch { /* corrupt key — still deliver, just without a valid signature */ }
         }
+
+        var job = new WebhookJob(wh.Id, eventType, payload, secret, wh.Url);
+        var jobJson = JsonSerializer.Serialize(job, JobOpts);
+        await webhookQueue.PersistAsync(jobJson, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        await channel.Writer.WriteAsync(job);
     }
 
     // Called by the dispatcher to log the attempt result. Uses its own scope to keep
@@ -219,7 +247,22 @@ public class WebhookDispatcherService(
         }
 
         var payloadBytes = Encoding.UTF8.GetBytes(job.Payload);
-        var sig = ComputeSignature(job.SecretPlain, payloadBytes);
+
+        // Sign over "{timestamp}.{payload}" so a receiver can reject replays by checking the
+        // age of the timestamp. Signing the payload alone made every delivery replayable
+        // forever. ComputeSignature also has to be inside the try: a non-base64 secret threw
+        // out of the un-awaited Task.Run and the job vanished silently.
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
+        string sig;
+        try
+        {
+            sig = ComputeSignature(job.SecretPlain, timestamp, payloadBytes);
+        }
+        catch (FormatException ex)
+        {
+            logger.LogWarning(ex, "Webhook {Id}: stored secret is not valid base64 — delivering unsigned", job.WebhookId);
+            sig = "";
+        }
 
         int? lastStatus = null;
         string? lastError = null;
@@ -238,7 +281,9 @@ public class WebhookDispatcherService(
                 req.Content = new ByteArrayContent(payloadBytes);
                 req.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
                 req.Headers.Add("X-RediensIAM-Signature", $"sha256={sig}");
+                req.Headers.Add("X-RediensIAM-Timestamp", timestamp);
                 req.Headers.Add("X-RediensIAM-Event", job.EventType);
+                req.Headers.Add("X-RediensIAM-Delivery", job.WebhookId.ToString());
 
                 var resp = await client.SendAsync(req, ct);
                 lastStatus = (int)resp.StatusCode;
@@ -289,10 +334,20 @@ public class WebhookDispatcherService(
         catch (Exception ex) { logger.LogWarning(ex, "Failed to remove webhook job from Redis queue"); }
     }
 
-    private static string ComputeSignature(string secret, byte[] payload)
+    /// <summary>
+    /// HMAC-SHA256 over <c>{timestamp}.{payload}</c>, hex-encoded. Receivers should recompute it
+    /// with the shared secret and reject deliveries whose <c>X-RediensIAM-Timestamp</c> is older
+    /// than their tolerance window.
+    /// </summary>
+    private static string ComputeSignature(string secret, string timestamp, byte[] payload)
     {
         if (string.IsNullOrEmpty(secret)) return "";
+        var signed = new byte[Encoding.UTF8.GetByteCount(timestamp) + 1 + payload.Length];
+        var written = Encoding.UTF8.GetBytes(timestamp, signed);
+        signed[written] = (byte)'.';
+        payload.CopyTo(signed, written + 1);
+
         using var hmac = new HMACSHA256(Convert.FromBase64String(secret));
-        return Convert.ToHexString(hmac.ComputeHash(payload)).ToLowerInvariant();
+        return Convert.ToHexString(hmac.ComputeHash(signed)).ToLowerInvariant();
     }
 }

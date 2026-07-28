@@ -130,8 +130,11 @@ export async function listSamlProviders(projectId: string) {
   return (await apiFetch(`/admin/projects/${projectId}/saml-providers`)).json();
 }
 export async function createSamlProvider(projectId: string, body: {
-  entity_id: string; metadata_url?: string; email_attribute_name?: string;
-  name_attribute_name?: string; jit_provisioning?: boolean; active?: boolean;
+  entity_id: string; metadata_url?: string; sso_url?: string; certificate_pem?: string;
+  email_attribute_name?: string;
+  // Backend field is display_name_attribute_name; `name_attribute_name` was silently dropped.
+  display_name_attribute_name?: string;
+  jit_provisioning?: boolean; default_role_id?: string;
 }) {
   return (await apiFetch(`/admin/projects/${projectId}/saml-providers`, { method: 'POST', body: JSON.stringify(body) })).json();
 }
@@ -328,13 +331,14 @@ export async function exportUserList(listId: string): Promise<Blob> {
   return (await apiFetch(`/org/userlists/${listId}/export?format=csv`)).blob();
 }
 export async function exportOrgAuditLog(orgId: string, isSystemCtx: boolean): Promise<Blob> {
+  // Org-scoped route is /org/audit-log/export (OrgController), not /org/export/audit-log.
   const path = isSystemCtx
     ? `/admin/organizations/${orgId}/export/audit-log?format=csv`
-    : `/org/export/audit-log?format=csv`;
+    : `/org/audit-log/export?format=csv`;
   return (await apiFetch(path)).blob();
 }
 export async function exportSystemAuditLog(): Promise<Blob> {
-  return (await apiFetch('/admin/export/audit-log?format=csv')).blob();
+  return (await apiFetch('/admin/audit-log/export?format=csv')).blob();
 }
 
 // ── Org-list manager (org-scoped) ─────────────────────────────────

@@ -39,9 +39,40 @@ public class GatewayAuthMiddleware(RequestDelegate next, AppConfig appConfig)
             return;
         }
 
+        // Audience gate. Introspection tells us the token is valid; it does not tell us the
+        // token was meant for THIS surface. Without this check any access token issued by the
+        // deployment's Hydra — including one minted for a tenant's own application — reaches
+        // the management API, with only ext.roles standing in the way.
+        if (IsManagementSurface(ctx.Request.Path) && !IsManagementAudience(claims, appConfig))
+        {
+            ctx.Response.StatusCode = 403;
+            ctx.Response.ContentType = "application/json";
+            await ctx.Response.WriteAsJsonAsync(new { error = "forbidden", detail = "token_audience_not_allowed" });
+            return;
+        }
+
         ctx.Items["Claims"] = claims;
 
         await next(ctx);
+    }
+
+    private static readonly string[] ManagementPrefixes =
+        ["/admin", "/org", "/project", "/service-accounts", "/api/manage", "/internal"];
+
+    private static bool IsManagementSurface(PathString path) =>
+        ManagementPrefixes.Any(p => path.StartsWithSegments(p));
+
+    private static bool IsManagementAudience(TokenClaims claims, AppConfig cfg)
+    {
+        // PATs are not OAuth2 tokens: they carry no client_id and are already bound to a
+        // service account whose roles were checked at introspection time.
+        if (claims.IsServiceAccount) return true;
+
+        // Service accounts authenticating via client_credentials (private_key_jwt).
+        if (claims.ClientId.StartsWith(Roles.ServiceAccountClientPrefix, StringComparison.Ordinal))
+            return true;
+
+        return cfg.ManagementClientIds.Contains(claims.ClientId, StringComparer.Ordinal);
     }
 }
 

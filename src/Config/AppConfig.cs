@@ -55,6 +55,18 @@ public class AppConfig(IConfiguration config)
     public string Argon2Pepper            => config["Security:Argon2Pepper"] ?? "";
     public string PatPrefix               => config["Security:PatPrefix"] ?? "rediens_pat_";
 
+    /// <summary>
+    /// OAuth2 client IDs allowed to call the management surfaces (/admin, /org, /project,
+    /// /service-accounts, /api/manage). CSV; defaults to the admin console client alone.
+    /// A token minted for a tenant's own application client must never reach those routes —
+    /// its <c>ext.roles</c> are session data, not an audience boundary.
+    /// Service-account clients (<c>sa_*</c>) are additionally accepted, see
+    /// <see cref="Roles.ServiceAccountClientPrefix"/>.
+    /// </summary>
+    public string[] ManagementClientIds =>
+        (config["Security:ManagementClientIds"] ?? Roles.AdminClientId)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
     // ── Per-purpose derived keys (HKDF-SHA256 from TotpSecretEncryptionKey) ──
     // Each purpose gets an independent 32-byte subkey; compromise of one does not
     // expose data encrypted under other purposes.
@@ -80,6 +92,14 @@ public class AppConfig(IConfiguration config)
 
     // ── Invitations ───────────────────────────────────────────────────────────
     public int InviteExpiryHours => config.GetValue<int>("Invitations:ExpiryHours", 72);
+
+    /// <summary>
+    /// Link mailed to an invited user. Must point at the login SPA route that renders the
+    /// set-password form, NOT at <c>/auth/invite/complete</c> — that is a POST API endpoint,
+    /// so clicking the emailed link produced a 404/405.
+    /// </summary>
+    public string InviteUrl(string rawToken) =>
+        $"{PublicUrl}/set-password?token={Uri.EscapeDataString(rawToken)}";
 
     // ── New device detection ──────────────────────────────────────────────────
     public int NewDeviceCacheDays => config.GetValue<int>("Security:NewDeviceCacheDays", 90);

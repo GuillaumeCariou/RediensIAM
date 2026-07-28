@@ -47,9 +47,16 @@ public class LoginRateLimiter(IConnectionMultiplexer redis, AppConfig appConfig)
         return blocked;
     }
 
+    /// <summary>
+    /// Clears the per-user counter after a successful authentication.
+    ///
+    /// The per-IP counter is deliberately NOT cleared: it is shared across every account
+    /// targeted from that address, so clearing it would let an attacker holding one valid
+    /// account reset the budget at will and brute-force other accounts indefinitely from the
+    /// same IP. The per-IP counter expires only by TTL.
+    /// </summary>
     public async Task ResetAsync(string ipAddress, Guid userId, string keyPrefix = "login")
     {
-        await _db.KeyDeleteAsync($"rate:{keyPrefix}:{ipAddress}");
         await _db.KeyDeleteAsync($"rate:{keyPrefix}:user:{userId}");
     }
 }

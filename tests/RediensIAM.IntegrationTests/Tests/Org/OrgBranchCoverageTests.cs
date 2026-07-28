@@ -237,6 +237,7 @@ public class OrgBranchCoverageTests(TestFixture fixture)
         {
             entity_id    = "https://idp.example.com/saml",
             sso_url      = "https://idp.example.com/sso",
+            certificate_pem = "-----BEGIN CERTIFICATE-----\nc3R1Yg==\n-----END CERTIFICATE-----"
         });
         createRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var createBody = await createRes.Content.ReadFromJsonAsync<JsonElement>();
@@ -282,7 +283,8 @@ public class OrgBranchCoverageTests(TestFixture fixture)
         var res = await client.PostAsJsonAsync($"/org/projects/{Guid.NewGuid()}/saml-providers", new
         {
             entity_id = "https://idp.example.com",
-            sso_url   = "https://idp.example.com/sso"
+            sso_url   = "https://idp.example.com/sso",
+            certificate_pem = "-----BEGIN CERTIFICATE-----\nc3R1Yg==\n-----END CERTIFICATE-----"
         });
 
         res.StatusCode.Should().Be(HttpStatusCode.NotFound);
@@ -381,6 +383,7 @@ public class OrgBranchCoverageTests(TestFixture fixture)
         {
             entity_id = "https://idp.example.com/saml",
             sso_url   = "https://idp.example.com/sso",
+            certificate_pem = "-----BEGIN CERTIFICATE-----\nc3R1Yg==\n-----END CERTIFICATE-----"
         });
         createRes.StatusCode.Should().Be(HttpStatusCode.Created);
         var providerId = (await createRes.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();

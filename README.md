@@ -55,9 +55,12 @@ secrets:
   # Dragonfly/Redis connection string
   cacheUrl: "rediensiam-dragonfly:6379,abortConnect=false"
 
-  # 32-byte key (base64-encoded) used to encrypt TOTP secrets at rest
-  # Generate: openssl rand -base64 32
-  totpEncryptionKey: "CHANGE_ME_32_BYTE_KEY_BASE64_ENC="
+  # Root encryption key: EXACTLY 64 hexadecimal characters (32 bytes).
+  # Per-purpose subkeys (TOTP secrets, webhook secrets, per-org SMTP passwords,
+  # login-theme provider secrets, device fingerprints) are derived from it via HKDF-SHA256.
+  # Any other format — base64 included — makes the app throw on startup.
+  # Generate: openssl rand -hex 32
+  totpEncryptionKey: "CHANGE_ME_64_HEX_CHARS_0123456789abcdef0123456789abcdef01234567"
 
   # Random hex string used as Argon2 pepper for password hashing
   # Generate: openssl rand -hex 32
@@ -136,7 +139,7 @@ yq -i 'del(.rediensiam.env.RECONFIGURE_FROM_ENV)' values.prod.yaml
 helm upgrade ...                  # next routine deploy
 ```
 
-True secrets (`secrets.databaseUrl`, `secrets.totpEncryptionKey`, `secrets.argon2Pepper`, `secrets.bootstrapPassword`) stay env-only. Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#configuration-model--zitadel-style).
+True secrets stay env-only: `secrets.databaseUrl`, `secrets.cacheUrl`, `secrets.totpEncryptionKey`, `secrets.argon2Pepper`, plus the bootstrap admin credentials `env.IAM_BOOTSTRAP_EMAIL` / `env.IAM_BOOTSTRAP_PASSWORD` (there is no `secrets.bootstrapPassword` key). Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#configuration-model--zitadel-style).
 
 ### `values.yaml` — Full reference
 
@@ -169,7 +172,7 @@ All keys below can be overridden in `values.secret.yaml` or via `--set` on the c
 | `env.Keto__WriteUrl` | `http://rediensiam-keto-write:4467` | Keto write API URL |
 | `secrets.databaseUrl` | `""` | **Required.** PostgreSQL connection string |
 | `secrets.cacheUrl` | `""` | **Required.** Dragonfly/Redis connection string |
-| `secrets.totpEncryptionKey` | `""` | **Required.** 32-byte base64 key for TOTP secret encryption |
+| `secrets.totpEncryptionKey` | `""` | **Required.** Root encryption key — exactly 64 hex chars (`openssl rand -hex 32`). All at-rest encryption subkeys are HKDF-derived from it. Not base64. |
 | `secrets.argon2Pepper` | `""` | **Required.** Hex pepper for Argon2 password hashing |
 | `secrets.smtpPassword` | `""` | Global SMTP password |
 | `postgres.password` | `""` | **Required.** PostgreSQL root password |
@@ -200,7 +203,15 @@ dotnet test tests/RediensIAM.IntegrationTests/ --logger "console;verbosity=detai
 dotnet test tests/RediensIAM.IntegrationTests/ -- xunit.maxParallelThreads=4
 ```
 
-The test suite covers 367 tests across auth flows, org/project management, service accounts, webhooks, and security.
+The suite is 1093 tests across auth flows, org/project management, service accounts, webhooks, and security.
+
+`Tests/Regression/` holds the defect-reproduction suite from the 2026-07-28 audit
+(`docs/2026-07-28-audit-complet.md`) — one test per finding, each written to fail against the
+vulnerable code and pass only once that finding is fixed. All 34 are green:
+
+```bash
+dotnet test tests/RediensIAM.IntegrationTests/ --filter "FullyQualifiedName~Tests.Regression"
+```
 
 ---
 
@@ -272,7 +283,15 @@ npm run report
 | `admin` | `tests/admin/*.spec.ts` | OIDC session injected | All API calls mocked via `page.route()` |
 | `account` | `tests/account/*.spec.ts` | OIDC session injected | All API calls mocked |
 
-**Admin SPA authentication:** The admin SPA stores its OIDC token in `sessionStorage` (via `oidc-client-ts`). Playwright's native `storageState` only covers cookies and `localStorage`, so the global setup captures `sessionStorage` after a real login and writes it to `.auth/admin-session.json`. The `adminPage` fixture re-injects these keys via `page.addInitScript` before each test.
+**Admin SPA authentication:** `frontend/admin/src/auth.ts` configures `oidc-client-ts` with an
+`InMemoryWebStorage` user store — the access token lives only in the JS heap and is **not**
+persisted to `sessionStorage` or `localStorage` (only the transient PKCE state store is in
+`localStorage`). A reload therefore always re-runs `signinRedirect`.
+
+That means the token cannot be captured and replayed via `storageState`: the Playwright
+`admin` project must complete a real OIDC round-trip per browser context, and every API call
+it exercises has to be mocked with `page.route()`. If `.auth/admin-session.json` exists from
+an older run it is inert — delete it.
 
 #### Test coverage (50 tests across 13 files)
 

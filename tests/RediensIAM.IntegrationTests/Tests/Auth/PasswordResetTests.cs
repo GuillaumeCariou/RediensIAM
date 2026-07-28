@@ -68,8 +68,12 @@ public class PasswordResetTests(TestFixture fixture)
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
-        // Must NOT reveal whether email exists
-        body.TryGetProperty("session_id", out _).Should().BeFalse();
+        // The response must be indistinguishable from the known-address case: same status,
+        // same shape, same fields. Omitting session_id here was itself the enumeration oracle.
+        // The session is stored under the "reset:void" prefix, so verification can never
+        // resolve it — and no mail is sent.
+        body.TryGetProperty("session_id", out var sessionId).Should().BeTrue();
+        sessionId.GetString().Should().NotBeNullOrEmpty();
         fixture.EmailStub.SentEmails.Should().BeEmpty();
     }
 

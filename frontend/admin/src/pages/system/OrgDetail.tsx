@@ -519,11 +519,11 @@ export default function OrgDetail() {
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="org_admin">Org Admin</SelectItem>
-                  <SelectItem value="project_manager">Project Manager</SelectItem>
+                  <SelectItem value="project_admin">Project Admin</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            {assignRoleForm.role === 'project_manager' && (
+            {assignRoleForm.role === 'project_admin' && (
               <div className="space-y-2">
                 <Label>Project (scope)</Label>
                 <Select value={assignRoleForm.scope_id} onValueChange={v => setAssignRoleForm(f => ({ ...f, scope_id: v }))}>

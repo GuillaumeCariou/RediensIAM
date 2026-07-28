@@ -31,11 +31,19 @@ public class SamlController(
         [FromQuery] string login_challenge,
         [FromQuery] Guid idp_id)
     {
-        try { await hydra.GetLoginRequestAsync(login_challenge); }
+        HydraLoginRequest req;
+        try { req = await hydra.GetLoginRequestAsync(login_challenge); }
         catch { return BadRequest(new { error = "invalid_login_challenge" }); }
 
+        // Bind the IdP to the project the calling client is registered for. Without this any
+        // tenant could start a flow against another tenant's IdP on its own login_challenge and
+        // receive an authorization code for the victim's user (see SEC-02).
+        var projectId = LoginChallengeProject.ResolveOrNull(req);
+        if (projectId == null || !Guid.TryParse(projectId, out var challengeProjectId))
+            return BadRequest(new { error = "missing_project_id" });
+
         var idp = await db.SamlIdpConfigs
-            .FirstOrDefaultAsync(x => x.Id == idp_id && x.Active);
+            .FirstOrDefaultAsync(x => x.Id == idp_id && x.Active && x.ProjectId == challengeProjectId);
         if (idp == null) return NotFound(new { error = "saml_idp_not_found" });
 
         var config = await saml.BuildConfigAsync(idp, SpEntity, AcsUrl);

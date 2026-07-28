@@ -33,6 +33,10 @@ public class SystemAdminController(
     private const string AuditOrg = "organisation";
     private const string KindInvite = "invite";
 
+    /// <summary>Management role names accepted by the role-assignment endpoints.</summary>
+    internal static readonly string[] KnownManagementRoles =
+        [Roles.SuperAdmin, Roles.OrgAdmin, Roles.ProjectAdmin];
+
     private TokenClaims Claims => HttpContext.GetClaims()!;
     private Guid GetActorId() => Claims.ParsedUserId;
 
@@ -350,7 +354,7 @@ var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(u
                 CreatedAt = DateTimeOffset.UtcNow
             });
             await db.SaveChangesAsync();
-            var inviteUrl = $"{appConfig.PublicUrl}/auth/invite/complete?token={Uri.EscapeDataString(raw)}";
+            var inviteUrl = appConfig.InviteUrl(raw);
             var orgName   = ul.Organisation?.Name ?? "the organization";
             await emailService.SendInviteAsync(user.Email, inviteUrl, orgName);
         }
@@ -405,7 +409,12 @@ var orgRoles = await db.OrgRoles.Where(r => r.OrgId == id).Include(r => r.User).
     [HttpPost("organizations/{id}/admins")]
     public async Task<IActionResult> AssignOrgAdmin(Guid id, [FromBody] AssignOrgAdminRequest body)
     {
-var existing = await db.OrgRoles.FirstOrDefaultAsync(r =>
+        // Role is written verbatim into OrgRoles.Role AND used as a Keto relation name.
+        // An arbitrary string would pollute the permission graph with a relation nothing checks.
+        if (!KnownManagementRoles.Contains(body.Role))
+            return BadRequest(new { error = "unknown_role", allowed = KnownManagementRoles });
+
+        var existing = await db.OrgRoles.FirstOrDefaultAsync(r =>
             r.OrgId == id && r.UserId == body.UserId && r.Role == body.Role && r.ScopeId == body.ScopeId);
         if (existing != null) return Ok(new { existing.Id });
         var role = new OrgRole
@@ -900,6 +909,46 @@ await hydra.DeleteOAuth2ClientAsync(id);
         return Empty;
     }
 
+    /// <summary>
+    /// System-wide audit-log export (all organisations, plus system-level entries with no org).
+    /// The admin console offers this on its global audit-log page; no route existed for it, so
+    /// the download button 404'd.
+    /// </summary>
+    [HttpGet("audit-log/export")]
+    public async Task<IActionResult> AdminExportAllAuditLog(
+        [FromQuery] string format = "csv",
+        [FromQuery] DateTimeOffset? from = null,
+        [FromQuery] DateTimeOffset? to = null)
+    {
+        var rateLimitKey = $"export_rl:{GetActorId()}:admin:auditlog:all";
+        if (await cache.GetAsync(rateLimitKey) != null)
+            return StatusCode(429, new { error = "export_rate_limited", retry_after_seconds = appConfig.ExportRateLimitMinutes * 60 });
+        await cache.SetAsync(rateLimitKey, [1], new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(appConfig.ExportRateLimitMinutes) });
+
+        await audit.RecordAsync(null, null, GetActorId(), "export.audit_log", "system", "all",
+            new Dictionary<string, object> { ["format"] = format, ["scope"] = "system" });
+
+        var query = db.AuditLogs
+            .Where(l => from == null || l.CreatedAt >= from)
+            .Where(l => to == null || l.CreatedAt <= to)
+            .OrderBy(l => l.CreatedAt)
+            .Select(l => new { l.Id, l.Action, l.OrgId, l.ProjectId, l.ActorId, l.TargetType, l.TargetId, l.IpAddress, l.CreatedAt });
+
+        if (format == "json")
+        {
+            var data = await query.ToListAsync();
+            Response.Headers.ContentDisposition = "attachment; filename=audit-log-system.json";
+            return new JsonResult(data);
+        }
+
+        Response.Headers.ContentDisposition = "attachment; filename=audit-log-system.csv";
+        Response.ContentType = "text/csv";
+        await Response.WriteAsync("id,action,org_id,project_id,actor_id,target_type,target_id,ip_address,created_at\n");
+        await foreach (var l in query.AsAsyncEnumerable())
+            await Response.WriteAsync($"{l.Id},{AdminCsvEscape(l.Action)},{l.OrgId},{l.ProjectId},{l.ActorId},{AdminCsvEscape(l.TargetType)},{AdminCsvEscape(l.TargetId)},{AdminCsvEscape(l.IpAddress)},{l.CreatedAt:O}\n");
+        return Empty;
+    }
+
     [HttpGet("organizations/{id}/export/audit-log")]
     public async Task<IActionResult> AdminExportAuditLog(
         Guid id,
@@ -940,13 +989,7 @@ await hydra.DeleteOAuth2ClientAsync(id);
         return Empty;
     }
 
-    private static string AdminCsvEscape(string? value)
-    {
-        if (value == null) return "";
-        if (value.Contains(',') || value.Contains('"') || value.Contains('\n'))
-            return $"\"{value.Replace("\"", "\"\"")}\"";
-        return value;
-    }
+    private static string AdminCsvEscape(string? value) => CsvWriter.Escape(value);
 
     // ── SAML IdP management (admin) ───────────────────────────────────────────
 

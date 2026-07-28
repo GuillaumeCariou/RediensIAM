@@ -38,7 +38,10 @@ public class ProjectController(
                 if (q != null && Guid.TryParse(q, out var g)) return g;
             }
 #pragma warning restore S6932
-            return Guid.Parse(Claims.ProjectId);
+            // Guid.Parse threw a FormatException — surfacing as a 500 — when a super admin
+            // called /project/* without ?project_id=. Empty means "no project context", which
+            // GetProjectAsync turns into a clean 404.
+            return Guid.TryParse(Claims.ProjectId, out var fromClaims) ? fromClaims : Guid.Empty;
         }
     }
 
@@ -82,6 +85,8 @@ public class ProjectController(
     {
         var project = await GetProjectAsync();
         if (project == null) return NotFound();
+        var allowlistErr = ApplyIpAllowlist(project, body.IpAllowlist);
+        if (allowlistErr != null) return allowlistErr;
         ApplyProjectFields(project, body);
         var roleErr = await ApplyDefaultRoleAsync(project, body.ClearDefaultRole, body.DefaultRoleId);
         if (roleErr != null) return roleErr;
@@ -109,6 +114,39 @@ public class ProjectController(
         if (body.PasswordRequireLowercase.HasValue)   project.PasswordRequireLowercase   = body.PasswordRequireLowercase.Value;
         if (body.PasswordRequireDigit.HasValue)       project.PasswordRequireDigit       = body.PasswordRequireDigit.Value;
         if (body.PasswordRequireSpecial.HasValue)     project.PasswordRequireSpecial     = body.PasswordRequireSpecial.Value;
+        if (body.CheckBreachedPasswords.HasValue)     project.CheckBreachedPasswords     = body.CheckBreachedPasswords.Value;
+        if (body.ClearEmailFromName == true)          project.EmailFromName              = null;
+        else if (body.EmailFromName != null)          project.EmailFromName              = body.EmailFromName;
+    }
+
+    /// <summary>
+    /// Validates every entry before storing. An unparseable CIDR silently matches nothing in
+    /// <c>IpInRange</c>, which locks the whole tenant out of its own project instead of
+    /// reporting the typo.
+    /// </summary>
+    private BadRequestObjectResult? ApplyIpAllowlist(Project project, string[]? allowlist)
+    {
+        if (allowlist == null) return null;
+
+        var invalid = allowlist.Where(entry => !IsValidCidr(entry)).ToArray();
+        if (invalid.Length > 0)
+            return BadRequest(new { error = "invalid_ip_allowlist", invalid });
+
+        project.IpAllowlist = allowlist;
+        return null;
+    }
+
+    private static bool IsValidCidr(string entry)
+    {
+        if (string.IsNullOrWhiteSpace(entry)) return false;
+        var parts = entry.Split('/');
+        if (parts.Length > 2) return false;
+        if (!System.Net.IPAddress.TryParse(parts[0], out var address)) return false;
+        if (parts.Length == 1) return true;
+
+        if (!int.TryParse(parts[1], out var prefix)) return false;
+        var maxPrefix = address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 ? 128 : 32;
+        return prefix >= 0 && prefix <= maxPrefix;
     }
 
     private async Task<IActionResult?> ApplyDefaultRoleAsync(Project project, bool? clearRole, Guid? newRoleId)
@@ -392,7 +430,12 @@ public record UpdateProjectInfoRequest(string? Name, bool? Active, bool? Require
     string[]? AllowedEmailDomains, Guid? DefaultRoleId, bool? ClearDefaultRole,
     Dictionary<string, object>? LoginTheme, int? MinPasswordLength,
     bool? PasswordRequireUppercase, bool? PasswordRequireLowercase,
-    bool? PasswordRequireDigit, bool? PasswordRequireSpecial);
+    bool? PasswordRequireDigit, bool? PasswordRequireSpecial,
+    // Sent by the admin console. Previously absent from this record, so System.Text.Json
+    // dropped them and the API answered 200 while applying nothing — an operator could
+    // enable an IP allowlist that never took effect.
+    string[]? IpAllowlist, bool? CheckBreachedPasswords,
+    string? EmailFromName, bool? ClearEmailFromName);
 public record CreateProjectUserRequest(string Email, string? Username, string Password);
 public record AssignRoleRequest([property: System.Text.Json.Serialization.JsonRequired] Guid RoleId);
 public record CreateRoleRequest(string Name, string? Description, int? Rank);

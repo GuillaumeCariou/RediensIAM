@@ -49,6 +49,10 @@ public class SmtpEmailService(
 {
     public async Task SendOtpAsync(string to, string code, string purpose, Guid? orgId = null, Guid? projectId = null)
     {
+        // Expiry quoted in the mail must match Security:OtpTtlSeconds (default 300s), not a
+        // hardcoded "10 minutes".
+        var expiryMinutes = Math.Max(1, appConfig.OtpTtlSeconds / 60);
+
         // ── Resolve SMTP config ──────────────────────────────────────────────
         string? host;
         int port;
@@ -113,7 +117,7 @@ public class SmtpEmailService(
         message.Subject = subject;
         message.Body = new TextPart("plain")
         {
-            Text = $"Your {subject.ToLower()} is: {code}\n\nThis code expires in 10 minutes."
+            Text = $"Your {subject.ToLower()} is: {code}\n\nThis code expires in {expiryMinutes} minute(s)."
         };
 
         await SmtpSendAsync(host, port, startTls, username, password, message);
@@ -172,7 +176,7 @@ public class SmtpEmailService(
         message.Subject = $"You've been invited to {orgName}";
         message.Body = new TextPart("plain")
         {
-            Text = $"You have been invited to join {orgName}.\n\nClick the link below to accept your invitation and set your password:\n\n{inviteUrl}\n\nThis link expires in 72 hours."
+            Text = $"You have been invited to join {orgName}.\n\nClick the link below to accept your invitation and set your password:\n\n{inviteUrl}\n\nThis link expires in {appConfig.InviteExpiryHours} hours."
         };
 
         await SmtpSendAsync(host, port, startTls, username, password, message);

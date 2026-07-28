@@ -30,6 +30,10 @@ public static class RedirectValidator
     {
         safeUrl = "";
         if (string.IsNullOrWhiteSpace(url)) return false;
+        // Reject backslashes outright. Browsers normalise a leading "/\" to "//", i.e.
+        // protocol-relative, so "/\evil.com" would slip through the relative-path
+        // short-circuit below and redirect off-origin.
+        if (url.Contains('\\', StringComparison.Ordinal)) return false;
         // Relative path = same origin = always safe (covers Hydra reject-flow's "/" replies too).
         // Reconstruct it through Uri to drop fragments/CR-LF and apply percent-encoding rules.
         if (url.StartsWith('/') && !url.StartsWith("//", StringComparison.Ordinal))

@@ -70,6 +70,7 @@ builder.Services.AddScoped<HydraService>();
 builder.Services.AddScoped<KetoService>();
 builder.Services.AddScoped<AuditLogService>();
 builder.Services.AddScoped<BreachCheckService>();
+builder.Services.AddScoped<PasswordPolicyService>();
 builder.Services.AddScoped<SamlService>();
 builder.Services.AddSingleton(_ => System.Threading.Channels.Channel.CreateUnbounded<RediensIAM.Services.WebhookJob>());
 builder.Services.AddSingleton<IWebhookQueue, RedisWebhookQueue>();
@@ -77,7 +78,11 @@ builder.Services.AddSingleton<IWebhookSsrfValidator, WebhookSsrfValidator>();
 builder.Services.AddScoped<WebhookService>();
 builder.Services.AddHostedService<WebhookDispatcherService>();
 builder.Services.AddHostedService<AuditLogRetentionService>();
-builder.Services.AddHttpClient("webhook");
+// AllowAutoRedirect=false: the SSRF allowlist is applied to the URL we are about to call.
+// Following redirects would let a public endpoint 302 us to 169.254.169.254 (or any internal
+// host) after the check has already passed.
+builder.Services.AddHttpClient("webhook")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddScoped<PatService>();
 builder.Services.AddSingleton<SocialLoginService>();
 builder.Services.AddHttpContextAccessor();
@@ -190,7 +195,10 @@ static async Task EnsureDbSchemaAsync(WebApplication webApp)
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "DB schema creation failed");
+            // Fail fast. Continuing to serve traffic against a database whose schema could not
+            // be created produces confusing 500s and, worse, a half-migrated schema.
+            logger.LogCritical(ex, "DB schema creation failed after 12 attempts — aborting startup");
+            throw;
         }
     }
 }
@@ -274,8 +282,10 @@ static async Task EnsureBootstrapAdminAsync(
             Active = true, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
         };
         bdb.Users.Add(user);
-        await bketo.WriteRelationTupleAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{user.Id}");
+        // Persist the user BEFORE granting super_admin in Keto. The reverse order leaves an
+        // orphaned super_admin tuple pointing at a user id that was never committed.
         await bdb.SaveChangesAsync();
+        await bketo.WriteRelationTupleAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{user.Id}");
         if (log.IsEnabled(LogLevel.Information))
             log.LogInformation("Bootstrap super admin created: {Email}", email);
         log.LogWarning("Bootstrap complete. Remove IAM_BOOTSTRAP_PASSWORD from environment variables.");
@@ -368,9 +378,14 @@ static void AddSecurityHeaders(HttpContext ctx)
         ctx.Response.Headers.StrictTransportSecurity = "max-age=31536000; includeSubDomains";
     if (!ctx.Request.Path.StartsWithSegments("/preview"))
         ctx.Response.Headers.XFrameOptions = "DENY";
+    // default-src is the fallback for every directive that is not named. Omitting it left
+    // connect-src, img-src, font-src and friends wide open on the admin policy.
+    // base-uri and form-action are not covered by default-src and must be set explicitly.
     ctx.Response.Headers.ContentSecurityPolicy = ctx.Request.Path.StartsWithSegments("/admin")
-        ? "script-src 'self'; style-src 'self'; object-src 'none'; frame-ancestors 'none';"
-        : "default-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none';";
+        ? "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; " +
+          "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+        : "default-src 'self'; style-src 'self'; img-src 'self' data:; " +
+          "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';";
 }
 
 // Configure forwarded-headers: honour X-Forwarded-* only from operator-trusted proxies.

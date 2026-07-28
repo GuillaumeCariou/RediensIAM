@@ -378,6 +378,11 @@ public class SocialLoginService(
         if (parsed.Scheme != "https" && httpsRequired)
             throw new ArgumentException($"OIDC issuer_url must be an absolute HTTPS URL: {issuerUrl}");
 
+        // Same SSRF policy as webhooks: HTTPS alone does not stop an org admin pointing the
+        // issuer at an internal host and having the server fetch it.
+        if (httpsRequired && await RediensIAM.Controllers.WebhookUrlValidator.IsPrivateOrReservedAsync(issuerUrl))
+            throw new ArgumentException($"OIDC issuer_url must not resolve to a private or reserved address: {issuerUrl}");
+
         if (_discoveryCache.TryGetValue(issuerUrl, out var cached)) return cached;
 
         // Best-effort eviction under contention — TryRemove is the concurrent equivalent.

@@ -296,12 +296,21 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
         if (cached != null)
             return JsonSerializer.Deserialize<TokenClaims>(cached, _json);
 
-        var form = new FormUrlEncodedContent([new("token", token)]);
+        // token_type_hint pins the lookup to access tokens. Without it Hydra also reports
+        // refresh tokens as active, which would let a refresh token authenticate an API call.
+        var form = new FormUrlEncodedContent(
+            [new("token", token), new("token_type_hint", "access_token")]);
         var resp = await Client.PostAsync($"{_adminUrl}/admin/oauth2/introspect", form);
         if (!resp.IsSuccessStatusCode) return null;
 
         var body = await resp.Content.ReadFromJsonAsync<IntrospectResult>(_json);
         if (body is not { Active: true }) return null;
+
+        // Belt and braces: some Hydra versions honour token_type_hint only as a lookup order.
+        // Reject anything the server does not explicitly call an access token.
+        if (body.TokenUse is { Length: > 0 } use &&
+            !use.Equals("access_token", StringComparison.OrdinalIgnoreCase))
+            return null;
 
         var ext = body.Ext;
         var userId    = ext?.GetString("user_id")    ?? body.Sub ?? "";
@@ -312,7 +321,9 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
         var claims = new TokenClaims
         {
             UserId = userId, OrgId = orgId, ProjectId = projectId,
-            Roles = roles, IsServiceAccount = false
+            Roles = roles, IsServiceAccount = false,
+            ClientId  = body.ClientId ?? "",
+            Audiences = body.Aud ?? [],
         };
 
         // Cache for up to 60s, bounded above by the token's actual expiry so revocation
@@ -334,7 +345,10 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
     private sealed record IntrospectResult(
         bool Active, string? Sub,
         [property: JsonPropertyName("exp")] long? Exp,
-        [property: JsonPropertyName("ext")] ExtClaims? Ext);
+        [property: JsonPropertyName("ext")] ExtClaims? Ext,
+        [property: JsonPropertyName("client_id")] string? ClientId,
+        [property: JsonPropertyName("aud")] List<string>? Aud,
+        [property: JsonPropertyName("token_use")] string? TokenUse);
 
     private sealed class ExtClaims : Dictionary<string, JsonElement>
     {

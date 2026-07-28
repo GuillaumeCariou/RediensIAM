@@ -73,9 +73,9 @@ public class WebhookDeliveryTests(TestFixture fixture)
               .RespondWith(Response.Create().WithStatusCode(200));
 
         var (orgId, _, client, anchorId) = await ScaffoldAsync();
-        await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"]);
+        var wh = await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"]);
 
-        await client.PostAsJsonAsync($"/org/webhooks/{anchorId}/test", new { });
+        await client.PostAsJsonAsync($"/org/webhooks/{wh.Id}/test", new { });
         await Task.Delay(500); // let the background dispatcher fire
 
         var hits = target.LogEntries.Where(e => e.RequestMessage!.Path == "/hook").ToList();
@@ -92,9 +92,9 @@ public class WebhookDeliveryTests(TestFixture fixture)
               .RespondWith(Response.Create().WithStatusCode(200));
 
         var (orgId, _, client, anchorId) = await ScaffoldAsync();
-        await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"]);
+        var wh = await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"]);
 
-        await client.PostAsJsonAsync($"/org/webhooks/{anchorId}/test", new { });
+        await client.PostAsJsonAsync($"/org/webhooks/{wh.Id}/test", new { });
         await Task.Delay(500);
 
         var hits = target.LogEntries.Where(e => e.RequestMessage!.Path == "/hook").ToList();
@@ -117,9 +117,9 @@ public class WebhookDeliveryTests(TestFixture fixture)
 
         var (orgId, _, client, anchorId) = await ScaffoldAsync();
         // SecretEnc = "" → dispatcher sees empty plaintext → ComputeSignature returns ""
-        await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"], secretEnc: "");
+        var wh = await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"], secretEnc: "");
 
-        await client.PostAsJsonAsync($"/org/webhooks/{anchorId}/test", new { });
+        await client.PostAsJsonAsync($"/org/webhooks/{wh.Id}/test", new { });
         await Task.Delay(500);
 
         var hits = target.LogEntries.Where(e => e.RequestMessage!.Path == "/hook").ToList();
@@ -145,9 +145,9 @@ public class WebhookDeliveryTests(TestFixture fixture)
             info: Encoding.UTF8.GetBytes("rediensiam-webhook-secret-v1"));
         var rawSecret   = Convert.ToBase64String(Encoding.UTF8.GetBytes("super-secret"));
         var secretEnc   = TotpEncryption.EncryptString(encKey, rawSecret);
-        await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"], secretEnc: secretEnc);
+        var wh = await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"], secretEnc: secretEnc);
 
-        await client.PostAsJsonAsync($"/org/webhooks/{anchorId}/test", new { });
+        await client.PostAsJsonAsync($"/org/webhooks/{wh.Id}/test", new { });
         await Task.Delay(500);
 
         var hits = target.LogEntries.Where(e => e.RequestMessage!.Path == "/hook").ToList();
@@ -170,7 +170,7 @@ public class WebhookDeliveryTests(TestFixture fixture)
         var (orgId, _, client, anchorId) = await ScaffoldAsync();
         var wh = await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"]);
 
-        await client.PostAsJsonAsync($"/org/webhooks/{anchorId}/test", new { });
+        await client.PostAsJsonAsync($"/org/webhooks/{wh.Id}/test", new { });
         await Task.Delay(500);
 
         await fixture.RefreshDbAsync();
@@ -249,10 +249,10 @@ public class WebhookDeliveryTests(TestFixture fixture)
               .RespondWith(Response.Create().WithStatusCode(200));
 
         var (orgId, _, client, anchorId) = await ScaffoldAsync();
-        await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"],
+        var wh = await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"],
             secretEnc: "not-valid-base64!!!");
 
-        await client.PostAsJsonAsync($"/org/webhooks/{anchorId}/test", new { });
+        await client.PostAsJsonAsync($"/org/webhooks/{wh.Id}/test", new { });
         await Task.Delay(500);
 
         target.LogEntries.Where(e => e.RequestMessage!.Path == "/hook").Should().HaveCount(1);
@@ -268,9 +268,9 @@ public class WebhookDeliveryTests(TestFixture fixture)
               .RespondWith(Response.Create().WithStatusCode(500));
 
         var (orgId, _, client, anchorId) = await ScaffoldAsync();
-        await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"]);
+        var wh = await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"]);
 
-        await client.PostAsJsonAsync($"/org/webhooks/{anchorId}/test", new { });
+        await client.PostAsJsonAsync($"/org/webhooks/{wh.Id}/test", new { });
         await Task.Delay(500); // first attempt completes synchronously before retry delay starts
 
         // At least one request received (first attempt)
@@ -288,9 +288,9 @@ public class WebhookDeliveryTests(TestFixture fixture)
         // temp is disposed — port is no longer listening
 
         var (orgId, _, client, anchorId) = await ScaffoldAsync();
-        await SeedWebhookAsync(orgId, targetUrl, ["webhook.test"]);
+        var wh = await SeedWebhookAsync(orgId, targetUrl, ["webhook.test"]);
 
-        await client.PostAsJsonAsync($"/org/webhooks/{anchorId}/test", new { });
+        await client.PostAsJsonAsync($"/org/webhooks/{wh.Id}/test", new { });
         await Task.Delay(500); // connection refused is immediate → catch block (lines 145-149) executed
     }
 }

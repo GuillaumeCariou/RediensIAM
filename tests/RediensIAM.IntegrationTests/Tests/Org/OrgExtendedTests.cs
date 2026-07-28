@@ -378,7 +378,8 @@ public class OrgExtendedTests(TestFixture fixture)
         var res = await client.PostAsJsonAsync($"/org/projects/{project.Id}/saml-providers", new
         {
             entity_id = "https://idp.example.com/entity",
-            sso_url   = "https://idp.example.com/sso"
+            sso_url   = "https://idp.example.com/sso",
+            certificate_pem = "-----BEGIN CERTIFICATE-----\nc3R1Yg==\n-----END CERTIFICATE-----"
         });
 
         res.StatusCode.Should().Be(HttpStatusCode.Created);
@@ -395,7 +396,8 @@ public class OrgExtendedTests(TestFixture fixture)
         var res = await client.PostAsJsonAsync($"/org/projects/{project.Id}/saml-providers", new
         {
             entity_id = "",
-            sso_url   = "https://idp.example.com/sso"
+            sso_url   = "https://idp.example.com/sso",
+            certificate_pem = "-----BEGIN CERTIFICATE-----\nc3R1Yg==\n-----END CERTIFICATE-----"
         });
 
         res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -432,7 +434,8 @@ public class OrgExtendedTests(TestFixture fixture)
         var createRes = await client.PostAsJsonAsync($"/org/projects/{project.Id}/saml-providers", new
         {
             entity_id = "https://idp.update.com",
-            sso_url   = "https://idp.update.com/sso/v1"
+            sso_url   = "https://idp.update.com/sso/v1",
+            certificate_pem = "-----BEGIN CERTIFICATE-----\nc3R1Yg==\n-----END CERTIFICATE-----"
         });
         var providerId = (await createRes.Content.ReadFromJsonAsync<JsonElement>())
             .GetProperty("id").GetString()!;
@@ -458,7 +461,8 @@ public class OrgExtendedTests(TestFixture fixture)
         var createRes = await client.PostAsJsonAsync($"/org/projects/{project.Id}/saml-providers", new
         {
             entity_id = "https://idp.delete.com",
-            sso_url   = "https://idp.delete.com/sso"
+            sso_url   = "https://idp.delete.com/sso",
+            certificate_pem = "-----BEGIN CERTIFICATE-----\nc3R1Yg==\n-----END CERTIFICATE-----"
         });
         var providerId = (await createRes.Content.ReadFromJsonAsync<JsonElement>())
             .GetProperty("id").GetString()!;

@@ -424,7 +424,7 @@ public class OrgController(
                 CreatedAt = DateTimeOffset.UtcNow
             });
             await db.SaveChangesAsync();
-            inviteUrl = $"{appConfig.PublicUrl}/auth/invite/complete?token={Uri.EscapeDataString(raw)}";
+            inviteUrl = appConfig.InviteUrl(raw);
             var orgName = ul.Organisation?.Name ?? "the organization";
             await emailService.SendInviteAsync(user.Email, inviteUrl, orgName);
         }
@@ -465,7 +465,7 @@ public class OrgController(
         });
         await db.SaveChangesAsync();
 
-        var inviteUrl = $"{appConfig.PublicUrl}/auth/invite/complete?token={Uri.EscapeDataString(raw)}";
+        var inviteUrl = appConfig.InviteUrl(raw);
         var orgName   = ul.Organisation?.Name ?? "the organization";
         await emailService.SendInviteAsync(user.Email, inviteUrl, orgName);
         await audit.RecordAsync(OrgId, null, ActorId, "user.invite_resent", "user", uid.ToString());
@@ -618,6 +618,23 @@ public class OrgController(
 
         if (body.Role != null && body.Role == Roles.SuperAdmin)
             return StatusCode(403, new { error = "cannot_grant_super_admin" });
+
+        // This endpoint used to bypass KetoService.AssignManagementRoleAsync entirely, so the
+        // management-level checks it performs (can the actor grant this rank?) were skipped and
+        // any string could be written as a Keto relation.
+        if (body.Role != null && !SystemAdminController.KnownManagementRoles.Contains(body.Role))
+            return BadRequest(new { error = "unknown_role", allowed = SystemAdminController.KnownManagementRoles });
+
+        var actorLevel = await keto.GetActorManagementLevelForOrgAsync(ActorId, orgId);
+        var targetLevel = (body.Role ?? role.Role) switch
+        {
+            Roles.SuperAdmin   => ManagementLevel.SuperAdmin,
+            Roles.OrgAdmin     => ManagementLevel.OrgAdmin,
+            Roles.ProjectAdmin => ManagementLevel.ProjectAdmin,
+            _                  => ManagementLevel.None,
+        };
+        if (actorLevel == ManagementLevel.None || targetLevel < actorLevel)
+            return StatusCode(403, new { error = "insufficient_management_level" });
 
         if (body.ScopeId != null && body.ScopeId != role.ScopeId)
         {
@@ -773,6 +790,9 @@ public class OrgController(
         if (string.IsNullOrEmpty(body.EntityId)) return BadRequest(new { error = "entity_id_required" });
         if (string.IsNullOrEmpty(body.MetadataUrl) && string.IsNullOrEmpty(body.SsoUrl))
             return BadRequest(new { error = "metadata_url_or_sso_url_required" });
+        // Without metadata there is no way to discover the signing key, so it must be supplied.
+        if (string.IsNullOrEmpty(body.MetadataUrl) && string.IsNullOrEmpty(body.CertificatePem))
+            return BadRequest(new { error = "certificate_pem_required_without_metadata_url" });
 
         var provider = new SamlIdpConfig
         {
@@ -901,13 +921,7 @@ public class OrgController(
         return Empty;
     }
 
-    private static string CsvEscape(string? value)
-    {
-        if (value == null) return "";
-        if (value.Contains(',') || value.Contains('"') || value.Contains('\n'))
-            return $"\"{value.Replace("\"", "\"\"")}\"";
-        return value;
-    }
+    private static string CsvEscape(string? value) => CsvWriter.Escape(value);
 }
 
 public record CreateProjectRequest(string Name, string Slug, bool? RequireRoleToLogin, string[]? RedirectUris);

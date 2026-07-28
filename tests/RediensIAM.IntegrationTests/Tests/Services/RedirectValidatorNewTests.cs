@@ -52,16 +52,14 @@ public class RedirectValidatorNewTests
     }
 
     [Fact]
-    public void TryReconstruct_RejectsRelativePathWithBackslash_PotentialBypass()
+    public void TryReconstruct_RelativePathWithBackslash_IsRejected()
     {
-        // Browsers normalise `\` to `/` in URL parsing. Even though Uri.TryCreate accepts
-        // this as a relative URL, the validator's reconstruction would keep the backslash
-        // which becomes `//host/...` after browser normalisation. Verify the output is safe.
+        // Browsers normalise a leading `/\` to `//` — protocol-relative — so emitting the
+        // literal value in a Location header navigates off-origin. This used to be accepted
+        // by the relative-path short-circuit ("starts with '/', not with '//'").
         var ok = RedirectValidator.TryReconstruct("/\\attacker.example/x", Trusted, out var safe);
-        // The relative-path branch keeps the literal value (CRLF stripped). A browser
-        // following this will not navigate off-origin because the literal backslash
-        // remains in the path component when written via Location header.
-        ok.Should().BeTrue();
-        safe.Should().NotStartWith("//");
+
+        ok.Should().BeFalse();
+        safe.Should().BeEmpty();
     }
 }

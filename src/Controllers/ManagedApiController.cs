@@ -202,7 +202,7 @@ public class ManagedApiController(
                 CreatedAt = DateTimeOffset.UtcNow
             });
             await db.SaveChangesAsync();
-            var inviteUrl = $"{appConfig.PublicUrl}/auth/invite/complete?token={Uri.EscapeDataString(raw)}";
+            var inviteUrl = appConfig.InviteUrl(raw);
             var orgName   = ul.Organisation?.Name ?? "the organization";
             await emailService.SendInviteAsync(user.Email, inviteUrl, orgName);
         }

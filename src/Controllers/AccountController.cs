@@ -79,8 +79,20 @@ public class AccountController(
             await rateLimiter.RecordFailureAsync(Ip, userId, "pwchange");
             return BadRequest(new { error = "invalid_current_password" });
         }
-        if (body.NewPassword.Length < 8)
-            return BadRequest(new { error = "password_too_short", min_length = 8 });
+        // Enforce the tenant's policy, not a hardcoded floor: otherwise a user signs up under
+        // the project policy and then downgrades below it on their next password change.
+        var project = Guid.TryParse(Claims.ProjectId, out var pid)
+            ? await db.Projects.FirstOrDefaultAsync(p => p.Id == pid)
+            : null;
+        var (policy, breachCount) = await svc.PasswordPolicy.EvaluateAsync(project, body.NewPassword);
+        if (policy != PasswordPolicyResult.Ok)
+            return BadRequest(new
+            {
+                error      = PasswordPolicyService.ErrorCode(policy),
+                min_length = PasswordPolicyService.EffectiveMinimumLength(project),
+                count      = breachCount,
+            });
+
         user.PasswordHash = passwords.Hash(body.NewPassword);
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();

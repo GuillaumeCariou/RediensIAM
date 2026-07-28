@@ -79,7 +79,7 @@ public class ProjectMoreCoverageTests(TestFixture fixture)
     // ── GET /project/info — OrgAdmin without ?project_id= (ProjectId getter line 37) ─
 
     [Fact]
-    public async Task GetProjectInfo_OrgAdminWithoutProjectId_Returns500()
+    public async Task GetProjectInfo_OrgAdminWithoutProjectId_Returns404()
     {
         var (org, orgList) = await fixture.Seed.CreateOrgAsync();
         var admin  = await fixture.Seed.CreateUserAsync(orgList.Id);
@@ -88,11 +88,11 @@ public class ProjectMoreCoverageTests(TestFixture fixture)
         var client = fixture.ClientWithToken(token);
 
         // OrgAdmin has no project_id claim (empty string) and provides no ?project_id= query param.
-        // The ProjectId getter enters the OrgAdmin branch, the inner TryParse fails (q==null),
-        // falls through to line 37 (closing brace), then Guid.Parse("") throws → 500.
+        // "No project context" is a client mistake, not a server fault: the getter yields
+        // Guid.Empty and GetProjectAsync finds nothing. It used to throw FormatException → 500.
         var res = await client.GetAsync("/project/info");
 
-        res.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
+        res.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
     // ── POST /project/cleanup — dry_run=false with orphaned roles (line 340) ─

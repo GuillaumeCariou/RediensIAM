@@ -54,7 +54,15 @@ public class PatService(
 
         var cached = await _cache.StringGetAsync(cacheKey);
         if (!cached.IsNull)
-            return JsonSerializer.Deserialize<IntrospectionResponse>(cached.ToString());
+        {
+            var hit = JsonSerializer.Deserialize<IntrospectionResponse>(cached.ToString());
+            // The cache exists to skip the expensive join, never the authorisation decision.
+            // Re-check liveness on every call so deactivating a service account or suspending
+            // an organisation cuts access immediately instead of after the TTL.
+            if (hit != null && await IsStillLiveAsync(hit.Sub)) return hit;
+            await _cache.KeyDeleteAsync(cacheKey);
+            return null;
+        }
 
         var pat = await db.PersonalAccessTokens
             .Include(p => p.ServiceAccount)
@@ -120,6 +128,44 @@ public class PatService(
     public async Task InvalidateAsync(string tokenHash)
     {
         await _cache.KeyDeleteAsync($"pat:{tokenHash}");
+    }
+
+    /// <summary>
+    /// Drops every cached introspection for a service account. Call after any change to its
+    /// roles — liveness is re-checked per request, but the role set is not.
+    /// </summary>
+    public async Task InvalidateServiceAccountAsync(Guid serviceAccountId)
+    {
+        var hashes = await db.PersonalAccessTokens
+            .Where(p => p.ServiceAccountId == serviceAccountId)
+            .Select(p => p.TokenHash)
+            .ToListAsync();
+        foreach (var hash in hashes)
+            await _cache.KeyDeleteAsync($"pat:{hash}");
+    }
+
+    /// <summary>
+    /// Cheap per-request liveness probe for a cached PAT: the service account must still exist
+    /// and be active, and its organisation must not be suspended.
+    /// </summary>
+    private async Task<bool> IsStillLiveAsync(string sub)
+    {
+        // Sub is "sa:{guid}" — see the IntrospectionResponse built below.
+        var raw = sub.StartsWith("sa:", StringComparison.Ordinal) ? sub[3..] : sub;
+        if (!Guid.TryParse(raw, out var saId)) return false;
+
+        var live = await db.ServiceAccounts
+            .Where(sa => sa.Id == saId)
+            .Select(sa => new
+            {
+                sa.Active,
+                OrgActive = sa.UserList == null
+                            || sa.UserList.Organisation == null
+                            || sa.UserList.Organisation.Active,
+            })
+            .FirstOrDefaultAsync();
+
+        return live is { Active: true, OrgActive: true };
     }
 
     // ── Service account keys (Hydra JWK) ──────────────────────────────────────

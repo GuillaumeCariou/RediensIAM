@@ -6,7 +6,15 @@ RediensIAM is built on three principles:
 
 1. **Stateless app, stateful infrastructure.** Pods carry no per-instance data. Postgres holds the durable state (users, orgs, projects, audit log). Redis/Dragonfly holds ephemeral shared state (sessions, rate-limit counters, OTP challenges, DataProtection keys). Any number of replicas can run side-by-side.
 2. **Standards over re-invention.** OAuth2/OIDC = Ory Hydra. Fine-grained authorisation = Ory Keto. Argon2id for passwords. WebAuthn level-2 for passkeys. We do not re-implement these.
-3. **Defence in depth, but no magic.** Every privileged path checks the database, not just the token. Every webhook URL is re-validated for SSRF on each delivery. Every redirect target passes through an allowlist. Static analysers (SecurityCodeScan, SonarAnalyzer.CSharp) run in CI.
+3. **Defence in depth, but no magic.** Every webhook URL is re-validated for SSRF on each delivery. Every redirect target passes through an allowlist. Static analysers (SecurityCodeScan, SonarAnalyzer.CSharp) run in CI.
+
+> **Gap — read before relying on principle 3.** This document previously claimed "every
+> privileged path checks the database, not just the token". That is **not** what the code
+> does. `RequireManagementLevelAttribute` authorises purely from `ext.roles` in the
+> introspected token; `KetoService.CheckAsync` is not on that path. A role revoked or an
+> org suspended after issuance stays effective until the token expires. Tracked as
+> finding A in [`2026-07-28-findings-securite-deploiement.md`](2026-07-28-findings-securite-deploiement.md)
+> and SEC-11 in [`2026-07-28-audit-complet.md`](2026-07-28-audit-complet.md).
 
 ---
 
@@ -59,7 +67,7 @@ Every other piece of state is in Postgres or Redis. A pod can die, restart, or b
 - DataProtection keys (so session cookies survive pod restart)
 - Rate-limit counters (per-IP, per-user)
 - OTP store (email + SMS codes, anti-replay)
-- PAT introspection cache (5 min TTL, invalidated on SA delete)
+- PAT introspection cache (5 min TTL, invalidated on PAT revoke and SA delete only — **not** on SA deactivate or org suspend; see SEC-08)
 - Hydra introspect cache (≤ 60 s, clamped by token `exp`)
 - Webhook job queue (Redis sorted-set)
 - OAuth2 social-login state store
@@ -122,14 +130,14 @@ The provider is a stock `Microsoft.Extensions.Configuration.ConfigurationProvide
 | From → To | Trust |
 |---|---|
 | Browser → Backend public `:5000` | Untrusted; rate-limited, anti-CSRF cookies, CSP |
-| Browser → Backend admin `:5001` | OIDC-authenticated, JWT-bearer only, no cookies |
+| Browser → Backend admin `:5001` | OIDC-authenticated, JWT-bearer. Not cookie-free in practice: `/account/mfa/totp/*` and `/account/mfa/webauthn/*` keep setup state in the ASP.NET session cookie, which `SameSite=Strict` blocks whenever `App__AdminSpaOrigin` differs from `App__PublicUrl` (see FUNC-07) |
 | Backend → Hydra admin `:4445` | Trusted (in-cluster service); NetworkPolicy locked |
 | Backend → Keto write `:4467` | Trusted (in-cluster service); NetworkPolicy locked |
 | Backend → Postgres `:5432` | Shared user `iam` with full DB; NetworkPolicy locked to {app, hydra, keto} pods |
 | Backend → Dragonfly `:6379` | Password-protected; NetworkPolicy locked to app pod only |
 | Hydra → Backend public `:5000` (consent flow) | Browser-mediated redirect; allowlist via `RedirectValidator` |
 | External IdP → Backend `/auth/saml/acs` | SAML assertion verified against pinned IdP certificate |
-| Operator → Backend admin (PAT / service account) | Bearer token; SA active + org active checked on every introspect |
+| Operator → Backend admin (PAT / service account) | Bearer token; SA active + org active checked on **cache miss only** (5 min TTL) |
 
 ---
 
@@ -163,8 +171,8 @@ Backend  →  hydra.AcceptLoginAsync → SafeRedirect into normal flow
 ### SAML login
 
 ```
-Browser  →  /auth/saml/start?idp_id=...
-Backend  →  AuthnRequest signed (if configured), redirect to IdP
+Browser  →  /auth/saml/start?idp_id=...   (idp_id is NOT checked against the challenge's project — SEC-02)
+Backend  →  AuthnRequest UNSIGNED (SP metadata advertises AuthnRequestsSigned="false"), redirect to IdP
 IdP      →  user consent
 IdP      →  POST SAMLResponse to /auth/saml/acs
 Backend  →  verify signature (pinned cert)
@@ -176,7 +184,7 @@ Backend  →  hydra.AcceptLoginAsync → Location header redirect into flow
 
 - TOTP — Otp.NET, anti-replay via Redis `TotpUsed` set
 - SMS OTP — rate-limited per user (default 3 / 10 min)
-- WebAuthn (passkey / security key) — Fido2NetLib, `userVerification = required` forced client-side
+- WebAuthn (passkey / security key) — Fido2NetLib. `UserVerification = Preferred`, **not** `Required` (`AuthController.WebAuthnOptions`), so a non-verifying authenticator still satisfies the factor. The assertion is also not bound server-side to the user pending MFA (SEC-05).
 - Backup codes — HMAC-SHA256, versioned format `sha256:{keyId}:{hex}` so pepper rotation is detectable
 
 Session cookie is rotated on every successful MFA completion to defeat session fixation.
@@ -211,9 +219,11 @@ This brings up a single-node k3s with Hydra + Keto + Postgres + Dragonfly + the 
 
 ## Testing
 
-- `dotnet test tests/RediensIAM.IntegrationTests/` — 1043 integration tests against real Postgres/Redis containers (Testcontainers) and WireMock Hydra/Keto stubs
+- `dotnet test tests/RediensIAM.IntegrationTests/` — 1093 tests against real Postgres/Redis containers (Testcontainers) and WireMock Hydra/Keto stubs. 1059 pass; the 34 in `Tests/Regression/` fail by design, one per open audit finding.
 - `cd tests/e2e && npm test` — Playwright E2E across login + admin SPAs
 
 ## Sonar
 
-The repo runs SonarQube via `bash sonar-scan.sh`. The `RediensIAM` backend project ships with `SecurityCodeScan.VS2019` + `SonarAnalyzer.CSharp` analyzers, so most issues are caught at build time before reaching the server.
+`bash sonar-scan.sh` publishes a **single** SonarQube project, `RediensIAM`, covering the C# backend and both SPAs in one analysis (the MSBuild scanner indexes non-MSBuild files under `sonar.projectBaseDir`). The former `Admin-SPA` / `Login-SPA` projects and their `sonar-project.properties` files are gone; delete those projects server-side.
+
+The backend ships `SecurityCodeScan.VS2019` + `SonarAnalyzer.CSharp`, so most C# issues surface at build time. Note that neither analyser models cross-tenant authorisation, so the findings in `2026-07-28-audit-complet.md` are invisible to them — a clean quality gate is not evidence of tenant isolation.

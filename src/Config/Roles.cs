@@ -27,4 +27,7 @@ public static class Roles
 
     // ── Well-known Hydra client IDs ───────────────────────────────────────────
     public const string AdminClientId = "client_admin_system";
+
+    /// <summary>Prefix of the Hydra client registered for a service account (see PatService.AddKeyAsync).</summary>
+    public const string ServiceAccountClientPrefix = "sa_";
 }

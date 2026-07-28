@@ -144,7 +144,7 @@ public class OrgWebhookController(
     {
         var wh = await db.Webhooks.FirstOrDefaultAsync(w => w.Id == id && w.OrgId == OrgId && w.ProjectId == null);
         if (wh == null) return NotFound();
-        await webhookService.DispatchAsync("webhook.test", new { webhook_id = id, message = "test" }, OrgId, null);
+        await webhookService.DispatchToWebhookAsync(id, "webhook.test", new { webhook_id = id, message = "test" });
         return Ok(new { message = "test_dispatched" });
     }
 
@@ -282,16 +282,36 @@ public static class WebhookUrlValidator
     public static bool IsPrivateIp(IPAddress ip)
     {
         if (IPAddress.IsLoopback(ip)) return true;
+
+        // Normalise IPv4-mapped IPv6 (::ffff:10.0.0.1) BEFORE the v6 branch. Without this the
+        // v6 branch returns early and every private IPv4 range is reachable by writing it in
+        // mapped form — the address resolves to exactly the same host.
+        if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+
         if (ip.AddressFamily == AddressFamily.InterNetworkV6)
         {
             if (ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal) return true;
-            return ip.Equals(IPAddress.IPv6Loopback);
+            if (ip.Equals(IPAddress.IPv6Loopback) || ip.Equals(IPAddress.IPv6Any)) return true;
+            var v6 = ip.GetAddressBytes();
+            // fc00::/7 — unique-local, the IPv6 equivalent of RFC1918. IsIPv6SiteLocal only
+            // covers the deprecated fec0::/10 and misses this entirely.
+            if ((v6[0] & 0xFE) == 0xFC) return true;
+            // 2001:db8::/32 — documentation range, never legitimate egress.
+            return v6[0] == 0x20 && v6[1] == 0x01 && v6[2] == 0x0D && v6[3] == 0xB8;
         }
+
         var b = ip.GetAddressBytes();
         return b[0] == 10
             || (b[0] == 172 && b[1] >= 16 && b[1] <= 31)
             || (b[0] == 192 && b[1] == 168)
-            || (b[0] == 169 && b[1] == 254)
-            || b[0] == 127;
+            || (b[0] == 169 && b[1] == 254)          // link-local + cloud metadata
+            || b[0] == 127
+            || b[0] == 0                              // "this network"
+            // 100.64.0.0/10 — CGNAT, and the range Tailscale hands out. This deployment
+            // exposes its admin ingress on 100.64.0.3.
+            || (b[0] == 100 && b[1] >= 64 && b[1] <= 127)
+            || (b[0] == 192 && b[1] == 0 && b[2] == 0)       // 192.0.0.0/24 IETF protocol assignments
+            || (b[0] == 198 && (b[1] & 0xFE) == 18)          // 198.18.0.0/15 benchmarking
+            || b[0] >= 224;                                   // multicast + reserved
     }
 }

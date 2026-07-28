@@ -20,7 +20,7 @@ interface Provider {
 
 interface SamlProvider {
   id: string; entity_id: string; metadata_url?: string;
-  email_attribute_name: string; name_attribute_name?: string;
+  email_attribute_name: string; display_name_attribute_name?: string;
   jit_provisioning: boolean; active: boolean;
 }
 
@@ -245,7 +245,7 @@ export default function Authentication() {
   const [addSamlOpen,   setAddSamlOpen]   = useState(false);
   const [samlForm,      setSamlForm]      = useState({
     entity_id: '', metadata_url: '', email_attribute_name: 'email',
-    name_attribute_name: '', jit_provisioning: true, active: true,
+    display_name_attribute_name: '', jit_provisioning: true, active: true,
   });
   const [samlSaving, setSamlSaving] = useState(false);
   const [samlError,  setSamlError]  = useState('');
@@ -395,14 +395,15 @@ export default function Authentication() {
         entity_id: samlForm.entity_id,
         metadata_url: samlForm.metadata_url || undefined,
         email_attribute_name: samlForm.email_attribute_name || 'email',
-        name_attribute_name: samlForm.name_attribute_name || undefined,
+        display_name_attribute_name: samlForm.display_name_attribute_name || undefined,
         jit_provisioning: samlForm.jit_provisioning,
-        active: samlForm.active,
+        // `active` is not accepted on create — the API always creates providers enabled.
+        // Use the PATCH endpoint to disable one afterwards.
       });
       if (res.error) { setSamlError(res.error_description ?? 'Failed to add provider.'); return; }
       setSamlProviders(prev => [...prev, res]);
       setAddSamlOpen(false);
-      setSamlForm({ entity_id: '', metadata_url: '', email_attribute_name: 'email', name_attribute_name: '', jit_provisioning: true, active: true });
+      setSamlForm({ entity_id: '', metadata_url: '', email_attribute_name: 'email', display_name_attribute_name: '', jit_provisioning: true, active: true });
     } catch { setSamlError('Something went wrong.'); }
     finally { setSamlSaving(false); }
   };
@@ -908,7 +909,7 @@ export default function Authentication() {
             </div>
             <div>
               <label className="iam-label" htmlFor="saml-name-attr">Name attribute <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>(optional)</span></label>
-              <input id="saml-name-attr" className="iam-input" value={samlForm.name_attribute_name} onChange={e => setSamlForm(f => ({ ...f, name_attribute_name: e.target.value }))} placeholder="displayName" />
+              <input id="saml-name-attr" className="iam-input" value={samlForm.display_name_attribute_name} onChange={e => setSamlForm(f => ({ ...f, display_name_attribute_name: e.target.value }))} placeholder="displayName" />
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

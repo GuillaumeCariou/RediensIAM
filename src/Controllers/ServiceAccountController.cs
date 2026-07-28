@@ -260,6 +260,8 @@ public class ServiceAccountController(
         };
         db.ServiceAccountRoles.Add(role);
         await db.SaveChangesAsync();
+        // Cached introspections still carry the old role set — drop them now.
+        await patService.InvalidateServiceAccountAsync(id);
         await audit.RecordAsync(body.OrgId, body.ProjectId, ActorId, "sa.role.assigned",
             AuditSa, id.ToString(), new() { ["role"] = body.Role });
         return Created($"/service-accounts/{id}/roles/{role.Id}",
@@ -287,6 +289,7 @@ public class ServiceAccountController(
 
         db.ServiceAccountRoles.Remove(role);
         await db.SaveChangesAsync();
+        await patService.InvalidateServiceAccountAsync(id);
         await audit.RecordAsync(role.OrgId, role.ProjectId, ActorId, "sa.role.removed",
             AuditSa, id.ToString(), new() { ["role"] = role.Role });
         return NoContent();

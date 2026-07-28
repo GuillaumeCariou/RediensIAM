@@ -2,7 +2,7 @@
 # Layered on top of values.yaml. Secrets in values.secret.yaml (gitignored).
 
 rediensiam:
-  publicUrl: "http://localhost"
+  publicUrl: "http://iam.localhost"
   adminUrl:  "http://localhost:30501"
   smtp:
     fromAddress: "noreply@localhost"
@@ -15,10 +15,10 @@ hydra:
     config:
       urls:
         self:
-          issuer:              "http://localhost"
-        login:                 "http://localhost/login"
-        consent:               "http://localhost/auth/consent"
-        logout:                "http://localhost/auth/logout"
+          issuer:              "http://iam.localhost"
+        login:                 "http://iam.localhost/login"
+        consent:               "http://iam.localhost/auth/consent"
+        logout:                "http://iam.localhost/auth/logout"
         post_logout_redirect:  "http://localhost:30501/admin/"
       serve:
         public:
