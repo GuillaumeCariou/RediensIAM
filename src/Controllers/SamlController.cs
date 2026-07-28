@@ -19,8 +19,16 @@ public class SamlController(
     AuditLogService audit,
     SamlService saml,
     AppConfig appConfig,
+    OtpCacheService pending,
     ILogger<SamlController> logger) : ControllerBase
 {
+    // The ACS is a cross-site POST issued by the IdP, so the ASP.NET session cookie
+    // (SameSite=Strict) is never sent with it. Holding the pending AuthnRequest ID in the
+    // session meant InResponseTo could never be validated and every SAML login failed with
+    // saml_no_pending_request. It lives in Redis instead, keyed by the request ID itself —
+    // which is exactly what the response echoes back in InResponseTo.
+    private const string SamlRequestPrefix = "saml_req";
+
     private Uri AcsUrl      => new($"{appConfig.PublicUrl}/auth/saml/acs");
     private string SpEntity => $"{appConfig.PublicUrl}/auth/saml/metadata";
 
@@ -62,7 +70,7 @@ public class SamlController(
 
         // Store request ID in session to validate InResponseTo on ACS
         var result = binding.Bind(authnRequest);
-        HttpContext.Session.SetString($"saml_req:{idp_id}", authnRequest.Id.Value);
+        await pending.StorePendingAsync(SamlRequestPrefix, authnRequest.Id.Value, idp_id.ToString());
 
         return result.ToActionResult();
     }
@@ -139,16 +147,21 @@ public class SamlController(
             if (idp == null) return (null, "saml_idp_not_found");
 
             var config = await saml.BuildConfigAsync(idp, SpEntity, AcsUrl);
-            var expectedReqId = HttpContext.Session.GetString($"saml_req:{idpId}");
-            HttpContext.Session.Remove($"saml_req:{idpId}");
-            if (string.IsNullOrEmpty(expectedReqId)) return (null, "saml_no_pending_request");
 
             var saml2AuthnResponse = new Saml2AuthnResponse(config);
             httpRequest.Binding.ReadSamlResponse(httpRequest, saml2AuthnResponse);
             if (saml2AuthnResponse.Status != Saml2StatusCodes.Success)
                 throw new AuthenticationException($"SAML status: {saml2AuthnResponse.Status}");
-            if (saml2AuthnResponse.InResponseTo?.Value != expectedReqId)
-                throw new AuthenticationException("InResponseTo mismatch");
+
+            // Consume the pending request: single use, so a captured response cannot be replayed.
+            var inResponseTo = saml2AuthnResponse.InResponseTo?.Value;
+            if (string.IsNullOrEmpty(inResponseTo)) return (null, "saml_no_pending_request");
+            var pendingIdpId = await pending.GetAndDeletePendingAsync(SamlRequestPrefix, inResponseTo);
+            if (string.IsNullOrEmpty(pendingIdpId)) return (null, "saml_no_pending_request");
+            // The response must come from the IdP the request was actually sent to.
+            if (!string.Equals(pendingIdpId, idpId.ToString(), StringComparison.OrdinalIgnoreCase))
+                throw new AuthenticationException("InResponseTo belongs to a different IdP");
+
             httpRequest.Binding.Unbind(httpRequest, saml2AuthnResponse);
 
             return (new SamlParsed(idp, loginChallenge, saml2AuthnResponse.ClaimsIdentity), null);

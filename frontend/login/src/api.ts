@@ -134,13 +134,15 @@ export async function completeInvite(token: string, password: string) {
   return parseJson(r);
 }
 
+// MFA enrolment mid-login. /account/* requires a bearer token, which the user does not have
+// yet at this point in the flow — these endpoints authenticate off the pending-MFA session.
 export async function setupTotp() {
-  const r = await apiFetch('/account/mfa/totp/setup', { method: 'POST' });
+  const r = await apiFetch('/auth/mfa/setup/totp/start', { method: 'POST' });
   return parseJson(r);
 }
 
 export async function confirmTotp(code: string) {
-  const r = await apiFetch('/account/mfa/totp/confirm', {
+  const r = await apiFetch('/auth/mfa/setup/totp/confirm', {
     method: 'POST',
     body: JSON.stringify({ code }),
   });

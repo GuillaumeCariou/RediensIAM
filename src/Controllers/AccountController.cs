@@ -30,6 +30,11 @@ public class AccountController(
     private IFido2 fido2                 => svc.Fido2;
     private LoginRateLimiter rateLimiter => svc.RateLimiter;
     private string Ip => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+    // Enrolment state lives in Redis keyed by the authenticated user, never in a cookie.
+    private const string TotpSetupPrefix     = "totp_setup";
+    private const string PhoneSetupPrefix    = "phone_setup_number";
+    private const string WebAuthnSetupPrefix = "webauthn_setup";
     // /account/* routes are protected by GatewayAuthMiddleware — Claims is always non-null here.
     private TokenClaims Claims => HttpContext.GetClaims()!;
 
@@ -123,7 +128,12 @@ public class AccountController(
         if (user == null) return NotFound();
         var secret = KeyGeneration.GenerateRandomKey(20);
         var encrypted = TotpEncryption.Encrypt(appConfig.TotpEncKey, secret);
-        HttpContext.Session.SetString("totp_setup_secret", encrypted);
+        // Server-side, keyed by the bearer token's user. The ASP.NET session cookie is
+        // SameSite=Strict, so it is not sent at all when the admin console runs on a different
+        // origin from the API (the documented NodePort / Tailscale / private-ingress layout) —
+        // enrolment simply could not complete there.
+        await otpCache.StorePendingAsync(TotpSetupPrefix, Claims.UserId, encrypted,
+            OtpCacheService.EnrolmentTtlSeconds);
         var base32 = Base32Encoding.ToString(secret);
         var issuer = "RediensIAM";
         if (Guid.TryParse(Claims.OrgId, out var orgGuid))
@@ -139,7 +149,7 @@ public class AccountController(
     public async Task<IActionResult> ConfirmTotp([FromBody] TotpConfirmRequest body)
     {
         var userId = Claims.ParsedUserId;
-        var encryptedSecret = HttpContext.Session.GetString("totp_setup_secret");
+        var encryptedSecret = await otpCache.PeekPendingAsync(TotpSetupPrefix, Claims.UserId);
         if (encryptedSecret == null) return BadRequest(new { error = "no_setup_session" });
         var secret = TotpEncryption.Decrypt(appConfig.TotpEncKey, encryptedSecret);
         var totp = new Totp(secret);
@@ -147,11 +157,11 @@ public class AccountController(
             return BadRequest(new { error = "invalid_code" });
         var user = await db.Users.FindAsync(userId);
         if (user == null) return NotFound();
+        await otpCache.DeletePendingAsync(TotpSetupPrefix, Claims.UserId);
         user.TotpSecret = encryptedSecret;
         user.TotpEnabled = true;
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
-        HttpContext.Session.Remove("totp_setup_secret");
         var backupCodes = Enumerable.Range(0, 8).Select(_ =>
         {
             var code = Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToUpper();
@@ -223,7 +233,8 @@ public class AccountController(
     {
         await otpCache.EnforceSmsRateLimitAsync(Claims.ParsedUserId);
         var code = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
-        HttpContext.Session.SetString("phone_setup_number", body.Phone);
+        await otpCache.StorePendingAsync(PhoneSetupPrefix, Claims.UserId, body.Phone,
+            OtpCacheService.EnrolmentTtlSeconds);
         await otpCache.StoreSessionOtpAsync("phone_setup", Claims.UserId, code);
         await smsService.SendOtpAsync(body.Phone, code, "phone_setup");
         return Ok(new { sent = true });
@@ -232,17 +243,17 @@ public class AccountController(
     [HttpPost("mfa/phone/verify")]
     public async Task<IActionResult> VerifyPhone([FromBody] PhoneVerifyRequest body)
     {
-        var phone = HttpContext.Session.GetString("phone_setup_number");
+        var phone = await otpCache.PeekPendingAsync(PhoneSetupPrefix, Claims.UserId);
         if (phone == null) return BadRequest(new { error = "no_setup_session" });
         if (!await otpCache.VerifySessionOtpAsync("phone_setup", Claims.UserId, body.Code))
             return BadRequest(new { error = "invalid_code" });
         var user = await db.Users.FindAsync(Claims.ParsedUserId);
         if (user == null) return NotFound();
+        await otpCache.DeletePendingAsync(PhoneSetupPrefix, Claims.UserId);
         user.Phone = phone;
         user.PhoneVerified = true;
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
-        HttpContext.Session.Remove("phone_setup_number");
         return Ok(new { message = "phone_verified" });
     }
 
@@ -293,7 +304,8 @@ public class AccountController(
             AuthenticatorSelection = AuthenticatorSelection.Default,
             AttestationPreference  = AttestationConveyancePreference.None
         });
-        HttpContext.Session.SetString("fido2.attestationOptions", options.ToJson());
+        await otpCache.StorePendingAsync(WebAuthnSetupPrefix, Claims.UserId, options.ToJson(),
+            OtpCacheService.EnrolmentTtlSeconds);
         return Ok(options);
     }
 
@@ -301,9 +313,8 @@ public class AccountController(
     public async Task<IActionResult> WebAuthnRegisterComplete([FromBody] WebAuthnCompleteRequest body)
     {
         var userId = Claims.ParsedUserId;
-        var json = HttpContext.Session.GetString("fido2.attestationOptions");
+        var json = await otpCache.GetAndDeletePendingAsync(WebAuthnSetupPrefix, Claims.UserId);
         if (json == null) return BadRequest(new { error = "no_registration_session" });
-        HttpContext.Session.Remove("fido2.attestationOptions");
         var options     = CredentialCreateOptions.FromJson(json);
         var attestation = JsonSerializer.Deserialize<AuthenticatorAttestationRawResponse>(
             JsonSerializer.Serialize(body.Response))!;

@@ -250,10 +250,19 @@ public class SmtpEmailService(
 public interface ISmsService
 {
     Task SendOtpAsync(string to, string code, string purpose);
+
+    /// <summary>
+    /// False when no real SMS provider is wired up. Callers MUST check this before offering SMS
+    /// as a factor: the stub silently drops messages, so a user whose only second factor is SMS
+    /// would be told to enter a code that never arrives and be locked out.
+    /// </summary>
+    bool IsConfigured { get; }
 }
 
 public class StubSmsService(ILogger<StubSmsService> logger) : ISmsService
 {
+    public bool IsConfigured => false;
+
     public Task SendOtpAsync(string to, string code, string purpose)
     {
         logger.LogWarning("[STUB SMS] To={To} Purpose={Purpose}", to, purpose);

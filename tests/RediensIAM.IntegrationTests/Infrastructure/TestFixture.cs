@@ -532,6 +532,9 @@ public record SentNewDeviceAlert(string To, string IpAddress);
 /// <summary>Captures SMS OTP codes so tests can complete the MFA flow.</summary>
 public class StubSmsService : ISmsService
 {
+    /// <summary>True: this stub records messages, so tests can complete SMS flows.</summary>
+    public bool IsConfigured => true;
+
     public List<SentSms> SentMessages { get; } = [];
 
     public Task SendOtpAsync(string to, string code, string purpose)

@@ -51,6 +51,7 @@ public class AuthController(
     private const string CtxOrgId            = "org_id";
     private const string CtxProjectId        = "project_id";
     private const string CtxUserId           = "user_id";
+    private const string MfaSetupTotpPrefix  = "mfa_setup_totp";
 
     private string Ip => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
@@ -337,7 +338,8 @@ public class AuthController(
             return Ok(new { requires_mfa = true, mfa_type = "totp" });
         }
 
-        if (user.PhoneVerified && !string.IsNullOrEmpty(user.Phone))
+        // Only offer SMS when a real provider can actually deliver it (see ISmsService.IsConfigured).
+        if (user.PhoneVerified && !string.IsNullOrEmpty(user.Phone) && smsService.IsConfigured)
         {
             SetMfaSession(user.Id.ToString(), loginChallenge, projectId);
             var smsCode = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
@@ -436,6 +438,8 @@ public class AuthController(
         if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
             return StatusCode(429, new { error = ErrRateLimited });
         var user = await db.Users.FindAsync(userGuid);
+        if (!smsService.IsConfigured)
+            return BadRequest(new { error = "sms_provider_not_configured" });
         if (user == null || !user.PhoneVerified || string.IsNullOrEmpty(user.Phone))
             return BadRequest(new { error = "phone_not_configured" });
         await otp.EnforceSmsRateLimitAsync(userGuid);
@@ -507,6 +511,96 @@ public class AuthController(
         await otp.StoreTotpUsedAsync(user.Id, body.Code);
         return await CompleteMfaLoginAsync(user, userGuid, challenge, projectId, "user.login.mfa");
     }
+
+    // ── MFA enrolment during login ────────────────────────────────────────────
+    //
+    // Reached when a project sets RequireMfa and the user has no factor yet: Login returns
+    // { requires_mfa_setup: true } and the login SPA must enrol one before the login can finish.
+    // The SPA used to call /account/mfa/totp/*, which sits behind GatewayAuthMiddleware and
+    // needs a bearer token the user does not have yet — mid-login is exactly when they have no
+    // token. These endpoints authenticate off the pending-MFA session instead.
+
+    [HttpPost("mfa/setup/totp/start")]
+    public async Task<IActionResult> SetupTotpDuringLogin()
+    {
+        var userId = HttpContext.Session.GetString(MfaPendingUser);
+        if (userId == null || !Guid.TryParse(userId, out var userGuid))
+            return BadRequest(new { error = ErrNoMfaSession });
+
+        var user = await db.Users.FindAsync(userGuid);
+        if (user == null) return NotFound();
+
+        var secret    = OtpNet.KeyGeneration.GenerateRandomKey(20);
+        var encrypted = TotpEncryption.Encrypt(appConfig.TotpEncKey, secret);
+        await otp.StorePendingAsync(MfaSetupTotpPrefix, userId, encrypted, OtpCacheService.EnrolmentTtlSeconds);
+
+        var issuer = "RediensIAM";
+        var projectId = HttpContext.Session.GetString(MfaPendingProject);
+        if (Guid.TryParse(projectId, out var pid))
+        {
+            var org = await db.Projects.Where(p => p.Id == pid).Select(p => p.Organisation!.Name).FirstOrDefaultAsync();
+            if (!string.IsNullOrEmpty(org)) issuer = org;
+        }
+
+        var base32 = Base32Encoding.ToString(secret);
+        return Ok(new
+        {
+            otpauth_url = $"otpauth://totp/{Uri.EscapeDataString(issuer)}:{Uri.EscapeDataString(user.Email)}?secret={base32}&issuer={Uri.EscapeDataString(issuer)}",
+            secret      = base32,
+        });
+    }
+
+    [HttpPost("mfa/setup/totp/confirm")]
+    public async Task<IActionResult> ConfirmTotpDuringLogin([FromBody] TotpVerifyRequest body)
+    {
+        var userId    = HttpContext.Session.GetString(MfaPendingUser);
+        var challenge = HttpContext.Session.GetString(MfaPendingChallenge);
+        var projectId = HttpContext.Session.GetString(MfaPendingProject);
+        if (userId == null || challenge == null || projectId == null || !Guid.TryParse(userId, out var userGuid))
+            return BadRequest(new { error = ErrNoMfaSession });
+
+        if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
+            return StatusCode(429, new { error = ErrRateLimited });
+
+        var encrypted = await otp.PeekPendingAsync(MfaSetupTotpPrefix, userId);
+        if (encrypted == null) return BadRequest(new { error = "no_setup_session" });
+
+        var totp = new Totp(TotpEncryption.Decrypt(appConfig.TotpEncKey, encrypted));
+        if (!totp.VerifyTotp(body.Code, out _, new VerificationWindow(1, 1)))
+        {
+            await rateLimiter.RecordFailureAsync(Ip, userGuid);
+            return BadRequest(new { error = ErrInvalidCode });
+        }
+
+        var user = await db.Users.FindAsync(userGuid);
+        if (user == null) return NotFound();
+
+        await otp.DeletePendingAsync(MfaSetupTotpPrefix, userId);
+        user.TotpSecret  = encrypted;
+        user.TotpEnabled = true;
+        user.UpdatedAt   = DateTimeOffset.UtcNow;
+
+        var backupCodes = Enumerable.Range(0, 8).Select(_ =>
+        {
+            var code = Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToUpperInvariant();
+            return (code, hash: passwords.HashBackupCode(code));
+        }).ToList();
+        db.BackupCodes.RemoveRange(db.BackupCodes.Where(c => c.UserId == userGuid));
+        db.BackupCodes.AddRange(backupCodes.Select(c => new BackupCode
+        {
+            UserId = userGuid, CodeHash = c.hash, CreatedAt = DateTimeOffset.UtcNow,
+        }));
+        await db.SaveChangesAsync();
+
+        // Enrolment satisfies the factor for this login — the code was just proven.
+        var result = await CompleteMfaLoginAsync(user, userGuid, challenge, projectId, "user.mfa.enrolled");
+        return result is OkObjectResult ok
+            ? Ok(new { redirect_to = RedirectFrom(ok.Value), backup_codes = backupCodes.Select(c => c.code).ToList() })
+            : result;
+    }
+
+    private static string? RedirectFrom(object? payload) =>
+        payload?.GetType().GetProperty("redirect_to")?.GetValue(payload) as string;
 
     [HttpGet("consent")]
     public async Task<IActionResult> GetConsent([FromQuery] string consent_challenge)
@@ -716,6 +810,11 @@ public class AuthController(
 
     private async Task<IActionResult> RegisterWithVerificationAsync(Project project, string projectId, string email, RegisterRequest body)
     {
+        // SMS-only verification with no real provider means the code is never delivered and the
+        // user can never finish registering. Refuse up front rather than stranding them.
+        if (!project.EmailVerificationEnabled && !smsService.IsConfigured)
+            return StatusCode(503, new { error = "sms_provider_not_configured" });
+
         var sessionId = Guid.NewGuid().ToString("N");
         var code = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
         var pending = System.Text.Json.JsonSerializer.Serialize(new
