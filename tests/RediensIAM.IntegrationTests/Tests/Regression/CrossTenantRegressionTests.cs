@@ -219,6 +219,61 @@ public class CrossTenantRegressionTests(TestFixture fixture)
         res.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
+    // ── REG-SEC-11: authorisation must be live, not a token snapshot ─────────
+
+    /// <summary>
+    /// RequireManagementLevelAttribute used to authorise purely from <c>ext.roles</c>, a snapshot
+    /// taken at token issuance. Revoking super_admin — or suspending the org — therefore had no
+    /// effect until the token expired. The same token must stop working once Keto no longer
+    /// grants the role.
+    /// </summary>
+    [Fact]
+    public async Task ManagementApi_AfterRoleRevokedInKeto_IsRejected()
+    {
+        var (_, orgList) = await fixture.Seed.CreateOrgAsync();
+        var user = await fixture.Seed.CreateUserAsync(orgList.Id);
+        await fixture.FlushCacheAsync();
+
+        fixture.Keto.AllowAll();
+        var client = fixture.ClientWithToken(fixture.Seed.SuperAdminToken(user.Id));
+
+        (await client.GetAsync("/admin/organizations")).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Role revoked upstream. The bearer token is untouched and still carries super_admin.
+        fixture.Keto.DenyAll();
+        await fixture.FlushCacheAsync();   // skip the 30s decision cache
+
+        var res = await client.GetAsync("/admin/organizations");
+
+        res.StatusCode.Should().Be(HttpStatusCode.Forbidden,
+            "a revoked role must take effect without waiting for the token to expire");
+    }
+
+    /// <summary>
+    /// Keto being unreachable must not fall back to trusting the token's own claims.
+    /// </summary>
+    [Fact]
+    public async Task ManagementApi_WhenKetoIsUnreachable_FailsClosed()
+    {
+        var (_, orgList) = await fixture.Seed.CreateOrgAsync();
+        var user = await fixture.Seed.CreateUserAsync(orgList.Id);
+        await fixture.FlushCacheAsync();
+
+        fixture.Keto.SimulateOutage();
+        try
+        {
+            var client = fixture.ClientWithToken(fixture.Seed.SuperAdminToken(user.Id));
+            var res = await client.GetAsync("/admin/organizations");
+
+            res.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        }
+        finally
+        {
+            fixture.Keto.AllowAll();
+            await fixture.FlushCacheAsync();
+        }
+    }
+
     /// <summary>
     /// Hydra's introspection endpoint reports refresh tokens as active when no
     /// <c>token_type_hint</c> is supplied. A refresh token must never authenticate an API call.

@@ -32,12 +32,12 @@
     <!-- Transitive via Swashbuckle; pinned to patch GHSA-v5pm-xwqc-g5wc.
          Stay on 2.x — Swashbuckle 10 is built against Microsoft.OpenApi 2.x and 3.x is a
          breaking-change line (IOpenApiSchema, JsonSchemaType, *Reference types). -->
-    <PackageReference Include="Microsoft.OpenApi" Version="2.11.0" />
+    <PackageReference Include="Microsoft.OpenApi" Version="3.9.0" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.1" />
     <PackageReference Include="Otp.NET" Version="1.4.1" />
     <PackageReference Include="StackExchange.Redis" Version="2.12.14" />
     <PackageReference Include="prometheus-net.AspNetCore" Version="8.2.1" />
-    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.7" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.17.0" />
   </ItemGroup>
 

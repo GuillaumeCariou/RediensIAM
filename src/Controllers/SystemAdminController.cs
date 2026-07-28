@@ -27,6 +27,7 @@ public class SystemAdminController(
     private AuditLogService audit       => svc.Audit;
     private IEmailService emailService  => svc.Email;
     private IDistributedCache cache     => svc.Cache;
+    private LiveAuthorizationService live => svc.Live;
     private static readonly string[] OAuth2GrantTypes   = ["authorization_code", "refresh_token"];
     private static readonly string[] OAuth2ResponseTypes = ["code"];
     private static readonly string[] BuiltInScopes       = ["openid", "profile", "offline_access"];
@@ -97,6 +98,7 @@ var org = await db.Organisations.FindAsync(id);
         if (body.AuditRetentionDays.HasValue) org.AuditRetentionDays = body.AuditRetentionDays == -1 ? null : body.AuditRetentionDays;
         org.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
+        await audit.RecordAsync(id, null, GetActorId(), "org.updated", AuditOrg, id.ToString());
         return Ok(new { org.Id, org.Name, org.AuditRetentionDays });
     }
 
@@ -386,6 +388,7 @@ var ul   = await db.UserLists.FindAsync(id);
 var ul = new UserList { Name = body.Name, OrgId = body.OrgId, Immovable = false, CreatedAt = DateTimeOffset.UtcNow };
         db.UserLists.Add(ul);
         await db.SaveChangesAsync();
+        await audit.RecordAsync(body.OrgId, null, GetActorId(), "userlist.created", "userlist", ul.Id.ToString());
         return Created($"/admin/userlists/{ul.Id}", new { ul.Id, ul.Name });
     }
 
@@ -426,6 +429,9 @@ var orgRoles = await db.OrgRoles.Where(r => r.OrgId == id).Include(r => r.User).
         await db.SaveChangesAsync();
         var ketoSubject = body.ScopeId.HasValue ? $"user:{body.UserId}|project:{body.ScopeId}" : $"user:{body.UserId}";
         await keto.WriteRelationTupleAsync(Roles.KetoOrgsNamespace, id.ToString(), body.Role, ketoSubject);
+        await live.InvalidateAsync(body.UserId);
+        await audit.RecordAsync(id, null, GetActorId(), "role.management.assigned", "user", body.UserId.ToString(),
+            new() { ["role"] = body.Role });
         return Created($"/admin/organizations/{id}/admins/{role.Id}", new { role.Id });
     }
 
@@ -438,6 +444,9 @@ var role = await db.OrgRoles.FirstOrDefaultAsync(r => r.Id == roleId && r.OrgId 
         await db.SaveChangesAsync();
         var ketoSubject = role.ScopeId.HasValue ? $"user:{role.UserId}|project:{role.ScopeId}" : $"user:{role.UserId}";
         await keto.DeleteRelationTupleAsync(Roles.KetoOrgsNamespace, id.ToString(), role.Role, ketoSubject);
+        await live.InvalidateAsync(role.UserId);
+        await audit.RecordAsync(id, null, GetActorId(), "role.management.removed", "user", role.UserId.ToString(),
+            new() { ["role"] = role.Role });
         return NoContent();
     }
 
@@ -656,6 +665,8 @@ var roles = await db.Roles
         };
         db.Roles.Add(role);
         await db.SaveChangesAsync();
+        await audit.RecordAsync(null, id, GetActorId(), "role.created", "role", role.Id.ToString(),
+            new() { ["name"] = role.Name });
         return Created($"/admin/projects/{id}/roles/{role.Id}", new { role.Id, role.Name, role.Rank });
     }
 
@@ -666,6 +677,8 @@ var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == rid && r.ProjectId ==
         if (role == null) return NotFound();
         db.Roles.Remove(role);
         await db.SaveChangesAsync();
+        await audit.RecordAsync(null, id, GetActorId(), "role.deleted", "role", rid.ToString(),
+            new() { ["name"] = role.Name });
         return NoContent();
     }
 
@@ -854,6 +867,7 @@ var client = await hydra.CreateOAuth2ClientAsync(new
             scope = body.Scope ?? "openid profile offline_access",
             token_endpoint_auth_method = body.GrantTypes.Contains("client_credentials") ? "private_key_jwt" : "none",
         });
+        await audit.RecordAsync(null, null, GetActorId(), "oauth2_client.created", "oauth2_client", body.ClientName);
         return Ok(client);
     }
 
@@ -869,6 +883,7 @@ var client = await hydra.GetOAuth2ClientAsync(id);
     public async Task<IActionResult> DeleteHydraClient(string id)
     {
 await hydra.DeleteOAuth2ClientAsync(id);
+        await audit.RecordAsync(null, null, GetActorId(), "oauth2_client.deleted", "oauth2_client", id);
         return NoContent();
     }
 

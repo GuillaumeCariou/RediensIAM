@@ -759,7 +759,7 @@ public class EntityModelTests
     // ── RequireManagementLevelAttribute — null claims path (lines 20-22) ─────
 
     [Fact]
-    public void RequireManagementLevelAttribute_NullClaims_ReturnsUnauthorized()
+    public async Task RequireManagementLevelAttribute_NullClaims_ReturnsUnauthorized()
     {
         var attr        = new RequireManagementLevelAttribute(ManagementLevel.OrgAdmin);
         var httpContext = new DefaultHttpContext();
@@ -771,9 +771,15 @@ public class EntityModelTests
             actionContext, new List<IFilterMetadata>(),
             new Dictionary<string, object?>(), controller: null!);
 
-        attr.OnActionExecuting(execContext);
+        var nextCalled = false;
+        await attr.OnActionExecutionAsync(execContext, () =>
+        {
+            nextCalled = true;
+            return Task.FromResult<ActionExecutedContext>(null!);
+        });
 
         execContext.Result.Should().BeOfType<UnauthorizedObjectResult>();
+        nextCalled.Should().BeFalse("the action must not run without claims");
     }
 
     // ── WebhookDispatcherService — Redis recovery path (lines 143-152) ───────

@@ -52,10 +52,19 @@ public sealed class KetoStub : IDisposable
             .Given(Request.Create().WithPath("/relation-tuples/check").UsingGet())
             .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { allowed = true }));
 
-        // List: always empty
+        // List: returns a tuple, so HasAnyRelationAsync agrees with CheckAsync.
+        // These two must not disagree: the live authorisation check uses the list endpoint for
+        // org_admin / project_admin, so an "allow all" stub that listed nothing meant every
+        // non-super-admin request was denied.
         _readServer
             .Given(Request.Create().WithPath("/relation-tuples").UsingGet())
-            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { relation_tuples = Array.Empty<object>() }));
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new
+            {
+                relation_tuples = new[]
+                {
+                    new { @namespace = "Projects", @object = "stub-object", relation = "manager", subject_id = "user:stub" }
+                }
+            }));
 
         // Write (insert/delete): always success
         _writeServer
@@ -134,6 +143,18 @@ public sealed class KetoStub : IDisposable
         _readServer
             .Given(Request.Create().WithPath("/relation-tuples").UsingGet())
             .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { relation_tuples = Array.Empty<object>() }));
+    }
+
+    /// <summary>Makes every read return 500 — models Keto being down, for fail-closed tests.</summary>
+    public void SimulateOutage()
+    {
+        _readServer.Reset();
+        _readServer
+            .Given(Request.Create().WithPath("/relation-tuples/check").UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(500));
+        _readServer
+            .Given(Request.Create().WithPath("/relation-tuples").UsingGet())
+            .RespondWith(Response.Create().WithStatusCode(500));
     }
 
     // ── Health failure simulation ─────────────────────────────────────────────

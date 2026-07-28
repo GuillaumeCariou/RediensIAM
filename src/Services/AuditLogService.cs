@@ -3,7 +3,7 @@ using RediensIAM.Data.Entities;
 
 namespace RediensIAM.Services;
 
-public class AuditLogService(RediensIamDbContext db, IHttpContextAccessor http, WebhookService webhookService)
+public class AuditLogService(IServiceScopeFactory scopeFactory, IHttpContextAccessor http, WebhookService webhookService)
 {
     public async Task RecordAsync(
         Guid? orgId, Guid? projectId, Guid? actorId, string action,
@@ -11,6 +11,13 @@ public class AuditLogService(RediensIamDbContext db, IHttpContextAccessor http, 
         Dictionary<string, object>? metadata = null)
     {
         var ctx = http.HttpContext;
+
+        // Own scope, own DbContext. Writing the audit row through the request's DbContext meant
+        // SaveChangesAsync() here also committed whatever the caller had pending — including
+        // half-applied changes it had not decided to persist yet.
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<RediensIamDbContext>();
+
         db.AuditLogs.Add(new AuditLog
         {
             OrgId = orgId,

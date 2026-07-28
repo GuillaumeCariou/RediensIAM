@@ -33,6 +33,7 @@ public class OrgController(
     private AuditLogService audit       => svc.Audit;
     private IEmailService emailService  => svc.Email;
     private IDistributedCache cache     => svc.Cache;
+    private LiveAuthorizationService live => svc.Live;
     private static readonly string[] BuiltInScopes = ["openid", "profile", "offline_access"];
     private const string KindInvite      = "invite";
     private const string AuditOrg        = "organisation";
@@ -605,6 +606,7 @@ public class OrgController(
         if (body.Role == Roles.SuperAdmin) return StatusCode(403, new { error = "cannot_grant_super_admin" });
         
         await keto.AssignManagementRoleAsync(ActorId, body.UserId, OrgId, body.Role, body.ScopeId);
+        await live.InvalidateAsync(body.UserId);
         return Ok(new { message = "role_assigned" });
     }
 
@@ -653,6 +655,9 @@ public class OrgController(
         // Write new Keto tuple
         var newSubject = role.ScopeId.HasValue ? $"user:{role.UserId}|project:{role.ScopeId}" : $"user:{role.UserId}";
         await keto.WriteRelationTupleAsync(Roles.KetoOrgsNamespace, orgId.ToString(), role.Role, newSubject);
+        await live.InvalidateAsync(role.UserId);
+        await audit.RecordAsync(orgId, null, ActorId, "role.management.assigned", "user", role.UserId.ToString(),
+            new() { ["role"] = role.Role });
 
         return Ok(new { role.Id, role.Role, role.ScopeId });
     }
@@ -661,7 +666,9 @@ public class OrgController(
     public async Task<IActionResult> RemoveOrgListManager(Guid id)
     {
         
+        var removed = await db.OrgRoles.AsNoTracking().FirstOrDefaultAsync(r => r.Id == id && r.OrgId == OrgId);
         await keto.RemoveManagementRoleAsync(ActorId, id, OrgId);
+        if (removed != null) await live.InvalidateAsync(removed.UserId);
         return NoContent();
     }
 

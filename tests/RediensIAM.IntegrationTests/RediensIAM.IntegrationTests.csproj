@@ -14,7 +14,7 @@
        Scriban.Signed + OpenTelemetry come from WireMock.Net, System.Security.Cryptography.Xml
        from ITfoxtec.Identity.Saml2, Microsoft.OpenApi from Swashbuckle (kept on 2.x — see src). -->
   <ItemGroup>
-    <PackageReference Include="Microsoft.OpenApi" Version="2.11.0" />
+    <PackageReference Include="Microsoft.OpenApi" Version="3.9.0" />
     <PackageReference Include="Scriban.Signed" Version="7.2.5" />
     <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
     <PackageReference Include="OpenTelemetry" Version="1.15.3" />

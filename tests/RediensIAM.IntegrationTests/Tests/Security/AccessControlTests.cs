@@ -129,21 +129,29 @@ public class AccessControlTests(TestFixture fixture)
     // ── Keto permission denial ────────────────────────────────────────────────
 
     [Fact]
-    public async Task SuperAdminToken_KetoDeniesSuperAdmin_StillAccessed()
+    public async Task SuperAdminToken_KetoDeniesSuperAdmin_IsRejected()
     {
-        // Super-admin role is checked via JWT claims (RequireManagementLevel filter),
-        // NOT via Keto. DenyAll only affects Keto read checks; the admin endpoints
-        // do not consult Keto for super-admin level access.
+        // RequireManagementLevel re-verifies the claimed level against Keto on every request
+        // (LiveAuthorizationService). A token still carrying super_admin must stop working the
+        // moment Keto no longer grants it — previously the claim alone was enough until expiry.
         var (org, orgList) = await fixture.Seed.CreateOrgAsync();
         var user           = await fixture.Seed.CreateUserAsync(orgList.Id);
         var token          = fixture.Seed.SuperAdminToken(user.Id);
         var client         = fixture.ClientWithToken(token);
         fixture.Keto.DenyAll();
+        await fixture.FlushCacheAsync();   // bypass the short-lived decision cache
 
-        var res = await client.GetAsync("/admin/organizations");
+        try
+        {
+            var res = await client.GetAsync("/admin/organizations");
 
-        // Super-admin bypasses Keto; endpoint returns 200 regardless of Keto state
-        res.StatusCode.Should().Be(HttpStatusCode.OK);
+            res.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        }
+        finally
+        {
+            fixture.Keto.AllowAll();
+            await fixture.FlushCacheAsync();
+        }
     }
 
     // ── IDOR prevention ───────────────────────────────────────────────────────

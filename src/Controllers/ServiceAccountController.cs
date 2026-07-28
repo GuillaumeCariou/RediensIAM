@@ -180,6 +180,8 @@ public class ServiceAccountController(
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
         if (sa == null || !await CanAccessAsync(sa)) return NotFound();
         var (raw, pat) = await patService.GenerateAsync(id, body.Name, body.ExpiresAt, ActorId);
+        await audit.RecordAsync(sa.UserList.OrgId, null, ActorId, "sa.pat.created", AuditSa, id.ToString(),
+            new() { ["pat_id"] = pat.Id.ToString(), ["expires_at"] = pat.ExpiresAt?.ToString("O") ?? "never" });
         return Ok(new { pat.Id, pat.Name, token = raw, pat.ExpiresAt, message = "store_this_token_shown_once" });
     }
 
@@ -188,8 +190,11 @@ public class ServiceAccountController(
     {
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
         if (sa == null || !await CanAccessAsync(sa)) return NotFound();
-        try { await patService.RevokePat(patId, id); return NoContent(); }
+        try { await patService.RevokePat(patId, id); }
         catch (KeyNotFoundException) { return NotFound(); }
+        await audit.RecordAsync(sa.UserList.OrgId, null, ActorId, "sa.pat.revoked", AuditSa, id.ToString(),
+            new() { ["pat_id"] = patId.ToString() });
+        return NoContent();
     }
 
     // ── API keys (Hydra JWK) ──────────────────────────────────────────────────
@@ -207,8 +212,11 @@ public class ServiceAccountController(
     {
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
         if (sa == null || !await CanAccessAsync(sa)) return NotFound();
-        try { var clientId = await patService.AddKeyAsync(sa, body.Jwk); return Ok(new { client_id = clientId }); }
+        string clientId;
+        try { clientId = await patService.AddKeyAsync(sa, body.Jwk); }
         catch (Exception ex) { return BadRequest(new { error = "hydra_error", detail = ex.Message }); }
+        await audit.RecordAsync(sa.UserList.OrgId, null, ActorId, "sa.key.added", AuditSa, id.ToString());
+        return Ok(new { client_id = clientId });
     }
 
     [HttpDelete("{id}/api-keys")]
@@ -217,6 +225,7 @@ public class ServiceAccountController(
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
         if (sa == null || !await CanAccessAsync(sa)) return NotFound();
         await patService.RemoveKeyAsync(sa);
+        await audit.RecordAsync(sa.UserList.OrgId, null, ActorId, "sa.key.removed", AuditSa, id.ToString());
         return Ok(new { message = "key_removed" });
     }
 

@@ -71,6 +71,7 @@ builder.Services.AddScoped<KetoService>();
 builder.Services.AddScoped<AuditLogService>();
 builder.Services.AddScoped<BreachCheckService>();
 builder.Services.AddScoped<PasswordPolicyService>();
+builder.Services.AddScoped<LiveAuthorizationService>();
 builder.Services.AddScoped<SamlService>();
 builder.Services.AddSingleton(_ => System.Threading.Channels.Channel.CreateUnbounded<RediensIAM.Services.WebhookJob>());
 builder.Services.AddSingleton<IWebhookQueue, RedisWebhookQueue>();
