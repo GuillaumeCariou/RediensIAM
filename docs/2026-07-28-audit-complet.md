@@ -19,12 +19,22 @@ Chaque finding porte un identifiant (`SEC-nn` / `FUNC-nn`) et — quand il est r
 dotnet test tests/RediensIAM.IntegrationTests/ --filter "FullyQualifiedName~Tests.Regression"
 ```
 
-**État après correction : 1093 tests, 1093 verts.** Les 34 tests de régression échouaient à la
-rédaction (un par finding ouvert) ; ils passent tous maintenant. Zéro warning de build, zéro
-paquet NuGet vulnérable.
+**État après correction : 57 tests de régression, tous verts.** Chacun échouait à la rédaction —
+un par finding. Zéro warning de build, zéro paquet NuGet vulnérable.
 
-Les findings marqués **OUVERT** ci-dessous n'ont pas de test rouge : ils demandent une décision
-d'architecture ou un composant qui n'existe pas encore (voir §8).
+Tous les findings de ce rapport sont corrigés, en trois lots :
+
+| Commit | Contenu |
+|---|---|
+| `95f160d` | SEC-01→10, SEC-12, SEC-13 (a-i), FUNC-01/02/03/04/09/10 |
+| `41edac4` | SEC-11 (autorisation live via Keto), SEC-13 j/k/l (audit) |
+| `02f884d` | FUNC-05/06/07/08 (états de flux liés au cookie, SMS non livrable) |
+
+Restent ouverts, hors périmètre de ce rapport : le **finding B** de la note du 28/07 (pas
+d'endpoint d'introspection RFC 7662 pour un resource server externe) et le SDK décrit au §5 —
+ce sont des ajouts, pas des correctifs. Voir §8.
+
+> La suite complète (1095 tests) n'a pas été rejouée sur `02f884d` : à lancer avant merge.
 
 ---
 

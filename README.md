@@ -145,6 +145,12 @@ True secrets stay env-only: `secrets.databaseUrl`, `secrets.cacheUrl`, `secrets.
 
 All keys below can be overridden in `values.secret.yaml` or via `--set` on the command line.
 
+> The `env.*` rows are the config keys the app actually reads — the source of truth is
+> `src/Config/AppConfig.cs` (plus `App__TrustedProxies`, read in `src/Program.cs`). Helm maps
+> `env.Foo__Bar` to the `Foo:Bar` configuration key. Anything in `src/Config/InstanceConfiguration.cs`
+> is additionally persisted to the `instances` table on first boot and read from there afterwards.
+> When adding a setting to `AppConfig`, add its row here in the same change.
+
 | Key | Default | Description |
 |-----|---------|-------------|
 | `appUrl` | `http://localhost` | Public base URL (login SPA, Hydra issuer, user-facing endpoints) |
@@ -170,6 +176,28 @@ All keys below can be overridden in `values.secret.yaml` or via `--set` on the c
 | `env.Hydra__PublicUrl` | `http://rediensiam-hydra-public:4444` | Hydra public API URL (in-cluster) |
 | `env.Keto__ReadUrl` | `http://rediensiam-keto-read:4466` | Keto read API URL |
 | `env.Keto__WriteUrl` | `http://rediensiam-keto-write:4467` | Keto write API URL |
+| `env.App__TrustedProxies` | *(none)* | **Required in Production** — CSV of CIDRs whose `X-Forwarded-*` headers are honoured. The app refuses to start without it: silently trusting RFC1918 lets any in-cluster pod spoof `X-Forwarded-For` and bypass per-IP rate limiting and project IP allowlists. k3s example: `10.42.0.0/16,10.43.0.0/16` |
+| `env.Security__ManagementClientIds` | `client_admin_system` | CSV of OAuth2 client IDs allowed on `/admin`, `/org`, `/project`, `/service-accounts`, `/api/manage`. Tokens minted for a tenant's own client are rejected there. Service-account clients (`sa_*`) are always accepted |
+| `env.Security__MaxLoginAttempts` | `5` | Failures before lockout (per IP and per account) |
+| `env.Security__LockoutMinutes` | `15` | Lockout duration, and the per-IP rate-limit window |
+| `env.Security__OtpTtlSeconds` | `300` | Lifetime of email/SMS one-time codes. Quoted verbatim in the emails |
+| `env.Security__MaxSmsPerWindow` | `3` | SMS sends allowed per user per window |
+| `env.Security__SmsWindowMinutes` | `10` | SMS rate-limit window |
+| `env.Security__ArgonTimeCost` | `3` | Argon2id iterations |
+| `env.Security__ArgonMemoryCost` | `65536` | Argon2id memory in KiB (64 MiB) |
+| `env.Security__ArgonParallelism` | `4` | Argon2id lanes |
+| `env.Security__NewDeviceCacheDays` | `90` | How long a device fingerprint counts as known before a new-device alert fires again |
+| `env.Security__PatPrefix` | `rediens_pat_` | Personal-access-token prefix. The gateway routes a bearer token to PAT introspection on this prefix |
+| `env.Cache__InstanceName` | `rediensiam:` | Redis key prefix |
+| `env.Cache__PatTtlMinutes` | `5` | PAT introspection cache TTL. Liveness (account active, org not suspended) is re-checked per request regardless |
+| `env.Audit__RetentionDays` | `365` | Global audit retention. An org may override it via `/org/settings` |
+| `env.Invitations__ExpiryHours` | `72` | Invite link lifetime. Quoted verbatim in the invitation email |
+| `env.Webhooks__TimeoutSeconds` | `10` | Per-attempt webhook HTTP timeout (retries at 2s, 8s, 32s) |
+| `env.Export__RateLimitMinutes` | `1` | Minimum gap between CSV/JSON exports per actor per resource |
+| `env.Social__GithubUserApiUrl` | `https://api.github.com/user` | Override for GitHub Enterprise |
+| `env.Social__GithubEmailsApiUrl` | `https://api.github.com/user/emails` | Override for GitHub Enterprise |
+| `env.INSTANCE_ID` | `default` | Which row of the `instances` table this pod loads |
+| `env.RECONFIGURE_FROM_ENV` | *(unset)* | `true` rewrites the instance row from env on boot — see "Stateless config" above |
 | `secrets.databaseUrl` | `""` | **Required.** PostgreSQL connection string |
 | `secrets.cacheUrl` | `""` | **Required.** Dragonfly/Redis connection string |
 | `secrets.totpEncryptionKey` | `""` | **Required.** Root encryption key — exactly 64 hex chars (`openssl rand -hex 32`). All at-rest encryption subkeys are HKDF-derived from it. Not base64. |
