@@ -1,6 +1,8 @@
 using System.Net.Http.Json;
 using RediensIAM.IntegrationTests.Infrastructure;
 
+using RediensIAM.Services;
+
 namespace RediensIAM.IntegrationTests.Tests.Keto;
 
 /// <summary>
@@ -210,23 +212,21 @@ public class KetoServiceMoreCoverageTests(TestFixture fixture)
         // Actor has a ProjectAdmin OrgRole in DB
         await fixture.Seed.CreateOrgRoleAsync(org.Id, actor.Id, "project_admin");
 
-        var token  = fixture.Seed.OrgAdminToken(actor.Id, org.Id);
         fixture.Keto.AllowAll();
         // Deny super_admin and org_admin → DB check returns ProjectAdmin (level 3)
         fixture.Keto.DenyCheck("System", "rediensiam", "super_admin", $"user:{actor.Id}");
         fixture.Keto.DenyCheck("Organisations", org.Id.ToString(), "org_admin", $"user:{actor.Id}");
-        var client = fixture.ClientWithToken(token);
+
+        // Driven at the service layer: /org/admins requires org_admin, and authorisation is now
+        // verified live, so a caller cannot hold an org_admin token while Keto denies org_admin.
+        var keto = fixture.GetService<KetoService>();
 
         // "org_admin" rank=2 < ProjectAdmin rank=3 → insufficient level
-        var res = await client.PostAsJsonAsync("/org/admins", new
-        {
-            user_id = target.Id,
-            role    = "org_admin"
-        });
+        var act = async () => await keto.AssignManagementRoleAsync(
+            actor.Id, target.Id, org.Id, "org_admin", scopeId: null);
 
-        res.StatusCode.Should().Be(HttpStatusCode.Forbidden);
-        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
-        body.GetProperty("detail").GetString().Should().Contain("insufficient management level");
+        (await act.Should().ThrowAsync<RediensIAM.Exceptions.ForbiddenException>())
+            .WithMessage("*insufficient management level*");
     }
 
     // ── AssignManagementRoleAsync — existing role update path (lines 184-187) ─
@@ -278,22 +278,21 @@ public class KetoServiceMoreCoverageTests(TestFixture fixture)
         // Actor's OrgRole is scoped to project
         await fixture.Seed.CreateOrgRoleAsync(org.Id, actor.Id, "project_admin", project.Id);
 
-        var token  = fixture.Seed.OrgAdminToken(actor.Id, org.Id);
         fixture.Keto.AllowAll();
         fixture.Keto.DenyCheck("System", "rediensiam", "super_admin", $"user:{actor.Id}");
         fixture.Keto.DenyCheck("Organisations", org.Id.ToString(), "org_admin", $"user:{actor.Id}");
-        var client = fixture.ClientWithToken(token);
+
+        // Driven at the service layer — see the note in the higher-rank test above.
+        var keto = fixture.GetService<KetoService>();
 
         // scope_id = same project → ValidateProjectAdminScopeAsync succeeds
-        var res = await client.PostAsJsonAsync("/org/admins", new
-        {
-            user_id  = target.Id,
-            role     = "project_admin",
-            scope_id = project.Id
-        });
+        await keto.AssignManagementRoleAsync(
+            actor.Id, target.Id, org.Id, "project_admin", scopeId: project.Id);
 
-        // Assignment succeeds
-        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await fixture.Db.OrgRoles.AsNoTracking().AnyAsync(r =>
+            r.OrgId == org.Id && r.UserId == target.Id &&
+            r.Role == "project_admin" && r.ScopeId == project.Id))
+            .Should().BeTrue();
     }
 
     // ── RemoveManagementRoleAsync — actor removes own role (line 228) ─────────

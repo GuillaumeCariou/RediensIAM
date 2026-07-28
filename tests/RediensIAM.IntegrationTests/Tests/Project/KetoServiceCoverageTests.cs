@@ -1,6 +1,8 @@
 using System.Net.Http.Json;
 using RediensIAM.IntegrationTests.Infrastructure;
 
+using RediensIAM.Services;
+
 namespace RediensIAM.IntegrationTests.Tests.Keto;
 
 /// <summary>
@@ -216,19 +218,19 @@ public class KetoServiceCoverageTests(TestFixture fixture)
     [Fact]
     public async Task AssignManagementRole_ProjectAdminByDB_NullScope_Returns403()
     {
-        var (_, _, targetUser, client) = await ScaffoldProjectAdminByDbAsync();
+        var (org, manager, targetUser, _) = await ScaffoldProjectAdminByDbAsync();
 
-        // role = "project_admin" but no scope_id → ValidateProjectAdminScopeAsync line 213-214 throws
-        var res = await client.PostAsJsonAsync("/org/admins", new
-        {
-            user_id = targetUser.Id,
-            role    = "project_admin"
-            // scope_id intentionally omitted (null)
-        });
+        // Exercised at the service layer: /org/admins requires org_admin, and since
+        // authorisation is now verified live, a caller cannot simultaneously hold an org_admin
+        // token and be denied org_admin by Keto. The project-admin-by-DB branch therefore has
+        // to be driven directly.
+        var keto = fixture.GetService<KetoService>();
 
-        res.StatusCode.Should().Be(HttpStatusCode.Forbidden);
-        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
-        body.GetProperty("detail").GetString().Should().Contain("project_manager can only assign project_manager roles");
+        var act = async () => await keto.AssignManagementRoleAsync(
+            manager.Id, targetUser.Id, org.Id, "project_admin", scopeId: null);
+
+        (await act.Should().ThrowAsync<RediensIAM.Exceptions.ForbiddenException>())
+            .WithMessage("*project_manager can only assign project_manager roles*");
     }
 
     /// <summary>
@@ -250,23 +252,17 @@ public class KetoServiceCoverageTests(TestFixture fixture)
         // Actor's OrgRole is scoped to correctProject
         await fixture.Seed.CreateOrgRoleAsync(org.Id, manager.Id, "project_admin", correctProject.Id);
 
-        var token = fixture.Seed.OrgAdminToken(manager.Id, org.Id);
         fixture.Keto.AllowAll();
         fixture.Keto.DenyCheck("System", "rediensiam", "super_admin", $"user:{manager.Id}");
         fixture.Keto.DenyCheck("Organisations", org.Id.ToString(), "org_admin", $"user:{manager.Id}");
 
-        var client = fixture.ClientWithToken(token);
+        // Driven at the service layer — see the note in the null-scope test above.
+        var keto = fixture.GetService<KetoService>();
 
-        // scope_id = wrongProject.Id → actorScope.ScopeId (correctProject) != scopeId (wrongProject) → line 217 throws
-        var res = await client.PostAsJsonAsync("/org/admins", new
-        {
-            user_id  = targetUser.Id,
-            role     = "project_admin",
-            scope_id = wrongProject.Id
-        });
+        var act = async () => await keto.AssignManagementRoleAsync(
+            manager.Id, targetUser.Id, org.Id, "project_admin", scopeId: wrongProject.Id);
 
-        res.StatusCode.Should().Be(HttpStatusCode.Forbidden);
-        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
-        body.GetProperty("detail").GetString().Should().Contain("Cannot assign project_manager for a project outside your scope");
+        (await act.Should().ThrowAsync<RediensIAM.Exceptions.ForbiddenException>())
+            .WithMessage("*outside your scope*");
     }
 }

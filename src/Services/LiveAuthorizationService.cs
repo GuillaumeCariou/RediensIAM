@@ -1,5 +1,7 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Distributed;
 using RediensIAM.Config;
+using RediensIAM.Data;
 using RediensIAM.Models;
 
 namespace RediensIAM.Services;
@@ -17,6 +19,7 @@ namespace RediensIAM.Services;
 /// </summary>
 public sealed class LiveAuthorizationService(
     KetoService keto,
+    RediensIamDbContext db,
     IDistributedCache cache,
     ILogger<LiveAuthorizationService> logger)
 {
@@ -71,8 +74,13 @@ public sealed class LiveAuthorizationService(
                 ? await keto.CheckAsync(Roles.KetoOrgsNamespace, orgId.ToString(), Roles.KetoOrgAdminRelation, subject)
                 : await keto.HasAnyRelationAsync(Roles.KetoOrgsNamespace, Roles.KetoOrgAdminRelation, subject),
 
-            ManagementLevel.ProjectAdmin => await keto.HasAnyRelationAsync(
-                Roles.KetoProjectsNamespace, Roles.KetoManagerRelation, subject),
+            // project_admin has two grant paths and both are authoritative: a Keto manager
+            // relation on a project (what GetConsent reads to put the role in the token) and an
+            // org_roles row (what KetoService.GetActorManagementLevelForOrgAsync reads). Checking
+            // only Keto denied admins who were granted the role the other way.
+            ManagementLevel.ProjectAdmin =>
+                await keto.HasAnyRelationAsync(Roles.KetoProjectsNamespace, Roles.KetoManagerRelation, subject)
+                || await db.OrgRoles.AnyAsync(r => r.UserId == userId && r.Role == Roles.ProjectAdmin),
 
             _ => false,
         };

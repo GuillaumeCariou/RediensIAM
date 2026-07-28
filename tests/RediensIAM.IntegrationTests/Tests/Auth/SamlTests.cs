@@ -578,7 +578,7 @@ public partial class SamlControllerTests(TestFixture fixture)
             .ToDictionary(p => Uri.UnescapeDataString(p[0]), p => Uri.UnescapeDataString(p[1]))
             .GetValueOrDefault("RelayState", "");
 
-        // Build a response with a DIFFERENT InResponseTo than what was stored in the session
+        // Build a response echoing an InResponseTo that was never issued
         var form = BuildSignedResponseForm(challenge, idp, cert, spRelayState,
             authnReqId: "_wrong_request_id");
 
@@ -586,7 +586,9 @@ public partial class SamlControllerTests(TestFixture fixture)
 
         res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
-        body.GetProperty("error").GetString().Should().Be("saml_response_invalid");
+        // Pending requests are keyed by their own ID, so an InResponseTo the SP never issued
+        // (or already consumed) simply resolves to nothing.
+        body.GetProperty("error").GetString().Should().Be("saml_no_pending_request");
     }
 
     // ── ACS: response has no email claim ─────────────────────────────────────
