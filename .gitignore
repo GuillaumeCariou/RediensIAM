@@ -38,3 +38,5 @@ deploy/rediensiam/tmpcharts-*/
 
 # Rust SDK build artifacts
 sdk/rust/**/target/
+sdk/typescript/**/dist/
+sdk/typescript/**/node_modules/

@@ -1,7 +1,26 @@
 # RediensIAM SDKs
 
-Clients for services that sit **behind** RediensIAM — a gateway, an API, a worker — and need to
-answer two questions about an incoming bearer token:
+Two different jobs, two different kinds of SDK. Picking the wrong one is a security problem, so
+start here.
+
+| You are writing | Use | Path |
+|---|---|---|
+| A **frontend** — SPA, mobile web | `rediensiam-web` | [`typescript/rediensiam-web`](typescript/rediensiam-web) |
+| A **backend** — gateway, API, worker | `RediensIAM.Client` (C#) · `rediensiam-client` (Rust) | [`dotnet/`](dotnet/RediensIAM.Client) · [`rust/`](rust/rediensiam-client) |
+
+**The frontend logs the user in. The backend decides what they may do.** The browser SDK never
+validates a token, because validating requires a service-account credential and anything shipped
+to a browser is readable by anyone with devtools. Claims it exposes are for rendering only —
+showing a menu, hiding a button. Every privileged decision is re-made server-side.
+
+If you find yourself wanting to check a role in the browser to protect data, that check belongs
+in your API.
+
+---
+
+## Backend SDKs
+
+Answer two questions about an incoming bearer token:
 
 1. Is this token valid **right now**?
 2. Is this subject allowed to do **X**?
@@ -158,6 +177,60 @@ matters more than the round-trip. `Forget(token)` / `forget(token)` drops an ent
 e.g. on logout.
 
 Cache keys are digests, never the token itself: keys surface in dumps and diagnostics.
+
+## Frontend (`rediensiam-web`)
+
+Zero dependencies — Web Crypto and `fetch` cover the whole flow.
+
+```bash
+npm install rediensiam-web
+```
+
+```ts
+import { createRediensIam } from 'rediensiam-web';
+
+const iam = createRediensIam({
+  issuer: 'https://auth.example.com',
+  clientId: 'client_<your-project-id>',
+  redirectUri: `${location.origin}/callback`,
+});
+
+// On page load: completes the login if we came back from the IdP.
+if (!(await iam.handleRedirect()) && !iam.isAuthenticated) {
+  await iam.login();   // redirects; does not return
+}
+
+// Call your API — the bearer token is attached and refreshed on 401.
+const orders = await iam.fetch('/api/orders').then((r) => r.json());
+```
+
+Rendering decisions:
+
+```ts
+if (iam.hasRole('org_admin')) showAdminMenu();
+const { orgId, userId } = iam.claims;
+```
+
+`claims` is decoded from the token **without verifying the signature**, and roles may have been
+revoked since it was issued. Use it to render, never to protect.
+
+Logout ends the SSO session too:
+
+```ts
+await iam.logout();
+```
+
+### What it does for you
+
+- Authorization code + **PKCE S256** (verified against the RFC 7636 test vector)
+- `state` generated and checked — an attacker cannot feed you their code and log your user into
+  their account
+- Token held **in memory only**: not `localStorage`, not `sessionStorage`. Injected JavaScript
+  cannot read it and it does not outlive the tab
+- Refresh on expiry, single-flight so concurrent 401s cause one refresh, not ten
+- `redirectUri` origin checked against the app origin at construction
+
+---
 
 ## Getting a service-account token
 
