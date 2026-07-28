@@ -1,0 +1,116 @@
+using System.Security.Claims;
+using System.Text.Encodings.Web;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+
+namespace RediensIAM.Client;
+
+public static class RediensIamServiceCollectionExtensions
+{
+    /// <summary>
+    /// Registers <see cref="RediensIamClient"/>.
+    ///
+    /// <code>
+    /// builder.Services.AddRediensIam(o =>
+    /// {
+    ///     o.BaseUrl             = "https://auth.example.com";
+    ///     o.ServiceAccountToken = builder.Configuration["RediensIAM:Token"]!;
+    /// });
+    /// </code>
+    /// </summary>
+    public static IServiceCollection AddRediensIam(
+        this IServiceCollection services, Action<RediensIamOptions> configure)
+    {
+        var options = new RediensIamOptions();
+        configure(options);
+
+        if (string.IsNullOrWhiteSpace(options.BaseUrl))
+            throw new ArgumentException("RediensIamOptions.BaseUrl is required.", nameof(configure));
+        if (string.IsNullOrWhiteSpace(options.ServiceAccountToken))
+            throw new ArgumentException("RediensIamOptions.ServiceAccountToken is required.", nameof(configure));
+
+        services.AddSingleton(options);
+        services.AddMemoryCache();
+        services.AddHttpClient<RediensIamClient>(client =>
+        {
+            // Trailing slash matters: relative request URIs are resolved against it.
+            client.BaseAddress = new Uri(options.BaseUrl.TrimEnd('/') + "/");
+            client.Timeout     = options.Timeout;
+        });
+
+        return services;
+    }
+
+    /// <summary>
+    /// Adds a "RediensIAM" authentication scheme that validates the incoming bearer token by
+    /// introspection and turns the answer into a <see cref="ClaimsPrincipal"/>. Use it when the
+    /// service wants ordinary <c>[Authorize]</c> semantics rather than calling the client itself.
+    ///
+    /// <code>
+    /// builder.Services.AddAuthentication(RediensIamDefaults.Scheme).AddRediensIam();
+    /// </code>
+    /// </summary>
+    public static AuthenticationBuilder AddRediensIam(this AuthenticationBuilder builder) =>
+        builder.AddScheme<AuthenticationSchemeOptions, RediensIamAuthenticationHandler>(
+            RediensIamDefaults.Scheme, _ => { });
+}
+
+public static class RediensIamDefaults
+{
+    public const string Scheme = "RediensIAM";
+
+    /// <summary>Claim carrying the tenant. Present on every authenticated principal that has one.</summary>
+    public const string OrgIdClaim = "org_id";
+
+    public const string ProjectIdClaim = "project_id";
+}
+
+/// <summary>
+/// Validates the request's bearer token through RediensIAM on every request.
+///
+/// Deliberately not a JWT-signature handler: a valid signature only proves the token was issued,
+/// not that it is still honoured. Roles revoked, accounts disabled and organisations suspended
+/// after issuance are invisible to signature checks.
+/// </summary>
+public sealed class RediensIamAuthenticationHandler(
+    IOptionsMonitor<AuthenticationSchemeOptions> options,
+    ILoggerFactory loggerFactory,
+    UrlEncoder encoder,
+    RediensIamClient client) : AuthenticationHandler<AuthenticationSchemeOptions>(options, loggerFactory, encoder)
+{
+    protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
+    {
+        var header = Request.Headers.Authorization.ToString();
+        if (!header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            return AuthenticateResult.NoResult();
+
+        var token = header["Bearer ".Length..].Trim();
+
+        TokenInfo info;
+        try
+        {
+            info = await client.IntrospectAsync(token, Context.RequestAborted);
+        }
+        catch (Exception ex)
+        {
+            // Fail the request rather than letting it through unauthenticated: an IAM outage
+            // must not become an authorisation bypass.
+            return AuthenticateResult.Fail(ex);
+        }
+
+        if (!info.Active) return AuthenticateResult.Fail("Token is not active.");
+
+        var claims = new List<Claim>();
+        if (info.UserId is { Length: > 0 }) claims.Add(new Claim(ClaimTypes.NameIdentifier, info.UserId));
+        if (info.OrgId is { Length: > 0 }) claims.Add(new Claim(RediensIamDefaults.OrgIdClaim, info.OrgId));
+        if (info.ProjectId is { Length: > 0 }) claims.Add(new Claim(RediensIamDefaults.ProjectIdClaim, info.ProjectId));
+        claims.AddRange(info.Roles.Select(r => new Claim(ClaimTypes.Role, r)));
+
+        var identity  = new ClaimsIdentity(claims, RediensIamDefaults.Scheme);
+        var principal = new ClaimsPrincipal(identity);
+
+        return AuthenticateResult.Success(new AuthenticationTicket(principal, RediensIamDefaults.Scheme));
+    }
+}

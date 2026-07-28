@@ -57,7 +57,7 @@ public class GatewayAuthMiddleware(RequestDelegate next, AppConfig appConfig)
     }
 
     private static readonly string[] ManagementPrefixes =
-        ["/admin", "/org", "/project", "/service-accounts", "/api/manage", "/internal"];
+        ["/admin", "/org", "/project", "/service-accounts", "/api", "/internal"];
 
     private static bool IsManagementSurface(PathString path) =>
         ManagementPrefixes.Any(p => path.StartsWithSegments(p));

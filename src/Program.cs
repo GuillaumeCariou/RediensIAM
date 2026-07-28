@@ -319,7 +319,7 @@ app.MapHealthChecks("/health");
 
 // Protect account/project/org/internal/manage/system routes — admin SPA loads without auth (handles PKCE itself)
 // /admin/system is always auth-gated (no browser SPA navigation hits it, only API calls)
-var protectedPrefixes = new[] { "/account", "/project", "/org", "/internal", "/service-accounts", "/api/manage", "/admin/system", "/auth/oauth2/link" };
+var protectedPrefixes = new[] { "/account", "/project", "/org", "/internal", "/service-accounts", "/api", "/admin/system", "/auth/oauth2/link" };
 app.UseWhen(
     ctx => protectedPrefixes.Any(p => ctx.Request.Path.StartsWithSegments(p)),
     branch => branch.UseMiddleware<GatewayAuthMiddleware>());

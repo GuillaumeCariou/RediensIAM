@@ -35,3 +35,6 @@ src/bin\\Debug/
 **/bin\\Debug/
 
 deploy/rediensiam/tmpcharts-*/
+
+# Rust SDK build artifacts
+sdk/rust/**/target/
