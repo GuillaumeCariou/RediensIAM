@@ -27,7 +27,11 @@ public class ServiceAccountController(
     private TokenClaims Claims     => HttpContext.GetClaims()!;
     private ManagementLevel Level  => Claims.GetManagementLevel();
     private Guid ActorId           => Claims.ParsedUserId;
-    private Guid? CallerOrgId      => Guid.TryParse(Claims.OrgId, out var g) ? g : null;
+    // Guid.Empty, never null. A null here compared equal to UserList.OrgId IS NULL — the
+    // __system__ list — so a token whose org_id failed to parse gained access to the most
+    // privileged service accounts in the deployment. Every other controller already uses
+    // Guid.Empty, which matches no real row.
+    private Guid CallerOrgId       => Guid.TryParse(Claims.OrgId, out var g) ? g : Guid.Empty;
 
     // Returns true if the caller has management access to the given SA.
     private async Task<bool> CanAccessAsync(ServiceAccount sa)
@@ -35,7 +39,7 @@ public class ServiceAccountController(
         return Level switch
         {
             ManagementLevel.SuperAdmin   => true,
-            ManagementLevel.OrgAdmin     => sa.UserList.OrgId == CallerOrgId,
+            ManagementLevel.OrgAdmin     => sa.UserList.OrgId != null && sa.UserList.OrgId == CallerOrgId,
             ManagementLevel.ProjectAdmin => await IsCallerProjectListAsync(sa.UserListId),
             _                            => false
         };
@@ -58,7 +62,7 @@ public class ServiceAccountController(
         IQueryable<ServiceAccount> query = db.ServiceAccounts.Include(sa => sa.UserList);
 
         if (Level == ManagementLevel.OrgAdmin)
-            query = query.Where(sa => sa.UserList.OrgId == CallerOrgId);
+            query = query.Where(sa => sa.UserList.OrgId != null && sa.UserList.OrgId == CallerOrgId);
         else if (Level == ManagementLevel.ProjectAdmin)
         {
             if (!Guid.TryParse(Claims.ProjectId, out var projectId))

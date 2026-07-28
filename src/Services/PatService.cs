@@ -59,7 +59,10 @@ public class PatService(
             // The cache exists to skip the expensive join, never the authorisation decision.
             // Re-check liveness on every call so deactivating a service account or suspending
             // an organisation cuts access immediately instead of after the TTL.
-            if (hit != null && await IsStillLiveAsync(hit.Sub)) return hit;
+            // Expiry is re-checked here too: IsStillLiveAsync covers the account and the org,
+            // but a PAT that expired while this entry was warm would otherwise keep working for
+            // the rest of the TTL.
+            if (hit != null && !IsExpired(hit) && await IsStillLiveAsync(hit.Sub)) return hit;
             await _cache.KeyDeleteAsync(cacheKey);
             return null;
         }
@@ -119,7 +122,8 @@ public class PatService(
             OrgId: orgId,
             ProjectId: projectId,
             Roles: saRoles.Select(r => r.Role).Distinct().ToList(),
-            IsServiceAccount: true);
+            IsServiceAccount: true,
+            ExpiresAt: pat.ExpiresAt);
 
         await _cache.StringSetAsync(cacheKey, JsonSerializer.Serialize(result), _ttl);
         return result;
@@ -143,6 +147,9 @@ public class PatService(
         foreach (var hash in hashes)
             await _cache.KeyDeleteAsync($"pat:{hash}");
     }
+
+    private static bool IsExpired(IntrospectionResponse hit) =>
+        hit.ExpiresAt.HasValue && hit.ExpiresAt < DateTimeOffset.UtcNow;
 
     /// <summary>
     /// Cheap per-request liveness probe for a cached PAT: the service account must still exist

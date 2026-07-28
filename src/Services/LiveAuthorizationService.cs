@@ -68,11 +68,11 @@ public sealed class LiveAuthorizationService(
             ManagementLevel.SuperAdmin => await keto.CheckAsync(
                 Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, subject),
 
-            // Prefer the org the token names; fall back to "admin of any org" when the token
-            // carries no org (the admin console issues such tokens).
+            // An org_admin claim must name the org it applies to. Falling back to "admin of any
+            // org" let an orphaned grant — one whose organisation had been deleted — satisfy the
+            // check while carrying an empty org_id downstream.
             ManagementLevel.OrgAdmin => Guid.TryParse(orgIdClaim, out var orgId)
-                ? await keto.CheckAsync(Roles.KetoOrgsNamespace, orgId.ToString(), Roles.KetoOrgAdminRelation, subject)
-                : await keto.HasAnyRelationAsync(Roles.KetoOrgsNamespace, Roles.KetoOrgAdminRelation, subject),
+                && await keto.CheckAsync(Roles.KetoOrgsNamespace, orgId.ToString(), Roles.KetoOrgAdminRelation, subject),
 
             // project_admin has two grant paths and both are authoritative: a Keto manager
             // relation on a project (what GetConsent reads to put the role in the token) and an

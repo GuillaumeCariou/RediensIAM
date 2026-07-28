@@ -84,6 +84,10 @@ builder.Services.AddHostedService<AuditLogRetentionService>();
 // host) after the check has already passed.
 builder.Services.AddHttpClient("webhook")
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+// Same reasoning for social login: discovery-declared endpoints are validated before use, and a
+// redirect after that check would land us wherever the provider chose.
+builder.Services.AddHttpClient(SocialLoginService.NoRedirectClient)
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddScoped<PatService>();
 builder.Services.AddSingleton<SocialLoginService>();
 builder.Services.AddHttpContextAccessor();

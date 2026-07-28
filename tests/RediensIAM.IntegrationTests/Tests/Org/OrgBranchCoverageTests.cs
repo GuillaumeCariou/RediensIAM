@@ -418,6 +418,8 @@ public class OrgBranchCoverageTests(TestFixture fixture)
 
         var res = await client.GetAsync("/org/info");
 
+        // The claim names a well-formed org that simply does not exist: the live check passes
+        // (Keto allows) and the controller finds no row.
         res.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
@@ -710,10 +712,10 @@ public class OrgBranchCoverageTests(TestFixture fixture)
     // ── OrgId property — invalid Guid in claims (line 41 FALSE branch) ────────
 
     [Fact]
-    public async Task GetOrgInfo_InvalidOrgIdClaim_Returns404()
+    public async Task GetOrgInfo_InvalidOrgIdClaim_Returns403()
     {
-        // Covers line 41 FALSE: Guid.TryParse(Claims.OrgId) fails → OrgId = Guid.Empty
-        // No org has Id = Guid.Empty, so the query returns null → 404
+        // An org_admin claim whose org_id does not parse is refused outright: the live check no
+        // longer degrades to "admin of any org" (R-01, link 3).
         var fakeUserId = Guid.NewGuid();
         var token      = $"badorgid-{fakeUserId:N}";
         fixture.Hydra.RegisterToken(token, fakeUserId.ToString(), "not-a-valid-guid", null, ["org_admin"]);
@@ -722,7 +724,7 @@ public class OrgBranchCoverageTests(TestFixture fixture)
 
         var res = await client.GetAsync("/org/info");
 
-        res.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        res.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     // ── PATCH /org/admins/{id} — same ScopeId (line 644 AND condition FALSE) ──

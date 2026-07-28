@@ -40,3 +40,4 @@ deploy/rediensiam/tmpcharts-*/
 sdk/rust/**/target/
 sdk/typescript/**/dist/
 sdk/typescript/**/node_modules/
+.security-hardening/

@@ -126,9 +126,11 @@ public class FlowStateRegressionTests(TestFixture fixture)
         // No Set-Cookie is required for the flow to be resumable: the state is in Redis.
         var authnRequestId = ExtractAuthnRequestId(res.Headers.Location!.ToString());
         var otpCache = fixture.GetService<OtpCacheService>();
+        // Record is "{idpId}|{loginChallenge}": ACS must bind the response to both.
         (await otpCache.PeekPendingAsync("saml_req", authnRequestId))
-            .Should().Be(idp.Id.ToString(),
-                "the pending AuthnRequest must be resolvable without the caller's session cookie");
+            .Should().Be($"{idp.Id}|{challenge}",
+                "the pending AuthnRequest must be resolvable without the caller's session cookie, "
+                + "and must carry the challenge it was issued for");
     }
 
     private static string ExtractAuthnRequestId(string redirectUrl)

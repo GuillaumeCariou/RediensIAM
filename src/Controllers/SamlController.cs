@@ -70,7 +70,11 @@ public class SamlController(
 
         // Store request ID in session to validate InResponseTo on ACS
         var result = binding.Bind(authnRequest);
-        await pending.StorePendingAsync(SamlRequestPrefix, authnRequest.Id.Value, idp_id.ToString());
+        // Store the challenge with the IdP: ACS must confirm the response answers the request
+        // WE issued, for the project we issued it for. RelayState is browser-controlled and is
+        // not covered by the assertion signature, so it cannot be trusted for either.
+        await pending.StorePendingAsync(SamlRequestPrefix, authnRequest.Id.Value,
+            $"{idp_id}|{login_challenge}");
 
         return result.ToActionResult();
     }
@@ -156,11 +160,28 @@ public class SamlController(
             // Consume the pending request: single use, so a captured response cannot be replayed.
             var inResponseTo = saml2AuthnResponse.InResponseTo?.Value;
             if (string.IsNullOrEmpty(inResponseTo)) return (null, "saml_no_pending_request");
-            var pendingIdpId = await pending.GetAndDeletePendingAsync(SamlRequestPrefix, inResponseTo);
-            if (string.IsNullOrEmpty(pendingIdpId)) return (null, "saml_no_pending_request");
+            var pendingRecord = await pending.GetAndDeletePendingAsync(SamlRequestPrefix, inResponseTo);
+            if (string.IsNullOrEmpty(pendingRecord)) return (null, "saml_no_pending_request");
+
+            var parts = pendingRecord.Split('|', 2);
+            var pendingIdpId = parts[0];
+            var pendingChallenge = parts.Length == 2 ? parts[1] : null;
+
             // The response must come from the IdP the request was actually sent to.
             if (!string.Equals(pendingIdpId, idpId.ToString(), StringComparison.OrdinalIgnoreCase))
                 throw new AuthenticationException("InResponseTo belongs to a different IdP");
+
+            // ...and must be redeemed against the challenge it was issued for. Without this a
+            // caller could complete a genuine flow at their own IdP and then swap the
+            // login_challenge in RelayState for one belonging to another tenant's client.
+            if (!string.Equals(pendingChallenge, loginChallenge, StringComparison.Ordinal))
+                throw new AuthenticationException("InResponseTo belongs to a different login challenge");
+
+            // Same binding Start enforces: the IdP must belong to the challenge's project.
+            var challengeProjectId = LoginChallengeProject.ResolveOrNull(
+                await hydra.GetLoginRequestAsync(loginChallenge));
+            if (challengeProjectId == null || idp.ProjectId.ToString() != challengeProjectId)
+                throw new AuthenticationException("IdP does not belong to the challenge's project");
 
             httpRequest.Binding.Unbind(httpRequest, saml2AuthnResponse);
 

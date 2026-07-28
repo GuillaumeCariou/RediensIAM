@@ -49,6 +49,21 @@ public class KetoService(IHttpClientFactory http, AppConfig appConfig, RediensIa
         await WriteClient.DeleteAsync(url);
     }
 
+    /// <summary>
+    /// Removes every tuple on an organisation object — the structural <c>org</c> relation AND all
+    /// per-user management grants.
+    ///
+    /// Deleting an org used to drop only the structural tuple and the org_roles rows, leaving
+    /// <c>Organisations:{orgId}#org_admin@user:{uid}</c> behind. That orphan still satisfies
+    /// "is admin of some org" while no row remains to name which org, which is the first link in
+    /// a chain that ends at the system service accounts.
+    /// </summary>
+    public async Task DeleteAllOrgTuplesAsync(string orgId)
+    {
+        var url = $"{_writeUrl}/admin/relation-tuples?namespace={Uri.EscapeDataString(Roles.KetoOrgsNamespace)}&object={Uri.EscapeDataString(orgId)}";
+        await WriteClient.DeleteAsync(url);
+    }
+
     public async Task<bool> HasAnyRelationAsync(string namespaceName, string relation, string subjectId)
     {
         var url = $"{_readUrl}/relation-tuples?namespace={Uri.EscapeDataString(namespaceName)}&relation={Uri.EscapeDataString(relation)}&subject_id={Uri.EscapeDataString(subjectId)}&page_size=1";

@@ -162,7 +162,10 @@ var org = await db.Organisations.FindAsync(id);
         // Save the user deletions before tackling the org+lists circular FK.
         await db.SaveChangesAsync();
 
-        await keto.DeleteRelationTupleAsync(Roles.KetoOrgsNamespace, id.ToString(), "org", $"{Roles.KetoSystemNamespace}:{Roles.KetoSystemObject}");
+        // Delete the whole object, not just the structural relation: per-user org_admin grants
+        // written by AssignOrgAdmin/AssignManagementRoleAsync live on this same object and would
+        // otherwise survive the org, becoming an "admin of some org that no longer exists" grant.
+        await keto.DeleteAllOrgTuplesAsync(id.ToString());
 
         // Use raw SQL so PostgreSQL handles the circular FK (org.OrgListId ↔ list.OrgId)
         // in a single statement where both sides are deleted atomically.

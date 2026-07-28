@@ -164,6 +164,9 @@ public sealed class TestFixture : IAsyncLifetime
                     // with a stub that can be configured per-test to return HIBP breach counts.
                     var hibp = HibpStub;
                     services.AddHttpClient(string.Empty).ConfigurePrimaryHttpMessageHandler(() => hibp);
+                    // SocialLoginService now uses a named, redirect-disabled client — stub it too.
+                    services.AddHttpClient(SocialLoginService.NoRedirectClient)
+                        .ConfigurePrimaryHttpMessageHandler(() => hibp);
 
                     // Allow session cookies over plain HTTP in tests (test server uses http://localhost)
                     services.Configure<SessionOptions>(opts =>

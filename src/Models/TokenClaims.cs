@@ -37,6 +37,8 @@ public record IntrospectionResponse(
     string OrgId,
     string ProjectId,
     List<string> Roles,
-    bool IsServiceAccount = false);
+    bool IsServiceAccount = false,
+    // Carried so the cached-introspection path can re-check expiry without a DB round-trip.
+    DateTimeOffset? ExpiresAt = null);
 
 public record IntrospectRequest(string Token);
