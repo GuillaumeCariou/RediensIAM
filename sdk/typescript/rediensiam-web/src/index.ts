@@ -271,9 +271,29 @@ export class RediensIam {
     };
   }
 
-  /** Convenience for menu/route rendering. Not a security check. */
+  /**
+   * True when the token carries a **management** role of RediensIAM itself
+   * (`super_admin`, `org_admin`, `project_admin`).
+   *
+   * Tenant roles never match here: the issuer namespaces them by project, so use
+   * {@link hasProjectRole}. Convenience for menu/route rendering. Not a security check.
+   */
   hasRole(role: string): boolean {
     return this.claims.roles.includes(role);
+  }
+
+  /**
+   * True when the token carries tenant role `role` **in project `projectId`**.
+   *
+   * Role names are chosen by each tenant, so `'admin'` on its own means nothing across tenants —
+   * the issuer emits them as `{project_id}/{name}` and this is the matching read. Defaults to
+   * the project the token was issued for, which is what a single-tenant app wants.
+   *
+   * Convenience for menu/route rendering. Not a security check.
+   */
+  hasProjectRole(role: string, projectId?: string): boolean {
+    const claims = this.claims;
+    return matchProjectRole(claims.roles, projectId ?? claims.projectId, role);
   }
 
   // ── Internals ────────────────────────────────────────────────────────────
@@ -368,6 +388,19 @@ export function decodeJwtPayload(token: string): Record<string, unknown> | null 
   } catch {
     return null;
   }
+}
+
+/**
+ * Tenant roles arrive as `{project_id}/{name}`. Exported for testing.
+ * Without a project there is nothing to qualify against, so nothing matches — fail closed.
+ */
+export function matchProjectRole(
+  roles: string[],
+  projectId: string | undefined,
+  role: string,
+): boolean {
+  if (!projectId) return false;
+  return roles.includes(`${projectId}/${role}`);
 }
 
 function asString(value: unknown): string | undefined {

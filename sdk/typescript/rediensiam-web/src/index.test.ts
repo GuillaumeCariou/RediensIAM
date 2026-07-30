@@ -6,6 +6,7 @@ import {
   RediensIamError,
   base64UrlEncode,
   decodeJwtPayload,
+  matchProjectRole,
   randomUrlSafe,
   s256,
 } from './index.ts';
@@ -59,6 +60,18 @@ test('claims are read from the ext object Hydra produces', () => {
   const decoded = decodeJwtPayload(token);
   assert.ok(decoded);
   assert.deepEqual((decoded.ext as Record<string, unknown>).roles, ['org_admin']);
+});
+
+test('tenant roles only match when qualified by their own project', () => {
+  const roles = ['proj-1/admin', 'org_admin'];
+
+  assert.equal(matchProjectRole(roles, 'proj-1', 'admin'), true);
+  // The whole point of the namespacing: another tenant's "admin" is a different role.
+  assert.equal(matchProjectRole(roles, 'proj-2', 'admin'), false);
+  // A bare management name is not a project role, and vice versa.
+  assert.equal(matchProjectRole(roles, 'proj-1', 'org_admin'), false);
+  // No project in the token — nothing to qualify against, so nothing matches.
+  assert.equal(matchProjectRole(roles, undefined, 'admin'), false);
 });
 
 test('malformed tokens decode to null rather than throwing', () => {

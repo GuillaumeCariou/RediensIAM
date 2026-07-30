@@ -26,7 +26,24 @@ public sealed record TokenInfo
 
     public static readonly TokenInfo Inactive = new() { Active = false };
 
+    /// <summary>
+    /// True when the token carries a <b>management</b> role of RediensIAM itself
+    /// (<c>super_admin</c>, <c>org_admin</c>, <c>project_admin</c>). Tenant roles never match
+    /// here — the issuer namespaces them by project, so use <see cref="HasProjectRole"/>.
+    /// </summary>
     public bool HasRole(string role) => Roles.Contains(role, StringComparer.Ordinal);
+
+    /// <summary>
+    /// True when the token carries tenant role <paramref name="role"/> <b>in project
+    /// <paramref name="projectId"/></b>.
+    ///
+    /// Role names are chosen by each tenant, so <c>"admin"</c> on its own means nothing across
+    /// tenants. RediensIAM emits them as <c>{project_id}/{name}</c> and this is the matching
+    /// read; the same qualified string is what lands in <c>ClaimTypes.Role</c>, so
+    /// <c>[Authorize(Roles = "admin")]</c> fails closed rather than matching every tenant.
+    /// </summary>
+    public bool HasProjectRole(string projectId, string role) =>
+        Roles.Contains($"{projectId}/{role}", StringComparer.Ordinal);
 }
 
 /// <summary>Options for <see cref="RediensIamClient"/>.</summary>

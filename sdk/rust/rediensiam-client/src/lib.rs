@@ -15,7 +15,8 @@
 //! })?;
 //!
 //! let info = iam.introspect("rediens_pat_...").await?;
-//! if info.active && info.has_role("super_admin") {
+//! // Tenant roles are namespaced by project — "admin" alone is not a cross-tenant identity.
+//! if info.active && info.has_project_role("<project-id>", "admin") {
 //!     // proceed
 //! }
 //! # Ok(())
@@ -29,6 +30,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 
 #[derive(Debug, thiserror::Error)]
@@ -73,8 +75,20 @@ impl TokenInfo {
         Self::default()
     }
 
+    /// True when the token carries a **management** role of RediensIAM itself
+    /// (`super_admin`, `org_admin`, `project_admin`). Tenant roles never match here: the issuer
+    /// namespaces them by project, so use [`TokenInfo::has_project_role`] for those.
     pub fn has_role(&self, role: &str) -> bool {
         self.roles.iter().any(|r| r == role)
+    }
+
+    /// True when the token carries tenant role `role` **in project `project_id`**.
+    ///
+    /// Role names are chosen by each tenant, so `"admin"` on its own means nothing across
+    /// tenants — the issuer emits them as `{project_id}/{name}` and this is the matching read.
+    pub fn has_project_role(&self, project_id: &str, role: &str) -> bool {
+        let qualified = format!("{project_id}/{role}");
+        self.roles.iter().any(|r| *r == qualified)
     }
 
     /// True when the token belongs to `org_id` — the check a multi-tenant resource server needs
@@ -250,15 +264,18 @@ impl RediensIamClient {
 
 /// Cache on a digest, never the token itself: keys end up in dumps and diagnostics.
 ///
-/// FNV-1a is enough here — this is a map key, not a security boundary, and it avoids pulling in
-/// a crypto dependency for the SDK.
+/// It has to be a cryptographic digest. The map it keys returns a full `TokenInfo` — roles
+/// included — before any server call, so anything that collides with a cached privileged token
+/// is authenticated as that token. A 64-bit non-cryptographic hash (this used FNV-1a) is
+/// trivially preimageable once a key is observed in a log or a dump.
 fn cache_key(token: &str) -> String {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in token.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100_0000_01b3);
+    let digest = Sha256::digest(token.as_bytes());
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write;
+        let _ = write!(out, "{byte:02x}");
     }
-    format!("{hash:016x}")
+    out
 }
 
 #[cfg(test)]
@@ -283,6 +300,36 @@ mod tests {
         assert!(!key.contains("supersecret"));
         assert_eq!(key, cache_key(token), "must be stable");
         assert_ne!(key, cache_key("rediens_pat_other"));
+    }
+
+    /// R-28: the cache key must be a cryptographic digest. A 64-bit non-cryptographic hash
+    /// (the previous FNV-1a) let anyone who observed a key construct a preimage and be served
+    /// the cached `TokenInfo` — roles included — without contacting RediensIAM.
+    #[test]
+    fn cache_key_is_a_sha256_digest() {
+        // Known-answer test: SHA-256("") — pins both the algorithm and the hex encoding.
+        assert_eq!(
+            cache_key(""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(cache_key("rediens_pat_supersecret").len(), 64);
+    }
+
+    /// T-N3: tenant role names are namespaced by project at the issuer, so a bare name must not
+    /// authorise across tenants.
+    #[test]
+    fn tenant_roles_do_not_match_across_projects() {
+        let info = TokenInfo {
+            active: true,
+            project_id: Some("project-a".into()),
+            roles: vec!["project-a/admin".into()],
+            ..Default::default()
+        };
+
+        assert!(info.has_project_role("project-a", "admin"));
+        assert!(!info.has_project_role("project-b", "admin"), "must not serve another tenant");
+        assert!(!info.has_role("admin"), "a bare tenant role name must never match");
+        assert!(!info.has_role("super_admin"));
     }
 
     #[test]
