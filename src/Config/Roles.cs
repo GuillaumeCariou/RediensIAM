@@ -10,6 +10,41 @@ public static class Roles
     public const string OrgAdmin      = "org_admin";
     public const string ProjectAdmin  = "project_admin";
 
+    /// <summary>The only role names RediensIAM's own management surface recognises.</summary>
+    public static readonly string[] Management = [SuperAdmin, OrgAdmin, ProjectAdmin];
+
+    // ── Tenant (project) role names ───────────────────────────────────────────
+
+    /// <summary>Separates the project scope from the tenant-chosen name in <see cref="ProjectRoleClaim"/>.</summary>
+    public const char ProjectRoleSeparator = '/';
+
+    private const int MaxProjectRoleNameLength = 64;
+
+    /// <summary>
+    /// Rejects tenant role names that would be indistinguishable from something else once they
+    /// reach a token. A tenant admin picks these freely and they are published in
+    /// <c>ext.roles</c>, so a name matching a management role would have RediensIAM sign an
+    /// assertion of its own platform authority. Returns an error code, or null when acceptable.
+    /// </summary>
+    public static string? ProjectRoleNameError(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))             return "role_name_required";
+        if (name.Length > MaxProjectRoleNameLength)      return "role_name_too_long";
+        if (name.Contains(ProjectRoleSeparator))         return "role_name_invalid_character";
+        // Case-insensitive: a downstream resource server comparing case-insensitively would
+        // otherwise honour "Super_Admin".
+        if (Management.Contains(name, StringComparer.OrdinalIgnoreCase)) return "role_name_reserved";
+        return null;
+    }
+
+    /// <summary>
+    /// A tenant role as it appears in <c>ext.roles</c>, qualified by the project that defined it.
+    /// Bare names are meaningless across tenants — two tenants both naming a role "admin" would
+    /// otherwise be byte-identical in every consumer's <c>ClaimsPrincipal</c>.
+    /// </summary>
+    public static string ProjectRoleClaim(string projectId, string name) =>
+        $"{projectId}{ProjectRoleSeparator}{name}";
+
     // ── Keto namespaces ───────────────────────────────────────────────────────
     public const string KetoSystemNamespace    = "System";
     public const string KetoOrgsNamespace      = "Organisations";

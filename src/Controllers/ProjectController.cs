@@ -164,15 +164,8 @@ public class ProjectController(
         return null;
     }
 
-    private BadRequestObjectResult? ValidateLoginTheme(Dictionary<string, object>? theme)
-    {
-        if (theme == null) return null;
-        if (theme.TryGetValue("logo_url", out var logoVal) && logoVal is string logoUrl
-            && !string.IsNullOrEmpty(logoUrl)
-            && (!Uri.TryCreate(logoUrl, UriKind.Absolute, out var uri) || uri.Scheme != "https"))
-            return BadRequest(new { error = "logo_url_must_be_https" });
-        return null;
-    }
+    private BadRequestObjectResult? ValidateLoginTheme(Dictionary<string, object>? theme) =>
+        LoginThemeValidator.Validate(theme) is { } error ? BadRequest(new { error }) : null;
 
     private void ApplyLoginTheme(Project project, Dictionary<string, object>? theme)
     {
@@ -339,6 +332,8 @@ public class ProjectController(
     [HttpPost("roles")]
     public async Task<IActionResult> CreateRole([FromBody] CreateRoleRequest body)
     {
+        if (Roles.ProjectRoleNameError(body.Name) is { } nameErr)
+            return BadRequest(new { error = nameErr, reserved = Roles.Management });
         var project = await GetProjectAsync();
         if (project == null) return NotFound();
         var role = new Role

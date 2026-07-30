@@ -392,6 +392,62 @@ public class SystemAdminBranchCoverageTests(TestFixture fixture)
         ((int)res.StatusCode).Should().BeInRange(200, 499);
     }
 
+    // ── POST /admin/hydra/clients — explicit client_id ────────────────────────
+
+    [Fact]
+    public async Task CreateHydraClient_ExplicitClientId_IsAccepted()
+    {
+        var (_, _, client) = await SuperAdminAsync();
+
+        var res = await client.PostAsJsonAsync("/admin/hydra/clients", new
+        {
+            client_id     = "yandee-web",
+            client_name   = "yandee-web",
+            grant_types   = new[] { "authorization_code" },
+            redirect_uris = new[] { "http://localhost/superadmin/" }
+        });
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Theory]
+    [InlineData("has space")]
+    [InlineData("slash/injected")]
+    [InlineData("")]
+    [InlineData("sa_impersonator")]       // reserved: service-account clients
+    [InlineData("client_admin_system")]   // reserved: project + admin clients
+    public async Task CreateHydraClient_MalformedClientId_Returns400(string clientId)
+    {
+        var (_, _, client) = await SuperAdminAsync();
+
+        var res = await client.PostAsJsonAsync("/admin/hydra/clients", new
+        {
+            client_id     = clientId,
+            client_name   = "bad",
+            grant_types   = new[] { "authorization_code" },
+            redirect_uris = new[] { "http://localhost/superadmin/" }
+        });
+
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task CreateHydraClient_ClientIdAlreadyTaken_Returns409()
+    {
+        var (_, _, client) = await SuperAdminAsync();
+        fixture.Hydra.SetupOAuth2ClientWithJwks("already-there");
+
+        var res = await client.PostAsJsonAsync("/admin/hydra/clients", new
+        {
+            client_id     = "already-there",
+            client_name   = "duplicate",
+            grant_types   = new[] { "authorization_code" },
+            redirect_uris = new[] { "http://localhost/superadmin/" }
+        });
+
+        res.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
     // ── PATCH /admin/users/{id} — all fields provided (lines 221-242 TRUE branches) ─
 
     [Fact]

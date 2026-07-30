@@ -78,14 +78,11 @@ public sealed class InstanceConfigurationProvider(InstanceBootstrapOptions opts)
         i.AdminSpaOrigin  = S("App:AdminSpaOrigin",  i.AdminSpaOrigin);
         i.Domain          = S("App:Domain",          i.Domain);
         i.AdminPath       = S("IAM_ADMIN_PATH",      i.AdminPath);
-        i.TrustedProxies  = S("App:TrustedProxies",  i.TrustedProxies);
         i.PublicPort      = I("IAM_PUBLIC_PORT",     i.PublicPort);
         i.AdminPort       = I("IAM_ADMIN_PORT",      i.AdminPort);
 
-        i.HydraAdminUrl   = S("Hydra:AdminUrl",      i.HydraAdminUrl);
-        i.HydraPublicUrl  = S("Hydra:PublicUrl",     i.HydraPublicUrl);
-        i.KetoReadUrl     = S("Keto:ReadUrl",        i.KetoReadUrl);
-        i.KetoWriteUrl    = S("Keto:WriteUrl",       i.KetoWriteUrl);
+        // Trust anchors (App:TrustedProxies, Hydra:*Url, Keto:*Url) are deliberately absent:
+        // see the note above ToDict.
 
         i.SmtpHost        = S("Smtp:Host",           i.SmtpHost);
         i.SmtpPort        = I("Smtp:Port",           i.SmtpPort);
@@ -111,20 +108,26 @@ public sealed class InstanceConfigurationProvider(InstanceBootstrapOptions opts)
 
     // ── entity → flat IConfiguration dict ────────────────────────────────────
 
+    /// <summary>
+    /// Emits the operational configuration only.
+    ///
+    /// <c>Hydra:AdminUrl</c>, <c>Keto:ReadUrl</c>/<c>WriteUrl</c> and <c>App:TrustedProxies</c>
+    /// are deliberately NOT emitted, even though the columns still exist. They decide *who the
+    /// process believes* — where tokens are introspected, where authorisation resolves, and whose
+    /// <c>X-Forwarded-For</c> is trusted — and this row is written with the same Postgres
+    /// credentials Hydra and Keto hold. A process must not learn who to trust from data it can
+    /// itself write; fail-closed on an unreachable Keto defends against Keto being *down*, not
+    /// against Keto being *someone else*. These come from env/appsettings only, which is already
+    /// how the chart supplies them.
+    /// </summary>
     private static Dictionary<string, string?> ToDict(Instance i) => new(StringComparer.OrdinalIgnoreCase)
     {
         ["App:PublicUrl"]               = i.PublicUrl,
         ["App:AdminSpaOrigin"]          = i.AdminSpaOrigin,
         ["App:Domain"]                  = i.Domain,
-        ["App:TrustedProxies"]          = i.TrustedProxies,
         ["IAM_ADMIN_PATH"]              = i.AdminPath,
         ["IAM_PUBLIC_PORT"]             = i.PublicPort.ToString(),
         ["IAM_ADMIN_PORT"]              = i.AdminPort.ToString(),
-
-        ["Hydra:AdminUrl"]              = i.HydraAdminUrl,
-        ["Hydra:PublicUrl"]             = i.HydraPublicUrl,
-        ["Keto:ReadUrl"]                = i.KetoReadUrl,
-        ["Keto:WriteUrl"]               = i.KetoWriteUrl,
 
         ["Smtp:Host"]                   = i.SmtpHost,
         ["Smtp:Port"]                   = i.SmtpPort.ToString(),

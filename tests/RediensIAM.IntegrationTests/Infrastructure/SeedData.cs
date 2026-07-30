@@ -108,10 +108,14 @@ public class SeedData
 
     // ── User ──────────────────────────────────────────────────────────────────
 
+    /// <summary>Password every seeded user gets unless overridden — MFA mutations now
+    /// re-authenticate, so tests need to know it.</summary>
+    public const string DefaultPassword = "P@ssw0rd!Test";
+
     public async Task<User> CreateUserAsync(
         Guid   userListId,
         string? email    = null,
-        string  password = "P@ssw0rd!Test",
+        string  password = DefaultPassword,
         bool    active   = true)
     {
         email ??= UniqueEmail();

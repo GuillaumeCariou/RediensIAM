@@ -665,6 +665,24 @@ public sealed class HydraStub : IDisposable
             e.RequestMessage?.Query?.ContainsKey("consent_challenge") == true &&
             e.RequestMessage.Query["consent_challenge"].Contains(challenge));
 
+    /// <summary>Raw session body RediensIAM sent to Hydra when accepting a consent — the exact
+    /// claim set that ends up in the issued access token.</summary>
+    public string? AcceptedConsentBody(string challenge) =>
+        _server.LogEntries
+            .Where(e => e.RequestMessage?.Path == "/admin/oauth2/auth/requests/consent/accept"
+                && e.RequestMessage?.Query?.ContainsKey("consent_challenge") == true
+                && e.RequestMessage.Query["consent_challenge"].Contains(challenge))
+            .Select(e => e.RequestMessage?.Body)
+            .LastOrDefault();
+
+    /// <summary>True if RediensIAM asked Hydra to revoke the consent sessions of this subject.</summary>
+    public bool SessionsRevokedFor(string subject) =>
+        _server.LogEntries.Any(e =>
+            e.RequestMessage?.Path == "/admin/oauth2/auth/sessions/consent" &&
+            e.RequestMessage?.Method == "DELETE" &&
+            e.RequestMessage?.Query?.ContainsKey("subject") == true &&
+            e.RequestMessage.Query["subject"].Contains(subject));
+
     public bool ConsentWasRejected(string challenge) =>
         _server.LogEntries.Any(e =>
             e.RequestMessage?.Path == "/admin/oauth2/auth/requests/consent/reject" &&

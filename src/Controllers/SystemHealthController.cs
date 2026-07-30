@@ -188,7 +188,9 @@ public class SystemHealthController(
                 ["host"]     = appConfig.SmtpHost,
                 ["port"]     = appConfig.SmtpPort.ToString(),
                 ["starttls"] = appConfig.SmtpStartTls ? "yes" : "no",
-                ["auth"]     = string.IsNullOrEmpty(appConfig.SmtpUsername) ? "none" : appConfig.SmtpUsername,
+                // Whether auth is configured is the diagnostic; the account name is a credential
+                // half, and this response also lands in browser history and audit metadata.
+                ["auth"]     = string.IsNullOrEmpty(appConfig.SmtpUsername) ? "none" : "configured",
             };
             return new ComponentHealth("SMTP", "Email", HealthStatus.Ok, sw.ElapsedMilliseconds, null, stats);
         }

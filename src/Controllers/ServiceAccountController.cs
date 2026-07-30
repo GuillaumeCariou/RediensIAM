@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using RediensIAM.Config;
 using RediensIAM.Data;
 using RediensIAM.Data.Entities;
+using RediensIAM.Filters;
 using RediensIAM.Middleware;
 using RediensIAM.Services;
 
@@ -17,10 +18,17 @@ namespace RediensIAM.Controllers;
 /// </summary>
 [ApiController]
 [Route("service-accounts")]
+// Every action gates on the management level carried by the token, which is a snapshot taken
+// when that token was minted. This filter is what re-verifies the level against Keto, so a
+// revoked administrator cannot keep minting credentials on the deployment's most privileged
+// service accounts for the rest of the token's lifetime. ProjectAdmin is the least-privileged
+// level any action here admits; the per-action checks below still apply on top of it.
+[RequireManagementLevel(ManagementLevel.ProjectAdmin)]
 public class ServiceAccountController(
     RediensIamDbContext db,
     PatService patService,
-    AuditLogService audit) : ControllerBase
+    AuditLogService audit,
+    AppConfig appConfig) : ControllerBase
 {
     private const string AuditSa = "service_account";
 
@@ -183,7 +191,13 @@ public class ServiceAccountController(
     {
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
         if (sa == null || !await CanAccessAsync(sa)) return NotFound();
-        var (raw, pat) = await patService.GenerateAsync(id, body.Name, body.ExpiresAt, ActorId);
+        // A PAT with no expiry is a permanent credential on a service account whose grants the
+        // caller may lose tomorrow. Absent or over-long requests are clamped, not rejected, so
+        // existing callers keep working — with a bounded credential.
+        var maxExpiry = DateTimeOffset.UtcNow.AddDays(appConfig.MaxPatLifetimeDays);
+        if (body.ExpiresAt <= DateTimeOffset.UtcNow) return BadRequest(new { error = "expires_at_in_the_past" });
+        var expiresAt = body.ExpiresAt is { } requested && requested < maxExpiry ? requested : maxExpiry;
+        var (raw, pat) = await patService.GenerateAsync(id, body.Name, expiresAt, ActorId);
         await audit.RecordAsync(sa.UserList.OrgId, null, ActorId, "sa.pat.created", AuditSa, id.ToString(),
             new() { ["pat_id"] = pat.Id.ToString(), ["expires_at"] = pat.ExpiresAt?.ToString("O") ?? "never" });
         return Ok(new { pat.Id, pat.Name, token = raw, pat.ExpiresAt, message = "store_this_token_shown_once" });

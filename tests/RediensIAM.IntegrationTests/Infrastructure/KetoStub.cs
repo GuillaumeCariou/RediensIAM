@@ -76,6 +76,15 @@ public sealed class KetoStub : IDisposable
             .RespondWith(Response.Create().WithStatusCode(204));
     }
 
+    /// <summary>Makes tuple writes fail, so a dual-write's ordering is observable.</summary>
+    public void FailTupleWrites()
+    {
+        _writeServer
+            .Given(Request.Create().WithPath("/admin/relation-tuples").UsingPatch())
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(503));
+    }
+
     // ── Specific denials ──────────────────────────────────────────────────────
 
     /// <summary>

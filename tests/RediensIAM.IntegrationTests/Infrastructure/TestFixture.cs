@@ -180,6 +180,11 @@ public sealed class TestFixture : IAsyncLifetime
                     var ssrfDesc = services.SingleOrDefault(d => d.ServiceType == typeof(IWebhookSsrfValidator));
                     if (ssrfDesc != null) services.Remove(ssrfDesc);
                     services.AddSingleton<IWebhookSsrfValidator, PassthroughSsrfValidator>();
+                    // ...and the same for the delivery client's handler, which now refuses to
+                    // dial a reserved address at connect time. The real handler is covered
+                    // directly by BackendHardeningRegressionTests.
+                    services.AddHttpClient("webhook").ConfigurePrimaryHttpMessageHandler(
+                        () => new HttpClientHandler { AllowAutoRedirect = false });
                 });
             });
 

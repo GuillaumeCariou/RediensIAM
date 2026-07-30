@@ -60,7 +60,11 @@ public class OrgController(
     {
         var org = await db.Organisations.FindAsync(OrgId);
         if (org == null) return NotFound();
-        // -1 means "reset to global default"
+        // -1 means "reset to global default". Anything below the floor is refused rather than
+        // clamped: silently keeping more data than an admin asked for would be its own surprise,
+        // and 0/negative made the retention sweep delete the org's entire history within 24 h.
+        if (body.AuditRetentionDays is { } days && days != -1 && days < AppConfig.MinAuditRetentionDays)
+            return BadRequest(new { error = "audit_retention_too_short", minimum = AppConfig.MinAuditRetentionDays });
         if (body.AuditRetentionDays.HasValue)
             org.AuditRetentionDays = body.AuditRetentionDays == -1 ? null : body.AuditRetentionDays;
         org.UpdatedAt = DateTimeOffset.UtcNow;
@@ -159,6 +163,10 @@ public class OrgController(
         if (body.AllowedEmailDomains != null) project.AllowedEmailDomains = body.AllowedEmailDomains;
         var roleErr = await ApplyDefaultRoleAsync(project, body.ClearDefaultRole, body.DefaultRoleId, id);
         if (roleErr != null) return roleErr;
+        // This route reached ApplyLoginTheme without any validation at all — so the org path
+        // accepted tenant CSS and a non-HTTPS logo that the project path refused.
+        if (LoginThemeValidator.Validate(body.LoginTheme) is { } themeErr)
+            return BadRequest(new { error = themeErr });
         ApplyLoginTheme(project, body.LoginTheme);
         ApplyEmailFromName(project, body.ClearEmailFromName, body.EmailFromName);
         if (body.IpAllowlist != null) project.IpAllowlist = body.IpAllowlist;
@@ -513,15 +521,18 @@ public class OrgController(
 
     private async Task<IActionResult> ApplyUserUpdate(User user, UpdateUserRequest body)
     {
-        var passwordChanged = UserHelpers.ApplyUpdate(user, body, passwords);
+        var (passwordChanged, deactivated) = UserHelpers.ApplyUpdate(user, body, passwords);
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
-        if (passwordChanged)
+        if (passwordChanged || deactivated)
         {
             var subject = user.UserList.OrgId.HasValue ? $"{user.UserList.OrgId}:{user.Id}" : user.Id.ToString();
             await hydra.RevokeSessionsAsync(subject);
-            await audit.RecordAsync(OrgId, null, ActorId, "user.password_reset_by_admin", "user", user.Id.ToString());
         }
+        if (passwordChanged)
+            await audit.RecordAsync(OrgId, null, ActorId, "user.password_reset_by_admin", "user", user.Id.ToString());
+        if (deactivated)
+            await audit.RecordAsync(OrgId, null, ActorId, "user.deactivated", "user", user.Id.ToString());
         await audit.RecordAsync(OrgId, null, ActorId, "user.updated", "user", user.Id.ToString());
         return Ok(new { user.Id, user.Email, user.Username, user.Discriminator, user.DisplayName, user.Phone, user.Active, user.EmailVerified, user.LockedUntil, user.FailedLoginCount });
     }
@@ -695,6 +706,9 @@ public class OrgController(
     [HttpPut("smtp")]
     public async Task<IActionResult> UpsertSmtp([FromBody] UpsertSmtpRequest body)
     {
+        if (await SmtpEndpointValidator.ValidateAsync(body.Host, body.Port, body.StartTls) is { } smtpErr)
+            return BadRequest(new { error = smtpErr });
+
         var orgId  = OrgId;
         var config = await db.OrgSmtpConfigs.FirstOrDefaultAsync(c => c.OrgId == orgId);
         if (config == null)
@@ -755,8 +769,11 @@ public class OrgController(
         }
         catch (Exception ex)
         {
+            // No exception text on the wire. The message distinguishes "connection refused" from
+            // "no route" from an SMTP banner, which turns this endpoint into a probe oracle for
+            // whatever the pod can reach. It stays in the log, where only an operator sees it.
             logger.LogWarning(ex, "SMTP test failed for org {OrgId}", OrgId);
-            return BadRequest(new { error = "smtp_test_failed", detail = ex.Message });
+            return BadRequest(new { error = "smtp_test_failed" });
         }
     }
 

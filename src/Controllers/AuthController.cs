@@ -273,6 +273,12 @@ public class AuthController(
 
     private async Task<IActionResult?> CheckUserCredentialsAsync(User user, Project project, LoginRequest body)
     {
+        // The per-user counter is written on every failure here, in AdminLogin and at every MFA
+        // step, but the login path only ever read the per-IP one — so the budget an attacker
+        // actually faced was per source address, and rotating addresses reset it.
+        if (await rateLimiter.IsBlockedAsync(Ip, user.Id))
+            return StatusCode(429, new { error = ErrRateLimited });
+
         if (user.LockedUntil.HasValue && user.LockedUntil > DateTimeOffset.UtcNow)
         {
             IamMetrics.LoginAttempts.WithLabels("locked").Inc();
@@ -660,11 +666,17 @@ public class AuthController(
 
         var projectId = Guid.Parse(projectIdStr);
 
-        var roles = await db.UserProjectRoles
+        // ext.roles is a published contract read by resource servers RediensIAM cannot inventory.
+        // Tenant role names are chosen by tenant admins, so they are emitted qualified by the
+        // project that defined them: two tenants' "admin" must not be the same string at a
+        // consumer, and no tenant name can ever collide with a management role.
+        var roles = (await db.UserProjectRoles
             .Include(r => r.Role)
             .Where(r => r.UserId == userId && r.ProjectId == projectId)
             .Select(r => r.Role.Name)
-            .ToListAsync();
+            .ToListAsync())
+            .Select(name => Roles.ProjectRoleClaim(projectIdStr, name))
+            .ToList();
 
         var session = new
         {
@@ -1061,6 +1073,10 @@ public class AuthController(
             return Unauthorized(new { error = ErrInvalidCreds });
         }
 
+        // Same per-user budget as the tenant login path, for the same reason.
+        if (await rateLimiter.IsBlockedAsync(Ip, user.Id))
+            return StatusCode(429, new { error = ErrRateLimited });
+
         if (user.LockedUntil.HasValue && user.LockedUntil > DateTimeOffset.UtcNow)
             return Unauthorized(new { error = "account_locked", locked_until = user.LockedUntil });
 
@@ -1092,8 +1108,23 @@ public class AuthController(
             return Ok(new { requires_mfa = true });
         }
 
+        // A tenant project can demand a second factor (Project.RequireMfa); the console could not,
+        // so a super_admin without a factor signed in on a password alone. Enrolment is the same
+        // flow the tenant path uses — the login SPA handles requires_mfa_setup generically.
+        if (appConfig.RequireAdminMfa)
+        {
+            HttpContext.Session.SetString("mfa_setup_required", "true");
+            SetMfaSession(user.Id.ToString(), body.LoginChallenge, null);
+            IamMetrics.LoginAttempts.WithLabels("mfa_setup_required").Inc();
+            return Ok(new { requires_mfa_setup = true });
+        }
+
         var context = new Dictionary<string, object> { [CtxUserId] = user.Id.ToString() };
         var redirectUrl = await hydra.AcceptLoginAsync(body.LoginChallenge, user.Id.ToString(), context);
+        // Snapshot the request values before detaching: HttpContext is not valid once the
+        // response completes.
+        var (userAgent, ip) = (Request.Headers.UserAgent.ToString(), Ip);
+        _ = Task.Run(() => CheckNewDeviceAsync(user, null, ip, userAgent));
         return Ok(new { redirect_to = redirectUrl });
     }
 
@@ -1586,6 +1617,10 @@ public class AuthController(
         user.LastLoginAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         if (resetRateLimit) await rateLimiter.ResetAsync(Ip, userGuid);
+        // Only CompleteLoginAsync had this, so every login that passed a second factor — including
+        // every admin-console login — produced no new-device alert. Snapshot the request values
+        // before detaching: HttpContext is not valid once the response completes.
+        var (userAgent, ip) = (Request.Headers.UserAgent.ToString(), Ip);
 
         HttpContext.Session.Remove(MfaPendingUser);
         HttpContext.Session.Remove(MfaPendingChallenge);
@@ -1601,6 +1636,7 @@ public class AuthController(
             var ctx = new Dictionary<string, object> { [CtxUserId] = user.Id.ToString() };
             redirectUrl = await hydra.AcceptLoginAsync(challenge, user.Id.ToString(), ctx);
             await audit.RecordAsync(null, null, user.Id, auditEvent);
+            _ = Task.Run(() => CheckNewDeviceAsync(user, null, ip, userAgent));
         }
         else
         {
@@ -1612,6 +1648,7 @@ public class AuthController(
             };
             redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, context);
             await audit.RecordAsync(project.OrgId, project.Id, user.Id, auditEvent);
+            _ = Task.Run(() => CheckNewDeviceAsync(user, project.OrgId, ip, userAgent));
         }
         return Ok(new { redirect_to = redirectUrl });
     }

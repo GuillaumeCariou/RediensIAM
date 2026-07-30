@@ -236,7 +236,13 @@ public class SmtpEmailService(
         MimeMessage? message)
     {
         using var client = new SmtpClient();
-        await client.ConnectAsync(host, port, startTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None);
+        // Port 465 is implicit TLS: the socket is TLS from the first byte, and StartTls on it
+        // negotiates nothing. Without this branch a config saved as "465, start_tls off" — which
+        // is the correct way to describe SMTPS — sent credentials in the clear.
+        var security = SecureSocketOptions.None;
+        if (port == SmtpEndpointValidator.ImplicitTlsPort) security = SecureSocketOptions.SslOnConnect;
+        else if (startTls) security = SecureSocketOptions.StartTls;
+        await client.ConnectAsync(host, port, security);
         if (!string.IsNullOrEmpty(username) && !string.IsNullOrEmpty(password))
             await client.AuthenticateAsync(username, password);
         if (message != null)

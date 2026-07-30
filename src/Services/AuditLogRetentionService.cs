@@ -39,7 +39,9 @@ public class AuditLogRetentionService(
         int total = 0;
         foreach (var org in orgs)
         {
-            var days = org.AuditRetentionDays ?? appConfig.AuditRetentionDays;
+            // Clamped here as well as at the write path: this is the only code that deletes, and
+            // a row set directly in the database must not be able to make the cutoff be now.
+            var days = AppConfig.ClampRetention(org.AuditRetentionDays ?? appConfig.AuditRetentionDays);
             var cutoff = DateTimeOffset.UtcNow.AddDays(-days);
             var deleted = await db.AuditLogs
                 .Where(a => a.OrgId == org.Id && a.CreatedAt < cutoff)

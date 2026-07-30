@@ -50,16 +50,20 @@ public class ServiceAccountBranchCoverageTests(TestFixture fixture)
         return fixture.ClientWithToken(token);
     }
 
-    // ── GET /service-accounts — Level.None → Unauthorized (line 56) ──────────
+    // ── GET /service-accounts — Level.None → Forbidden ───────────────────────
 
+    /// <summary>
+    /// [RequireManagementLevel] now runs ahead of the action, so a token with no management
+    /// level is refused with 403 by the filter rather than 401 by the action body (R-22).
+    /// </summary>
     [Fact]
-    public async Task ListServiceAccounts_LevelNone_ReturnsUnauthorized()
+    public async Task ListServiceAccounts_LevelNone_IsRefused()
     {
         var client = await RegularUserClientAsync();
 
         var res = await client.GetAsync("/service-accounts");
 
-        res.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        res.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     // ── GET /service-accounts — ProjectAdmin with no assigned list (line 70) ─
@@ -81,10 +85,10 @@ public class ServiceAccountBranchCoverageTests(TestFixture fixture)
         res.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
-    // ── POST /service-accounts — Level.None → Unauthorized (line 91) ─────────
+    // ── POST /service-accounts — Level.None → Forbidden ──────────────────────
 
     [Fact]
-    public async Task CreateServiceAccount_LevelNone_ReturnsUnauthorized()
+    public async Task CreateServiceAccount_LevelNone_IsRefused()
     {
         var client = await RegularUserClientAsync();
 
@@ -94,7 +98,7 @@ public class ServiceAccountBranchCoverageTests(TestFixture fixture)
             user_list_id = Guid.NewGuid()
         });
 
-        res.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        res.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     // ── POST /service-accounts — list not found → BadRequest (line 94) ────────

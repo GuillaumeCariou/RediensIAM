@@ -78,7 +78,14 @@ public class SamlService(
         if (string.IsNullOrEmpty(idp.SsoUrl))
             throw new InvalidOperationException("SAML IdP has neither MetadataUrl nor SsoUrl");
 
-        config.SingleSignOnDestination = new Uri(idp.SsoUrl);
+        // GET /auth/saml/start redirects the browser here without going through
+        // RedirectValidator, so an unvalidated SsoUrl is an unauthenticated open redirect to
+        // wherever an org admin points it. The metadata branch already requires HTTPS; guarding
+        // on the read path rather than the four write paths also covers rows already stored.
+        if (!Uri.TryCreate(idp.SsoUrl, UriKind.Absolute, out var ssoUri) || ssoUri.Scheme != Uri.UriSchemeHttps)
+            throw new InvalidOperationException($"SAML IdP {idp.Id}: SsoUrl must be an absolute HTTPS URL");
+
+        config.SingleSignOnDestination = ssoUri;
 
         // The signing certificate is the ONLY integrity control on a SAML assertion. Without
         // one, an unsigned (or attacker-signed) assertion could be accepted. The metadata

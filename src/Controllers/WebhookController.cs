@@ -253,11 +253,57 @@ public sealed class WebhookSsrfValidator : IWebhookSsrfValidator
 
 public static class WebhookUrlValidator
 {
+    /// <summary>
+    /// Handler for every client that fetches an operator- or tenant-supplied URL.
+    ///
+    /// Validating the URL and then handing the hostname to the socket stack resolves DNS twice,
+    /// and a record with a one-second TTL can answer "public" the first time and "169.254.169.254"
+    /// the second. This resolves once, inside the connect, and dials the address it vetted — so
+    /// there is no window between the check and the connection.
+    ///
+    /// The callback vets redirect hops too, so <paramref name="allowAutoRedirect"/> is no longer
+    /// a security control — it stays false where following a redirect was never wanted anyway
+    /// (webhook delivery, OAuth2 token exchange).
+    /// </summary>
+    public static SocketsHttpHandler CreateSsrfSafeHandler(bool allowAutoRedirect = false) => new()
+    {
+        AllowAutoRedirect = allowAutoRedirect,
+        ConnectCallback = async (ctx, ct) =>
+        {
+            var addresses = await Dns.GetHostAddressesAsync(ctx.DnsEndPoint.Host, ct);
+            var vetted = Array.Find(addresses, a => !IsPrivateIp(a))
+                ?? throw new HttpRequestException(
+                    $"Refused to connect to {ctx.DnsEndPoint.Host}: resolves only to private or reserved addresses");
+
+            var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+            try
+            {
+                await socket.ConnectAsync(vetted, ctx.DnsEndPoint.Port, ct);
+                return new NetworkStream(socket, ownsSocket: true);
+            }
+            catch
+            {
+                socket.Dispose();
+                throw;
+            }
+        },
+    };
+
     public static async Task<bool> IsPrivateOrReservedAsync(string url)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return true;
+        return await IsPrivateOrReservedHostAsync(uri.Host);
+    }
 
-        var host = uri.Host;
+    /// <summary>
+    /// Host-only entry point, for targets that are not URLs — an SMTP endpoint is a bare
+    /// host:port pair and used to reach the network without passing through here at all.
+    /// </summary>
+    public static async Task<bool> IsPrivateOrReservedHostAsync(string host)
+    {
+        // Uri.Host keeps the brackets on an IPv6 literal, and Dns.GetHostAddressesAsync throws
+        // on the bracketed form — which the catch below turned into "allowed".
+        host = host.Trim('[', ']');
 
         if (host.EndsWith(".svc", StringComparison.OrdinalIgnoreCase) ||
             host.EndsWith(".cluster.local", StringComparison.OrdinalIgnoreCase) ||
@@ -265,6 +311,8 @@ public static class WebhookUrlValidator
             host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
             host.Equals("metadata.google.internal", StringComparison.OrdinalIgnoreCase))
             return true;
+
+        if (IPAddress.TryParse(host, out var literal)) return IsPrivateIp(literal);
 
         try
         {

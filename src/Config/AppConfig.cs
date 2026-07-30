@@ -21,7 +21,8 @@ public class AppConfig(IConfiguration config)
     // ── Cache / Redis ─────────────────────────────────────────────────────────
     public string CacheConnectionString => config["Cache:ConnectionString"] ?? "localhost:6379,abortConnect=false";
     public string CacheInstanceName     => config["Cache:InstanceName"] ?? "rediensiam:";
-    public int    PatCacheTtlMinutes    => config.GetValue<int>("Cache:PatTtlMinutes", 5);
+    // Upper bound on how long a revoked PAT keeps working — see MaxLoginAttempts on clamping.
+    public int    PatCacheTtlMinutes    => Math.Clamp(config.GetValue<int>("Cache:PatTtlMinutes", 5), 0, 15);
 
     // ── App URLs ──────────────────────────────────────────────────────────────
     public string PublicUrl      => config["App:PublicUrl"] ?? "http://localhost";
@@ -40,20 +41,35 @@ public class AppConfig(IConfiguration config)
     public string  SmtpFromAddress => config["Smtp:FromAddress"] ?? "noreply@localhost";
 
     // ── Security ──────────────────────────────────────────────────────────────
-    public int    MaxLoginAttempts        => config.GetValue<int>("Security:MaxLoginAttempts", 5);
-    public int    LockoutMinutes          => config.GetValue<int>("Security:LockoutMinutes", 15);
+    // These stay operator-tunable through the instance row, so every one of them is clamped to a
+    // range in which it is still a control. Unclamped, a single DB write disables account
+    // lockout, weakens Argon2 for every future hash, and makes PAT revocation ineffective.
+    public int    MaxLoginAttempts        => Math.Clamp(config.GetValue<int>("Security:MaxLoginAttempts", 5), 1, 10);
+    public int    LockoutMinutes          => Math.Clamp(config.GetValue<int>("Security:LockoutMinutes", 15), 1, 1440);
     public int    OtpTtlSeconds           => config.GetValue<int>("Security:OtpTtlSeconds", 300);
     public int    MaxSmsPerWindow         => config.GetValue<int>("Security:MaxSmsPerWindow", 3);
     public int    SmsWindowMinutes        => config.GetValue<int>("Security:SmsWindowMinutes", 10);
     public string TotpSecretEncryptionKey => config["Security:TotpSecretEncryptionKey"]
         ?? throw new InvalidOperationException("Security:TotpSecretEncryptionKey is required");
-    public int    ArgonTimeCost           => config.GetValue<int>("Security:ArgonTimeCost", 3);
-    public int    ArgonMemoryCost         => config.GetValue<int>("Security:ArgonMemoryCost", 65536);
-    public int    ArgonParallelism        => config.GetValue<int>("Security:ArgonParallelism", 4);
+    // Floors are the OWASP Argon2id minimum (t=2, m=19 MiB, p=1).
+    public int    ArgonTimeCost           => Math.Max(config.GetValue<int>("Security:ArgonTimeCost", 3), 2);
+    public int    ArgonMemoryCost         => Math.Max(config.GetValue<int>("Security:ArgonMemoryCost", 65536), 19456);
+    public int    ArgonParallelism        => Math.Clamp(config.GetValue<int>("Security:ArgonParallelism", 4), 1, 16);
     /// <summary>Optional hex-encoded server-side pepper mixed via HMAC-SHA256 into Argon2 input.
     /// Empty value means no pepper (back-compat with existing hashes).</summary>
     public string Argon2Pepper            => config["Security:Argon2Pepper"] ?? "";
     public string PatPrefix               => config["Security:PatPrefix"] ?? "rediens_pat_";
+    /// <summary>Upper bound on a service-account PAT's lifetime. A credential that never expires
+    /// outlives every revocation path the deployment has.</summary>
+    public int    MaxPatLifetimeDays      => Math.Clamp(config.GetValue<int>("Security:MaxPatLifetimeDays", 365), 1, 730);
+    /// <summary>
+    /// Whether the management console requires a second factor. A tenant project has
+    /// <c>Project.RequireMfa</c>; RediensIAM's own admin surface — where <c>super_admin</c> lives —
+    /// had no equivalent and asked for MFA only when the account happened to have a factor, so the
+    /// most privileged accounts in the deployment were password-only by default. On means an admin
+    /// with no factor is sent through enrolment before the login completes, never refused.
+    /// </summary>
+    public bool   RequireAdminMfa         => config.GetValue("Security:RequireAdminMfa", true);
 
     /// <summary>
     /// OAuth2 client IDs allowed to call the management surfaces (/admin, /org, /project,
@@ -88,7 +104,19 @@ public class AppConfig(IConfiguration config)
             info: Encoding.UTF8.GetBytes(purpose));
 
     // ── Audit ─────────────────────────────────────────────────────────────────
-    public int AuditRetentionDays => config.GetValue<int>("Audit:RetentionDays", 365);
+
+    /// <summary>
+    /// Shortest retention any scope may request. Retention drives an unconditional
+    /// <c>ExecuteDeleteAsync</c>, so a value at or below zero is not a setting — it is a
+    /// self-service purge of the evidence, including the record of the change itself.
+    /// </summary>
+    public const int MinAuditRetentionDays = 90;
+    public const int MaxAuditRetentionDays = 3650;
+
+    public int AuditRetentionDays => ClampRetention(config.GetValue<int>("Audit:RetentionDays", 365));
+
+    public static int ClampRetention(int days) =>
+        Math.Clamp(days, MinAuditRetentionDays, MaxAuditRetentionDays);
 
     // ── Invitations ───────────────────────────────────────────────────────────
     public int InviteExpiryHours => config.GetValue<int>("Invitations:ExpiryHours", 72);

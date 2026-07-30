@@ -248,12 +248,28 @@ public class SocialLoginService(
 
         if (!resp.IsSuccessStatusCode)
         {
-            logger.LogWarning("Token exchange failed for {Provider}: {Status} {Body}", provider.Type, resp.StatusCode, content);
+            // Status and the OAuth2 error code only. The full body is provider-controlled and
+            // has been observed to echo request parameters back — which on this request means
+            // the client_secret and the authorization code.
+            var errorCode = TryReadErrorCode(content);
+            logger.LogWarning("Token exchange failed for {Provider}: {Status} {Error}",
+                provider.Type, resp.StatusCode, errorCode);
             return null;
         }
 
         using var doc = JsonDocument.Parse(content);
         return doc.RootElement.TryGetProperty("access_token", out var at) ? at.GetString() : null;
+    }
+
+    /// <summary>RFC 6749 §5.2 <c>error</c>, or "unparseable" — never the raw body.</summary>
+    private static string TryReadErrorCode(string content)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(content);
+            return doc.RootElement.TryGetProperty("error", out var e) ? e.ToString() : "no_error_field";
+        }
+        catch (JsonException) { return "unparseable"; }
     }
 
     private async Task<SocialUserProfile?> GetUserProfileAsync(ProviderConfig provider, string accessToken)

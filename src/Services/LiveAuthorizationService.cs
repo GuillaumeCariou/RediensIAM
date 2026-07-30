@@ -21,6 +21,7 @@ public sealed class LiveAuthorizationService(
     KetoService keto,
     RediensIamDbContext db,
     IDistributedCache cache,
+    HydraService hydra,
     ILogger<LiveAuthorizationService> logger)
 {
     /// <summary>Upper bound on how long a revoked role keeps working. Keep it short.</summary>
@@ -38,9 +39,14 @@ public sealed class LiveAuthorizationService(
         var userId = claims.ParsedUserId;
         if (userId == Guid.Empty) return false;
 
+        // The OrgAdmin decision is a function of claims.OrgId, so a cached answer is only valid
+        // for the scope it was decided under. The scope travels in the value rather than the key
+        // so InvalidateAsync can still drop every decision for a user without enumerating orgs.
+        var scope = level == ManagementLevel.OrgAdmin ? claims.OrgId : "";
         var cacheKey = $"authz:{userId}:{(int)level}";
         var cached = await cache.GetStringAsync(cacheKey);
-        if (cached != null) return cached == "1";
+        if (cached != null && cached.Split('|', 2) is [var verdict, var cachedScope] && cachedScope == scope)
+            return verdict == "1";
 
         bool granted;
         try
@@ -55,7 +61,7 @@ public sealed class LiveAuthorizationService(
             return false;
         }
 
-        await cache.SetStringAsync(cacheKey, granted ? "1" : "0",
+        await cache.SetStringAsync(cacheKey, $"{(granted ? "1" : "0")}|{scope}",
             new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(CacheTtlSeconds) });
         return granted;
     }
@@ -86,10 +92,33 @@ public sealed class LiveAuthorizationService(
         };
     }
 
-    /// <summary>Drops the cached decisions for a user. Call when their roles change.</summary>
+    /// <summary>
+    /// Called when a user's management roles change. Drops the cached decisions AND revokes their
+    /// management-console sessions.
+    ///
+    /// The cache drop only protects RediensIAM's own surface: the issued token still carries the
+    /// old <c>ext.roles</c>, and a resource server validating it locally against JWKS honours the
+    /// revoked role for the token's full lifetime. Revoking the Hydra session is the only way to
+    /// end that window — the next request has to obtain a token minted from the new grants.
+    ///
+    /// The subject is the bare user id, which is what <c>AdminLogin</c> accepts the login with;
+    /// tenant sessions (<c>{orgId}:{userId}</c>) carry project roles, not management ones, and are
+    /// deliberately left alone.
+    /// </summary>
     public async Task InvalidateAsync(Guid userId)
     {
         foreach (var level in (ManagementLevel[])[ManagementLevel.SuperAdmin, ManagementLevel.OrgAdmin, ManagementLevel.ProjectAdmin])
             await cache.RemoveAsync($"authz:{userId}:{(int)level}");
+
+        try
+        {
+            await hydra.RevokeSessionsAsync(userId.ToString());
+        }
+        catch (Exception ex)
+        {
+            // The grant change is already committed; failing the request would misreport it. The
+            // cache drop above still closes the window on this deployment's own surface.
+            logger.LogWarning(ex, "Session revocation after a role change failed for user {UserId}", userId);
+        }
     }
 }

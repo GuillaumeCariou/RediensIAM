@@ -1,3 +1,5 @@
+using System.Net.Http.Json;
+using System.Text.Json;
 using RediensIAM.IntegrationTests.Infrastructure;
 
 namespace RediensIAM.IntegrationTests.Tests.Security;
@@ -62,20 +64,54 @@ public class SecurityHeadersTests(TestFixture fixture)
         res.Headers.TryGetValues("X-Content-Type-Options", out var xct).Should().BeTrue();
         xct!.First().Should().Be("nosniff");
 
-        // Admin SPA gets a strict CSP (no unsafe-inline)
         res.Headers.TryGetValues("Content-Security-Policy", out var csp).Should().BeTrue();
-        csp!.First().Should().Contain("script-src 'self'");
-        csp!.First().Should().NotContain("unsafe-inline");
+        var policy = csp!.First();
+        // Scripts stay strict — 'unsafe-inline' is granted to style-src only (Radix injects
+        // <style> nodes at runtime), never to script-src.
+        policy.Should().Contain("script-src 'self';");
+        policy.Should().NotContain("script-src 'self' 'unsafe-inline'");
+        policy.Should().Contain("style-src 'self' 'unsafe-inline'");
+        policy.Should().Contain("object-src 'none'");
     }
 
-    // ── /preview should not have X-Frame-Options: DENY ────────────────────────
+    // ── R-26 — the admin console could not reach its own issuer ───────────────
+    // connect-src fell back to default-src 'self', so oidc-client-ts's discovery fetch to
+    // {issuer}/.well-known/openid-configuration was blocked and admin login was impossible.
 
     [Fact]
-    public async Task PreviewRoute_NoXFrameOptions()
+    public async Task AdminRoute_ConnectSrc_NamesTheIssuerOrigin()
+    {
+        var res = await fixture.Client.GetAsync("/admin/config");
+        var cfg = await res.Content.ReadFromJsonAsync<JsonElement>();
+        var issuerOrigin = new Uri(cfg.GetProperty("hydra_url").GetString()!)
+            .GetLeftPart(UriPartial.Authority);
+
+        var policy = res.Headers.GetValues("Content-Security-Policy").First();
+        policy.Should().Contain($"connect-src 'self' {issuerOrigin};");
+    }
+
+    [Fact]
+    public async Task PublicRoute_AllowsRemoteImagesButNotRemoteScripts()
+    {
+        var res = await fixture.Client.GetAsync("/health");
+
+        var policy = res.Headers.GetValues("Content-Security-Policy").First();
+        // Tenant logos and social-provider icons are remote HTTPS images.
+        policy.Should().Contain("img-src 'self' data: https:");
+        policy.Should().Contain("script-src 'self';");
+        policy.Should().Contain("connect-src 'self';");
+    }
+
+    // ── I-03: the /preview framing exemption was dead in two ways ─────────────
+    // No /preview route exists anywhere in src/, and the same response still carried
+    // frame-ancestors 'none', which browsers honour over X-Frame-Options. The exemption is gone;
+    // every response is DENY.
+
+    [Fact]
+    public async Task PreviewRoute_IsFramingDeniedLikeEverythingElse()
     {
         var res = await fixture.Client.GetAsync("/preview");
 
-        // /preview may 404 in tests (no static file), but the header must not be set
-        res.Headers.TryGetValues("X-Frame-Options", out _).Should().BeFalse();
+        res.Headers.GetValues("X-Frame-Options").Should().ContainSingle().Which.Should().Be("DENY");
     }
 }

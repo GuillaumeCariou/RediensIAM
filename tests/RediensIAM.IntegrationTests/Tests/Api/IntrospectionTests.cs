@@ -129,11 +129,13 @@ public class IntrospectionTests(TestFixture fixture)
     [Fact]
     public async Task Introspect_RoleRevokedInKeto_IsNotReported()
     {
-        var (client, _, _) = await GatewayClientAsync();
+        var (client, org, orgList) = await GatewayClientAsync();
 
-        var (_, orgList) = await fixture.Seed.CreateOrgAsync();
+        // Same organisation as the calling service account: a tenant-scoped gateway only ever
+        // sees its own organisation's tokens (T-N6).
         var admin = await fixture.Seed.CreateUserAsync(orgList.Id);
-        var token = fixture.Seed.SuperAdminToken(admin.Id);
+        var token = $"sa-org-{admin.Id:N}";
+        fixture.Hydra.RegisterToken(token, admin.Id.ToString(), org.Id.ToString(), null, [Roles.SuperAdmin]);
 
         fixture.Keto.AllowAll();
         await fixture.FlushCacheAsync();
@@ -168,7 +170,8 @@ public class IntrospectionTests(TestFixture fixture)
     {
         var (client, org, orgList) = await GatewayClientAsync();
         var user  = await fixture.Seed.CreateUserAsync(orgList.Id);
-        var token = fixture.Seed.SuperAdminToken(user.Id);
+        var token = $"sa-org-{user.Id:N}";
+        fixture.Hydra.RegisterToken(token, user.Id.ToString(), org.Id.ToString(), null, [Roles.SuperAdmin]);
 
         fixture.Keto.AllowAll();
         var allowed = await client.PostAsJsonAsync("/api/authorize", new

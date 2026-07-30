@@ -68,12 +68,18 @@ public class MfaSetupTests(TestFixture fixture)
 
     // ── Backup codes ──────────────────────────────────────────────────────────
 
+    // Regeneration invalidates every existing code, so it re-authenticates (R-24).
+    private static Task<HttpResponseMessage> RegenerateAsync(HttpClient client) =>
+        client.PostAsJsonAsync("/account/mfa/backup-codes",
+            new { current_password = SeedData.DefaultPassword });
+
     [Fact]
     public async Task RegenerateBackupCodes_Authenticated_ReturnsCodeList()
     {
         var (_, client) = await ScaffoldAsync();
 
-        var res = await client.PostAsync("/account/mfa/backup-codes", null);
+        var res = await client.PostAsJsonAsync("/account/mfa/backup-codes",
+            new { current_password = SeedData.DefaultPassword });
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
@@ -95,13 +101,13 @@ public class MfaSetupTests(TestFixture fixture)
         var (user, client) = await ScaffoldAsync();
 
         // Generate first batch
-        var res1   = await client.PostAsync("/account/mfa/backup-codes", null);
+        var res1   = await RegenerateAsync(client);
         var body1  = await res1.Content.ReadFromJsonAsync<JsonElement>();
         var codes1 = body1.GetProperty("backup_codes").EnumerateArray()
             .Select(c => c.GetString()).ToArray();
 
         // Generate second batch
-        await client.PostAsync("/account/mfa/backup-codes", null);
+        await RegenerateAsync(client);
 
         // First-batch codes should no longer exist in the DB
         await fixture.RefreshDbAsync();

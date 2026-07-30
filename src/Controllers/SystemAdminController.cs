@@ -35,8 +35,7 @@ public class SystemAdminController(
     private const string KindInvite = "invite";
 
     /// <summary>Management role names accepted by the role-assignment endpoints.</summary>
-    internal static readonly string[] KnownManagementRoles =
-        [Roles.SuperAdmin, Roles.OrgAdmin, Roles.ProjectAdmin];
+    internal static readonly string[] KnownManagementRoles = Roles.Management;
 
     private TokenClaims Claims => HttpContext.GetClaims()!;
     private Guid GetActorId() => Claims.ParsedUserId;
@@ -94,6 +93,8 @@ var actorId = GetActorId();
     {
 var org = await db.Organisations.FindAsync(id);
         if (org == null) return NotFound();
+        if (body.AuditRetentionDays is { } days && days != -1 && days < AppConfig.MinAuditRetentionDays)
+            return BadRequest(new { error = "audit_retention_too_short", minimum = AppConfig.MinAuditRetentionDays });
         if (body.Name != null) org.Name = body.Name;
         if (body.AuditRetentionDays.HasValue) org.AuditRetentionDays = body.AuditRetentionDays == -1 ? null : body.AuditRetentionDays;
         org.UpdatedAt = DateTimeOffset.UtcNow;
@@ -110,7 +111,29 @@ var org = await db.Organisations.FindAsync(id);
         org.Active = false; org.SuspendedAt = DateTimeOffset.UtcNow; org.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         await audit.RecordAsync(id, null, GetActorId(), "org.suspended", AuditOrg, id.ToString());
+        // Active is only consulted at login, so suspension used to leave every session already
+        // issued working until its token expired — the suspended tenant kept full API access for
+        // the token lifetime at every resource server. DeleteOrg already revokes this way, and
+        // suspension is the same revocation with the rows left in place.
+        await RevokeOrgSessionsAsync(id);
         return Ok(new { message = "org_suspended" });
+    }
+
+    /// <summary>
+    /// Revokes the Hydra sessions of every user in an organisation. Best-effort per user: one
+    /// unreachable subject must not leave the rest of the organisation signed in.
+    /// </summary>
+    private async Task RevokeOrgSessionsAsync(Guid orgId)
+    {
+        var userIds = await db.Users
+            .Where(u => u.UserList.OrgId == orgId)
+            .Select(u => u.Id)
+            .ToListAsync();
+        foreach (var userId in userIds)
+        {
+            try { await hydra.RevokeSessionsAsync($"{orgId}:{userId}"); }
+            catch (Exception ex) { logger.LogWarning(ex, "Failed to revoke Hydra sessions for user {UserId} in org {OrgId}", userId, orgId); }
+        }
     }
 
     [HttpPost("organizations/{id}/unsuspend")]
@@ -224,15 +247,18 @@ var user = await db.Users
     {
         var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id == id);
         if (user == null) return NotFound();
-        var passwordChanged = UserHelpers.ApplyUpdate(user, body, passwords);
+        var (passwordChanged, deactivated) = UserHelpers.ApplyUpdate(user, body, passwords);
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
-        if (passwordChanged)
+        if (passwordChanged || deactivated)
         {
             var subject = user.UserList.OrgId.HasValue ? $"{user.UserList.OrgId}:{user.Id}" : user.Id.ToString();
             await hydra.RevokeSessionsAsync(subject);
-            await audit.RecordAsync(user.UserList.OrgId, null, GetActorId(), "user.password_reset_by_admin", "user", id.ToString());
         }
+        if (passwordChanged)
+            await audit.RecordAsync(user.UserList.OrgId, null, GetActorId(), "user.password_reset_by_admin", "user", id.ToString());
+        if (deactivated)
+            await audit.RecordAsync(user.UserList.OrgId, null, GetActorId(), "user.deactivated", "user", id.ToString());
         await audit.RecordAsync(user.UserList.OrgId, null, GetActorId(), "user.updated", "user", id.ToString());
         return Ok(new { user.Id, user.Email, user.Username, user.Discriminator, user.DisplayName, user.Phone, user.Active, user.EmailVerified, user.LockedUntil, user.FailedLoginCount });
     }
@@ -420,6 +446,13 @@ var orgRoles = await db.OrgRoles.Where(r => r.OrgId == id).Include(r => r.User).
         if (!KnownManagementRoles.Contains(body.Role))
             return BadRequest(new { error = "unknown_role", allowed = KnownManagementRoles });
 
+        // super_admin is deployment-wide and lives at System:rediensiam#super_admin, written by
+        // adding the user to the __system__ list. Accepting it here wrote an org-scoped tuple no
+        // policy reads plus an org_roles row nothing resolves: the console then showed a
+        // super_admin who had no super_admin. /org/admins already refuses it; so does this now.
+        if (body.Role == Roles.SuperAdmin)
+            return StatusCode(403, new { error = "cannot_grant_super_admin" });
+
         var existing = await db.OrgRoles.FirstOrDefaultAsync(r =>
             r.OrgId == id && r.UserId == body.UserId && r.Role == body.Role && r.ScopeId == body.ScopeId);
         if (existing != null) return Ok(new { existing.Id });
@@ -428,10 +461,21 @@ var orgRoles = await db.OrgRoles.Where(r => r.OrgId == id).Include(r => r.User).
             OrgId = id, UserId = body.UserId, Role = body.Role,
             ScopeId = body.ScopeId, GrantedBy = GetActorId(), GrantedAt = DateTimeOffset.UtcNow
         };
-        db.OrgRoles.Add(role);
-        await db.SaveChangesAsync();
+        // Tuple first, row second, tuple removed if the row fails — the order
+        // KetoService.AssignManagementRoleAsync established. Row-first left a committed grant with
+        // no tuple behind it when Keto rejected the write.
         var ketoSubject = body.ScopeId.HasValue ? $"user:{body.UserId}|project:{body.ScopeId}" : $"user:{body.UserId}";
         await keto.WriteRelationTupleAsync(Roles.KetoOrgsNamespace, id.ToString(), body.Role, ketoSubject);
+        try
+        {
+            db.OrgRoles.Add(role);
+            await db.SaveChangesAsync();
+        }
+        catch
+        {
+            await keto.DeleteRelationTupleAsync(Roles.KetoOrgsNamespace, id.ToString(), body.Role, ketoSubject);
+            throw;
+        }
         await live.InvalidateAsync(body.UserId);
         await audit.RecordAsync(id, null, GetActorId(), "role.management.assigned", "user", body.UserId.ToString(),
             new() { ["role"] = body.Role });
@@ -443,10 +487,13 @@ var orgRoles = await db.OrgRoles.Where(r => r.OrgId == id).Include(r => r.User).
     {
 var role = await db.OrgRoles.FirstOrDefaultAsync(r => r.Id == roleId && r.OrgId == id);
         if (role == null) return NotFound();
-        db.OrgRoles.Remove(role);
-        await db.SaveChangesAsync();
+        // Tuple first. Row-first meant a failing Keto delete left the tuple with no row naming it —
+        // R-01's "admin of some org" orphan, and the fail-open direction. Tuple-first fails closed:
+        // the grant stops working and the row is the evidence that it should be cleaned up.
         var ketoSubject = role.ScopeId.HasValue ? $"user:{role.UserId}|project:{role.ScopeId}" : $"user:{role.UserId}";
         await keto.DeleteRelationTupleAsync(Roles.KetoOrgsNamespace, id.ToString(), role.Role, ketoSubject);
+        db.OrgRoles.Remove(role);
+        await db.SaveChangesAsync();
         await live.InvalidateAsync(role.UserId);
         await audit.RecordAsync(id, null, GetActorId(), "role.management.removed", "user", role.UserId.ToString(),
             new() { ["role"] = role.Role });
@@ -527,6 +574,8 @@ var project = await db.Projects.FindAsync(id);
         if (body.AllowedEmailDomains != null)       project.AllowedEmailDomains      = body.AllowedEmailDomains;
         var roleErr = await ApplyDefaultRoleAsync(project, body.ClearDefaultRole, body.DefaultRoleId, id);
         if (roleErr != null) return roleErr;
+        if (LoginThemeValidator.Validate(body.LoginTheme) is { } themeErr)
+            return BadRequest(new { error = themeErr });
         ApplyLoginTheme(project, body.LoginTheme);
         if (body.IpAllowlist != null) project.IpAllowlist = body.IpAllowlist;
         if (body.CheckBreachedPasswords.HasValue) project.CheckBreachedPasswords = body.CheckBreachedPasswords.Value;
@@ -660,6 +709,8 @@ var roles = await db.Roles
     [HttpPost("projects/{id}/roles")]
     public async Task<IActionResult> AdminCreateRole(Guid id, [FromBody] AdminCreateRoleRequest body)
     {
+        if (Roles.ProjectRoleNameError(body.Name) is { } nameErr)
+            return BadRequest(new { error = nameErr, reserved = KnownManagementRoles });
         if (!await db.Projects.AnyAsync(p => p.Id == id)) return NotFound();
         var role = new Role
         {
@@ -762,6 +813,9 @@ var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == rid && r.ProjectId ==
     public async Task<IActionResult> UpsertOrgSmtp(Guid id, [FromBody] AdminUpsertSmtpRequest body)
     {
         if (!await db.Organisations.AnyAsync(o => o.Id == id)) return NotFound();
+        if (await SmtpEndpointValidator.ValidateAsync(body.Host, body.Port, body.StartTls) is { } smtpErr)
+            return BadRequest(new { error = smtpErr });
+
         var config = await db.OrgSmtpConfigs.FirstOrDefaultAsync(c => c.OrgId == id);
         if (config == null)
         {
@@ -859,17 +913,42 @@ var clients = await hydra.ListOAuth2ClientsAsync();
         return Ok(clients);
     }
 
+    // "sa_" marks a service-account client and "client_" a project client; both prefixes carry
+    // authorisation meaning elsewhere (IntrospectionController.IsServiceAccountCaller, the
+    // project lookup by HydraClientId), so a hand-made client must never claim one.
+    private static readonly string[] ReservedClientIdPrefixes = [Roles.ServiceAccountClientPrefix, "client_"];
+
+    private static bool IsValidClientId(string id) =>
+        id.Length is > 0 and <= 64
+        && id.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.')
+        && !ReservedClientIdPrefixes.Any(p => id.StartsWith(p, StringComparison.Ordinal));
+
     [HttpPost("hydra/clients")]
     public async Task<IActionResult> CreateHydraClient([FromBody] CreateHydraClientRequest body)
     {
-var client = await hydra.CreateOAuth2ClientAsync(new
+        var payload = new Dictionary<string, object?>
         {
-            client_name = body.ClientName,
-            grant_types = body.GrantTypes,
-            redirect_uris = body.RedirectUris,
-            scope = body.Scope ?? "openid profile offline_access",
-            token_endpoint_auth_method = body.GrantTypes.Contains("client_credentials") ? "private_key_jwt" : "none",
-        });
+            ["client_name"] = body.ClientName,
+            ["grant_types"] = body.GrantTypes,
+            ["redirect_uris"] = body.RedirectUris,
+            ["scope"] = body.Scope ?? "openid profile offline_access",
+            ["token_endpoint_auth_method"] = body.GrantTypes.Contains("client_credentials") ? "private_key_jwt" : "none",
+        };
+
+        // Without an explicit id Hydra mints a random UUID, so every integrator has to capture
+        // it per environment. This endpoint is SuperAdmin-only, so letting the caller pin a
+        // stable id costs nothing — but it must not smuggle odd bytes into URLs and logs
+        // (allowlist), nor silently hijack an existing client (conflict check).
+        if (body.ClientId is not null)
+        {
+            if (!IsValidClientId(body.ClientId))
+                return BadRequest(new { error = "invalid_client_id" });
+            if (await hydra.GetOAuth2ClientAsync(body.ClientId) is not null)
+                return Conflict(new { error = "client_id_taken" });
+            payload["client_id"] = body.ClientId;
+        }
+
+        var client = await hydra.CreateOAuth2ClientAsync(payload);
         await audit.RecordAsync(null, null, GetActorId(), "oauth2_client.created", "oauth2_client", body.ClientName);
         return Ok(client);
     }
@@ -1108,7 +1187,8 @@ public record AdminUpdateProjectRequest(string? Name, bool? RequireRoleToLogin, 
     string[]? IpAllowlist, bool? CheckBreachedPasswords);
 public record AdminAssignUserListRequest([property: System.Text.Json.Serialization.JsonRequired] Guid UserListId);
 public record AdminCreateRoleRequest(string Name, string? Description, int? Rank);
-public record CreateHydraClientRequest(string ClientName, string[] GrantTypes, string[] RedirectUris, string? Scope);
+public record CreateHydraClientRequest(string ClientName, string[] GrantTypes, string[] RedirectUris, string? Scope,
+    string? ClientId = null);
 public record AdminUpsertSmtpRequest(string Host, [property: System.Text.Json.Serialization.JsonRequired] int Port, [property: System.Text.Json.Serialization.JsonRequired] bool StartTls, string? Username, string? Password, string FromAddress, string FromName);
 public record AdminCreateSamlProviderRequest(string EntityId, string? MetadataUrl, string? SsoUrl, string? CertificatePem, string? EmailAttributeName, string? DisplayNameAttributeName, bool? JitProvisioning, Guid? DefaultRoleId);
 public record AdminUpdateSamlProviderRequest(string? EntityId, string? MetadataUrl, string? SsoUrl, string? CertificatePem, string? EmailAttributeName, string? DisplayNameAttributeName, bool? JitProvisioning, Guid? DefaultRoleId, bool? Active);

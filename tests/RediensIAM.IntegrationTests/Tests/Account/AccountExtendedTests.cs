@@ -25,6 +25,13 @@ public class AccountExtendedTests(TestFixture fixture)
         return (user, token, client);
     }
 
+    // Removing a live MFA factor re-authenticates (R-24).
+    private static Task<HttpResponseMessage> DeleteWithReauthAsync(HttpClient client, string url) =>
+        client.SendAsync(new HttpRequestMessage(HttpMethod.Delete, url)
+        {
+            Content = JsonContent.Create(new { current_password = SeedData.DefaultPassword }),
+        });
+
     // ── PATCH /account/me — NewDeviceAlertsEnabled branch ────────────────────
 
     [Fact]
@@ -133,7 +140,7 @@ public class AccountExtendedTests(TestFixture fixture)
         user.PhoneVerified = true;
         await fixture.Db.SaveChangesAsync();
 
-        var res = await client.DeleteAsync("/account/mfa/phone");
+        var res = await DeleteWithReauthAsync(client, "/account/mfa/phone");
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
         await fixture.RefreshDbAsync();
@@ -253,7 +260,7 @@ public class AccountExtendedTests(TestFixture fixture)
         user.WebAuthnEnabled = true;
         await fixture.Db.SaveChangesAsync();
 
-        var res = await client.DeleteAsync($"/account/mfa/webauthn/credentials/{cred.Id}");
+        var res = await DeleteWithReauthAsync(client, $"/account/mfa/webauthn/credentials/{cred.Id}");
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
         await fixture.RefreshDbAsync();

@@ -26,9 +26,23 @@ public class IntrospectionController(
     PatService pats,
     KetoService keto,
     LiveAuthorizationService live,
+    AuditLogService audit,
     AppConfig appConfig) : ControllerBase
 {
     private TokenClaims Caller => HttpContext.GetClaims()!;
+
+    /// <summary>
+    /// The organisation this caller is allowed to ask about, or null for a deployment-level
+    /// caller. A service account attached to an organisation may only introspect that
+    /// organisation's tokens; without this, one tenant's gateway credential resolved every token
+    /// the deployment had issued, and every relation in the tuple store.
+    ///
+    /// Empty <c>org_id</c> means the service account hangs off the <c>__system__</c> user list
+    /// and holds no org-scoped role — i.e. it is a deployment-wide credential — so it stays
+    /// unscoped. That is also what keeps a multi-tenant gateway working: it needs a system
+    /// service account, not a tenant one.
+    /// </summary>
+    private Guid? CallerOrgScope => Guid.TryParse(Caller.OrgId, out var g) ? g : null;
 
     /// <summary>
     /// RFC 7662 token introspection. Accepts form-encoded parameters as the RFC specifies.
@@ -47,6 +61,12 @@ public class IntrospectionController(
 
         var claims = await ResolveAsync(body.Token);
         if (claims is null) return Ok(IntrospectionResult.Inactive);
+
+        // Out of scope answers "inactive", not "forbidden": the RFC 7662 contract here is that a
+        // caller cannot distinguish malformed from revoked from expired, and telling it "that
+        // token exists but belongs to someone else" would be the disclosure this closes.
+        if (!await IsInCallerScopeAsync(claims, "api.introspect.out_of_scope"))
+            return Ok(IntrospectionResult.Inactive);
 
         // Roles are re-verified against Keto/DB, so a role revoked after the token was minted
         // does not survive in the answer.
@@ -81,6 +101,20 @@ public class IntrospectionController(
         var claims = await ResolveAsync(body.Token);
         if (claims is null) return Ok(new AuthorizationResult(false, null));
 
+        if (!await IsInCallerScopeAsync(claims, "api.authorize.out_of_scope"))
+            return Ok(new AuthorizationResult(false, null));
+
+        // The System namespace holds exactly one object and one interesting relation:
+        // rediensiam#super_admin. A tenant credential asking about it is enumerating the
+        // deployment's administrators, never authorising its own request.
+        if (CallerOrgScope is not null &&
+            body.Namespace.Equals(Roles.KetoSystemNamespace, StringComparison.OrdinalIgnoreCase))
+        {
+            await audit.RecordAsync(CallerOrgScope, null, Caller.ParsedUserId,
+                "api.authorize.out_of_scope", "keto_namespace", body.Namespace);
+            return Ok(new AuthorizationResult(false, null));
+        }
+
         var subject = $"user:{claims.ParsedUserId}";
         var allowed = await keto.CheckAsync(body.Namespace, body.Object, body.Relation, subject);
 
@@ -104,6 +138,24 @@ public class IntrospectionController(
                 : null;
         }
         return await hydra.ValidateJwtAsync(token);
+    }
+
+    /// <summary>
+    /// True when the resolved token belongs to the caller's organisation, or the caller is a
+    /// deployment-level service account. Refusals are audited — this surface previously wrote no
+    /// record at all, so a compromised resource-server credential could enumerate every tenant
+    /// with nothing to find afterwards. Only refusals are recorded: a row per introspection would
+    /// be a row per API request behind every gateway.
+    /// </summary>
+    private async Task<bool> IsInCallerScopeAsync(TokenClaims subject, string auditAction)
+    {
+        var scope = CallerOrgScope;
+        if (scope is null) return true;
+        if (Guid.TryParse(subject.OrgId, out var subjectOrg) && subjectOrg == scope) return true;
+
+        await audit.RecordAsync(scope, null, Caller.ParsedUserId, auditAction,
+            "token", subject.ParsedUserId == Guid.Empty ? null : subject.ParsedUserId.ToString());
+        return false;
     }
 
     private bool IsServiceAccountCaller() =>

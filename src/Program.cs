@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Mvc.Controllers;
 using Prometheus;
 using Microsoft.EntityFrameworkCore;
 using StackExchange.Redis;
@@ -22,6 +23,24 @@ var appConfig = new AppConfig(builder.Configuration);
 
 // Validate encryption key before DI is locked (uses builder.Environment, available pre-Build)
 ValidateEncryptionKey(appConfig, builder.Environment);
+
+// ── Host header filtering ──────────────────────────────────────────────────
+// The chart ships AllowedHosts="*" on the grounds that Traefik filters hosts at the ingress,
+// which turns off host filtering in the app entirely. Rather than trust that, derive the list
+// from the URLs this deployment already declares as its own. Kubernetes probes send an explicit
+// Host header matching App__PublicUrl, so they are covered. An operator who sets a real
+// AllowedHosts list still wins — this only replaces the wildcard.
+builder.Services.PostConfigure<Microsoft.AspNetCore.HostFiltering.HostFilteringOptions>(o =>
+{
+    if (!o.AllowedHosts.Contains("*")) return;
+    var derived = new[] { appConfig.PublicUrl, appConfig.AdminSpaOrigin }
+        .Select(u => Uri.TryCreate(u, UriKind.Absolute, out var uri) ? uri.Host : null)
+        .Append(appConfig.Domain)
+        .Where(h => !string.IsNullOrWhiteSpace(h))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+    if (derived.Count > 0) o.AllowedHosts = derived!;
+});
 
 // ── Database ───────────────────────────────────────────────────────────────
 builder.Services.AddDbContext<RediensIamDbContext>(options =>
@@ -60,6 +79,10 @@ builder.Services.AddHttpClient("keto-read").AddStandardResilienceHandler();
 builder.Services.AddHttpClient("keto-write").AddStandardResilienceHandler();
 builder.Services.AddHttpClient("health", c => c.Timeout = TimeSpan.FromSeconds(5));
 builder.Services.AddHttpClient();
+// The unnamed client fetches SAML IdP metadata (via ITfoxtec) and the HIBP range API — both
+// operator- or tenant-named hosts. Redirects stay enabled: the connect callback vets each hop.
+builder.Services.AddHttpClient(string.Empty)
+    .ConfigurePrimaryHttpMessageHandler(() => WebhookUrlValidator.CreateSsrfSafeHandler(allowAutoRedirect: true));
 builder.Services.AddMemoryCache();
 
 // ── Services ───────────────────────────────────────────────────────────────
@@ -79,15 +102,13 @@ builder.Services.AddSingleton<IWebhookSsrfValidator, WebhookSsrfValidator>();
 builder.Services.AddScoped<WebhookService>();
 builder.Services.AddHostedService<WebhookDispatcherService>();
 builder.Services.AddHostedService<AuditLogRetentionService>();
-// AllowAutoRedirect=false: the SSRF allowlist is applied to the URL we are about to call.
-// Following redirects would let a public endpoint 302 us to 169.254.169.254 (or any internal
-// host) after the check has already passed.
+// Every client that dials a URL chosen by a tenant or by a remote provider gets the SSRF-safe
+// handler: no redirects, and the reserved-range check runs on the address actually connected to
+// rather than on a separate DNS lookup. See WebhookUrlValidator.CreateSsrfSafeHandler.
 builder.Services.AddHttpClient("webhook")
-    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
-// Same reasoning for social login: discovery-declared endpoints are validated before use, and a
-// redirect after that check would land us wherever the provider chose.
+    .ConfigurePrimaryHttpMessageHandler(() => WebhookUrlValidator.CreateSsrfSafeHandler());
 builder.Services.AddHttpClient(SocialLoginService.NoRedirectClient)
-    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+    .ConfigurePrimaryHttpMessageHandler(() => WebhookUrlValidator.CreateSsrfSafeHandler());
 builder.Services.AddScoped<PatService>();
 builder.Services.AddSingleton<SocialLoginService>();
 builder.Services.AddHttpContextAccessor();
@@ -302,7 +323,13 @@ app.UseMiddleware<AppExceptionMiddleware>();
 app.UseForwardedHeaders();
 
 // ── Security headers ───────────────────────────────────────────────────────
-app.Use((ctx, next) => { AddSecurityHeaders(ctx); return next(); });
+// The admin console runs on its own origin and fetches {issuer}/.well-known/openid-configuration
+// before it can redirect, so connect-src has to name the issuer origin explicitly — 'self' can
+// never cover it. Resolved once at startup from the same value /admin/config hands the SPA.
+var issuerOrigin = Uri.TryCreate(appConfig.PublicUrl, UriKind.Absolute, out var issuerUri)
+    ? issuerUri.GetLeftPart(UriPartial.Authority)
+    : "";
+app.Use((ctx, next) => { AddSecurityHeaders(ctx, issuerOrigin); return next(); });
 
 // ── Swagger UI — admin port only ───────────────────────────────────────────
 app.UseWhen(ctx => ctx.Connection.LocalPort == appConfig.AdminPort, branch =>
@@ -329,12 +356,18 @@ app.UseWhen(
     branch => branch.UseMiddleware<GatewayAuthMiddleware>());
 
 // Validate admin API Bearer tokens.
-// GET without Authorization is allowed through (browser SPA navigations, controllers still check Claims).
-// All mutating verbs (POST/PATCH/DELETE/PUT) always require a valid Bearer token.
+//
+// The SPA is served from /admin/* and its browser navigations carry no Authorization header, so
+// they have to pass. The condition used to be "GET without an Authorization header", which made
+// every unauthenticated admin GET reach its controller and depend on that controller carrying
+// [RequireManagementLevel]. UseRouting has already run here, so the request can be told apart
+// properly: if it resolved to a controller action it is an API call and needs a token; if it did
+// not, it is a static asset or the SPA fallback.
 app.UseWhen(
     ctx => ctx.Request.Path.StartsWithSegments("/admin")
         && !ctx.Request.Path.Equals("/admin/config")
-        && (ctx.Request.Headers.ContainsKey("Authorization") || ctx.Request.Method != HttpMethods.Get),
+        && (ctx.GetEndpoint()?.Metadata.GetMetadata<ControllerActionDescriptor>() != null
+            || ctx.Request.Method != HttpMethods.Get),
     branch => branch.UseMiddleware<GatewayAuthMiddleware>());
 
 // Public — no auth required; must be a minimal endpoint to bypass [RequireManagementLevel] on SystemAdminController
@@ -373,7 +406,7 @@ static void ValidateEncryptionKey(AppConfig cfg, IWebHostEnvironment env)
             "TotpSecretEncryptionKey must not be the default all-zero dev placeholder in production.");
 }
 
-static void AddSecurityHeaders(HttpContext ctx)
+static void AddSecurityHeaders(HttpContext ctx, string issuerOrigin)
 {
     ctx.Response.Headers.XContentTypeOptions   = "nosniff";
     ctx.Response.Headers["Referrer-Policy"]    = "strict-origin-when-cross-origin";
@@ -381,15 +414,25 @@ static void AddSecurityHeaders(HttpContext ctx)
     ctx.Response.Headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()";
     if (ctx.Request.IsHttps)
         ctx.Response.Headers.StrictTransportSecurity = "max-age=31536000; includeSubDomains";
-    if (!ctx.Request.Path.StartsWithSegments("/preview"))
-        ctx.Response.Headers.XFrameOptions = "DENY";
+    ctx.Response.Headers.XFrameOptions = "DENY";
     // default-src is the fallback for every directive that is not named. Omitting it left
     // connect-src, img-src, font-src and friends wide open on the admin policy.
     // base-uri and form-action are not covered by default-src and must be set explicitly.
+    //
+    // style-src carries 'unsafe-inline' on both branches. Neither SPA can do without it: Radix
+    // (via react-style-singleton) injects a <style> element on every dialog open, and the login
+    // page renders the tenant's custom_css into one. Script injection stays refused — script-src
+    // is 'self' with no inline escape — and the CSS sink itself is guarded server-side by
+    // LoginThemeValidator, which is what makes widening this safe (C-6).
+    var issuerConnect = string.IsNullOrEmpty(issuerOrigin) ? "'self'" : $"'self' {issuerOrigin}";
     ctx.Response.Headers.ContentSecurityPolicy = ctx.Request.Path.StartsWithSegments("/admin")
-        ? "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; " +
+        ? "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+          $"font-src 'self'; img-src 'self' data:; connect-src {issuerConnect}; " +
           "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
-        : "default-src 'self'; style-src 'self'; img-src 'self' data:; " +
+        // The login page renders tenant branding: a project logo and social-provider icons, both
+        // remote HTTPS URLs the operator does not control. Images execute nothing.
+        : "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+          "font-src 'self'; img-src 'self' data: https:; connect-src 'self'; " +
           "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';";
 }
 

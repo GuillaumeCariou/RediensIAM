@@ -61,8 +61,13 @@ public class AdminLoginTests(TestFixture fixture)
 
     // ── Success as super_admin (lines 926-933) ───────────────────────────────
 
+    /// <summary>
+    /// `Security:RequireAdminMfa` defaults on, so credentials alone never complete an admin login:
+    /// an account with no factor is sent through enrolment, and one with a factor is challenged.
+    /// Neither answers `redirect_to` — the login is accepted at the far side of the factor.
+    /// </summary>
     [Fact]
-    public async Task AdminLogin_SuperAdmin_Returns200WithRedirectTo()
+    public async Task AdminLogin_SuperAdmin_WithNoFactor_RequiresEnrolment()
     {
         var (_, user) = await CreateSystemUserAsync();
         var challenge = NewAdminChallenge();
@@ -77,13 +82,39 @@ public class AdminLoginTests(TestFixture fixture)
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
-        body.TryGetProperty("redirect_to", out _).Should().BeTrue();
+        body.GetProperty("requires_mfa_setup").GetBoolean().Should().BeTrue();
+        body.TryGetProperty("redirect_to", out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task AdminLogin_SuperAdmin_WithAFactor_IsChallengedForIt()
+    {
+        var (_, user) = await CreateSystemUserAsync();
+        user.TotpEnabled = true;
+        user.TotpSecret  = RediensIAM.Services.TotpEncryption.Encrypt(
+            fixture.GetService<RediensIAM.Config.AppConfig>().TotpEncKey,
+            OtpNet.KeyGeneration.GenerateRandomKey(20));
+        await fixture.Db.SaveChangesAsync();
+        var challenge = NewAdminChallenge();
+        fixture.Keto.AllowAll();
+
+        var res = await fixture.Client.PostAsJsonAsync("/auth/login", new
+        {
+            login_challenge = challenge,
+            email           = user.Email,
+            password        = AdminPassword
+        });
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("requires_mfa").GetBoolean().Should().BeTrue();
+        body.TryGetProperty("requires_mfa_setup", out _).Should().BeFalse();
     }
 
     // ── Success as org_admin only (line 920: hasOrgAdmin branch) ────────────
 
     [Fact]
-    public async Task AdminLogin_OrgAdminNotSuperAdmin_Returns200()
+    public async Task AdminLogin_OrgAdminNotSuperAdmin_PassesTheRoleCheck()
     {
         var (_, user) = await CreateSystemUserAsync();
         var challenge = NewAdminChallenge();
@@ -101,6 +132,9 @@ public class AdminLoginTests(TestFixture fixture)
         });
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
+        // Past the insufficient_role gate; the second factor is what remains, not the role.
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("requires_mfa_setup").GetBoolean().Should().BeTrue();
     }
 
     // ── No roles at all (lines 923-924) ─────────────────────────────────────
