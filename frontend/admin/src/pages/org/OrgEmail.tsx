@@ -7,6 +7,25 @@ import {
   adminGetOrgSmtp, adminUpsertOrgSmtp, adminDeleteOrgSmtp, adminTestOrgSmtp,
 } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
+import { ApiError } from '@/auth';
+
+// The write endpoints validate the relay before storing it (SmtpEndpointValidator), and
+// /org/smtp/test deliberately no longer echoes the SMTP server's message — it distinguished
+// "host unreachable" from "connection refused", which turns the endpoint into a port scanner.
+// So every failure has to be explained from its code alone.
+const SMTP_ERRORS: Record<string, string> = {
+  smtp_host_required:   'Host is required.',
+  smtp_host_too_long:   'Host is too long (255 characters maximum).',
+  smtp_port_not_allowed:'Port must be one of 25, 465, 587, 1025 or 2525.',
+  smtp_tls_required:    'TLS is required. Enable StartTLS, or use port 465 for implicit TLS.',
+  smtp_host_not_allowed:'That host resolves to a private or reserved address and cannot be used.',
+  smtp_test_failed:     'Could not send through this relay. Check the host, port, and credentials.',
+};
+
+function smtpErrorMessage(e: unknown, fallback: string): string {
+  const code = e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined;
+  return (code && SMTP_ERRORS[code]) ?? fallback;
+}
 
 interface SmtpConfig {
   configured: boolean; host?: string; port?: number; start_tls?: boolean;
@@ -67,7 +86,7 @@ export default function OrgEmail() {
       if (isAdmin) await adminUpsertOrgSmtp(id, body);
       else await upsertOrgSmtp(body);
       await fetchConfig(); setEditing(false);
-    } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Failed to save SMTP configuration.'); }
+    } catch (e: unknown) { setError(smtpErrorMessage(e, 'Failed to save SMTP configuration.')); }
     finally { setSaving(false); }
   };
 
@@ -85,7 +104,7 @@ export default function OrgEmail() {
     try {
       const res = isAdmin ? await adminTestOrgSmtp(id) : await testOrgSmtp();
       setTestResult({ ok: true, msg: `Test email sent to ${res.to}` });
-    } catch (e: unknown) { setTestResult({ ok: false, msg: e instanceof Error ? e.message : 'Test failed' }); }
+    } catch (e: unknown) { setTestResult({ ok: false, msg: smtpErrorMessage(e, 'Test failed.') }); }
     finally { setTesting(false); }
   };
 

@@ -1,4 +1,5 @@
 import { apiFetch } from './auth';
+import type { MfaReauth } from './auth';
 
 // ── Organisations ─────────────────────────────────────────────────
 export async function listOrgs() {
@@ -242,25 +243,31 @@ export async function changePassword(body: { current_password: string; new_passw
 export async function setupPhone(phone: string) {
   return (await apiFetch('/account/mfa/phone/setup', { method: 'POST', body: JSON.stringify({ phone }) })).json();
 }
-export async function verifyPhone(code: string) {
-  return (await apiFetch('/account/mfa/phone/verify', { method: 'POST', body: JSON.stringify({ code }) })).json();
+export async function verifyPhone(code: string, reauth?: MfaReauth) {
+  return (await apiFetch('/account/mfa/phone/verify', { method: 'POST', body: JSON.stringify({ code, reauth }) })).json();
 }
-export async function removePhone() {
-  return apiFetch('/account/mfa/phone', { method: 'DELETE' });
+// ── MFA mutations that add, replace or destroy a factor ───────────────────
+// Every one of these takes a re-authentication proof: a bearer token alone must not be enough to
+// overwrite the victim's second factor (R-24), nor to enrol the attacker's own alongside it. The
+// proof is omitted on the first attempt — the backend answers 401 reauthentication_required with
+// the methods this account can actually supply, and only then is the user prompted. Enrolling the
+// FIRST factor on an account that has none needs no proof. See ReauthDialog.
+export async function removePhone(reauth?: MfaReauth) {
+  return apiFetch('/account/mfa/phone', { method: 'DELETE', body: JSON.stringify(reauth ?? {}) });
 }
 
 // ── WebAuthn / Passkeys ────────────────────────────────────────────────────
 export async function beginWebAuthnRegistration() {
   return (await apiFetch('/account/mfa/webauthn/register/begin', { method: 'POST' })).json();
 }
-export async function completeWebAuthnRegistration(body: Record<string, unknown>) {
-  return (await apiFetch('/account/mfa/webauthn/register/complete', { method: 'POST', body: JSON.stringify(body) })).json();
+export async function completeWebAuthnRegistration(body: Record<string, unknown>, reauth?: MfaReauth) {
+  return (await apiFetch('/account/mfa/webauthn/register/complete', { method: 'POST', body: JSON.stringify({ ...body, reauth }) })).json();
 }
 export async function listWebAuthnCredentials() {
   return (await apiFetch('/account/mfa/webauthn/credentials')).json();
 }
-export async function deleteWebAuthnCredential(id: string) {
-  return apiFetch(`/account/mfa/webauthn/credentials/${id}`, { method: 'DELETE' });
+export async function deleteWebAuthnCredential(id: string, reauth?: MfaReauth) {
+  return apiFetch(`/account/mfa/webauthn/credentials/${id}`, { method: 'DELETE', body: JSON.stringify(reauth ?? {}) });
 }
 
 // ── SA API keys (JWK) ─────────────────────────────────────────────────────
@@ -279,11 +286,11 @@ export async function getMfaStatus() {
 export async function setupTotp() {
   return (await apiFetch('/account/mfa/totp/setup', { method: 'POST' })).json();
 }
-export async function confirmTotp(body: { code: string }) {
-  return (await apiFetch('/account/mfa/totp/confirm', { method: 'POST', body: JSON.stringify(body) })).json();
+export async function confirmTotp(body: { code: string }, reauth?: MfaReauth) {
+  return (await apiFetch('/account/mfa/totp/confirm', { method: 'POST', body: JSON.stringify({ ...body, reauth }) })).json();
 }
-export async function regenerateBackupCodes() {
-  return (await apiFetch('/account/mfa/backup-codes', { method: 'POST' })).json();
+export async function regenerateBackupCodes(reauth?: MfaReauth) {
+  return (await apiFetch('/account/mfa/backup-codes', { method: 'POST', body: JSON.stringify(reauth ?? {}) })).json();
 }
 
 // ── Audit log ─────────────────────────────────────────────────────

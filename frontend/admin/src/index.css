@@ -39,7 +39,7 @@
   * { @apply border-border; }
   body {
     @apply bg-background text-foreground;
-    font-family: var(--font-sans, 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif);
+    font-family: var(--font-sans, 'Geist Variable', 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif);
   }
 }
 
@@ -49,8 +49,8 @@
 
 /* ── Shared non-color tokens ── */
 :root {
-  --font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --font-sans: 'Geist Variable', 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'Geist Mono Variable', 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   --iam-radius:    8px;
   --iam-radius-sm: 5px;
   --iam-radius-lg: 12px;

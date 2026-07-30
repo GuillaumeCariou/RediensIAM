@@ -5,11 +5,14 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="referrer" content="no-referrer" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' http: https:; frame-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" />
+    <!--
+      Mirrors the server header (src/Program.cs, AddSecurityHeaders); browsers enforce the
+      intersection. connect-src is 'self': this SPA only ever calls the origin that served it.
+      frame-ancestors is not repeated — browsers ignore it in a meta tag; the header carries it.
+      Fonts are self-hosted (@fontsource-variable/geist) — no external origin to allow.
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: https:; connect-src 'self'; frame-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'" />
     <title>RediensIAM</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
   </head>
   <body>
     <div id="root"></div>

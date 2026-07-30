@@ -5,11 +5,17 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" />
+    <!--
+      Browsers enforce the intersection of this meta policy and the server's
+      Content-Security-Policy header (src/Program.cs, AddSecurityHeaders) — a request must satisfy
+      both. The header is the enforcing copy and pins connect-src to the exact issuer origin; this
+      file cannot, because the issuer is a deployment value and the bundle is built once. So
+      connect-src is left broad here and narrowed by the header. frame-ancestors is not repeated:
+      browsers ignore it in a meta tag; the header carries it.
+      Fonts are self-hosted (@fontsource-variable/geist) — no external origin to allow.
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https: http:; frame-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'" />
     <title>RediensIAM</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" />
   </head>
   <body>
     <div id="root"></div>

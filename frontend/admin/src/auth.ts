@@ -76,6 +76,35 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Proof that the caller still controls an existing authentication factor.
+ * Sent as the JSON body (or as `reauth` inside it) on the MFA mutation endpoints.
+ * Exactly one field is filled — the backend tries password first, then TOTP.
+ */
+export interface MfaReauth {
+  current_password?: string;
+  totp_code?: string;
+}
+
+/** Shape of `401 {"error":"reauthentication_required","methods":[…]}` from AccountController. */
+export interface ReauthRequired {
+  error: 'reauthentication_required';
+  methods: string[];
+}
+
+function isReauthRequired(body: unknown): body is ReauthRequired {
+  return (body as ReauthRequired | null)?.error === 'reauthentication_required';
+}
+
+/**
+ * The proofs the account can supply, or null when `e` is not a re-authentication demand.
+ * `methods` is authoritative: a passwordless account cannot be asked for a password.
+ */
+export function reauthMethods(e: unknown): string[] | null {
+  if (!(e instanceof ApiError) || e.status !== 401) return null;
+  return isReauthRequired(e.body) ? (e.body.methods ?? []) : null;
+}
+
 export async function apiFetch(path: string, opts: RequestInit = {}) {
   const res = await fetch(path, {
     ...opts,
@@ -85,18 +114,21 @@ export async function apiFetch(path: string, opts: RequestInit = {}) {
       ...opts.headers,
     },
   });
-  if (res.status === 401) {
-    accessToken = null;
-    if (!signinRedirectInFlight) {
-      signinRedirectInFlight = true;
-      const m = await getManager();
-      await m.signinRedirect();
-    }
-    throw new ApiError(401, null);
-  }
   if (!res.ok) {
     let body: unknown;
     try { body = await res.json(); } catch { body = null; }
+    // A 401 normally means the token is gone and the only way forward is a fresh login.
+    // The MFA mutation endpoints reuse 401 for something else entirely: the session is fine,
+    // the caller just has to prove possession of a factor first. Redirecting there would throw
+    // away a working session and drop the user back on the login page mid-action.
+    if (res.status === 401 && !isReauthRequired(body)) {
+      accessToken = null;
+      if (!signinRedirectInFlight) {
+        signinRedirectInFlight = true;
+        const m = await getManager();
+        await m.signinRedirect();
+      }
+    }
     throw new ApiError(res.status, body);
   }
   return res;

@@ -13,6 +13,7 @@ import { Switch } from '@/components/ui/switch';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { getMe, updateMe, changePassword, getMfaStatus, setupTotp, confirmTotp, regenerateBackupCodes, getSessions, revokeSession, revokeAllSessions, setupPhone, verifyPhone, removePhone, beginWebAuthnRegistration, completeWebAuthnRegistration, listWebAuthnCredentials, deleteWebAuthnCredential, getSocialAccounts, unlinkSocialAccount } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
+import { useReauth } from '@/components/ReauthDialog';
 import { fmtDate } from '@/lib/utils';
 
 interface Me {
@@ -309,6 +310,7 @@ function PasskeysCard() {
   const [registering, setRegistering] = useState(false);
   const [deviceName, setDeviceName] = useState('');
   const [error, setError] = useState('');
+  const { guard, dialog } = useReauth();
 
   const load = () => {
     setLoading(true);
@@ -346,10 +348,15 @@ function PasskeysCard() {
         device_name: deviceName || null,
       };
 
-      const res = await completeWebAuthnRegistration(body);
-      if (res.error) { setError('Registration failed: ' + res.error); return; }
-      setDeviceName('');
-      load();
+      // Adding a passkey to an account that already has a factor needs a proof; the first one does
+      // not. `guard` only prompts if the backend asks, and the backend checks the proof before it
+      // consumes the pending registration, so the retry replays the same attestation successfully.
+      await guard(async proof => {
+        const res = await completeWebAuthnRegistration(body, proof);
+        if (res.error) { setError('Registration failed: ' + res.error); return; }
+        setDeviceName('');
+        load();
+      });
     } catch (e: unknown) {
       if (e instanceof Error && e.name === 'NotAllowedError') {
         setError('Passkey prompt was cancelled.');
@@ -362,8 +369,10 @@ function PasskeysCard() {
   };
 
   const handleDelete = async (id: string) => {
-    await deleteWebAuthnCredential(id);
-    load();
+    setError('');
+    try {
+      await guard(proof => deleteWebAuthnCredential(id, proof).then(load));
+    } catch { setError('Failed to remove the passkey.'); }
   };
 
   return (
@@ -422,6 +431,7 @@ function PasskeysCard() {
         </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}
+        {dialog}
       </CardContent>
     </Card>
   );
@@ -464,6 +474,9 @@ function MfaTab() {
   const [phoneError, setPhoneError] = useState('');
   const [phoneSuccess, setPhoneSuccess] = useState(false);
 
+  const [regenError, setRegenError] = useState('');
+  const { guard, dialog } = useReauth();
+
   const load = () => {
     setLoading(true);
     getMfaStatus().then(setStatus).catch(console.error).finally(() => setLoading(false));
@@ -481,20 +494,30 @@ function MfaTab() {
     setSetupError('');
     setSetupSaving(true);
     try {
-      const res = await confirmTotp({ code: setupCode });
-      if (res.error) { setSetupError('Invalid code. Please try again.'); return; }
-      setBackupCodes(res.backup_codes ?? []);
-      setSetupData(null);
-      setSetupCode('');
-      load();
-    } finally { setSetupSaving(false); }
+      // Replacing an existing TOTP factor needs a proof; a first enrolment does not. `guard`
+      // only prompts if the backend actually asks, so both cases go through one call.
+      await guard(async proof => {
+        const res = await confirmTotp({ code: setupCode }, proof);
+        if (res.error) { setSetupError('Invalid code. Please try again.'); return; }
+        setBackupCodes(res.backup_codes ?? []);
+        setSetupData(null);
+        setSetupCode('');
+        load();
+      });
+    } catch { setSetupError('Could not confirm the code. Please try again.'); }
+    finally { setSetupSaving(false); }
   };
 
   const handleRegen = async () => {
-    const res = await regenerateBackupCodes();
-    setRegenCodes(res.backup_codes ?? []);
+    setRegenError('');
     setRegenOpen(false);
-    load();
+    try {
+      await guard(async proof => {
+        const res = await regenerateBackupCodes(proof);
+        setRegenCodes(res.backup_codes ?? []);
+        load();
+      });
+    } catch { setRegenError('Failed to regenerate backup codes.'); }
   };
 
   const handlePhoneSend = async (e: React.SyntheticEvent<HTMLFormElement>) => {
@@ -513,20 +536,26 @@ function MfaTab() {
     setPhoneError('');
     setPhoneSending(true);
     try {
-      const res = await verifyPhone(phoneOtp);
-      if (res.error) { setPhoneError('Invalid code. Try again.'); return; }
-      setPhoneSuccess(true);
-      setPhoneCodeSent(false);
-      setPhoneInput('');
-      setPhoneOtp('');
-      load();
+      // Same rule as the passkey and TOTP paths: adding a factor to an account that already has
+      // one needs a proof, a first enrolment does not.
+      await guard(async proof => {
+        const res = await verifyPhone(phoneOtp, proof);
+        if (res.error) { setPhoneError('Invalid code. Try again.'); return; }
+        setPhoneSuccess(true);
+        setPhoneCodeSent(false);
+        setPhoneInput('');
+        setPhoneOtp('');
+        load();
+      });
     } catch { setPhoneError('Failed to verify code.'); }
     finally { setPhoneSending(false); }
   };
 
   const handleRemovePhone = async () => {
-    await removePhone();
-    load();
+    setPhoneError('');
+    try {
+      await guard(proof => removePhone(proof).then(load));
+    } catch { setPhoneError('Failed to remove the phone number.'); }
   };
 
   if (loading) return <Skeleton className="h-40 rounded-xl" />;
@@ -662,12 +691,17 @@ function MfaTab() {
               </Button>
             </div>
           </CardHeader>
-          {regenCodes.length > 0 && (
+          {(regenCodes.length > 0 || regenError) && (
             <CardContent>
-              <div className="grid grid-cols-4 gap-2 mb-3">
-                {regenCodes.map(c => <code key={c} className="text-xs font-mono bg-muted rounded px-2 py-1 text-center">{c}</code>)}
-              </div>
-              <CopyButton text={regenCodes.join('\n')} />
+              {regenError && <p className="text-sm text-destructive mb-3">{regenError}</p>}
+              {regenCodes.length > 0 && (
+                <>
+                  <div className="grid grid-cols-4 gap-2 mb-3">
+                    {regenCodes.map(c => <code key={c} className="text-xs font-mono bg-muted rounded px-2 py-1 text-center">{c}</code>)}
+                  </div>
+                  <CopyButton text={regenCodes.join('\n')} />
+                </>
+              )}
             </CardContent>
           )}
         </Card>
@@ -709,6 +743,8 @@ function MfaTab() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {dialog}
     </div>
   );
 }
