@@ -16,6 +16,15 @@ public static class LoginThemeValidator
     private const string CustomCssKey = "custom_css";
     private const string LogoUrlKey   = "logo_url";
     private const int MaxCustomCssLength = 20_000;
+    private const int MaxThemeValueLength = 120;
+
+    /// <summary>
+    /// Characters refused in every theme value other than <c>custom_css</c> and <c>logo_url</c>.
+    /// <c>(</c> is the one that matters — it is what makes <c>url(https://attacker/?</c> a legal
+    /// value — and the backslash is what would rebuild it from <c>\28</c>. The rest match the
+    /// guard the preview page already applies.
+    /// </summary>
+    private const string ForbiddenValueChars = ";{}()<>\"'`\\";
 
     /// <summary>
     /// Constructs refused outright rather than stripped. Each is either an exfiltration
@@ -45,11 +54,29 @@ public static class LoginThemeValidator
             && (!Uri.TryCreate(logoUrl, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps))
             return "logo_url_must_be_https";
 
-        if (theme.TryGetValue(CustomCssKey, out var cssRaw) && AsString(cssRaw) is { Length: > 0 } css)
-            return ValidateCss(css);
+        if (theme.TryGetValue(CustomCssKey, out var cssRaw) && AsString(cssRaw) is { Length: > 0 } css
+            && ValidateCss(css) is { } cssErr)
+            return cssErr;
+
+        // The theme is a free-form dictionary and the login page pushes every string value it
+        // recognises into a CSS custom property (Login.tsx `setProperty`); index.css then uses
+        // several of them in `background: var(--surface)`, which accepts `url()`. So validating
+        // custom_css alone left the exfiltration primitive in the colour keys, to be reassembled
+        // by selectors that custom_css is perfectly entitled to contain. Checked key-agnostically
+        // on purpose: a colour key added tomorrow is covered without editing a list here.
+        foreach (var (key, raw) in theme)
+        {
+            if (key is CustomCssKey or LogoUrlKey) continue;
+            if (AsString(raw) is { } value && IsUnsafeThemeValue(value))
+                return "theme_value_invalid_character";
+        }
 
         return null;
     }
+
+    private static bool IsUnsafeThemeValue(string value) =>
+        value.Length > MaxThemeValueLength
+        || value.AsSpan().IndexOfAny(ForbiddenValueChars) >= 0;
 
     private static string? ValidateCss(string css)
     {

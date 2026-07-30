@@ -120,19 +120,34 @@ var org = await db.Organisations.FindAsync(id);
     }
 
     /// <summary>
-    /// Revokes the Hydra sessions of every user in an organisation. Best-effort per user: one
-    /// unreachable subject must not leave the rest of the organisation signed in.
+    /// Revokes the Hydra sessions of everyone an organisation's suspension must reach.
+    /// Best-effort per subject: one unreachable subject must not leave the rest signed in.
     /// </summary>
     private async Task RevokeOrgSessionsAsync(Guid orgId)
     {
-        var userIds = await db.Users
+        var memberIds = await db.Users
             .Where(u => u.UserList.OrgId == orgId)
             .Select(u => u.Id)
             .ToListAsync();
-        foreach (var userId in userIds)
+        // Administering an org does not require belonging to it — AssignOrgAdmin takes any user
+        // id — so the membership query alone misses every grant held by a system-list user.
+        var adminIds = await db.OrgRoles
+            .Where(r => r.OrgId == orgId)
+            .Select(r => r.UserId)
+            .ToListAsync();
+
+        // Two subject shapes, not one. `{orgId}:{userId}` is the tenant session; the bare user id
+        // is the management-console session (LiveAuthorizationService.InvalidateAsync says so
+        // explicitly). Revoking only the first suspended the org's end users and left its own
+        // administrators working on /org/* — the party suspension most needs to stop.
+        var subjects = memberIds
+            .SelectMany(id => new[] { $"{orgId}:{id}", id.ToString() })
+            .Concat(adminIds.Select(id => id.ToString()))
+            .Distinct();
+        foreach (var subject in subjects)
         {
-            try { await hydra.RevokeSessionsAsync($"{orgId}:{userId}"); }
-            catch (Exception ex) { logger.LogWarning(ex, "Failed to revoke Hydra sessions for user {UserId} in org {OrgId}", userId, orgId); }
+            try { await hydra.RevokeSessionsAsync(subject); }
+            catch (Exception ex) { logger.LogWarning(ex, "Failed to revoke Hydra sessions for subject {Subject} in org {OrgId}", subject, orgId); }
         }
     }
 

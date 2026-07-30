@@ -62,9 +62,13 @@ public class AccountController(
         if (VerifyCurrentPassword(user, proof?.CurrentPassword)) return null;
         if (await VerifyCurrentTotpAsync(user, proof?.TotpCode)) return null;
 
-        // Nothing to re-authenticate against: a passwordless account with no TOTP factor (e.g.
-        // passkey-only) would otherwise be locked out of managing its own credentials.
-        if (user.PasswordHash == null && !user.TotpEnabled) return null;
+        // Step aside only when there is nothing to prove AND nothing to protect. The predicate
+        // has to be HasAnyFactorAsync, not "no password and no TOTP": every social-login user is
+        // provisioned with PasswordHash == null (AuthController.CreateSocialUserAsync), so the
+        // old condition handed a bearer token full control of the factors of every federated
+        // account whose second factor was SMS or a passkey. Such an account now gets 401 with an
+        // empty `methods` and must go through password reset — a support cost, not a takeover.
+        if (ReauthMethods(user).Length == 0 && !await HasAnyFactorAsync(user)) return null;
 
         await rateLimiter.RecordFailureAsync(Ip, user.Id, ReauthPurpose);
         return StatusCode(401, new

@@ -333,14 +333,18 @@ public class ServiceAccountController(
         };
         if (targetLevel == ManagementLevel.None) return BadRequest(new { error = "unknown_role" });
         if (targetLevel < Level) return StatusCode(403, new { error = "insufficient_level_to_grant_this_role" });
-        if (Level == ManagementLevel.OrgAdmin && body.OrgId != CallerOrgId)
-            return StatusCode(403, new { error = "org_mismatch" });
-        if (Level == ManagementLevel.ProjectAdmin)
-            return ValidateProjectAdminRoleAssignment(body);
+        if (Level == ManagementLevel.ProjectAdmin
+            && ValidateProjectAdminRoleAssignment(body) is { } projectErr) return projectErr;
         if (body.Role == Roles.OrgAdmin && body.OrgId == null)
             return BadRequest(new { error = "org_id_required_for_org_admin" });
         if (body.Role == Roles.ProjectAdmin && (body.OrgId == null || body.ProjectId == null))
             return BadRequest(new { error = "org_id_and_project_id_required_for_project_admin" });
+        // One rule for every caller below SuperAdmin, not just OrgAdmin. The org id written here
+        // becomes the credential's tenant scope at PatService.IntrospectAsync, which is what
+        // IntrospectionController scopes introspection by — so a caller that can choose it
+        // chooses the boundary that is supposed to contain it.
+        if (Level != ManagementLevel.SuperAdmin && body.OrgId != CallerOrgId)
+            return StatusCode(403, new { error = "org_mismatch" });
         return null;
     }
 

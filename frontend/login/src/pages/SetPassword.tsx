@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { getThemeByProject, completeInvite } from '../api';
 
-import { sanitizeCss } from '../lib/sanitizeCss';
+import { sanitizeCss, safeCssValue } from '../lib/sanitizeCss';
 
 // Returns a cleanup function that removes the applied CSS vars and <style> node.
 function applyTheme(data: Record<string, unknown>): () => void {
@@ -10,7 +10,8 @@ function applyTheme(data: Record<string, unknown>): () => void {
   const el = document.documentElement;
   const touched: string[] = [];
   const set = (v: string, val?: string) => {
-    if (val) { el.style.setProperty(v, val); touched.push(v); }
+    const safe = safeCssValue(val);
+    if (safe) { el.style.setProperty(v, safe); touched.push(v); }
   };
   set('--primary', t.primary_color);
   set('--accent', t.primary_color);

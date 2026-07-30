@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
+import { safeCssValue } from '../lib/sanitizeCss';
+
 const PROVIDER_ICONS: Record<string, string> = {
   // Inlined like the others: a remote icon is a third-party request on the unauthenticated login
   // page, and gstatic.com would have to be allowed in img-src for it.
@@ -96,14 +98,6 @@ export default function Preview() {
     password_require_special,
   } = cfg;
 
-  // Strict-allowlist CSS values so attacker-controlled cfg cannot break out of the
-  // declaration: no semicolons, no parens, no quotes — kills CSS injection vectors.
-  const safeCss = (v: unknown): string | null => {
-    if (typeof v !== 'string') return null;
-    if (v.length > 120) return null;
-    if (/[;{}()<>"`']/.test(v)) return null;
-    return v;
-  };
   useEffect(() => {
     const el = document.documentElement;
     el.dataset['theme'] = dark ? 'dark' : 'light';
@@ -115,7 +109,7 @@ export default function Preview() {
       ['--font-family', theme.font_family],
     ];
     for (const [name, val] of props) {
-      const safe = safeCss(val);
+      const safe = safeCssValue(val);
       if (safe) el.style.setProperty(name, safe);
     }
     if (typeof theme.border_radius === 'number' && theme.border_radius >= 0 && theme.border_radius <= 64) {

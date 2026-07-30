@@ -3,7 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { getLoginChallenge, submitLogin } from '../api';
 import { useTheme, type Theme as ColorTheme } from '../useTheme';
 import { safeNavigate } from '../safeNavigate';
-import { sanitizeCss } from '../lib/sanitizeCss';
+import { sanitizeCss, safeCssValue } from '../lib/sanitizeCss';
 
 const themeIcons: Record<ColorTheme, string> = { light: '☀', dark: '☾', system: '⊙' };
 const themeOrder: ColorTheme[] = ['system', 'light', 'dark'];
@@ -109,7 +109,8 @@ export default function Login() {
     const el = document.documentElement;
     const touchedProps: string[] = [];
     const set = (v: string, val?: string) => {
-      if (val) { el.style.setProperty(v, val); touchedProps.push(v); }
+      const safe = safeCssValue(val);
+      if (safe) { el.style.setProperty(v, safe); touchedProps.push(v); }
     };
     set('--primary', t.primary_color);
     set('--accent', t.primary_color);
