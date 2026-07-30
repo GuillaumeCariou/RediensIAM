@@ -4,6 +4,23 @@
 rediensiam:
   publicUrl: "http://iam.localhost"
   adminUrl:  "http://localhost:30501"
+
+  service:
+    admin:
+      # DEV ONLY. The chart default is ClusterIP (R-05); dev opts back in because the admin
+      # SPA is reached at http://localhost:30501 with no ingress and no DNS name. A NodePort
+      # binds on every node interface, so on a laptop this is loopback plus the LAN address —
+      # acceptable on a dev box, never on a deployed node. Prod does not set this.
+      type: NodePort
+
+  ingress:
+    public:
+      tls:
+        # `iam.localhost` cannot be certified by any CA and k3s Traefik would fall back to its
+        # own default cert, so dev stays on cleartext. This is the one place R-02 is not fixed,
+        # and it is gated to dev precisely so prod cannot inherit it.
+        enabled: false
+
   smtp:
     fromAddress: "noreply@localhost"
     fromName: "RediensIAM"

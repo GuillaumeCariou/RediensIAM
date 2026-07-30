@@ -14,11 +14,20 @@ spec:
     metadata:
       labels:
         app: {{ .Release.Name }}
+        # Selected by the release-scoped default-deny ingress policy.
+        app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
       automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault    # R-32 / CIS K8s 5.7.2
       containers:
         - name: rediensiam
+          {{- if .Values.rediensiam.image.digest }}
+          image: {{ .Values.rediensiam.image.repository }}@{{ .Values.rediensiam.image.digest }}
+          {{- else }}
           image: {{ .Values.rediensiam.image.repository }}:{{ .Values.rediensiam.image.tag }}
+          {{- end }}
           imagePullPolicy: {{ .Values.rediensiam.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false

@@ -49,6 +49,26 @@ http://{{ .Release.Name }}-keto-write:4467
 {{- end -}}
 
 {{/*
+rediensiam.dnsEgress
+The one egress rule every pod in this release needs. Narrowed from "0.0.0.0/0 on :53" to the
+kube-dns pods, because :53 to anywhere is the standard exfiltration channel.
+If DNS breaks after an upgrade, this selector is the first thing to check: it assumes coredns
+carries `k8s-app: kube-dns` in the namespace named by networkPolicy.dnsNamespace (k3s default).
+*/}}
+{{- define "rediensiam.dnsEgress" -}}
+- ports:
+    - {port: 53, protocol: UDP}
+    - {port: 53, protocol: TCP}
+  to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Values.rediensiam.networkPolicy.dnsNamespace }}
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+{{- end -}}
+
+{{/*
 rediensiam.ingressPublicHost
 Returns the public ingress hostname.
 Uses rediensiam.ingress.public.host if set; otherwise parses host from rediensiam.publicUrl.

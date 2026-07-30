@@ -1,4 +1,28 @@
 {{- if .Values.rediensiam.postgres.local.enabled }}
+{{- if .Values.rediensiam.postgres.local.tls.enabled }}
+# R-15. Server-side TLS for the bundled Postgres. Signed by the `selfsigned` ClusterIssuer,
+# so `sslmode=require` (encryption, no server authentication) is the honest ceiling here;
+# `verify-full` needs a real CA whose root is distributed to app, Hydra and Keto — see the
+# R-15 runbook. Postgres with ssl=on still ACCEPTS cleartext clients: it is the sslmode in
+# each DSN that enforces the encrypted path, which is why this can be enabled without an
+# outage and switched over per-client.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Release.Name }}-postgres-tls
+  namespace: {{ .Release.Namespace }}
+spec:
+  secretName: {{ .Release.Name }}-postgres-tls
+  issuerRef:
+    name: selfsigned
+    kind: ClusterIssuer
+  commonName: {{ .Release.Name }}-postgres
+  dnsNames:
+    - {{ .Release.Name }}-postgres
+    - {{ .Release.Name }}-postgres.{{ .Release.Namespace }}.svc
+    - {{ .Release.Name }}-postgres.{{ .Release.Namespace }}.svc.cluster.local
+---
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -71,6 +95,15 @@ spec:
                   key: postgres-password
             - name: POSTGRES_DB
               value: postgres
+          {{- if .Values.rediensiam.postgres.local.tls.enabled }}
+          args:
+            - -c
+            - ssl=on
+            - -c
+            - ssl_cert_file=/etc/postgres-tls/tls.crt
+            - -c
+            - ssl_key_file=/etc/postgres-tls/tls.key
+          {{- end }}
           ports:
             - containerPort: 5432
           volumeMounts:
@@ -78,6 +111,11 @@ spec:
               mountPath: /var/lib/postgresql/data
             - name: init
               mountPath: /docker-entrypoint-initdb.d
+            {{- if .Values.rediensiam.postgres.local.tls.enabled }}
+            - name: tls
+              mountPath: /etc/postgres-tls
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.rediensiam.postgres.local.resources | nindent 12 }}
           readinessProbe:
@@ -90,6 +128,14 @@ spec:
           configMap:
             name: {{ .Release.Name }}-postgres-init
             defaultMode: 0755
+        {{- if .Values.rediensiam.postgres.local.tls.enabled }}
+        # 0640 with root ownership is the only mode Postgres accepts for a key it does not
+        # own; fsGroup 70 above makes it group-readable by the postgres user.
+        - name: tls
+          secret:
+            secretName: {{ .Release.Name }}-postgres-tls
+            defaultMode: 0640
+        {{- end }}
   volumeClaimTemplates:
     - metadata:
         name: data

@@ -4,12 +4,35 @@
 
 rediensiam:
   publicUrl: "https://auth.rediens.net"
-  adminUrl:  "https://auth.ts.rediens.net"    # Tailscale MagicDNS — HTTPS via self-signed cert, Tailscale-only
+  adminUrl:  "https://auth.ts.rediens.net"    # Tailscale MagicDNS — Tailscale-only
+
+  # R-05. No NodePort in prod: the admin surface is reached only through the Tailscale-only
+  # admin ingress below. This is what the values.yaml comment used to claim NodePort provided.
+  service:
+    admin:
+      type: ClusterIP
 
   ingress:
+    public:
+      # R-02. Requires a ClusterIssuer named below to exist. Either install cert-manager and
+      # set certManager.acme.enabled + email (renders a Let's Encrypt ClusterIssuer with an
+      # HTTP-01 solver), or point clusterIssuer at an issuer you already run.
+      tls:
+        enabled: true
+        clusterIssuer: letsencrypt
     admin:
       enabled: true
       host: "auth.ts.rediens.net"
+      # Still self-signed: nothing here can certify a headscale-issued name. The runbook in
+      # .security-hardening/09-infra-security.md gives the two ways to fix that; until one is
+      # done, this is a known click-through warning on the most privileged UI.
+      clusterIssuer: selfsigned
+
+  # cert-manager must already be installed in the cluster; this chart does not install it.
+  certManager:
+    acme:
+      enabled: false          # set true + email to issue a real cert for auth.rediens.net
+      email: ""
 
   smtp:
     host: ""                             # set your SMTP server
@@ -36,5 +59,9 @@ hydra:
           cors:
             enabled: true
             allowed_origins:
+              # R-19 / chain C-9: `http://localhost:30501` is gone. It made port 30501 on ANY
+              # operator workstation a trusted origin against the production OAuth2 endpoints,
+              # permanently, for an SSH-tunnel convenience. The tunnel it existed for is also
+              # gone now that prod uses ClusterIP + the Tailscale admin ingress; reach the
+              # console at https://auth.ts.rediens.net/admin/ over Tailscale instead.
               - "https://auth.ts.rediens.net"
-              - "http://localhost:30501"    # keep for local SSH fallback

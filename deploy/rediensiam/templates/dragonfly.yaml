@@ -1,4 +1,24 @@
 {{- if .Values.rediensiam.dragonfly.local.enabled }}
+{{- if .Values.rediensiam.dragonfly.local.tls.enabled }}
+# Cache transport encryption. Unlike Postgres this is a HARD cutover — with --tls Dragonfly
+# stops answering cleartext — so the cacheUrl secret must gain `ssl=true` in the same change.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Release.Name }}-dragonfly-tls
+  namespace: {{ .Release.Namespace }}
+spec:
+  secretName: {{ .Release.Name }}-dragonfly-tls
+  issuerRef:
+    name: selfsigned
+    kind: ClusterIssuer
+  commonName: {{ .Release.Name }}-dragonfly
+  dnsNames:
+    - {{ .Release.Name }}-dragonfly
+    - {{ .Release.Name }}-dragonfly.{{ .Release.Namespace }}.svc
+    - {{ .Release.Name }}-dragonfly.{{ .Release.Namespace }}.svc.cluster.local
+---
+{{- end }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -28,6 +48,12 @@ spec:
         app: {{ .Release.Name }}-dragonfly
     spec:
       automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        {{- if .Values.rediensiam.dragonfly.local.tls.enabled }}
+        fsGroup: 999    # so uid 999 can read the mounted key
+        {{- end }}
       containers:
         - name: dragonfly
           image: {{ .Values.rediensiam.dragonfly.local.image }}
@@ -47,7 +73,27 @@ spec:
                   key: dragonfly-password
           ports:
             - containerPort: 6379
-          args: ["--logtostderr", "--requirepass=$(DRAGONFLY_PASSWORD)"]
+          args:
+            - --logtostderr
+            - --requirepass=$(DRAGONFLY_PASSWORD)
+            {{- if .Values.rediensiam.dragonfly.local.tls.enabled }}
+            - --tls
+            - --tls_cert_file=/etc/dragonfly-tls/tls.crt
+            - --tls_key_file=/etc/dragonfly-tls/tls.key
+            {{- end }}
+          {{- if .Values.rediensiam.dragonfly.local.tls.enabled }}
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/dragonfly-tls
+              readOnly: true
+          {{- end }}
           resources:
             {{- toYaml .Values.rediensiam.dragonfly.local.resources | nindent 12 }}
+      {{- if .Values.rediensiam.dragonfly.local.tls.enabled }}
+      volumes:
+        - name: tls
+          secret:
+            secretName: {{ .Release.Name }}-dragonfly-tls
+            defaultMode: 0440
+      {{- end }}
 {{- end }}

@@ -4,6 +4,12 @@ rediensiam:
   image:
     repository: rediensiam
     tag: "0.0.1"
+    # Digest pin (R-16). When set it replaces `tag`, so a pod restart re-runs the exact
+    # bytes that were deployed instead of whatever the registry currently answers with.
+    # deploy.sh resolves this from `docker push` output and passes it with --set.
+    digest: ""
+    # IfNotPresent is only safe *because* of the digest above — `Always` against a mutable
+    # tag makes every restart a fresh trust decision about the registry.
     pullPolicy: IfNotPresent
 
   replicaCount: 1
@@ -37,8 +43,12 @@ rediensiam:
       port: 5000
     admin:
       port: 5001
-      # Admin SPA is exposed ONLY via NodePort — no public ingress.
-      # Access: direct on local network, or SSH tunnel from remote:
+      # R-05: ClusterIP by default. A NodePort binds on EVERY node interface, which put
+      # Swagger, /metrics and the whole /admin,/org,/project surface on the node's LAN
+      # address, bypassing the ingress. values.dev.yaml opts back into NodePort for local
+      # development; prod reaches the admin SPA through the Tailscale-only admin ingress.
+      type: ClusterIP
+      # Only used when type is NodePort.
       #   ssh -L 30501:localhost:30501 user@server
       nodePort: 30501
 
@@ -47,8 +57,72 @@ rediensiam:
     public:
       enabled: true
       host: ""    # set in values.dev.yaml / values.prod.yaml
+      # R-02: TLS on the public auth surface. Off here because dev serves `iam.localhost`,
+      # which no CA will certify; values.prod.yaml turns it on. When enabled the router
+      # drops the `web` entrypoint and a redirectScheme middleware sends :80 → :443.
+      tls:
+        enabled: false
+        secretName: ""              # defaults to <release>-public-tls
+        clusterIssuer: letsencrypt  # must already exist, or set certManager.acme.enabled
+      # Traefik middlewares on the public router. Traefik's CRDs ship with k3s, so these
+      # need no extra component; they are the ingress-layer rate limit and body cap.
+      rateLimit:
+        enabled: true
+        average: 50       # requests/period per source IP
+        burst: 100
+        period: 1s
+      maxBodyBytes: 1048576   # 1 MiB request body cap; 0 disables the middleware
+      # P-04. Prefixes the app serves on BOTH listeners but that must not be reachable on the
+      # public hostname: the admin console and the whole management API. They stay reachable on
+      # the admin ingress. `/auth`, `/account` and `/api` are deliberately absent — the login SPA,
+      # end-user self-service and the resource-server introspection surface are public by design,
+      # and `/api` is what the in-cluster gateway calls. Empty list removes the deny entirely.
+      adminOnlyPaths:
+        - /admin
+        - /org
+        - /project
+        - /service-accounts
     admin:
-      enabled: false    # keep false — NodePort only
+      enabled: false    # prod enables this; dev uses the NodePort
+      host: ""
+      # Issuer for the admin ingress cert. `selfsigned` trains operators to click through a
+      # warning on the most privileged UI here — see the runbook in 09-infra-security.md for
+      # the two ways out (internal CA, or ACME DNS-01 on the Tailscale domain).
+      clusterIssuer: selfsigned
+
+  # ── cert-manager ──────────────────────────────────────────────────────────────
+  # The chart renders the `selfsigned` ClusterIssuer whenever the admin ingress is on.
+  # A publicly trusted issuer needs an ACME account, so it is opt-in: set acme.enabled and
+  # acme.email, and make sure port 80 reaches Traefik for the HTTP-01 challenge.
+  # cert-manager itself is NOT installed by this chart.
+  certManager:
+    acme:
+      enabled: false
+      email: ""
+      server: "https://acme-v02.api.letsencrypt.org/directory"
+      issuerName: letsencrypt
+
+  # ── NetworkPolicy ─────────────────────────────────────────────────────────────
+  networkPolicy:
+    # Release-scoped default-deny on ingress: any pod of this release that no other policy
+    # selects receives nothing. Deliberately NOT namespace-wide — deploy.sh installs into
+    # `default`, which on a real cluster carries unrelated workloads that a namespace-wide
+    # deny would cut off. See 09-infra-security.md for the dedicated-namespace upgrade.
+    defaultDenyIngress: true
+    # Namespace running the ingress controller (k3s: Traefik in kube-system).
+    ingressControllerNamespace: kube-system
+    # Namespace running cluster DNS. Egress to :53 is narrowed to kube-dns pods here.
+    dnsNamespace: kube-system
+    # Ranges the app pod may never reach on its outbound SMTP/HTTPS paths.
+    # 100.64.0.0/10 is the CGNAT range Tailscale hands out and is the one the earlier list
+    # omitted — the application refuses it (step 5) but the pod could still route to it.
+    privateRanges:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+      - 169.254.0.0/16
+      - 100.64.0.0/10
+      - 127.0.0.0/8
 
   # ── SMTP (optional; per-org SMTP overrides this) ──────────────────────────────
   smtp:
@@ -78,6 +152,14 @@ rediensiam:
       image: postgres:16-alpine
       storage: 2Gi
       password: ""
+      # R-15. Turns on server-side TLS using a cert-manager Certificate issued by the
+      # `selfsigned` ClusterIssuer. Off by default because it has two hard prerequisites:
+      #   1. cert-manager must be installed (this chart does not install it), and
+      #   2. every DSN must carry sslmode — see the R-15 runbook in 09-infra-security.md.
+      # Postgres with ssl=on still accepts non-TLS clients, so enabling this alone does not
+      # break anything; it is the DSN change that actually enforces it.
+      tls:
+        enabled: false
       resources:
         requests:
           cpu: 100m
@@ -94,6 +176,12 @@ rediensiam:
       enabled: true
       image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.25.0
       password: ""
+      # Plaintext cache connection. Same cert-manager prerequisite as Postgres, but this one
+      # is a HARD cutover: with --tls Dragonfly stops accepting cleartext, so the cacheUrl
+      # secret must gain `ssl=true` in the same change or the app cannot reach the cache.
+      # Off by default for that reason; runbook in 09-infra-security.md.
+      tls:
+        enabled: false
       resources:
         requests:
           cpu: 50m
@@ -125,12 +213,35 @@ rediensiam:
 # Hydra subchart — shared config (URLs set in values.dev.yaml / values.prod.yaml)
 # ══════════════════════════════════════════════════════════════════════════════
 hydra:
+  # hydra-maester is a Kubernetes controller that reconciles `OAuth2Client` custom resources into
+  # Hydra clients. This deployment does not use that CRD — every client is created through the
+  # Hydra Admin REST API from the app (HydraService.CreateOAuth2ClientAsync, and the callers in
+  # OrgController / SystemAdminController / ManagedApiController). Left on, it is a pod that
+  # mounts a ServiceAccount token and holds a **ClusterRole granting `list`, `watch` and `create`
+  # on Secrets across every namespace** — cluster-wide read of every Secret in the cluster, for a
+  # reconciliation loop with nothing to reconcile. Off.
+  maester:
+    enabled: false
   hydra:
     config:
       strategies:
         access_token: jwt
       secrets:
         system: []    # REQUIRED: set in values.secret.yaml / values.prod.secret.yaml
+      # Token lifetimes as stated policy rather than Hydra's defaults (step 8 §3d).
+      # Refresh-token rotation and reuse detection are Hydra defaults and are NOT overridden.
+      # Why these numbers: RevokeSessionsAsync kills the consent session and therefore the
+      # refresh chain, but an access token already minted survives to its own exp. So
+      # access_token is the residual window after a revocation — 15m, down from the 1h
+      # default. refresh_token is the outer bound on a stolen-but-unrotated chain; 168h (7d)
+      # costs an interactive re-auth once a week and is the knob to raise if that is too
+      # aggressive for your users.
+      ttl:
+        access_token: 15m
+        refresh_token: 168h
+        id_token: 15m
+        auth_code: 10m
+        login_consent_request: 30m
       log:
         level: info
         format: json
@@ -167,6 +278,16 @@ hydra:
 # Keto subchart — shared config
 # ══════════════════════════════════════════════════════════════════════════════
 keto:
+  # Keto talks to Postgres and to nothing else — it has no reason to hold a credential for the
+  # Kubernetes API. It mounted one anyway: the subchart's deployment template resolves the flag
+  # with `ternary .Values.deployment.automountServiceAccountToken .Values.automountServiceAccountToken
+  # (not (empty .Values.deployment.automountServiceAccountToken))`, and `empty false` is true —
+  # so `deployment.automountServiceAccountToken: false` alone can never be selected, and the
+  # subchart default of `true` always wins. Falling through picks a top-level key the chart does
+  # not define, which renders an empty value. Both keys together are what produces `false`.
+  automountServiceAccountToken: false
+  deployment:
+    automountServiceAccountToken: false
   keto:
     config:
       namespaces:

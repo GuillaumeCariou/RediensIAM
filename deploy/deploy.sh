@@ -5,11 +5,15 @@ set -euo pipefail
 DEV=false
 PROD=false
 UPGRADE=false
+ROTATE=false
 for arg in "$@"; do
   case "$arg" in
     --dev)     DEV=true ;;
     --prod)    PROD=true ;;
     --upgrade) UPGRADE=true ;;
+    # Dev only. Destroys the dev secrets file and the state encrypted under it, then regenerates.
+    # See §1b for why this cannot be a prod operation.
+    --rotate-secrets) ROTATE=true ;;
     *) echo "Unknown argument: $arg"; exit 1 ;;
   esac
 done
@@ -19,8 +23,14 @@ if [ "${DEV}" = "true" ] && [ "${PROD}" = "true" ]; then
 fi
 
 # ── Config ─────────────────────────────────────────────────────────────────────
+# NOTE: `default` is a shared namespace on this cluster. The chart's default-deny is
+# release-scoped for that reason. Moving this release to its own namespace is the
+# prerequisite for a true namespace-wide baseline deny — see .security-hardening/09.
 NAMESPACE=default
 REGISTRY="localhost:5000"
+# R-16: the registry listens on loopback only. Anyone who could reach TCP/5000 on this host
+# could previously push a replacement rediensiam:prod and own the next pod restart.
+REGISTRY_BIND="127.0.0.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CHART="${SCRIPT_DIR}/rediensiam"
@@ -37,6 +47,7 @@ if [ "${PROD}" = "true" ]; then
   echo "════════════════════════════════════════════════"
 else
   IMAGE="${REGISTRY}/rediensiam:dev"
+  SECRETS_FILE="${CHART}/values.secret.yaml"
   ENV_FILE="${CHART}/values.dev.yaml"
   echo "════════════════════════════════════════════════"
   echo " RediensIAM — Dev Deployment"
@@ -76,65 +87,172 @@ helm_deploy() {
 # ── 1. Docker Registry ─────────────────────────────────────────────────────────
 echo ""
 echo "──── [1/4] Docker Registry ──────────────────────"
-if docker ps | grep -q "registry"; then
-  echo "  Running"
-elif docker ps -a | grep -q "registry"; then
-  docker start registry; sleep 2
-else
+start_registry() {
   docker volume create registry-data 2>/dev/null || true
-  docker run -d -p 5000:5000 --name registry --restart=always \
+  docker run -d -p ${REGISTRY_BIND}:5000:5000 --name registry --restart=always \
     -v registry-data:/var/lib/registry \
     -e REGISTRY_STORAGE_DELETE_ENABLED=true registry:2
   sleep 3
+}
+
+# If an existing container is bound to anything but loopback, replace it. The images live in
+# the named volume, so this is not destructive — the container is recreated with the same
+# storage and a narrower bind.
+registry_bind_of() {
+  docker inspect -f '{{ range $p, $c := .HostConfig.PortBindings }}{{ range $c }}{{ .HostIp }}{{ end }}{{ end }}' registry 2>/dev/null
+}
+
+if docker ps -a --format '{{.Names}}' | grep -qx "registry"; then
+  CURRENT_BIND="$(registry_bind_of)"
+  if [ "${CURRENT_BIND}" != "${REGISTRY_BIND}" ]; then
+    echo "  Registry is bound to '${CURRENT_BIND:-0.0.0.0}' — rebinding to ${REGISTRY_BIND} (R-16)"
+    docker rm -f registry >/dev/null
+    start_registry
+  elif ! docker ps --format '{{.Names}}' | grep -qx "registry"; then
+    docker start registry >/dev/null; sleep 2
+  else
+    echo "  Running (bound to ${REGISTRY_BIND})"
+  fi
+else
+  start_registry
 fi
 curl -fs http://${REGISTRY}/v2/ >/dev/null || { echo "  ERROR: registry not accessible"; exit 1; }
-echo "  Ready at ${REGISTRY}"
+echo "  Ready at ${REGISTRY} (loopback only)"
 
-# ── 1b. Generate prod secrets (if prod and file missing) ───────────────────────
-if [ "${PROD}" = "true" ] && [ ! -f "${SECRETS_FILE}" ]; then
-  echo ""
-  echo "──── [1b/5] Generating prod secrets ─────────────"
-  DB_PASS=$(openssl rand -hex 20)
-  HYDRA_SECRET=$(openssl rand -hex 32)
-  TOTP_KEY=$(openssl rand -hex 32)   # must be exactly 64 hex chars (32 bytes)
-  ARGON_PEPPER=$(openssl rand -hex 32)
+# ── 1b. Secrets ────────────────────────────────────────────────────────────────
+# R-06. Neither environment has a default credential any more. `--prod` already generated its
+# own; `--dev` used to load a hand-written values.secret.yaml whose values were identical on
+# every machine that copied it — `changeme`, `Admin1234!`, `CHANGE_ME_HYDRA_SYSTEM_SECRET_32CHARS`
+# — so a dev cluster that ended up routable leaked credentials an attacker already knew. Dev is
+# now generated per install, with no prompt: a dev password an operator has to invent is a
+# password that ends up in a shell history or a README.
+#
+# R-07. `umask 077` in write_secrets_file covers *creation*. It does nothing for a file that
+# already exists from an earlier run under a wider umask, and `cat >` does not change the mode
+# of an existing file — hence the unconditional chmod on the reuse path below.
 
-  read -rp "  Bootstrap admin email    [admin@rediens.net]: " BOOTSTRAP_EMAIL
-  BOOTSTRAP_EMAIL="${BOOTSTRAP_EMAIL:-admin@rediens.net}"
-  read -rsp "  Bootstrap admin password: " BOOTSTRAP_PASS
-  echo ""
-  if [ -z "${BOOTSTRAP_PASS}" ]; then
-    echo "  ERROR: bootstrap password cannot be empty"; exit 1
-  fi
+# Literals this repo shipped as dev defaults. A match means the value is public knowledge, which
+# is a different and worse thing than the value being weak.
+KNOWN_DEFAULTS='changeme|CHANGE_ME_HYDRA_SYSTEM_SECRET_32CHARS|Admin1234!'
 
-  cat > "${SECRETS_FILE}" <<EOF
+write_secrets_file() {
+  local file="$1" email="$2" password="$3"
+  local db hydra_sys enc_key pepper
+  # The prod password is operator-chosen, so it can contain " \ or $, all of which break a
+  # double-quoted YAML scalar. A single-quoted scalar only needs ' doubled.
+  local password_yaml="'${password//\'/\'\'}'"
+  db=$(openssl rand -hex 20)
+  hydra_sys=$(openssl rand -hex 32)
+  enc_key=$(openssl rand -hex 32)   # must be exactly 64 hex chars (32 bytes) — HKDF root
+  pepper=$(openssl rand -hex 32)    # Security__Argon2Pepper; was generated and then dropped
+
+  # R-15: the DSNs below say sslmode=disable because the bundled Postgres ships without TLS.
+  # Turning on rediensiam.postgres.local.tls.enabled makes the server offer TLS; the DSNs then
+  # have to be changed to sslmode=require in this file for it to be used. Both steps are in the
+  # R-15 runbook in .security-hardening/09-infra-security.md. Do not raise the sslmode here
+  # without enabling the server side first — `require` against a non-TLS server fails to connect.
+  #
+  # The subshell keeps the umask local: leaking 077 into the rest of the script would silently
+  # narrow the mode of anything else it creates.
+  ( umask 077
+    cat > "${file}" <<EOF
 rediensiam:
   secrets:
-    databaseUrl: "Host=rediensiam-postgres;Database=rediensiam;Username=iam;Password=${DB_PASS}"
+    databaseUrl: "Host=rediensiam-postgres;Database=rediensiam;Username=iam;Password=${db}"
     cacheUrl: "rediensiam-dragonfly:6379,abortConnect=false"
-    encryptionKey: "${TOTP_KEY}"
+    encryptionKey: "${enc_key}"
     smtpPassword: ""
-    bootstrapEmail: "${BOOTSTRAP_EMAIL}"
-    bootstrapPassword: "${BOOTSTRAP_PASS}"
+    bootstrapEmail: "${email}"
+    bootstrapPassword: ${password_yaml}
+  security:
+    argon2Pepper: "${pepper}"
   postgres:
     local:
-      password: ${DB_PASS}
+      password: ${db}
 
 hydra:
   hydra:
     config:
-      dsn: "postgres://iam:${DB_PASS}@rediensiam-postgres:5432/hydra?sslmode=disable"
+      dsn: "postgres://iam:${db}@rediensiam-postgres:5432/hydra?sslmode=disable"
       secrets:
+        # Hydra reads this list newest-first: element 0 encrypts, the rest only decrypt. That is
+        # what makes a rotation non-destructive — prepend, upgrade, then drop the tail once the
+        # old tokens have expired. See 10-secrets-management.md §4.
         system:
-          - "${HYDRA_SECRET}"
+          - "${hydra_sys}"
 
 keto:
   keto:
     config:
-      dsn: "postgres://iam:${DB_PASS}@rediensiam-postgres:5432/keto?sslmode=disable"
+      dsn: "postgres://iam:${db}@rediensiam-postgres:5432/keto?sslmode=disable"
 EOF
-  echo "  Secrets written to ${SECRETS_FILE}"
-  echo "  (move this file somewhere safe before committing)"
+  )
+  chmod 600 "${file}"
+}
+
+echo ""
+echo "──── [1b/4] Secrets ─────────────────────────────"
+
+if [ "${ROTATE}" = "true" ]; then
+  # Rotating the DB password, the HKDF root and the Hydra system secret together invalidates
+  # everything derived from them at once: the Postgres data dir keeps the OLD password, every
+  # AES-GCM ciphertext in the DB (TOTP secrets, webhook secrets, per-org SMTP passwords) becomes
+  # undecryptable, and every Hydra token and consent session dies. The app has no key-versioned
+  # ciphertext and no re-encrypt pass, so the only coherent form of this is a full state reset —
+  # which is why it is dev-only. Prod rotation is per-secret and ordered.
+  if [ "${PROD}" = "true" ]; then
+    echo "  ERROR: --rotate-secrets is dev-only. Prod rotation is per-secret and ordered;"
+    echo "         follow .security-hardening/10-secrets-management.md §4."
+    exit 1
+  fi
+  echo "  Rotating dev secrets — this discards dev DB and cache state."
+  rm -f "${SECRETS_FILE}"
+  helm uninstall rediensiam -n "${NAMESPACE}" --no-hooks 2>/dev/null || true
+  kubectl delete pvc -n "${NAMESPACE}" data-rediensiam-postgres-0 2>/dev/null || true
+fi
+
+if [ ! -f "${SECRETS_FILE}" ]; then
+  if [ "${PROD}" = "true" ]; then
+    read -rp "  Bootstrap admin email    [admin@rediens.net]: " BOOTSTRAP_EMAIL
+    BOOTSTRAP_EMAIL="${BOOTSTRAP_EMAIL:-admin@rediens.net}"
+    read -rsp "  Bootstrap admin password: " BOOTSTRAP_PASS
+    echo ""
+    if [ -z "${BOOTSTRAP_PASS}" ]; then
+      echo "  ERROR: bootstrap password cannot be empty"; exit 1
+    fi
+    write_secrets_file "${SECRETS_FILE}" "${BOOTSTRAP_EMAIL}" "${BOOTSTRAP_PASS}"
+    echo "  Generated ${SECRETS_FILE} (mode 600)"
+    echo "  (move this file somewhere safe after the deploy)"
+  else
+    BOOTSTRAP_EMAIL="admin@dev.local"
+    # tr strips the base64 chars that need shell quoting; the suffix guarantees one of each
+    # character class so the value also satisfies a tightened project password policy.
+    BOOTSTRAP_PASS="$(openssl rand -base64 24 | tr -d '/+=')Aa1!"
+    write_secrets_file "${SECRETS_FILE}" "${BOOTSTRAP_EMAIL}" "${BOOTSTRAP_PASS}"
+    echo "  Generated ${SECRETS_FILE} (mode 600)"
+    echo ""
+    echo "  ┌─ DEV BOOTSTRAP ADMIN — unique to this machine, shown once ──────────"
+    echo "  │  email:    ${BOOTSTRAP_EMAIL}"
+    echo "  │  password: ${BOOTSTRAP_PASS}"
+    echo "  └─ also in ${SECRETS_FILE}; re-roll with --dev --rotate-secrets"
+    echo ""
+  fi
+else
+  chmod 600 "${SECRETS_FILE}"
+  echo "  Using ${SECRETS_FILE} (mode $(stat -c %a "${SECRETS_FILE}"))"
+  if grep -Eq "${KNOWN_DEFAULTS}" "${SECRETS_FILE}"; then
+    if [ "${PROD}" = "true" ]; then
+      echo "  ERROR (R-06): ${SECRETS_FILE} still holds a credential this repo shipped as a"
+      echo "                default. Refusing to deploy it. Generate a fresh one:"
+      echo "                  mv ${SECRETS_FILE} ${SECRETS_FILE}.old && ./deploy/deploy.sh --prod"
+      echo "                then follow 10-secrets-management.md §4 to migrate existing state."
+      exit 1
+    fi
+    echo "  WARNING (R-06): this file still holds credentials this repo shipped as defaults."
+    echo "                  Every copy of the repo knows them. Re-roll with:"
+    echo "                    ./deploy/deploy.sh --dev --rotate-secrets"
+    echo "                  (discards dev DB state — dev data is disposable)"
+  fi
 fi
 
 # ── 2. Build ───────────────────────────────────────────────────────────────────
@@ -145,7 +263,16 @@ echo "  Login SPA: $(du -sh dist | cut -f1)"
 cd "${ROOT_DIR}/frontend/admin" && npm ci --silent && npm run build
 echo "  Admin SPA: $(du -sh dist | cut -f1)"
 cd "${ROOT_DIR}" && docker build -t "${IMAGE}" . && docker push "${IMAGE}"
+# R-16: resolve the digest the registry actually stored and deploy that, not the tag. This is
+# what makes a pod restart replay the exact bytes that were reviewed instead of re-asking the
+# registry what `:prod` means today.
+IMAGE_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE}" 2>/dev/null | cut -d'@' -f2)
+if [ -z "${IMAGE_DIGEST}" ]; then
+  echo "  ERROR: could not resolve image digest after push — refusing to deploy a mutable tag"
+  exit 1
+fi
 echo "  Image pushed: ${IMAGE}"
+echo "  Digest:       ${IMAGE_DIGEST}"
 
 # ── 3. Helm repos & chart deps ────────────────────────────────────────────────
 echo ""
@@ -174,16 +301,18 @@ if [ "${PROD}" = "true" ]; then
     -f "${SECRETS_FILE}" \
     --set rediensiam.image.repository="${REGISTRY}/rediensiam" \
     --set rediensiam.image.tag=prod \
-    --set rediensiam.image.pullPolicy=Always \
+    --set rediensiam.image.digest="${IMAGE_DIGEST}" \
+    --set rediensiam.image.pullPolicy=IfNotPresent \
     --wait --timeout 10m
 else
   helm_deploy rediensiam "${CHART}" \
     -f "${CHART}/values.yaml" \
     -f "${CHART}/values.dev.yaml" \
-    -f "${CHART}/values.secret.yaml" \
+    -f "${SECRETS_FILE}" \
     --set rediensiam.image.repository="${REGISTRY}/rediensiam" \
     --set rediensiam.image.tag=dev \
-    --set rediensiam.image.pullPolicy=Always \
+    --set rediensiam.image.digest="${IMAGE_DIGEST}" \
+    --set rediensiam.image.pullPolicy=IfNotPresent \
     --wait --timeout 10m
 fi
 
@@ -228,8 +357,15 @@ if [ -n "${PUBLIC_IP}" ]; then
   check "OIDC discovery"  "http://${PUBLIC_IP}:5000/.well-known/openid-configuration" "200"
   check "Login page"      "http://${PUBLIC_IP}:5000/login"                            "200"
 fi
-if [ -n "${ADMIN_IP}" ]; then
+ADMIN_SVC_TYPE=$(kubectl get svc -n "${NAMESPACE}" rediensiam-admin -o jsonpath='{.spec.type}' 2>/dev/null)
+if [ -n "${ADMIN_IP}" ] && [ "${ADMIN_SVC_TYPE}" = "NodePort" ]; then
   check "Admin SPA"       "http://${ADMIN_IP}:5001/admin/"                            "200" "${ADMIN_HOST}"
+elif [ -n "${ADMIN_IP}" ]; then
+  # ClusterIP + NetworkPolicy scopes :5001 to the ingress controller, so a curl from this
+  # shell is expected to be refused. That is the control working, not a failure — reach the
+  # console through the admin ingress instead.
+  echo "   -  Admin SPA — not probed: :5001 is ClusterIP and admitted only from the ingress"
+  echo "                  controller. Verify at ${ADMIN_URL}/admin/ over Tailscale."
 fi
 if [ -z "${PUBLIC_IP}" ] && [ -z "${ADMIN_IP}" ]; then
   echo "   (could not resolve cluster IPs — skipping curl checks)"

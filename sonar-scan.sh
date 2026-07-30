@@ -10,6 +10,15 @@ SONAR_HOST="http://192.168.1.97:9000"
 ENV_FILE="$(dirname "$0")/.sonar.env"
 
 if [[ -f "$ENV_FILE" ]]; then
+  # R-08. This file holds a live SonarQube token. It shipped `-rw-rw-r--`, so every local
+  # account and every process running as this user could read it. The save path below already
+  # chmodded; a file written before that existed did not, and sourcing it is the one moment we
+  # are guaranteed to be looking at it.
+  mode=$(stat -c %a "$ENV_FILE" 2>/dev/null || echo 600)
+  if [[ "$mode" != "600" ]]; then
+    echo "warning: $ENV_FILE was mode $mode — tightening to 600 (R-08)" >&2
+    chmod 600 "$ENV_FILE"
+  fi
   # shellcheck disable=SC1090
   source "$ENV_FILE"
 fi
@@ -24,7 +33,9 @@ if [[ -z "$SONAR_TOKEN" ]]; then
   echo
   read -rp "Save token to .sonar.env for future runs? [y/N] " save
   if [[ "$save" =~ ^[Yy]$ ]]; then
-    printf 'SONAR_TOKEN=%s\n' "$SONAR_TOKEN" > "$ENV_FILE"
+    # umask before the redirect: chmod after the write leaves a window in which the token is
+    # on disk under the caller's umask.
+    ( umask 077; printf 'SONAR_TOKEN=%s\n' "$SONAR_TOKEN" > "$ENV_FILE" )
     chmod 600 "$ENV_FILE"
     echo "Token saved to .sonar.env"
   fi

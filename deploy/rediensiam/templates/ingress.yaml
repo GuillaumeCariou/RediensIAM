@@ -1,4 +1,57 @@
 {{- if .Values.rediensiam.ingress.public.enabled }}
+{{- $tls  := .Values.rediensiam.ingress.public.tls }}
+{{- $rl   := .Values.rediensiam.ingress.public.rateLimit }}
+{{- $body := int .Values.rediensiam.ingress.public.maxBodyBytes }}
+{{- $mw   := list }}
+{{- if $tls.enabled }}{{ $mw = append $mw (printf "%s-%s-redirect-https@kubernetescrd" .Release.Namespace .Release.Name) }}{{ end }}
+{{- if $rl.enabled }}{{ $mw = append $mw (printf "%s-%s-ratelimit@kubernetescrd" .Release.Namespace .Release.Name) }}{{ end }}
+{{- if gt $body 0 }}{{ $mw = append $mw (printf "%s-%s-bodylimit@kubernetescrd" .Release.Namespace .Release.Name) }}{{ end }}
+{{- if $rl.enabled }}
+# Traefik rateLimit keys on the client IP by default, which is what we want: the app's own
+# LoginRateLimiter is per-account, so the two layers key on different things rather than
+# duplicating each other. This one bounds credential stuffing and cheap L7 floods before
+# they reach a pod. Traefik's CRDs ship with k3s — no extra component.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ .Release.Name }}-ratelimit
+  namespace: {{ .Release.Namespace }}
+spec:
+  rateLimit:
+    average: {{ $rl.average }}
+    burst: {{ $rl.burst }}
+    period: {{ $rl.period }}
+---
+{{- end }}
+{{- if gt $body 0 }}
+# Request-body cap. The auth surface takes small JSON bodies only, so anything larger is
+# either a mistake or a memory-pressure probe; Traefik answers 413 without waking a pod.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ .Release.Name }}-bodylimit
+  namespace: {{ .Release.Namespace }}
+spec:
+  buffering:
+    maxRequestBodyBytes: {{ $body }}
+    memRequestBodyBytes: {{ $body }}
+---
+{{- end }}
+{{- if $tls.enabled }}
+# R-02. Traefik's shared redirect handler is a no-op when the rewritten URL equals the
+# original, so attaching this to a router that serves both entrypoints redirects :80 and
+# leaves :443 alone — no loop.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ .Release.Name }}-redirect-https
+  namespace: {{ .Release.Namespace }}
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+---
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -6,8 +59,20 @@ metadata:
   namespace: {{ .Release.Namespace }}
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    {{- if $mw }}
+    traefik.ingress.kubernetes.io/router.middlewares: {{ join "," $mw }}
+    {{- end }}
+    {{- if and $tls.enabled $tls.clusterIssuer }}
+    cert-manager.io/cluster-issuer: {{ $tls.clusterIssuer }}
+    {{- end }}
 spec:
   ingressClassName: {{ .Values.rediensiam.ingress.className }}
+  {{- if $tls.enabled }}
+  tls:
+    - hosts:
+        - {{ include "rediensiam.ingressPublicHost" . }}
+      secretName: {{ $tls.secretName | default (printf "%s-public-tls" .Release.Name) }}
+  {{- end }}
   rules:
     - host: {{ include "rediensiam.ingressPublicHost" . }}
       http:
@@ -42,4 +107,60 @@ spec:
                 name: {{ .Release.Name }}-public
                 port:
                   number: {{ .Values.rediensiam.service.public.port }}
+{{- with .Values.rediensiam.ingress.public.adminOnlyPaths }}
+---
+# P-04. `app.MapControllers()` maps every route on BOTH listeners — only Swagger and /metrics
+# are gated on the admin port — so the management API and the admin console answer on :5000 as
+# well, and the `path: /` rule above hands the public hostname a second door to them.
+#
+# Enforced here rather than in the app on purpose: the listener port is not a trust boundary
+# (every pod in the namespace can reach :5001 too), and a route filter keyed on
+# Connection.LocalPort is untestable under WebApplicationFactory, where LocalPort is always 0 —
+# which is how the port half of step 9 became decorative in the first place. The public
+# hostname is a real boundary, so the rule belongs on it.
+#
+# 255.255.255.255/32 matches no client: this is an unconditional deny, not an allowlist whose
+# correctness would depend on what source IP Traefik sees behind the load balancer. The admin
+# ingress serves these paths on its own hostname and carries no such middleware.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ $.Release.Name }}-deny
+  namespace: {{ $.Release.Namespace }}
+spec:
+  ipAllowList:
+    sourceRange:
+      - 255.255.255.255/32
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $.Release.Name }}-public-admin-deny
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    # Longer PathPrefix wins in Traefik, so these routers outrank the `/` catch-all above.
+    traefik.ingress.kubernetes.io/router.middlewares: {{ printf "%s-%s-deny@kubernetescrd" $.Release.Namespace $.Release.Name }}
+spec:
+  ingressClassName: {{ $.Values.rediensiam.ingress.className }}
+  {{- if $tls.enabled }}
+  tls:
+    - hosts:
+        - {{ include "rediensiam.ingressPublicHost" $ }}
+      secretName: {{ $tls.secretName | default (printf "%s-public-tls" $.Release.Name) }}
+  {{- end }}
+  rules:
+    - host: {{ include "rediensiam.ingressPublicHost" $ }}
+      http:
+        paths:
+          {{- range . }}
+          - path: {{ . }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $.Release.Name }}-public
+                port:
+                  number: {{ $.Values.rediensiam.service.public.port }}
+          {{- end }}
+{{- end }}
 {{- end }}
