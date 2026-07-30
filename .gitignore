@@ -40,7 +40,8 @@ deploy/rediensiam/tmpcharts-*/
 sdk/rust/**/target/
 sdk/typescript/**/dist/
 sdk/typescript/**/node_modules/
-.security-hardening/
+# Audit reports are kept in-tree as evidence; superseded sessions are not.
+.security-hardening-archive-*/
 
 # Editor/backup copies — one `cp values.secret.yaml values.secret.yaml.bak` from being a leak
 *.bak

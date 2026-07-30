@@ -1,0 +1,37 @@
+{
+  "target": "Whole RediensIAM — priority backend (src/) and SDKs (sdk/), then frontends (frontend/admin, frontend/login), deploy/ Helm chart, Ory Hydra/Keto, Postgres, Dragonfly",
+  "status": "in_progress",
+  "depth": "comprehensive",
+  "compliance_frameworks": [
+    "owasp-asvs-l2",
+    "cis-benchmarks",
+    "soc2-type-ii",
+    "pci-dss",
+    "hipaa"
+  ],
+  "current_step": 8,
+  "current_phase": 3,
+  "completed_steps": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "files_created": [
+    ".security-hardening/01-vulnerability-scan.md",
+    ".security-hardening/02-threat-model.md",
+    ".security-hardening/03-architecture-review.md",
+    ".security-hardening/04-critical-fixes.md",
+    ".security-hardening/07-mobile-hardening.md",
+    ".security-hardening/05-backend-hardening.md",
+    ".security-hardening/06-frontend-hardening.md"
+  ],
+  "started_at": "2026-07-28T22:02:34+02:00",
+  "last_updated": "2026-07-30T16:13:04+02:00",
+  "scanned_at": "ad3de8a",
+  "branch": "security/audit-2026-07-28",
+  "notes": "Fresh session; prior session archived at .security-hardening-archive-20260728-220234 (its 01-vulnerability-scan.md scanned 7a45d8b). Priority order per user: backend + SDK first. Also in scope: docs/2026-07-28-findings-securite-deploiement.md findings A-E. Step 7 (mobile) has no target — write a skip note. Step 2 done: STRIDE across 9 trust boundaries, 5 attack trees, 9 chains, risk matrix. Six threats step 1 did not name: T-N1 sa_ client-id squat (latent), T-N2 no audit on MFA mutations, T-N3 unnamespaced cross-tenant role claims (survives the R-23 fix), T-N4 tenant can purge its own audit log, T-N5 R-14 blast radius wider than recorded, T-N6 introspection/authorize unscoped (I-07 promoted). Severity disputes with step 1 recorded in 02 section 8. Step 3 done: architecture review, structural changes S-1..S-10 ranked. T-N1 closed in code (reserved sa_/client_ prefixes on explicit client_id) + 2 tests; suite 1116/1116 before that guard, 9/9 on the CreateHydraClient filter after. Checkpoint 1 approved by user: full remediation, steps 4-7. Step 4 scope: R-23, T-N3, R-24, T-N2, R-28, R-22, R-14/T-N5, T-N4, R-09 (R-09 pulled forward because the R-26 CSP bug currently masks it). Deployment-layer findings deferred to steps 9/10. Step 4 done and independently re-verified: 1151/1151. User decisions: keep the ext.roles break clean (no transition window); admin-console MFA re-auth wiring deferred to step 6. PAUSED before step 5 at user request. Step 7 written: skipped, no mobile target. Step 6 (frontend) was launched then stopped by the user; it left no changes — working tree unchanged from the step 4 pause. Step 5 still deferred. Resumed: user authorised running step 5, then 6, then every remaining step without further approval — checkpoints 2 and 3 are waived. Step 5 running. Step 5 done and independently re-verified: 1183/1183. Second wire break in the release: /api/introspect and /api/authorize are now tenant-scoped (a multi-tenant gateway must move its PAT to a __system__ service account); refusals audited as api.introspect.out_of_scope. S-1 not attempted — GetManagementLevel is sync, LiveAuthorizationService is async, so GrantedLevel would need an await inside EF Where clauses; ~1 day of restructuring. Build note: stale .sonarqube/ at repo root requires -p:SonarQubeTargetsImported=true on dotnet commands. Step 6 running. Step 6 done: console MFA re-auth wired (proof omitted on first attempt, server names acceptable methods), CSP fixed on both SPAs (header pins issuer, meta cannot; 'unsafe-inline' kept for Radix), Geist self-hosted, all external resources eliminated so SRI is moot, browser SDK gained hasProjectRole. Verified by me: 1185/1185 backend, both SPA builds ok, 8/8 SDK tests. Incident: an agent's greedy-regex edit corrupted frontend/login/src/pages/Preview.tsx (329 lines vs 226 at HEAD, facebook entry dropped, Login.tsx block pasted in) then died on a 529; repaired by restoring to HEAD and re-applying the one-line icon swap by hand. C-7 escalated: fixing the CSP made the admin console reachable, so R-05 (NodePort + self-signed cert) is now MORE exposed — step 9 must treat it as a prerequisite. Step 8 running."
+}
