@@ -8,13 +8,19 @@ RediensIAM is built on three principles:
 2. **Standards over re-invention.** OAuth2/OIDC = Ory Hydra. Fine-grained authorisation = Ory Keto. Argon2id for passwords. WebAuthn level-2 for passkeys. We do not re-implement these.
 3. **Defence in depth, but no magic.** Every webhook URL is re-validated for SSRF on each delivery. Every redirect target passes through an allowlist. Static analysers (SecurityCodeScan, SonarAnalyzer.CSharp) run in CI.
 
-> **Gap — read before relying on principle 3.** This document previously claimed "every
-> privileged path checks the database, not just the token". That is **not** what the code
-> does. `RequireManagementLevelAttribute` authorises purely from `ext.roles` in the
-> introspected token; `KetoService.CheckAsync` is not on that path. A role revoked or an
-> org suspended after issuance stays effective until the token expires. Tracked as
-> finding A in [`2026-07-28-findings-securite-deploiement.md`](2026-07-28-findings-securite-deploiement.md)
-> and SEC-11 in [`2026-07-28-audit-complet.md`](2026-07-28-audit-complet.md).
+> **How privileged paths are authorised.** `RequireManagementLevelAttribute` reads the claimed
+> level from `ext.roles`, refuses if it is insufficient, and then **re-verifies it against Keto**
+> (`src/Filters/RequireManagementLevelAttribute.cs`, `src/Services/LiveAuthorizationService.cs`).
+> The verdict is cached per user and level for 30 seconds, so that window — not the token
+> lifetime — is the upper bound on how long a revoked role keeps working on this deployment's own
+> surface. Every management controller carries the attribute at class level.
+>
+> The bound does **not** extend to a resource server that validates the JWT locally against JWKS:
+> it sees the `ext.roles` snapshot taken at issuance and has no way to learn the role was revoked.
+> That is why a management role change and an organisation suspension now also revoke the affected
+> Hydra sessions (`LiveAuthorizationService.InvalidateAsync`,
+> `SystemAdminController.SuspendOrg`) — forcing a token minted from the new grants — and why
+> `POST /api/introspect` remains the only way for a relying party to see live state.
 
 ---
 
@@ -67,7 +73,7 @@ Every other piece of state is in Postgres or Redis. A pod can die, restart, or b
 - DataProtection keys (so session cookies survive pod restart)
 - Rate-limit counters (per-IP, per-user)
 - OTP store (email + SMS codes, anti-replay)
-- PAT introspection cache (5 min TTL, invalidated on PAT revoke and SA delete only — **not** on SA deactivate or org suspend; see SEC-08)
+- PAT introspection cache (5 min TTL). The cache skips the join, never the decision: `PatService.IntrospectAsync` re-checks on every hit that the PAT, its service account and its organisation are all still live, so deactivating a service account or suspending an organisation takes effect immediately rather than at TTL.
 - Hydra introspect cache (≤ 60 s, clamped by token `exp`)
 - Webhook job queue (Redis sorted-set)
 - OAuth2 social-login state store
@@ -184,10 +190,21 @@ Backend  →  hydra.AcceptLoginAsync → Location header redirect into flow
 
 - TOTP — Otp.NET, anti-replay via Redis `TotpUsed` set
 - SMS OTP — rate-limited per user (default 3 / 10 min)
-- WebAuthn (passkey / security key) — Fido2NetLib. `UserVerification = Preferred`, **not** `Required` (`AuthController.WebAuthnOptions`), so a non-verifying authenticator still satisfies the factor. The assertion is also not bound server-side to the user pending MFA (SEC-05).
+- WebAuthn (passkey / security key) — Fido2NetLib. `UserVerification = Required` on both registration (`AccountController.WebAuthnRegisterBegin`) and assertion (`AuthController.WebAuthnOptions`): as a second factor, possession of the authenticator is not the point, the PIN or biometric is. The assertion is looked up scoped to the user pending MFA, so another account's registered authenticator cannot satisfy the factor. Resident (discoverable) keys are deliberately discouraged — this is a second factor and there is no passwordless entry point.
 - Backup codes — HMAC-SHA256, versioned format `sha256:{keyId}:{hex}` so pepper rotation is detectable
 
 Session cookie is rotated on every successful MFA completion to defeat session fixation.
+
+**Enforcement.** A project sets `Project.RequireMfa`; a user with no factor is then sent through
+enrolment (`requires_mfa_setup`) before the login completes, never refused. The management console
+has the same policy under `Security:RequireAdminMfa`, **on by default** — RediensIAM's own
+`super_admin` surface should not be password-only.
+
+**Mutating a factor** requires re-authentication against an existing one (`current_password` or
+`totp_code`, refused with `401 reauthentication_required` naming the methods the account can
+supply). This applies to adding, replacing and removing: enrolling the attacker's own authenticator
+alongside the victim's is the same takeover as overwriting theirs, and it survives a password reset.
+Enrolling the *first* factor on an account that has none needs no proof.
 
 ---
 
@@ -204,6 +221,10 @@ Session cookie is rotated on every successful MFA completion to defeat session f
 | HSTS, CSP, frame-ancestors, X-Content-Type-Options | `Program.cs:AddSecurityHeaders` |
 | Anti-forgery exemption for SAML ACS (signature-verified) | `[IgnoreAntiforgeryToken]` on `SamlController.AssertionConsumerService` |
 | Trusted-proxy fail-closed in production | `Program.cs:ConfigureForwardedHeaders` |
+| Live Keto re-check on every privileged request (30 s cache) | `RequireManagementLevelAttribute` + `LiveAuthorizationService` |
+| Session revocation on role change, org suspension, user deactivation, password change | `LiveAuthorizationService.InvalidateAsync`, `SystemAdminController.SuspendOrg`, `UserHelpers.ApplyUpdate` |
+| Re-authentication on every MFA factor mutation | `AccountController.RequireReauthAsync` |
+| New-device alert on every login path (HMAC of user-agent + /24) | `AuthController.CheckNewDeviceAsync` |
 | NetworkPolicy: Postgres / Dragonfly / Hydra / Keto locked down | `deploy/rediensiam/templates/network-policies.yaml` |
 | Pod securityContext: non-root, drop ALL caps, no priv-esc, RO root | `deploy/rediensiam/templates/{deployment,postgres,dragonfly}.yaml` |
 
@@ -219,7 +240,7 @@ This brings up a single-node k3s with Hydra + Keto + Postgres + Dragonfly + the 
 
 ## Testing
 
-- `dotnet test tests/RediensIAM.IntegrationTests/` — 1093 tests against real Postgres/Redis containers (Testcontainers) and WireMock Hydra/Keto stubs. 1059 pass; the 34 in `Tests/Regression/` fail by design, one per open audit finding.
+- `dotnet test tests/RediensIAM.IntegrationTests/` — 1198 tests against real Postgres/Redis containers (Testcontainers) and WireMock Hydra/Keto stubs. **All pass.** `Tests/Regression/` holds one suite per closed audit finding and each of those tests fails on the pre-fix build; they are guards, not a to-do list.
 - `cd tests/e2e && npm test` — Playwright E2E across login + admin SPAs
 
 ## Sonar

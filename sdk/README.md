@@ -16,6 +16,11 @@ showing a menu, hiding a button. Every privileged decision is re-made server-sid
 If you find yourself wanting to check a role in the browser to protect data, that check belongs
 in your API.
 
+Setting up the clients, projects and service accounts these SDKs need is
+[`docs/INTEGRATION.md`](../docs/INTEGRATION.md). Start there if you are wiring an app up for the
+first time — in particular, **every JSON body on this API is `snake_case`**, and a camelCase key
+binds to nothing without erroring.
+
 ---
 
 ## Backend SDKs
@@ -46,6 +51,15 @@ Local JWKS verification proves a token was *issued*. It cannot see anything that
 Local verification is the right choice only when you can tolerate a stale decision for the full
 token lifetime. For anything privileged, ask.
 
+**Breaking change in `ext.roles`.** Tenant role names are now emitted qualified by the project
+that defined them — `{project_id}/{name}` — and the management names (`super_admin`, `org_admin`,
+`project_admin`) are reserved and cannot be used for a tenant role. A bare `"admin"` therefore
+matches nothing, which is deliberate: two tenants' `admin` used to be the same string here.
+Use `HasProjectRole(projectId, name)` (.NET), `has_project_role(project_id, name)` (Rust) or
+`hasProjectRole(name, projectId?)` (browser); `HasRole` / `has_role` / `hasRole` now match
+management roles only.
+See [`docs/INTEGRATION.md`](../docs/INTEGRATION.md#introspection--the-backend-path).
+
 ---
 
 ## The API these wrap
@@ -62,6 +76,9 @@ Form-encoded, per the RFC.
 ```
 token=<token>&token_type_hint=access_token
 ```
+
+`token_type_hint` is sent for RFC conformance; the server does not read it, and pins its own hint
+when it asks Hydra. Only `token` matters.
 
 ```json
 {
@@ -207,8 +224,12 @@ const orders = await iam.fetch('/api/orders').then((r) => r.json());
 Rendering decisions:
 
 ```ts
+// Management roles of RediensIAM itself — bare names.
 if (iam.hasRole('org_admin')) showAdminMenu();
-const { orgId, userId } = iam.claims;
+// Tenant roles are emitted as `{project_id}/{name}`, so they need the project to match against.
+// It defaults to the project the token was issued for.
+if (iam.hasProjectRole('editor')) showEditorTools();
+const { orgId, userId, projectId } = iam.claims;
 ```
 
 `claims` is decoded from the token **without verifying the signature**, and roles may have been
@@ -238,5 +259,8 @@ await iam.logout();
 Admin console → Service Accounts → New → Tokens → Generate
 ```
 
-Or `POST /service-accounts/{id}/pat`. Grant the account only the roles the service actually
-needs — a gateway that just validates tokens needs none.
+Or `POST /service-accounts/{id}/pat`. Creating the account first needs
+`{"name": …, "user_list_id": "<guid>"}` — `user_list_id` is required and a request without it is
+rejected. Grant the account only the roles the service actually needs: a gateway that just
+validates tokens needs **none**, since introspection asks only that the caller be a service
+account. Full walkthrough in [`docs/INTEGRATION.md`](../docs/INTEGRATION.md).
