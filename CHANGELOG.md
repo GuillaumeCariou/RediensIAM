@@ -8,6 +8,49 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.2.1]
+
+No wire-contract change. Upgrading from 0.2.0 needs nothing beyond a redeploy.
+
+### Fixed
+
+- **Admin console: a failed MFA mutation was reported to nobody.** `ReauthDialog`'s `guard()`
+  resolved when the re-authentication prompt opened rather than when the mutation finished, so a
+  mutation that failed *after* a correct proof — a 500, a 409, a dropped connection — threw into a
+  caller whose `catch` had already gone out of scope, and the rethrow became an unhandled promise
+  rejection. The user typed the right password, the prompt closed, and no error appeared:
+  indistinguishable from success. On regenerating backup codes or deleting a passkey, believing a
+  change happened when it did not is how an account gets locked out. Unreachable on a *bad* proof,
+  which is why reading the code never caught it.
+- Login form: the primary email-or-username field had no accessible name.
+
+### Added
+
+- **First tests for both SPAs** — 150 across seven files. `vitest` and `@testing-library` had been
+  installed in both and left entirely unused, so every authentication change in 0.2.0 was defended
+  by a typecheck and by someone having read it. The bug above is what they found.
+- **Row-level security is enabled**, 19 tables with `ENABLE` + `FORCE`. Without `FORCE` the table
+  owner is exempt and the policies are decorative. `ALTER ROLE iam_backup BYPASSRLS` is now granted
+  at initdb and enforced by a precondition that aborts the deploy — without it `pg_dumpall` fails
+  and the nightly backup stops silently, which is worse than the finding it closes.
+- `k3s --secrets-encryption` documented in the README, including the `reencrypt` step: enabling the
+  flag protects only what is written afterwards.
+
+### Changed
+
+- `values.prod.yaml` now enables Dragonfly TLS. **Verified by rendering only** — there is no
+  production cluster, so this is not proven. A cache that survives the upgrade holding an
+  unprotected DataProtection key ring needs `DEL rediensiam:dataprotection:keys` first; see
+  `docs/DEPLOYMENT.md`.
+
+### Known limits
+
+Enabling RLS does **not** make the login path tenant-safe: users are resolved by e-mail before a
+tenant is known, so that path runs unscoped by necessity. Measured over one minute of
+tenant-exercising traffic: 5 org-scoped connections, 15 as `'system'`. See `docs/SECURITY.md`.
+
+---
+
 ## [0.2.0] — unreleased
 
 The security-hardening release. It is a **breaking** release for anyone who integrates against
