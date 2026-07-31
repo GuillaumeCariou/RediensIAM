@@ -19,8 +19,7 @@ Authorisation on RediensIAM's own management surface is re-verified against Ory 
 request, with a `GrantedLevel` type the compiler will not let you fabricate and a default-deny gate
 that refuses any management route reaching a controller with no authorisation filter. Tenant
 isolation is enforced by ~200 hand-written query conjuncts; the row-level-security backstop under
-them is written, tested and **switched off**, and would not by itself make the login path
-tenant-safe. Secrets are versioned and rotatable. The audit trail is written by the persistence
+them is **on in dev, off in prod**, and does not by itself make the login path tenant-safe. Secrets are versioned and rotatable. The audit trail is written by the persistence
 layer rather than remembered by developers, and is hash-chained — with an **unkeyed** hash, and
 with no scheduled verifier. Four things are known-open and named at the bottom.
 
@@ -129,13 +128,18 @@ implementation: `KetoService.IsManagementLevelGrantedAsync`.
   `SELECT set_config('rediensiam.org_id', …, false)` on every connection open. Two connection-string
   shapes that would silently break this — `No Reset On Close=true` and `Multiplexing=true` — are
   refused at startup (`src/Config/AppConfig.cs:18-52`) rather than tolerated.
+- **Row-level security, live in dev.** `postgres.rls.enabled: true` in `values.dev.yaml`: 19 tables
+  `ENABLE` + `FORCE` with one policy each, applied by a post-upgrade hook Job as the table owner and
+  verified against two real tenants on the running cluster — cross-tenant read, insert, update and
+  delete all refused at the database. Read the limit below before reporting this as tenant
+  isolation.
 
 ### What does not exist
 
-- **Row-level security is off.** `postgres.rls.enabled` is `false` in `values.yaml:302` and is
-  overridden in neither `values.dev.yaml` nor `values.prod.yaml`. The policies in
-  `deploy/rediensiam/files/rls.sql` are complete and fail-closed, and the applying Job exists — but
-  nothing is running them anywhere.
+- **Row-level security in production.** `postgres.rls.enabled` stays `false` in `values.yaml` and
+  `values.prod.yaml` does not override it: on an already-running database this is a migration, not
+  an upgrade, and no production cluster has been through it. The enablement as performed in dev,
+  including the rollback, is `.security-hardening/29-rls-prod-tls.md`.
 - **There is no EF global query filter.** `grep HasQueryFilter src/` returns one comment and no
   code. Nothing catches a forgotten conjunct.
 
@@ -152,11 +156,20 @@ identified yet. The same is true of password reset, email verification, social c
 PAT introspection, the bootstrap path, schema creation, the audit retention sweep and the webhook
 dispatcher.
 
-So: **turning RLS on would not make the login path tenant-safe.** It would put a schema-level
-backstop under the ~200 conjuncts on the *authenticated tenant* paths, which is a genuine and
-worthwhile defence in depth, and it would leave the highest-traffic unauthenticated surface exactly
-as safe as its hand-written queries. Anyone who reads "RLS" and hears "tenant isolation is now
-structural" has been misled, and this document would rather say so than let a flag flip imply it.
+So: **turning RLS on does not make the login path tenant-safe.** It puts a schema-level backstop
+under the ~200 conjuncts on the *authenticated tenant* paths, which is a genuine and worthwhile
+defence in depth, and it leaves the highest-traffic unauthenticated surface exactly as safe as its
+hand-written queries. Anyone who reads "RLS" and hears "tenant isolation is now structural" has been
+misled, and this document would rather say so than let a flag flip imply it.
+
+That is measurable rather than theoretical. With statement logging on for one minute of ordinary dev
+traffic — an OIDC login, TOTP, consent, a token exchange, SuperAdmin listings and one
+PAT-authenticated introspection — the scopes the application actually set were:
+
+```
+  5 94177c59-8d98-4dd1-8a4b-1e6b6add59b8    ← org-bearing, RLS-protected
+ 15 system                                   ← unscoped by necessity
+```
 
 Enabling RLS is also a real outage risk: the policies deny everything to a connection that has not
 set the variable, which for an identity provider is total. The runbook is in
@@ -416,11 +429,11 @@ assumed unaddressed.
 | Item | Severity | State | Why it is open |
 |---|---|---|---|
 | **npm advisories in both SPAs** | High | **7 high per SPA**, down from 8 high + 1 low. `react-router` and `brace-expansion` among them; remaining fixes need `npm audit fix --force`, i.e. breaking major bumps | The forced upgrades were judged riskier than the advisories as reached by these SPAs. That judgement has not been re-tested since the SPAs were rewritten |
-| **Dragonfly TLS off in prod** | Medium | app side complete and pinned; dev on; `values.prod.yaml` sets no flag | A hard cutover that has only been rehearsed on the dev cluster |
+| **Dragonfly TLS in prod is untested live** | Medium | `values.prod.yaml` now sets `dragonfly.local.tls.enabled: true`; `helm lint`/`helm template` pass, no prod cluster exists to run it against | A hard cutover proven only on the dev cluster. It also costs every session at the moment it happens, and a prod Dragonfly whose key ring survives the upgrade needs `DEL rediensiam:dataprotection:keys` first — see `DEPLOYMENT.md` |
 | **Registry unauthenticated, no TLS, no signature verification** | Medium | bound to loopback and digest-pinned, so the reachable attack is narrow | ~2 h; **required** if k3s is not on the deploy host — bind and auth move together |
 | **Prod admin certificate is self-signed** | Medium | `values.prod.yaml:29` `clusterIssuer: selfsigned` | It trains operators to click through a warning on the most privileged UI. Ways out: an internal CA, or ACME DNS-01 |
 | **No reconciler for the Keto/`org_roles` dual write** | Medium, structural | compensating delete in the `catch` covers a thrown exception, not a killed process | S-8's second half was never scoped |
-| **RLS shipped but off** | Medium, structural | policies, SQL and Job complete; flag `false` everywhere | Enabling it before verifying the application half on a live connection is a total outage. And see §2 — it would not make the login path tenant-safe |
+| **RLS off in prod** | Medium, structural | live and verified in dev since `29-rls-prod-tls.md`; chart default and `values.prod.yaml` still `false` | On an existing prod database it is a migration, not an upgrade, and there is no prod cluster to rehearse on. And see §2 — even on, it does not make the login path tenant-safe |
 | **Audit chain hash is unkeyed; no scheduled verifier; no DB-level append-only** | Medium | see §5 | An HMAC needs a key with its own rotation story; the verifier needs an owner and an alert destination |
 | **`/api/authorize` object check skips ownership when both scopes are absent** | Low–Medium | `IsObjectInScopeAsync` checks only that the namespace is known when the caller is deployment-level *and* the subject token has no `org_id`. The `System` namespace is refused to every caller before this point, so what remains is an unowned check against `Organisations` / `Projects` / `UserLists` | Not named by any report; found while writing this document. The `System` half was closed in `75e9576`; the rest needs a decision about what a deployment-level caller with an org-less token may legitimately ask |
 | **`GET /admin/system/health` returns raw `ex.Message`** | Low | the SMTP username is redacted; two branches still return exception text (`SystemHealthController` `:222`, `:245`) | Treat this route as equivalent to a stack trace |

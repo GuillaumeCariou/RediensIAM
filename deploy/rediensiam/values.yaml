@@ -279,23 +279,28 @@ rediensiam:
       namespace: ""
 
     # ── S-5 phase 2 — Postgres row-level security ──────────────────────────────
-    # OFF, and it must stay off until the application half is deployed. These
-    # policies are fail-closed by design: a connection that has not set
+    # These policies are fail-closed by design: a connection that has not set
     # `rediensiam.org_id` sees zero rows in every tenant table, which for this
-    # application is a total outage, not a degraded mode.
+    # application is a total outage, not a degraded mode. The application half
+    # that keeps that from happening shipped in step 21 —
+    # src/Data/TenantScopeInterceptor.cs issues `SET rediensiam.org_id` on every
+    # connection open, an org uuid for tenant traffic and the literal `system` for
+    # the paths that legitimately cross tenants. On since step 29 in dev.
     #
-    # What the application must do before this is turned on:
-    #   - issue `SET rediensiam.org_id = '<org uuid>'` on every connection it
-    #     rents, for the tenant the request belongs to;
-    #   - issue `SET rediensiam.org_id = 'system'` for the paths that legitimately
-    #     cross tenants (login before a tenant is known, bootstrap, the audit
-    #     retention sweep, SuperAdmin listings, EF migrations);
-    #   - never leave it unset.
-    # And one thing an operator must do, once, as superuser:
-    #   ALTER ROLE iam_backup BYPASSRLS;
-    # without it pg_dumpall aborts on the first RLS table and the nightly backup
-    # stops working. Full runbook and verification query:
-    #   .security-hardening/18-cnpg-tls-rls.md §3
+    # THE HONEST LIMIT, which enabling this does not change: login resolves a user
+    # by e-mail before any tenant is known, so the authentication surface runs as
+    # `system`. RLS protects authenticated, org-bearing traffic. The enumerated
+    # unscoped paths are TenantScopeInterceptor.LegitimatelyUnscopedPaths.
+    #
+    # Off by default for one reason only: on an ALREADY-RUNNING database this is a
+    # migration, not an upgrade — see .security-hardening/29-rls-prod-tls.md for
+    # the enablement as performed, and 18-cnpg-tls-rls.md §3 for the runbook.
+    #
+    # The one superuser prerequisite, `ALTER ROLE iam_backup BYPASSRLS`, is no
+    # longer a thing to remember: init.sh grants it at initdb when this flag is
+    # set, and files/rls.sql aborts the deploy if the running database does not
+    # have it. Without it pg_dumpall errors on the first policied table and the
+    # nightly backup stops.
     #
     # Enabling this renders a post-install/post-upgrade Job that applies
     # files/rls.sql as the table owner. The SQL is idempotent and re-runnable.

@@ -90,6 +90,17 @@ data:
       -- it is run with --no-role-passwords (the only part that requires superuser).
       CREATE ROLE iam_backup LOGIN PASSWORD :'backup_pw' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
       GRANT pg_read_all_data TO iam_backup;
+{{- if .Values.rediensiam.postgres.rls.enabled }}
+      -- S-5 phase 2. pg_dump sets `row_security = off`, which ERRORS for a role that cannot
+      -- bypass RLS, so the nightly pg_dumpall ABORTS on the first policied table. Granting it
+      -- here is what stops a fresh install with rls.enabled from coming up with a backup that
+      -- has never once succeeded. It hands iam_backup nothing it did not already have:
+      -- pg_read_all_data above already reads every row, RLS or no RLS.
+      -- On an ALREADY-RUNNING database this line never executes — init.sh only runs at initdb.
+      -- files/rls.sql refuses to apply a policy without it, so that case fails the deploy
+      -- instead of the backup.
+      ALTER ROLE iam_backup BYPASSRLS;
+{{- end }}
 
       -- `rediensiam` used to be created by the app itself, which is why `iam` needed
       -- CREATEDB. Pre-creating it here is what lets iam_app drop that attribute.

@@ -253,20 +253,65 @@ containers — about four hours, described in the same section.
 
 ### Turning RLS on
 
-Gated on application change A-1 (`.security-hardening/18-cnpg-tls-rls.md §4`), which landed in
-`.security-hardening/21-rls-app-support.md` — so the gate is now "deploy a build that contains it,
-then verify", not "wait for the code". Then:
+**Done in dev**, on the live cluster, with every command and its real output in
+`.security-hardening/29-rls-prod-tls.md`. `values.dev.yaml` carries the flag. Prod does not: on an
+already-running database this is a migration, not an upgrade.
 
-1. Verify the app really sets the variable, on a connection it is using:
-   `SELECT setting FROM pg_settings WHERE name = 'rediensiam.org_id'`. Empty means stop.
-2. `ALTER ROLE iam_backup BYPASSRLS` — **before** enabling, or `pg_dump` aborts on the first RLS
-   table and the nightly backup silently stops working.
-3. Take a dump.
-4. `rediensiam.postgres.rls.enabled: true`, redeploy, check `kubectl logs job/rediensiam-rls`.
-5. Prove the backup still runs, before the next nightly.
+Two of the five steps below are now enforced rather than remembered — `init.sh` grants `BYPASSRLS`
+at initdb when the flag is set, and `files/rls.sql` refuses to create a single policy on a database
+where `iam_backup` cannot bypass. So step 2 can no longer be skipped silently; it can only fail the
+deploy. Do it anyway, in the right order, so the deploy does not fail at all.
+
+1. Verify the app really sets the variable, on a connection it is using. From the database, with
+   `log_statement='all'` for one minute:
+   `SELECT set_config($1, $2, false)` with `$1 = 'rediensiam.org_id'` must appear for every
+   connection the app opens. Nothing there means the deployed image predates
+   `TenantScopeInterceptor` — stop.
+2. `ALTER ROLE iam_backup BYPASSRLS`, as superuser, **before** enabling. `pg_dump` sets
+   `row_security = off`, which *errors* for a role that cannot bypass, so without this the nightly
+   backup aborts on the first policied table.
+3. Take a dump: `kubectl create job --from=cronjob/rediensiam-backup rls-pre-enable`.
+4. `rediensiam.postgres.rls.enabled: true`, redeploy. `kubectl logs job/rediensiam-rls` must end
+   with `RLS applied to 19 tables` and a table in which every row reads `t / t / 1`.
+5. Prove the backup still runs, **before** the next nightly, and confirm the dump is not silently
+   partial — `gzip -dc` it and grep for a row you know is there.
 
 Full runbook, both verification queries and the rollback SQL:
-`.security-hardening/18-cnpg-tls-rls.md §3`.
+`.security-hardening/18-cnpg-tls-rls.md §3`. What it does *not* protect:
+[`SECURITY.md`](SECURITY.md#2-tenant-isolation-and-its-honest-limit).
+
+### Turning cache TLS on in production
+
+`values.prod.yaml` sets `dragonfly.local.tls.enabled: true`. **This has never been run against a
+production cluster** — it is `helm template`-verified and reasoned from the dev cutover in
+`.security-hardening/23-cache-hardening.md`.
+
+It is a hard cutover, and the cost is not avoidable by ordering:
+
+1. `--tls` makes Dragonfly **refuse cleartext**. The `,ssl=true` half of `cacheUrl` must land in the
+   same upgrade. `deploy.sh` writes it from this flag on a fresh install and stops with the exact
+   `sed` on the reuse path; `templates/dragonfly.yaml` fails the render if the two disagree in
+   either direction. You cannot split them by accident.
+2. **Every session is invalidated.** The Dragonfly pod flips immediately while the Deployment keeps
+   the old app pod serving, so that pod loses its cache for ~30 s; and Dragonfly has no PVC, so the
+   restart empties the DataProtection key ring. There is no version of this that is invisible.
+3. **If this prod release predates step 23 and its Dragonfly survives the upgrade**, delete the key
+   ring first:
+
+   ```
+   DEL rediensiam:dataprotection:keys
+   ```
+
+   The old ring is stored **unprotected**, and `EncryptedOnlyXmlRepository` refuses an unprotected
+   key rather than adopting one — a plaintext key in a shared cache can be *planted*, and it mints
+   session cookies. Skip this and the session path 500s with the remedy in the exception message.
+   Dev never hit it because the cutover restarted a memory-only Dragonfly, so the old ring was gone
+   anyway. Point 2 has the same effect for a cutover done in one upgrade; this step matters when the
+   cache is upgraded separately, or has been given persistence.
+
+Then: `./deploy/verify-deployment.sh --prod` must show `V-26/server`, `V-26/dsn` and `V-26/pin` all
+passing. `V-26/pin` reads the running pod's log, so it is the one that cannot be satisfied by a
+manifest alone.
 
 ### Rotating credentials
 
@@ -308,8 +353,8 @@ Carried forward deliberately; each has a runbook and a cost.
 |---|---|---|
 | Admin console served with a self-signed certificate | `09 §6.3` | internal CA, or ACME DNS-01 |
 | Local registry has no authentication and no TLS | `09 §6.2` | 2h; **required** if k3s is not on this host — bind and auth move together, never one without the other |
-| Dragonfly TLS off **in prod only** | `09 §6.5` / `18 §2` / `23` | Nothing is missing but the flag. The application side is done and *pinned* to the mounted cluster CA (`src/Config/CacheTls.cs`), the chart mounts it (`templates/deployment.yaml:180-195`), and `values.dev.yaml` runs with it on and verified on the wire. `values.prod.yaml` sets no `dragonfly` block, so it inherits `false`. The cutover is atomic and user-visible either way — `cacheUrl` gains `ssl=true` in the *same* `helm upgrade` that sets `dragonfly.local.tls.enabled`, or the cache goes offline. The chart fails the render if the two ever disagree, in either direction |
-| RLS off | `18 §3` | the application side (A-1) is in the build — `src/Data/TenantScopeInterceptor.cs`; the flag is `false` in `values.yaml` and overridden nowhere. Enabling it before verifying the variable on a live connection is a total outage. Note also that RLS does **not** make the login path tenant-safe: it resolves users before a tenant is known and runs as `'system'` by necessity — [`SECURITY.md`](SECURITY.md#2-tenant-isolation-and-its-honest-limit) |
+| Dragonfly TLS in prod is **untested live** | `09 §6.5` / `18 §2` / `23` / `29` | `values.prod.yaml` now sets `dragonfly.local.tls.enabled: true`, and both `helm lint` and `helm template` pass for `values.yaml + values.prod.yaml`. No production cluster exists to run it against, so it is verified by rendering and by reasoning from the dev cutover — **not proven**. The cutover is atomic and user-visible either way, and it costs every session; see [Turning cache TLS on in production](#turning-cache-tls-on-in-production) for the key-ring pre-step |
+| RLS off **in prod only** | `18 §3` / `29` | Live and verified in dev: 19 tables `ENABLE` + `FORCE`, cross-tenant read/insert/update/delete refused at the database, backup still succeeding. `values.prod.yaml` does not override the `false` default, because on an existing prod database this is a migration, not an upgrade, and there is no prod cluster to rehearse on. Note also that RLS does **not** make the login path tenant-safe: it resolves users before a tenant is known and runs as `'system'` by necessity — [`SECURITY.md`](SECURITY.md#2-tenant-isolation-and-its-honest-limit) |
 | No WAF | `09 §6.6` | load the Traefik plugin **before** attaching the middleware, or Traefik answers 503 for the whole router |
 | No IDS/IPS | `09 §6.7` | Falco; needs an alert destination *and* a named owner |
 | k3s secrets not encrypted at rest | `10 §7.3` | 15 min, root on the server node |

@@ -399,10 +399,26 @@ fi
 # The `<release>-rls` ConfigMap is rendered only when postgres.rls.enabled. If it is
 # there and pg_policies is empty, the hook Job failed and tenant isolation is back to
 # being 200 hand-written conjuncts while the chart claims otherwise.
+#
+# What this asserts and what it does not: rls.sql runs under ON_ERROR_STOP with a
+# coverage gate that aborts on any tenant table without a policy, so a SUCCEEDED Job
+# means all 19 tables came out ENABLE+FORCE with one policy each. It is still a
+# statement about the last APPLY, not about the database right now — someone who runs
+# the rollback DO block by hand leaves this passing. Closing that needs a live
+# pg_policies count, which needs a database password, and this script's discipline is
+# that it never reads one (see V-20/V-21/V-23/V-26). ~1 h via a /health/detail field.
 if kubectl get configmap -n "${NS}" "${RELEASE}-rls" >/dev/null 2>&1; then
   RLSJOB=$(kubectl get job -n "${NS}" "${RELEASE}-rls" -o jsonpath='{.status.succeeded}' 2>/dev/null)
-  [ "${RLSJOB}" = "1" ] && pass V-25 "RLS hook Job succeeded (policies applied)" \
-                        || fail V-25 "postgres.rls.enabled is set but the ${RELEASE}-rls Job has not succeeded — no policy is in force"
+  RLSLOG=$(kubectl logs -n "${NS}" "job/${RELEASE}-rls" --tail=-1 2>/dev/null | grep -m1 'RLS applied to')
+  if [ "${RLSJOB}" != "1" ]; then
+    fail V-25 "postgres.rls.enabled is set but the ${RELEASE}-rls Job has not succeeded — no policy is in force"
+  elif [ -n "${RLSLOG}" ]; then
+    # Evidence from the process rather than from a status field: rls.sql prints this
+    # only after the coverage gate has passed on every table it found.
+    pass V-25 "RLS applied as the table owner — ${RLSLOG#*NOTICE:  }"
+  else
+    pass V-25 "RLS hook Job succeeded (policies applied; log rotated, count not read)"
+  fi
 else
   skip V-25 "postgres.rls.enabled is off — tenant isolation is application-side only (S-5 phase 2 open)"
 fi

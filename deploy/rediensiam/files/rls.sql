@@ -56,6 +56,28 @@
 
 BEGIN;
 
+-- ── Prerequisite: the backup must be able to bypass these policies ────────────
+-- This is checked, not documented, because the failure it prevents is the worst
+-- shape a control can have. pg_dump sets `row_security = off`; for a role without
+-- BYPASSRLS that ERRORS, so the nightly pg_dumpall aborts on the first policied
+-- table — and the moment that stops working is the moment the policies start.
+-- Refusing to apply a single policy is recoverable in one statement; discovering
+-- three weeks of failed backups is not. This is T-03's whole lesson.
+--
+-- iam_app cannot grant it (ALTER ROLE … BYPASSRLS is superuser-only), which is
+-- exactly why this is an abort with the command in it rather than a fix-up.
+DO $pre$
+DECLARE backup_role constant text := 'iam_backup';
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = backup_role)
+     AND NOT (SELECT rolbypassrls FROM pg_roles WHERE rolname = backup_role) THEN
+    RAISE EXCEPTION USING
+      MESSAGE = format('%s cannot bypass RLS — enabling these policies would stop the nightly backup', backup_role),
+      HINT    = format('run as superuser, once, BEFORE this deploy: ALTER ROLE %I BYPASSRLS;', backup_role);
+  END IF;
+END
+$pre$;
+
 -- ── Scope accessors ───────────────────────────────────────────────────────────
 -- Plain SQL, so the planner can inline them into the policy expression; a plpgsql
 -- function with an EXCEPTION block opens a subtransaction on every row evaluated.
