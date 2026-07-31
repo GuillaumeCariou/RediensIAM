@@ -126,7 +126,6 @@ builder.Services.AddScoped<AuthExtServices>();
 builder.Services.AddScoped<AuthControllerServices>();
 builder.Services.AddScoped<AccountControllerServices>();
 builder.Services.AddScoped<OrgAdminServices>();
-builder.Services.AddScoped<ManagedApiServices>();
 
 // ── WebAuthn / Passkeys ────────────────────────────────────────────────────
 builder.Services.AddFido2(opts =>
@@ -232,8 +231,14 @@ static async Task EnsureDbSchemaAsync(WebApplication webApp)
         {
             // Fail fast. Continuing to serve traffic against a database whose schema could not
             // be created produces confusing 500s and, worse, a half-migrated schema.
+            // Wrapped rather than rethrown bare: the bare throw left the retry count in the log
+            // line only, so a crash report read without the logs lost the one fact that
+            // distinguishes a slow database from a broken migration.
             logger.LogCritical(ex, "DB schema creation failed after 12 attempts — aborting startup");
-            throw;
+            throw new InvalidOperationException(
+                "Database schema creation failed after 12 attempts over roughly 60 seconds. The "
+                + "retries would have continued had the database merely been unreachable, so "
+                + "treat this as a migration failure rather than a connectivity one.", ex);
         }
     }
 }
@@ -535,11 +540,19 @@ static bool TryParseCidr(string cidr, out System.Net.IPNetwork network)
 static void AddDefaultTrustedNetworks(ForwardedHeadersOptions o)
 {
     // Well-known private + loopback ranges (RFC1918 + RFC5735). Not routable on the
-    // public internet, used by k3s/k8s pod networks. Hardcoding is intentional here.
+    // public internet, used by k3s/k8s pod networks.
+    //
+    // S1313 asks whether hardcoding an IP is safe. Here it is the only correct option: these
+    // literals are the RFC's own definition of a private network, not a deployment's address.
+    // Making them configurable would let an operator declare the public internet private and
+    // silently trust X-Forwarded-For from anywhere — the exact failure App__TrustedProxies
+    // refuses to start without. That value is what an operator sets; this is the constant.
+#pragma warning disable S1313 // RFC-defined ranges, deliberately not configurable
     var defaults = new (string Address, int Prefix)[]
     {
         ("10.0.0.0", 8), ("172.16.0.0", 12), ("192.168.0.0", 16), ("127.0.0.0", 8),
     };
+#pragma warning restore S1313
     foreach (var (address, prefix) in defaults)
         o.KnownIPNetworks.Add(new System.Net.IPNetwork(System.Net.IPAddress.Parse(address), prefix));
 }

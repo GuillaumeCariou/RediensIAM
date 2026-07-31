@@ -74,7 +74,15 @@ public sealed class AccountControllerServices(
     public PasswordPolicyService PasswordPolicy => passwordPolicy;
 }
 
-/// <summary>Service bundle for OrgController / SystemAdminController — groups 6 dependencies (S107).</summary>
+/// <summary>
+/// Service bundle for OrgController / SystemAdminController — groups 8 dependencies (S107).
+///
+/// The bundle itself trips S107 at eight parameters, and that is the trade it exists to make:
+/// the alternative is two bundles, which relocates the count without reducing what either
+/// controller depends on and leaves a reader chasing which half holds what. Split it when the
+/// controllers stop needing all eight, not to satisfy the counter.
+/// </summary>
+#pragma warning disable S107 // a DI aggregate; splitting it relocates the count, it does not lower it
 public sealed class OrgAdminServices(
     HydraService hydra,
     KetoService keto,
@@ -94,18 +102,8 @@ public sealed class OrgAdminServices(
     public LiveAuthorizationService Live => live;
     public KeyRotationService KeyRotation => keyRotation;
 }
+#pragma warning restore S107
 
-/// <summary>Service bundle for ManagedApiController — groups 5 dependencies (S107).</summary>
-public sealed class ManagedApiServices(
-    HydraService hydra,
-    KetoService keto,
-    PasswordService passwords,
-    AuditLogService audit,
-    IEmailService email)
-{
-    public HydraService Hydra        => hydra;
-    public KetoService Keto          => keto;
-    public PasswordService Passwords  => passwords;
-    public AuditLogService Audit     => audit;
-    public IEmailService Email       => email;
-}
+// ManagedApiServices was deleted with ManagedApiController: /api/manage is now a second route
+// prefix on SystemAdminController, so the two surfaces share one handler and one bundle. The
+// class outlived its only consumer and stayed registered in DI, resolving for nobody.

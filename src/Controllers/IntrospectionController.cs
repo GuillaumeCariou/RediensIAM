@@ -67,9 +67,16 @@ public class IntrospectionController(
     /// <c>active: true</c> and the resource server has to remember to compare
     /// <c>project_id</c> itself. Nobody remembers. See P-06.</para>
     /// </summary>
+    // SCS0016 fires on any [FromForm] POST without an anti-forgery token. It does not apply
+    // here: CSRF needs an ambient credential the browser attaches by itself, and this endpoint
+    // authenticates by bearer only — GatewayAuthMiddleware 401s without one, and no browser
+    // attaches a bearer cross-site. The form encoding is not a choice either: RFC 7662 §2.1
+    // specifies it, and the callers are service accounts rather than pages.
+#pragma warning disable SCS0016 // bearer-only surface: no ambient credential to forge against
     [HttpPost("introspect")]
     [ProducesResponseType(typeof(IntrospectionResult), StatusCodes.Status200OK)]
     public async Task<IActionResult> Introspect([FromForm] IntrospectionRequest body)
+#pragma warning restore SCS0016
     {
         if (!IsServiceAccountCaller())
             return StatusCode(403, new { error = "service_account_required" });
