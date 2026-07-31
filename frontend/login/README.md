@@ -147,28 +147,44 @@ redeploy an existing one.
 
 ## Testing
 
-**There are none.** No `*.test.tsx`, no `vitest.config.ts`, no `setupTests`, and no `test` script
-in `package.json`.
+```bash
+npm test         # vitest run — 79 tests, ~3s
+npm run test:watch
+```
 
-`vitest`, `jsdom`, `@testing-library/react`, `@testing-library/jest-dom` and
-`@testing-library/user-event` are all installed as devDependencies and **entirely unused**. They
-were added in anticipation and nothing was ever written.
+Vitest + jsdom + Testing Library. Config lives in the `test` block of `vite.config.ts`; shared
+setup is `src/test/setup.ts`. Tests sit next to the code they cover and are typechecked by the
+`tsc -b` in `npm run build`.
 
-This is the more uncomfortable of the two gaps, because two files here are pure security logic
-with well-defined inputs and outputs and no React at all:
+| File | Tests | Covers |
+|---|--:|---|
+| `src/lib/sanitizeCss.test.ts` | 36 | The P-03 control: keylogger selectors, `url()`, `attr(`, at-rules, nesting, malformed input, `safeCssValue`'s refusals and its 120-character ceiling — **and a timing bound** |
+| `src/pages/Login.test.tsx` | 29 | The form's happy path, every error state, the MFA handoffs, hostile `redirect_to`, and tenant theming end to end |
+| `src/safeNavigate.test.ts` | 14 | Backslash smuggles, protocol-relative URLs, non-http schemes, userinfo and lookalike hosts, and both halves of `safeNavigate`'s contract |
 
-- `isSafeRedirect` in `src/safeNavigate.ts` — an open-redirect guard, exactly the shape of thing
-  that wants a table of hostile inputs;
-- `sanitizeCss` in `src/lib/sanitizeCss.ts` — a regex sanitiser whose own header comment says
-  regex CSS sanitisation is fragile.
+Two things worth knowing before changing these:
 
-Both are plain exported functions. `vitest` + `jsdom` are already installed, so a first test needs
-only a `vitest.config.ts` and a `"test": "vitest"` script.
+- **`sanitizeCss` has a cost budget, not just a correctness one.** Six 16 KB hostile payloads must
+  each finish in under 250 ms, and growing the input tenfold must not cost more than 60x. The four
+  regexes replaced by the current linear scan were cubic on input containing no `{` — SonarQube
+  measured 69 s of CPU for 4 KB, on the unauthenticated login page. If a regex goes back into that
+  file, these are the tests that will tell you.
+- **The keylogger tests do not grep the output string.** They apply the sanitiser's result to a
+  real `<style>` node and ask a real `<input type="password">` whether any surviving rule matches
+  it. That is the property that matters; a string assertion is a proxy for it and a leaky one.
 
-Today the only automated coverage of this SPA is the Playwright suite in `tests/e2e/`, which is
-not run in CI and is itself unverified in the current tree (`node_modules` absent — see
-[`docs/TESTING.md`](../../docs/TESTING.md)). `npm run lint` and the `tsc -b` in `npm run build`
-are the only checks that run today.
+`Login.test.tsx` deliberately does **not** mock `safeNavigate` — refusing a hostile `redirect_to`
+is part of what the login form has to do, so four hostile values are asserted to produce an error
+message and no navigation at all.
+
+Not covered: `MfaChallenge`, `Register`, `PasswordReset`, `SetPassword`, `MfaSetup` — none were
+touched by the security audit. Browser-level coverage is the Playwright suite in `tests/e2e/`,
+which is not run in CI and is itself unverified in the current tree (`node_modules` absent — see
+[`docs/TESTING.md`](../../docs/TESTING.md)).
+
+See [`.security-hardening/28-frontend-tests.md`](../../.security-hardening/28-frontend-tests.md)
+for the full rationale, and for two known deviations in `sanitizeCss.ts` that are pinned by tests
+rather than fixed.
 
 ---
 

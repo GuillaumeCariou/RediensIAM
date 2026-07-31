@@ -23,6 +23,8 @@ import type { MfaReauth } from '@/auth';
 type Pending = {
   methods: string[];
   run: (proof: MfaReauth) => Promise<unknown>;
+  /** Settles the caller's `await guard(...)`. Cancelling is not an error the page should report. */
+  settle: (failure?: unknown) => void;
 };
 
 export function useReauth() {
@@ -34,6 +36,12 @@ export function useReauth() {
    * Runs `action` and, if the backend demands re-authentication, opens the prompt and re-runs it
    * with the proof the user supplies. Any other failure propagates to the caller unchanged, so a
    * failed mutation is never reported as a failed password.
+   *
+   * The returned promise covers the whole flow, prompt included — it settles when the mutation
+   * finally succeeds, fails for a reason the prompt cannot fix, or the user cancels. Resolving it
+   * early (when the prompt opens) would leave the caller's `catch` out of scope by the time the
+   * mutation runs for real, and a mutation that failed after a good proof would be reported to
+   * nobody.
    */
   const guard = async (action: (proof?: MfaReauth) => Promise<unknown>) => {
     try {
@@ -42,7 +50,9 @@ export function useReauth() {
       const methods = reauthMethods(e);
       if (!methods) throw e;
       setError('');
-      setPending({ methods, run: action });
+      await new Promise<void>((resolve, reject) => {
+        setPending({ methods, run: action, settle: failure => failure ? reject(failure) : resolve() });
+      });
     }
   };
 
@@ -52,6 +62,7 @@ export function useReauth() {
     try {
       await pending.run(proof);
       setPending(null);
+      pending.settle();
     } catch (e) {
       if (reauthMethods(e)) {
         setError(proof.totp_code
@@ -62,7 +73,7 @@ export function useReauth() {
       } else {
         // The proof worked; the mutation itself failed. Close and let the page report it.
         setPending(null);
-        throw e;
+        pending.settle(e);
       }
     } finally {
       setBusy(false);
@@ -75,7 +86,7 @@ export function useReauth() {
       error={error}
       busy={busy}
       onSubmit={submit}
-      onCancel={() => { setPending(null); setError(''); }}
+      onCancel={() => { pending?.settle(); setPending(null); setError(''); }}
     />
   );
 

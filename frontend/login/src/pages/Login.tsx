@@ -239,8 +239,9 @@ export default function Login() {
 
             <form className="login-form" style={{ marginTop: providers.length > 0 ? 0 : undefined }} onSubmit={handleSubmit}>
               <div>
-                <label className="label">{loginTheme?.is_admin_login ? 'Email' : 'Email or username'}</label>
+                <label className="label" htmlFor="login-identifier">{loginTheme?.is_admin_login ? 'Email' : 'Email or username'}</label>
                 <input
+                  id="login-identifier"
                   className="input"
                   type={loginTheme?.is_admin_login ? 'email' : 'text'}
                   value={identifier}

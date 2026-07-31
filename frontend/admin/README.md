@@ -146,21 +146,40 @@ which API prefix a page uses.
 
 ## Testing
 
-**There are none.** No `*.test.tsx`, no `vitest.config.ts`, no `setupTests`, and no `test` script
-in `package.json`.
+```bash
+npm test         # vitest run — 71 tests, ~3s
+npm run test:watch
+```
 
-`vitest`, `jsdom`, `@testing-library/react`, `@testing-library/jest-dom` and
-`@testing-library/user-event` are all installed as devDependencies and **entirely unused**. They
-were added in anticipation and nothing was ever written.
+Vitest + jsdom + Testing Library. Config lives in the `test` block of `vite.config.ts`; shared
+setup is `src/test/setup.ts`. Tests sit next to the code they cover and are typechecked by the
+`tsc -b` in `npm run build` (they are not bundled — `vite build` only follows `index.html`).
 
-What that means in practice: the only automated coverage of this SPA is the Playwright suite in
-`tests/e2e/`, which drives it through a browser, is not run in CI, and is itself unverified in the
-current tree (`node_modules` absent — see [`docs/TESTING.md`](../../docs/TESTING.md)). `npm run
-lint` and the `tsc -b` in `npm run build` are the only checks that run today.
+| File | Tests | Covers |
+|---|--:|---|
+| `src/components/ReauthDialog.test.tsx` | 23 | The MFA re-authentication contract: no proof on the first attempt, prompt only on `401 reauthentication_required`, `methods` is authoritative, **no auto-retry**, input cleared between attempts, 429 locks the form, focus containment |
+| `src/components/layout/CommandPalette.test.tsx` | 19 | Opens via `showModal()` (not `show()`), Escape closes, combobox/listbox keyboard behaviour — `aria-activedescendant`, arrows, Enter — and role gating |
+| `src/pages/org/OrgEmail.test.tsx` | 17 | The five SMTP 400 codes and their fallback, plus the assertion that no server-supplied text reaches the screen (the port-scanner defence) |
+| `src/auth.test.ts` | 12 | The 401 split — a re-auth 401 must not destroy the session — the one-shot signin-redirect guard, and the `/admin/config` `redirect_uri` origin check |
 
-Starting: `vitest` + `jsdom` are already there, so a first test needs only a `vitest.config.ts`
-and a `"test": "vitest"` script. `src/auth.ts` (`reauthMethods`, the `apiFetch` 401 split) is the
-highest-value target — it is pure logic guarding a security behaviour.
+Two constraints these tests exist to hold, both from the backend:
+
+- **a failed proof charges a rate limiter**, so the dialog must never retry by itself — the
+  re-auth tests assert the call count, not just the rendered output;
+- **a verified TOTP code is burned** by the anti-replay cache, so the field is cleared after every
+  attempt and the same characters can never be resubmitted.
+
+Two things jsdom cannot do, so they are not claimed here: real Tab containment for a native
+`<dialog>` (no top layer, no `inert` — `src/test/setup.ts` shims the missing `HTMLDialogElement`
+methods and the tests assert only that the dialog is opened *modally*), and anything needing
+layout. Browser-level coverage is the Playwright suite in `tests/e2e/`, which is not run in CI and
+is itself unverified in the current tree (`node_modules` absent — see
+[`docs/TESTING.md`](../../docs/TESTING.md)).
+
+`AccountPage.tsx` is not rendered directly; its MFA handlers are thin wrappers over `useReauth`,
+which is covered through a harness of the same shape. See
+[`.security-hardening/28-frontend-tests.md`](../../.security-hardening/28-frontend-tests.md) for
+what else was left out and why — and for the bug these tests found in `ReauthDialog.tsx`.
 
 ---
 
