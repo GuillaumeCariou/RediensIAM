@@ -28,8 +28,12 @@ rediensiam:
   app:
     adminPath: "/admin"
     # CSV of CIDRs allowed to set X-Forwarded-* (must contain your ingress controller's
-    # pod/node network). Empty falls back to RFC1918 + loopback. Maps to App__TrustedProxies.
-    trustedProxies: ""
+    # pod/node network). Maps to App__TrustedProxies.
+    # NOT optional: the image runs as Production, and Program.cs refuses to start on an
+    # empty value rather than silently trusting RFC1918 — a pod that can spoof
+    # X-Forwarded-For defeats every IP-based control. The default below is the k3s pod
+    # and service CIDR; override it for any other cluster.
+    trustedProxies: "10.42.0.0/16,10.43.0.0/16"
 
   # ── Argon2 password hashing ───────────────────────────────────────────────────
   # Optional hex-encoded server-side pepper. Generate with `openssl rand -hex 32`.
