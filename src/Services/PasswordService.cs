@@ -148,7 +148,6 @@ public class PasswordService(AppConfig appConfig)
     /// </summary>
     private bool TryResolveBackupCodeKey(string rest, out string storedHex, out byte[] keyForHash)
     {
-        storedHex  = "";
         keyForHash = [];
         // Format variants:
         //   sha256:{keyId}:{hex} → versioned format

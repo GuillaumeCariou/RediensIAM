@@ -3,7 +3,6 @@ using Microsoft.EntityFrameworkCore;
 using RediensIAM.Config;
 using RediensIAM.Data;
 using RediensIAM.Middleware;
-using RediensIAM.Models;
 using RediensIAM.Services;
 
 namespace RediensIAM.Controllers;

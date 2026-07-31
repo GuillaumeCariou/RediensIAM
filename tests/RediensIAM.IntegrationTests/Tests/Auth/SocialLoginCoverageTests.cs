@@ -51,7 +51,7 @@ public class SocialLoginCoverageTests(TestFixture fixture)
     }
 
     /// <summary>Obtains an OAuth state token by calling OAuthStart, returns the state string.</summary>
-    private async Task<string> GetOAuthStateAsync(Project project, string challengeId)
+    private async Task<string> GetOAuthStateAsync(string challengeId)
     {
         var res = await fixture.Client.GetAsync(
             $"/auth/oauth2/start?login_challenge={challengeId}&provider_id=github");
@@ -105,7 +105,7 @@ public class SocialLoginCoverageTests(TestFixture fixture)
             challenge, project.HydraClientId, project.Id.ToString(), org.Id.ToString());
 
         // Get state for "github"
-        var state = await GetOAuthStateAsync(project, challenge);
+        var state = await GetOAuthStateAsync(challenge);
 
         // Remove all providers from project's LoginTheme so GetProviderConfig returns null
         // (the state still references "github", but the project now has no providers → null loop exit at 1265-1266)
@@ -135,7 +135,7 @@ public class SocialLoginCoverageTests(TestFixture fixture)
         fixture.Hydra.SetupLoginChallengeWithProject(
             challenge, project.HydraClientId, project.Id.ToString(), org.Id.ToString());
 
-        var state = await GetOAuthStateAsync(project, challenge);
+        var state = await GetOAuthStateAsync(challenge);
 
         var res = await fixture.Client.GetAsync(
             $"/auth/oauth2/callback?code=will-fail&state={Uri.EscapeDataString(state)}");
@@ -182,7 +182,7 @@ public class SocialLoginCoverageTests(TestFixture fixture)
                 challenge, project.HydraClientId, project.Id.ToString(), org.Id.ToString());
             fixture.Keto.AllowAll();
 
-            var state = await GetOAuthStateAsync(project, challenge);
+            var state = await GetOAuthStateAsync(challenge);
 
             var res = await fixture.Client.GetAsync(
                 $"/auth/oauth2/callback?code=valid-code&state={Uri.EscapeDataString(state)}");
@@ -220,7 +220,7 @@ public class SocialLoginCoverageTests(TestFixture fixture)
                 challenge, project.HydraClientId, project.Id.ToString(), org.Id.ToString());
             fixture.Keto.AllowAll();
 
-            var state = await GetOAuthStateAsync(project, challenge);
+            var state = await GetOAuthStateAsync(challenge);
 
             var res = await fixture.Client.GetAsync(
                 $"/auth/oauth2/callback?code=valid-code&state={Uri.EscapeDataString(state)}");
@@ -351,7 +351,7 @@ public class SocialLoginCoverageTests(TestFixture fixture)
                 challenge, project.HydraClientId, project.Id.ToString(), org.Id.ToString());
             fixture.Keto.AllowAll();
 
-            var state = await GetOAuthStateAsync(project, challenge);
+            var state = await GetOAuthStateAsync(challenge);
 
             var res = await fixture.Client.GetAsync(
                 $"/auth/oauth2/callback?code=valid-code&state={Uri.EscapeDataString(state)}");

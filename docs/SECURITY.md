@@ -370,7 +370,7 @@ Neither runs on a schedule by default. See [`TESTING.md`](TESTING.md#detection-r
 | Admin ingress TLS | on in prod, but `selfsigned` — a known defect, see below |
 | Postgres server TLS + `hostssl` | **on in both shipped environments** |
 | Postgres roles | four least-privilege login roles, `scram-sha-256`, no shared superuser in any DSN |
-| Dragonfly TLS | **on in dev, off in prod** — see below |
+| Dragonfly TLS | set in **both** values files; **only ever executed in dev** — see below |
 | NetworkPolicy | namespace-wide default-deny plus five lockdown policies; CGNAT (`100.64.0.0/10`) egress blocked |
 | Pod hardening | non-root, drop `ALL` caps, no priv-esc, read-only root, `seccompProfile: RuntimeDefault`, `automountServiceAccountToken: false` |
 | Image | pinned by `@sha256:` digest, `pullPolicy: IfNotPresent` |
@@ -379,11 +379,14 @@ Neither runs on a schedule by default. See [`TESTING.md`](TESTING.md#detection-r
 
 Two of these need their qualifier stated, because a summary table elsewhere reads as unconditional:
 
-- **Dragonfly TLS is on in dev and off in prod.** `values.prod.yaml` sets no `dragonfly` block, so
-  it inherits `enabled: false` from `values.yaml:328`. The application side is complete and *pinned*
+- **Dragonfly TLS is set in both values files and has only ever run in dev.**
+  `values.prod.yaml` now sets `dragonfly.local.tls.enabled: true`; the chart default in
+  `values.yaml:333` remains `false`. Prod has never been deployed from this branch, so the prod half
+  is `helm template`-verified and reasoned from the dev cutover, **not observed** — see the risk
+  register below. The application side is complete and *pinned*
   — `src/Config/CacheTls.cs` builds an `X509Chain` with `CustomRootTrust` over only the mounted CA,
   keeps name mismatch fatal, and requires the serverAuth EKU; it is not a `return true`. The chart
-  mount exists. Prod simply has the flag off. It is a **hard cutover** — `--tls` makes Dragonfly stop
+  mount exists. It is a **hard cutover** — `--tls` makes Dragonfly stop
   answering cleartext — so `cacheUrl` must gain `ssl=true` in the same `helm upgrade`, which the
   chart enforces as a render failure in both directions.
 - **NetworkPolicy is decorative unless your CNI enforces it.** Verify that before trusting any row

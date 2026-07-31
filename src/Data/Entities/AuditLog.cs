@@ -1,5 +1,3 @@
-using System.Net;
-
 namespace RediensIAM.Data.Entities;
 
 public class AuditLog

@@ -1,9 +1,7 @@
 using System.Runtime.CompilerServices;
-using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using RediensIAM.Config;
 using RediensIAM.Filters;
-using RediensIAM.Models;
 using RediensIAM.Services;
 
 namespace RediensIAM.Middleware;

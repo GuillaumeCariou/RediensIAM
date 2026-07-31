@@ -23,12 +23,10 @@ public sealed class SocialLoginServiceTests : IDisposable
 {
     private readonly WireMockServer          _server;
     private readonly SocialLoginService      _svc;
-    private readonly IDistributedCache       _cache;
 
     public SocialLoginServiceTests()
     {
         _server = WireMockServer.Start(new WireMockServerSettings { Port = 0 });
-        _cache  = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
         _svc    = BuildSvc(_server);
     }
 

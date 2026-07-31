@@ -7,7 +7,9 @@ and method names are cited instead of line numbers for anything under `src/Contr
 moves too often for line numbers to stay true. If this document and the code disagree, the code
 wins and this document is a bug.
 
-Companion reads: [`SECURITY.md`](SECURITY.md) (what protects what, and what does not),
+Companion reads: [`DIAGRAMS.md`](DIAGRAMS.md) (this document, drawn — topology, the request
+pipeline, the authorisation decision, the OIDC and introspection sequences, the data model, key
+material and the audit chain), [`SECURITY.md`](SECURITY.md) (what protects what, and what does not),
 [`API.md`](API.md) (every route), [`INTEGRATION.md`](INTEGRATION.md) (the integrator contract),
 [`DEPLOYMENT.md`](DEPLOYMENT.md) (the operator guide), [`TESTING.md`](TESTING.md).
 
@@ -241,8 +243,9 @@ plus a `rediensiam_tenant` policy per tenant table (`rls.sql:159-166`), and it *
 table is neither policied nor declared deployment-global (`:181`). It is applied by a
 post-install/post-upgrade Job.
 
-`postgres.rls.enabled` is **`false`** in `values.yaml:302` and is not overridden in either
-`values.dev.yaml` or `values.prod.yaml`. **RLS is off everywhere.** The policies are fail-closed —
+`postgres.rls.enabled` is **`false`** in `values.yaml:308`. `values.dev.yaml` overrides it to
+**`true`** — 19 tables carry a policy on the dev cluster — and `values.prod.yaml` does not override
+it, so **RLS is on in dev and off in prod**. The policies are fail-closed —
 a connection that has not set the variable sees zero rows in every tenant table, which for an
 identity provider is a total outage, not a degraded mode — so turning it on is a runbook, not a
 flag flip. See [`DEPLOYMENT.md`](DEPLOYMENT.md#turning-rls-on).
@@ -534,7 +537,7 @@ handled explicitly rather than falling through.
 | Backend → Hydra admin `:4445` | In-cluster only; NetworkPolicy-locked. **Verify your CNI enforces NetworkPolicy** — if it does not, Hydra's admin API is open to the whole cluster |
 | Backend → Keto write `:4467` | Same |
 | Backend → Postgres `:5432` | Role `iam_app`, own database only; TLS on in both shipped environments; NetworkPolicy locked to {app, hydra, keto} |
-| Backend → Dragonfly `:6379` | Password-protected; TLS on in dev, **off in prod** (see below); NetworkPolicy locked to the app pod |
+| Backend → Dragonfly `:6379` | Password-protected; TLS set in both values files but **only ever executed in dev** (see below); NetworkPolicy locked to the app pod |
 | Hydra → public listener (consent) | Browser-mediated redirect; allowlist via `RedirectValidator` |
 | External IdP → `/auth/saml/acs` | SAML assertion verified against the pinned IdP certificate |
 | Operator / machine → management API | Bearer PAT or `client_credentials` token; audience gate, then live Keto re-check per request |
@@ -549,8 +552,8 @@ handled explicitly rather than falling through.
 | Admin ingress TLS | — | NodePort, no ingress | on, but `selfsigned` |
 | Postgres server TLS (`postgres.local.tls.enabled`) | off | **on** | **on** |
 | Postgres `requireSsl` (`hostssl` in `pg_hba.conf`) | off | **on** | **on** |
-| Dragonfly TLS (`dragonfly.local.tls.enabled`) | off | **on** | **off** |
-| `postgres.rls.enabled` | off | off | off |
+| Dragonfly TLS (`dragonfly.local.tls.enabled`) | off | **on** | **on**, but never executed — see below |
+| `postgres.rls.enabled` | off | **on** | off |
 
 Dev being cleartext on the ingress is the one place finding R-02 is not fixed, and it is gated to
 dev so prod cannot inherit it.
@@ -558,7 +561,9 @@ dev so prod cannot inherit it.
 Dragonfly TLS is a **hard cutover**: `--tls` makes Dragonfly stop answering cleartext, so
 `cacheUrl` must gain `ssl=true` in the same change. `deploy.sh` derives it from the flag and
 `templates/dragonfly.yaml` fails the render if the two ever disagree, so the pair cannot be split
-by accident. It is on in dev and **not set in `values.prod.yaml`**, so prod inherits `false`.
+by accident. It is now set in **both** `values.dev.yaml` and `values.prod.yaml`, but it has only
+ever been *executed* in dev: prod has never been deployed from this branch, so the prod half is
+`helm template`-verified and reasoned from the dev cutover, **not observed**. Treat it as untested.
 
 The app's cache TLS is **pinned, not trusting** (`src/Config/CacheTls.cs`, wired at
 `src/Program.cs:53-59`). The callback builds an `X509Chain` with `TrustMode = CustomRootTrust` over
@@ -597,6 +602,7 @@ which is the correct trade.
 
 | Question | Document |
 |---|---|
+| The same system, drawn — topology, pipeline, authorisation, sequences, data model, keys, audit chain | [`DIAGRAMS.md`](DIAGRAMS.md) |
 | What actually protects what, and what is still open | [`SECURITY.md`](SECURITY.md) |
 | Every route, its authority, and where it is reachable | [`API.md`](API.md) |
 | How to integrate an app or a resource server | [`INTEGRATION.md`](INTEGRATION.md) |

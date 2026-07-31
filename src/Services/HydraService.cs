@@ -4,7 +4,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Caching.Distributed;
 using RediensIAM.Config;
-using RediensIAM.Models;
 
 namespace RediensIAM.Services;
 

@@ -1,5 +1,3 @@
-using System.Text.Json;
-
 namespace RediensIAM.Data.Entities;
 
 public class Project

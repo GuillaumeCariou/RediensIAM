@@ -22,12 +22,6 @@ async function apiFetch(path: string, init: RequestInit = {}): Promise<Response>
 
 const enc = encodeURIComponent;
 
-export async function getLoginTheme(challenge: string) {
-  const r = await apiFetch(`/auth/login/theme?login_challenge=${enc(challenge)}`, { credentials: 'omit' });
-  if (!r.ok) throw new Error('Failed to load theme');
-  return parseJson(r);
-}
-
 export async function getLoginChallenge(challenge: string) {
   const r = await apiFetch(`/auth/login?login_challenge=${enc(challenge)}`, { credentials: 'omit' });
   if (!r.ok) throw new Error('Failed to load challenge');

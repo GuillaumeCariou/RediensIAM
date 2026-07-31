@@ -17,11 +17,6 @@ namespace RediensIAM.IntegrationTests.Tests.Regression;
 [Collection("RediensIAM")]
 public class StructuralDebtTests(TestFixture fixture)
 {
-    private static TokenClaims Claims(string orgId, string projectId, params string[] roles) => new()
-    {
-        UserId = Guid.NewGuid().ToString(), OrgId = orgId, ProjectId = projectId, Roles = [.. roles],
-    };
-
     // ── S-1: a claimed level is not a granted one ────────────────────────────
 
     /// <summary>

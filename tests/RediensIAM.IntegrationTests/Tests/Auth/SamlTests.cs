@@ -261,7 +261,7 @@ public partial class SamlControllerTests(TestFixture fixture)
         xmlDoc.LoadXml(authnXml);
         var authnReqId = xmlDoc.DocumentElement!.GetAttribute("ID");
 
-        return BuildSignedResponseForm(challenge, idp, cert, spRelayState, authnReqId,
+        return BuildSignedResponseForm(idp, cert, spRelayState, authnReqId,
             identity, responseStatus);
     }
 
@@ -272,12 +272,12 @@ public partial class SamlControllerTests(TestFixture fixture)
         ClaimsIdentity? identity = null)
     {
         var relayState = $"login_challenge={Uri.EscapeDataString(challenge)}&idp_id={idp.Id}";
-        return BuildSignedResponseForm(challenge, idp, cert, relayState,
+        return BuildSignedResponseForm(idp, cert, relayState,
             authnReqId: "_fake_req_no_session", identity);
     }
 
     private static FormUrlEncodedContent BuildSignedResponseForm(
-        string challenge, SamlIdpConfig idp, X509Certificate2 cert,
+        SamlIdpConfig idp, X509Certificate2 cert,
         string relayState, string authnReqId,
         ClaimsIdentity? identity = null,
         Saml2StatusCodes responseStatus = Saml2StatusCodes.Success)
@@ -579,7 +579,7 @@ public partial class SamlControllerTests(TestFixture fixture)
             .GetValueOrDefault("RelayState", "");
 
         // Build a response echoing an InResponseTo that was never issued
-        var form = BuildSignedResponseForm(challenge, idp, cert, spRelayState,
+        var form = BuildSignedResponseForm(idp, cert, spRelayState,
             authnReqId: "_wrong_request_id");
 
         var res = await client.PostAsync("/auth/saml/acs", form);

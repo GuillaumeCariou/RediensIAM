@@ -17,6 +17,7 @@ Multi-tenant Identity & Access Management built on Ory Hydra + Keto, ASP.NET Cor
 |---|---|
 | [CHANGELOG.md](CHANGELOG.md) | **what breaks when you upgrade.** 0.2.0 changes the wire contract in four places and deploy order is load-bearing — read this first |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | how the system is put together and where authority lives |
+| [docs/DIAGRAMS.md](docs/DIAGRAMS.md) | the same thing drawn — deployment topology, request pipeline, authorisation decision, OIDC and introspection sequences, data model and RLS coverage, key material, audit chain |
 | [docs/SECURITY.md](docs/SECURITY.md) | what protects what, and what is deliberately still open — **read before trusting it with anything** |
 | [docs/API.md](docs/API.md) | all 184 routes: method, path, required authority, where each is reachable |
 | [docs/INTEGRATION.md](docs/INTEGRATION.md) | plugging an application in — includes four breaking wire-contract changes in this release |

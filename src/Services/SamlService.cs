@@ -1,4 +1,3 @@
-using System.Net;
 using System.Security.Cryptography.X509Certificates;
 using System.ServiceModel.Security;
 using ITfoxtec.Identity.Saml2;

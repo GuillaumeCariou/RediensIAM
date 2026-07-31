@@ -6,7 +6,6 @@ using StackExchange.Redis;
 using RediensIAM.Config;
 using RediensIAM.Data;
 using RediensIAM.Data.Entities;
-using RediensIAM.Models;
 
 namespace RediensIAM.Services;
 

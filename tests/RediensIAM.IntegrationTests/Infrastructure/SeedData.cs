@@ -1,4 +1,3 @@
-using Bogus;
 using RediensIAM.Config;
 using RediensIAM.Services;
 
@@ -13,9 +12,6 @@ public class SeedData
     private readonly RediensIamDbContext _db;
     private readonly HydraStub          _hydra;
     private readonly PasswordService    _pwd;
-
-    // Shared Bogus faker for generating plausible-looking data
-    private static readonly Faker Faker = new("en");
 
     public SeedData(RediensIamDbContext db, HydraStub hydra, PasswordService pwd)
     {

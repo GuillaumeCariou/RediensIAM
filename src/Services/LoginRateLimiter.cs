@@ -1,6 +1,5 @@
 using StackExchange.Redis;
 using RediensIAM.Config;
-using RediensIAM.Exceptions;
 
 namespace RediensIAM.Services;
 

@@ -22,20 +22,6 @@ public class AccountBranchCoverageTests(TestFixture fixture)
 {
     // ── Scaffold helpers ──────────────────────────────────────────────────────
 
-    /// <summary>A token whose user ID exists in the DB.</summary>
-    private async Task<(User user, HttpClient client)> ScaffoldAsync()
-    {
-        var (org, _)  = await fixture.Seed.CreateOrgAsync();
-        var project   = await fixture.Seed.CreateProjectAsync(org.Id);
-        var list      = await fixture.Seed.CreateUserListAsync(org.Id);
-        project.AssignedUserListId = list.Id;
-        await fixture.Db.SaveChangesAsync();
-        var user   = await fixture.Seed.CreateUserAsync(list.Id);
-        var token  = fixture.Seed.UserToken(user.Id, org.Id, project.Id);
-        fixture.Keto.AllowAll();
-        return (user, fixture.ClientWithToken(token));
-    }
-
     /// <summary>
     /// A token pointing at a user ID that does NOT exist in the DB.
     /// Covers all "if (user == null) return NotFound()" branches.

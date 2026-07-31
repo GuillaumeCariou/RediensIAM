@@ -1,5 +1,3 @@
-import type { ReactNode } from 'react';
-
 interface IamAvatarProps {
   name: string;
   size?: 'sm' | 'default' | 'lg';
@@ -38,13 +36,4 @@ export default function IamAvatar({ name, size = 'default', className = '' }: Re
       {initials(name)}
     </div>
   );
-}
-
-interface IamAvatarStackProps {
-  children: ReactNode;
-  className?: string;
-}
-
-export function IamAvatarStack({ children, className = '' }: Readonly<IamAvatarStackProps>) {
-  return <div className={`iam-avatar-stack ${className}`}>{children}</div>;
 }

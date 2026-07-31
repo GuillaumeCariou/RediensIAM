@@ -47,28 +47,3 @@ export async function mockDelete(page: Page, path: RoutePattern, status = 204) {
     await route.fulfill({ status });
   });
 }
-
-// ── Pre-wired mock sets ───────────────────────────────────────────────────────
-
-/** Mock the /admin/config endpoint so oidc-client-ts initialises without
- *  needing the real backend to be up when running mocked admin tests. */
-export async function mockAdminConfig(page: Page, overrides?: Record<string, string>) {
-  await page.route('**/admin/config', async (route) => {
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        hydra_url: 'http://localhost',
-        client_id: 'admin-spa',
-        redirect_uri: 'http://localhost/admin/',
-        ...overrides,
-      }),
-    });
-  });
-}
-
-/** Intercept any call and return a generic server error, for testing error states. */
-export async function mockError(page: Page, path: RoutePattern, status = 500, message = 'Internal server error') {
-  await page.route(toGlob(path), async (route) => {
-    await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify({ error: message }) });
-  });
-}
