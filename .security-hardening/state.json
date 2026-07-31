@@ -1,6 +1,6 @@
 {
   "target": "Whole RediensIAM — priority backend (src/) and SDKs (sdk/), then frontends (frontend/admin, frontend/login), deploy/ Helm chart, Ory Hydra/Keto, Postgres, Dragonfly",
-  "status": "in_progress",
+  "status": "complete",
   "depth": "comprehensive",
   "compliance_frameworks": [
     "owasp-asvs-l2",
@@ -9,8 +9,8 @@
     "pci-dss",
     "hipaa"
   ],
-  "current_step": 8,
-  "current_phase": 3,
+  "current_step": "complete",
+  "current_phase": 4,
   "completed_steps": [
     1,
     2,
@@ -18,20 +18,33 @@
     4,
     5,
     6,
-    7
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13
   ],
   "files_created": [
     ".security-hardening/01-vulnerability-scan.md",
     ".security-hardening/02-threat-model.md",
     ".security-hardening/03-architecture-review.md",
     ".security-hardening/04-critical-fixes.md",
-    ".security-hardening/07-mobile-hardening.md",
     ".security-hardening/05-backend-hardening.md",
-    ".security-hardening/06-frontend-hardening.md"
+    ".security-hardening/06-frontend-hardening.md",
+    ".security-hardening/07-mobile-hardening.md",
+    ".security-hardening/08-auth-enhancement.md",
+    ".security-hardening/09-infra-security.md",
+    ".security-hardening/10-secrets-management.md",
+    ".security-hardening/11-pentest-results.md",
+    ".security-hardening/11b-pentest-remediation.md",
+    ".security-hardening/12-compliance-report.md",
+    ".security-hardening/13-monitoring-siem.md"
   ],
   "started_at": "2026-07-28T22:02:34+02:00",
-  "last_updated": "2026-07-30T16:13:04+02:00",
+  "last_updated": "2026-07-31T12:13:00+02:00",
   "scanned_at": "ad3de8a",
-  "branch": "security/audit-2026-07-28",
-  "notes": "Fresh session; prior session archived at .security-hardening-archive-20260728-220234 (its 01-vulnerability-scan.md scanned 7a45d8b). Priority order per user: backend + SDK first. Also in scope: docs/2026-07-28-findings-securite-deploiement.md findings A-E. Step 7 (mobile) has no target — write a skip note. Step 2 done: STRIDE across 9 trust boundaries, 5 attack trees, 9 chains, risk matrix. Six threats step 1 did not name: T-N1 sa_ client-id squat (latent), T-N2 no audit on MFA mutations, T-N3 unnamespaced cross-tenant role claims (survives the R-23 fix), T-N4 tenant can purge its own audit log, T-N5 R-14 blast radius wider than recorded, T-N6 introspection/authorize unscoped (I-07 promoted). Severity disputes with step 1 recorded in 02 section 8. Step 3 done: architecture review, structural changes S-1..S-10 ranked. T-N1 closed in code (reserved sa_/client_ prefixes on explicit client_id) + 2 tests; suite 1116/1116 before that guard, 9/9 on the CreateHydraClient filter after. Checkpoint 1 approved by user: full remediation, steps 4-7. Step 4 scope: R-23, T-N3, R-24, T-N2, R-28, R-22, R-14/T-N5, T-N4, R-09 (R-09 pulled forward because the R-26 CSP bug currently masks it). Deployment-layer findings deferred to steps 9/10. Step 4 done and independently re-verified: 1151/1151. User decisions: keep the ext.roles break clean (no transition window); admin-console MFA re-auth wiring deferred to step 6. PAUSED before step 5 at user request. Step 7 written: skipped, no mobile target. Step 6 (frontend) was launched then stopped by the user; it left no changes — working tree unchanged from the step 4 pause. Step 5 still deferred. Resumed: user authorised running step 5, then 6, then every remaining step without further approval — checkpoints 2 and 3 are waived. Step 5 running. Step 5 done and independently re-verified: 1183/1183. Second wire break in the release: /api/introspect and /api/authorize are now tenant-scoped (a multi-tenant gateway must move its PAT to a __system__ service account); refusals audited as api.introspect.out_of_scope. S-1 not attempted — GetManagementLevel is sync, LiveAuthorizationService is async, so GrantedLevel would need an await inside EF Where clauses; ~1 day of restructuring. Build note: stale .sonarqube/ at repo root requires -p:SonarQubeTargetsImported=true on dotnet commands. Step 6 running. Step 6 done: console MFA re-auth wired (proof omitted on first attempt, server names acceptable methods), CSP fixed on both SPAs (header pins issuer, meta cannot; 'unsafe-inline' kept for Radix), Geist self-hosted, all external resources eliminated so SRI is moot, browser SDK gained hasProjectRole. Verified by me: 1185/1185 backend, both SPA builds ok, 8/8 SDK tests. Incident: an agent's greedy-regex edit corrupted frontend/login/src/pages/Preview.tsx (329 lines vs 226 at HEAD, facebook entry dropped, Login.tsx block pasted in) then died on a 529; repaired by restoring to HEAD and re-applying the one-line icon swap by hand. C-7 escalated: fixing the CSP made the admin console reachable, so R-05 (NodePort + self-signed cert) is now MORE exposed — step 9 must treat it as a prerequisite. Step 8 running."
+  "branch": "security/hardening-2026-07-30",
+  "notes": "Fresh session; prior session archived at .security-hardening-archive-20260728-220234 (its 01-vulnerability-scan.md scanned 7a45d8b). Priority order per user: backend + SDK first. Also in scope: docs/2026-07-28-findings-securite-deploiement.md findings A-E. Step 7 (mobile) has no target — write a skip note. Step 2 done: STRIDE across 9 trust boundaries, 5 attack trees, 9 chains, risk matrix. Six threats step 1 did not name: T-N1 sa_ client-id squat (latent), T-N2 no audit on MFA mutations, T-N3 unnamespaced cross-tenant role claims (survives the R-23 fix), T-N4 tenant can purge its own audit log, T-N5 R-14 blast radius wider than recorded, T-N6 introspection/authorize unscoped (I-07 promoted). Severity disputes with step 1 recorded in 02 section 8. Step 3 done: architecture review, structural changes S-1..S-10 ranked. T-N1 closed in code (reserved sa_/client_ prefixes on explicit client_id) + 2 tests; suite 1116/1116 before that guard, 9/9 on the CreateHydraClient filter after. Checkpoint 1 approved by user: full remediation, steps 4-7. Step 4 scope: R-23, T-N3, R-24, T-N2, R-28, R-22, R-14/T-N5, T-N4, R-09 (R-09 pulled forward because the R-26 CSP bug currently masks it). Deployment-layer findings deferred to steps 9/10. Step 4 done and independently re-verified: 1151/1151. User decisions: keep the ext.roles break clean (no transition window); admin-console MFA re-auth wiring deferred to step 6. PAUSED before step 5 at user request. Step 7 written: skipped, no mobile target. Step 6 (frontend) was launched then stopped by the user; it left no changes — working tree unchanged from the step 4 pause. Step 5 still deferred. Resumed: user authorised running step 5, then 6, then every remaining step without further approval — checkpoints 2 and 3 are waived. Step 5 running. Step 5 done and independently re-verified: 1183/1183. Second wire break in the release: /api/introspect and /api/authorize are now tenant-scoped (a multi-tenant gateway must move its PAT to a __system__ service account); refusals audited as api.introspect.out_of_scope. S-1 not attempted — GetManagementLevel is sync, LiveAuthorizationService is async, so GrantedLevel would need an await inside EF Where clauses; ~1 day of restructuring. Build note: stale .sonarqube/ at repo root requires -p:SonarQubeTargetsImported=true on dotnet commands. Step 6 running. Step 6 done: console MFA re-auth wired (proof omitted on first attempt, server names acceptable methods), CSP fixed on both SPAs (header pins issuer, meta cannot; 'unsafe-inline' kept for Radix), Geist self-hosted, all external resources eliminated so SRI is moot, browser SDK gained hasProjectRole. Verified by me: 1185/1185 backend, both SPA builds ok, 8/8 SDK tests. Incident: an agent's greedy-regex edit corrupted frontend/login/src/pages/Preview.tsx (329 lines vs 226 at HEAD, facebook entry dropped, Login.tsx block pasted in) then died on a 529; repaired by restoring to HEAD and re-applying the one-line icon swap by hand. C-7 escalated: fixing the CSP made the admin console reachable, so R-05 (NodePort + self-signed cert) is now MORE exposed — step 9 must treat it as a prerequisite. Step 8 running. Step 8 done and independently re-verified: 1198/1198. Adding an MFA factor was unguarded (only replace/remove were); WebAuthn was userVerification:discouraged (measured in the build, not assumed); org suspension revoked no sessions while deletion did. All fixed. Risk-based auth deliberately left as a separate project. Work committed on new branch security/hardening-2026-07-30 in 5 commits (4ca27ad backend, f12a016 sdk, f1daa4a frontend, 66efe86 docs, 0144e1c reports) off ad3de8a; per-step commits were NOT reconstructible because steps 4/5/8 edited the same files, so commits are per-area. .gitignore narrowed so .security-hardening reports are tracked, archive dirs are not. Step 9 running. Step 9 done: R-16 registry bound to 127.0.0.1 + digest pinning, R-02 TLS+redirectScheme (prod-gated), R-05 admin service ClusterIP by default (closes C-7), R-19, 100.64.0.0/10, Hydra TTLs 15m/168h, seccomp. Postgres/Dragonfly TLS implemented but gated off (need cert-manager + ordered DSN cutover). Baseline deny is release-scoped, not namespace-wide, because NAMESPACE=default holds 9 unrelated pods (yandee stack, 6 helm releases) — moving RediensIAM to its own namespace is the top runbook item. Live bug found: app egress to Hydra :4444 was never allowed, so the /health/alive probe has been failing at the network layer. Step 10 done: R-06 closed structurally (dev now generates a bootstrap password, KNOWN_DEFAULTS hard-fails in prod), Argon2 pepper was generated but never written (prod ran with no pepper), prod password broke on quote/backslash/dollar chars. R-08 never committed (verified) so fix is revocation not history rewrite. BIGGEST FIND: hydra-maester had a ClusterRole with list/watch/CREATE on secrets cluster-wide and zero OAuth2Client CRs to reconcile — disabled; chart now creates 0 cluster-scoped RBAC. Verified live: role still present and pod running until next deploy. Vault judged disproportionate; SOPS+age recommended when a second operator appears. Verified by me: helm dev+prod render, 0 ClusterRole, bash -n clean. C-3 still unrecoverable (ciphertexts carry no key id) — ~2 days in src/. Operator actions outstanding: revoke SonarQube tokens, --rotate-secrets on this workstation, k3s --secrets-encryption. Step 11 (pentest) running. Steps 11/11b: pentest broke 3 controls (P-02 8.0 reauth bypass for every federated user, P-01 7.7 cross-tenant SA role grant, P-03 6.1 theme injection reassembled across the validator boundary) plus P-04/P-08; all fixed, suite 1221/1221 with the 3 proof tests passing unmodified. Step 12: PCI-DSS and HIPAA do not apply (evidence-based), SOC2 Type II unreachable (1 git author, 12-18 months + 2nd headcount), ASVS L2 ~70%. Found: no backup exists anywhere, Postgres single SUPERUSER role shared by app+Hydra+Keto, SAML XML unassessed. Step 13: no SIEM (disproportionate); built verify-deployment.sh + 13 SQL detections + selftest. verify-deployment.sh --dev on the live cluster: 12 passed, 12 FAILED — registry still on 0.0.0.0:5000 unauthenticated, maester ClusterRole still live, /admin/ still 200 on the public host. Every failure is fixed in the chart and pending a deploy. PIPELINE COMPLETE."
 }
