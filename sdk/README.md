@@ -34,10 +34,16 @@ Answer two questions about an incoming bearer token:
 1. Is this token valid **right now**?
 2. Is this subject allowed to do **X**?
 
-| Language | Path | Package |
+| Language | Package | Reference |
 |---|---|---|
-| C# / .NET 10 | [`dotnet/RediensIAM.Client`](dotnet/RediensIAM.Client) | `RediensIAM.Client` |
-| Rust (2021) | [`rust/rediensiam-client`](rust/rediensiam-client) | `rediensiam-client` |
+| C# / .NET 10 | `RediensIAM.Client` | [`dotnet/RediensIAM.Client/README.md`](dotnet/RediensIAM.Client/README.md) |
+| Rust (2021) | `rediensiam-client` | [`rust/rediensiam-client/README.md`](rust/rediensiam-client/README.md) |
+
+The browser SDK's own reference is
+[`typescript/rediensiam-web/README.md`](typescript/rediensiam-web/README.md).
+
+This page is the shared story — which SDK to pick, and what changed on the wire. Each per-SDK
+README is the complete option-by-option reference for that language.
 
 ---
 
@@ -149,7 +155,10 @@ token=<token>&token_type_hint=access_token&aud=<project-or-org-id>
 ```
 
 `aud` is **required** — see [above](#aud-is-now-a-required-sdk-option). `token_type_hint` is sent
-for RFC conformance; the server does not read it, and pins its own hint when it asks Hydra.
+for RFC conformance and discarded during model binding: `IntrospectionRequest` no longer declares
+it, because `ResolveAsync` already picks the token shape from its prefix in constant time and RFC
+7662 §2.1 makes the hint something a server MAY ignore. Sending it is harmless. RediensIAM pins its
+own `token_type_hint=access_token` when it asks Hydra, which is a different question.
 
 ```json
 {
@@ -242,7 +251,7 @@ it through unauthenticated.
 
 ```toml
 [dependencies]
-rediensiam-client = "0.1"
+rediensiam-client = "0.2"
 ```
 
 ```rust

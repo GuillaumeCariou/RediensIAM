@@ -1,73 +1,173 @@
-# React + TypeScript + Vite
+# RediensIAM — Admin console
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The operator SPA. Everything an administrator does to RediensIAM itself happens here:
+organisations, projects, user lists, users, roles, service accounts and their PATs, webhooks,
+SMTP, the audit log, metrics and health.
 
-Currently, two official plugins are available:
+React 19 + TypeScript + Vite, Tailwind and Radix (shadcn-style `src/components/ui`),
+`oidc-client-ts` for login, `recharts` for the dashboards.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+> **This SPA has no tests.** See [Testing](#testing) — the tooling is installed and unused.
 
-## React Compiler
+---
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Where it runs
 
-## Expanding the ESLint configuration
+The bundle is served **by the backend**, not by a separate web server:
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+| | |
+|---|---|
+| Vite `base` | `/admin/` |
+| Built into | `wwwroot/admin/` in the container image (`Dockerfile`, stage 2 → stage 3) |
+| Reached at | `https://<host>/admin` |
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+`/admin/*` is in the chart's `ingress.public.adminOnlyPaths`, so on a public host it answers 403.
+The console is reachable on the admin host only. The machine-to-machine equivalent of the same
+controllers is `/api/manage/*`, which is deliberately **not** in `adminOnlyPaths` — see
+[`docs/API.md`](../../docs/API.md).
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+---
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Authentication
+
+`src/auth.ts`. Authorization code + PKCE against the RediensIAM-managed Hydra, via
+`oidc-client-ts`.
+
+- Configuration comes from `GET /admin/config` at runtime (`hydra_url`, `client_id`,
+  `redirect_uri`) — the bundle is built once and carries no deployment values.
+- The `redirect_uri` the server returns is checked against `location.origin` before it is used.
+  Hydra validates its registered list too; this is the second lock, so a compromised config
+  endpoint cannot hand the authorization code to another origin.
+- Tokens live in `InMemoryWebStorage` — nothing in `localStorage`, nothing that outlives the tab.
+- A single `signinRedirectInFlight` guard means concurrent 401s fire one redirect, not several
+  racing ones that would each overwrite the stored PKCE state.
+
+**`App__AdminSpaOrigin` must equal the origin the browser actually loads this SPA from**, and
+Hydra's registered `redirect_uri` must match it. A mismatch fails at the origin check above before
+the OIDC round-trip even starts.
+
+---
+
+## The CSP arrangement
+
+Two policies apply and a request must satisfy **both** — browsers enforce the intersection.
+
+| | Where | What it pins |
+|---|---|---|
+| **Header** (enforcing copy) | `src/Program.cs`, `AddSecurityHeaders`, `/admin` branch | `connect-src 'self' <issuerOrigin>` — the *exact* issuer origin, computed at runtime; plus `frame-ancestors 'none'` |
+| **Meta** | `index.html` | everything else. `connect-src` is left broad (`'self' https: http:`) |
+
+The meta tag **cannot** pin the issuer: the issuer is a deployment value and the bundle is built
+once, so a meta policy that named one would be wrong everywhere else. The header narrows it. The
+meta tag deliberately omits `frame-ancestors`, because browsers ignore that directive in a meta
+tag — the header carries it, along with `X-Frame-Options: DENY`.
+
+`style-src` carries `'unsafe-inline'` on both copies and cannot do without it: Radix injects a
+`<style>` element on every dialog open. `script-src` stays `'self'` with no inline escape, so
+script injection is still refused.
+
+Fonts are self-hosted (`@fontsource-variable/geist`) — there is no external font origin to allow.
+
+If you add a call to a **third** origin, the header is what will refuse it, not the meta tag.
+
+---
+
+## MFA re-authentication
+
+`src/components/ReauthDialog.tsx` (`useReauth`) plus `reauthMethods` in `src/auth.ts`.
+
+Every MFA mutation on `/account/mfa/*` — removing a phone, deleting a passkey, confirming TOTP,
+regenerating backup codes — requires proof the caller still holds an existing factor. A bearer
+token alone is not enough: a stolen session must not be able to swap the second factor.
+
+The flow is **optimistic**:
+
+1. Run the mutation with no proof. Enrolling a *first* factor on an account that has none needs
+   none, so that stays a single step.
+2. The backend answers `401 {"error":"reauthentication_required","methods":[…]}`.
+   `apiFetch` special-cases this 401 — every other 401 clears the token and redirects to login,
+   which here would throw away a working session mid-action.
+3. `useReauth` opens the dialog offering exactly the methods the **server** listed. A passwordless
+   account is never asked for a password.
+4. The same action is re-run with `{ current_password }` or `{ totp_code }` in the body.
+
+Two backend behaviours the UI respects: a failed proof charges a rate limiter (429 → the dialog
+blocks further attempts rather than extending the block), and a TOTP code that verifies is burned
+by the anti-replay cache and can never be sent again. So nothing retries by itself and the input
+is cleared after every attempt.
+
+A related server-side guard shows up here as a `409`: turning a project's `require_mfa` off is
+refused once, with the count of users it would affect, and needs `confirm_mfa_downgrade: true` on
+the retry.
+
+---
+
+## Run and build
+
+```bash
+npm ci
+npm run build      # tsc -b && vite build → dist/
+npm run lint       # eslint .
+npm run dev        # vite — see the caveat below
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+**`npm run dev` does not stand alone.** There is no `server.proxy` in `vite.config.ts` and no
+`VITE_API_BASE_URL` escape hatch in `src/api.ts`; every call is a same-origin relative path
+(`/admin/config`, `/admin/…`, `/org/…`, `/account/…`). Against the Vite dev server on
+`localhost:5173` those 404. To work on this SPA against a live backend you need either a
+`server.proxy` entry of your own or a reverse proxy putting both on one origin.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+The supported loop is the built bundle: `deploy/deploy.sh` runs `npm ci && npm run build` here and
+in `frontend/login`, then `docker build` copies both `dist/` trees into `wwwroot/`. Use
+`./deploy/setup.sh --dev` for a first install, or `./deploy/deploy.sh --dev` to rebuild and
+redeploy an existing one.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+---
+
+## Layout
+
+| Path | What |
+|---|---|
+| `src/auth.ts` | OIDC session, `apiFetch`, `ApiError`, re-auth types |
+| `src/api.ts` | every backend call, one function each |
+| `src/context/` | `AuthContext`, `ScopeContext` (system / org / project scope), `ThemeContext` |
+| `src/components/ui/` | shadcn-style Radix primitives — generated, edit sparingly |
+| `src/components/iam/` | the project's own presentational pieces (`StatCard`, `IamTuple`, `Spark`, …) |
+| `src/components/layout/` | `Shell`, `Sidebar`, `Topbar`, `CommandPalette`, the tweaks panel |
+| `src/pages/system/` | super-admin scope |
+| `src/pages/org/` | organisation-admin scope |
+| `src/pages/project/` | project-admin scope |
+| `src/pages/account/` | the signed-in user's own account, including MFA |
+
+The three page scopes mirror the three management levels; `ScopeContext` decides which sidebar and
+which API prefix a page uses.
+
+---
+
+## Testing
+
+**There are none.** No `*.test.tsx`, no `vitest.config.ts`, no `setupTests`, and no `test` script
+in `package.json`.
+
+`vitest`, `jsdom`, `@testing-library/react`, `@testing-library/jest-dom` and
+`@testing-library/user-event` are all installed as devDependencies and **entirely unused**. They
+were added in anticipation and nothing was ever written.
+
+What that means in practice: the only automated coverage of this SPA is the Playwright suite in
+`tests/e2e/`, which drives it through a browser, is not run in CI, and is itself unverified in the
+current tree (`node_modules` absent — see [`docs/TESTING.md`](../../docs/TESTING.md)). `npm run
+lint` and the `tsc -b` in `npm run build` are the only checks that run today.
+
+Starting: `vitest` + `jsdom` are already there, so a first test needs only a `vitest.config.ts`
+and a `"test": "vitest"` script. `src/auth.ts` (`reauthMethods`, the `apiFetch` 401 split) is the
+highest-value target — it is pure logic guarding a security behaviour.
+
+---
+
+## Known dependency advisories
+
+`npm audit` reports **7 high** advisories in this SPA (down from 8 high + 1 low), `react-router`
+among them. The remaining fixes need `npm audit fix --force`, i.e. breaking major bumps, which was
+judged riskier than the advisories as reached by this SPA. That judgement has not been re-tested
+since the SPA was rewritten. Tracked as R-21 / R-03 / T-06 in
+[`.security-hardening/14-finding-ledger.md`](../../.security-hardening/14-finding-ledger.md) §9.

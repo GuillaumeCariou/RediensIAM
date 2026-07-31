@@ -9,6 +9,15 @@
     <!-- .NET 10 + SonarScanner: Sonar item collection prevents glob expansion of "**/*.resx"
          causing MSB3552. No .resx files in this project; suppress the default include. -->
     <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+
+    <Version>0.2.0</Version>
+    <!-- AssemblyVersion is pinned and must stay pinned. The DataProtection key ring persists
+         `decryptorType="RediensIAM.Config.RootKeyXmlDecryptor, RediensIAM, Version=1.0.0.0, …"`
+         into storage (KeyRingProtection.cs). Letting <Version> drive AssemblyVersion would make
+         every already-persisted key entry name a version this assembly no longer reports.
+         Bump the product version above; leave this alone. -->
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
   </PropertyGroup>
 
 

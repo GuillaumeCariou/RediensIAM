@@ -218,11 +218,17 @@ These do not change the security properties, but a document that says "always" s
   `ValidationProblemDetails` 400 for a missing `token`/`namespace`/`object`/`relation` (there is no
   `InvalidModelStateResponseFactory` override in `src/`), nor on the middleware `401`. An SDK
   enforcing "`ver >= 1` or fail closed" is unaffected — all of these are non-200s.
-- **Object scoping has a fail-open edge.** `IsObjectInScopeAsync` computes
-  `scope = CallerOrgScope ?? subject.OrgId` and returns `true` when both are absent. A
-  deployment-level service account asking about a token whose `org_id` is also empty gets no object
-  check, and can reach the `System` namespace. Report 19 §7.3's unconditional "unknown namespaces
-  are refused" is conditional in code.
+- **Object scoping still has a narrower fail-open edge.** `IsObjectInScopeAsync` computes
+  `scope = CallerOrgScope ?? subject.OrgId`. When both are absent — a deployment-level service
+  account asking about a token whose `org_id` is also empty — there is no ownership to compare, so
+  the only check left is that the namespace is one this deployment writes objects into: the call
+  succeeds for `Organisations`, `Projects` and `UserLists` without an object-ownership check.
+  Report 19 §7.3's unconditional "unknown namespaces are refused" is therefore conditional in
+  code, and unknown namespaces are refused even in that path. The `System` namespace is **no
+  longer** reachable this way: `Authorize` refuses it to every caller before object scoping runs,
+  because `System:rediensiam#super_admin` enumerates the deployment's administrators and never
+  authorises the caller's own request. A resource server that needs that answer reads the `roles`
+  field of `/api/introspect`, which re-verifies against Keto.
 - **Audience matching is asymmetric.** `project_id`/`org_id` are compared case-insensitively;
   membership in the token's OAuth2 audience list is compared case-sensitively.
 
@@ -416,7 +422,7 @@ assumed unaddressed.
 | **No reconciler for the Keto/`org_roles` dual write** | Medium, structural | compensating delete in the `catch` covers a thrown exception, not a killed process | S-8's second half was never scoped |
 | **RLS shipped but off** | Medium, structural | policies, SQL and Job complete; flag `false` everywhere | Enabling it before verifying the application half on a live connection is a total outage. And see §2 — it would not make the login path tenant-safe |
 | **Audit chain hash is unkeyed; no scheduled verifier; no DB-level append-only** | Medium | see §5 | An HMAC needs a key with its own rotation story; the verifier needs an owner and an alert destination |
-| **`/api/authorize` object check fails open when both scopes are absent** | Medium | `IsObjectInScopeAsync` returns `true` when the caller is deployment-level *and* the subject token has no `org_id` | Not named by any report; found while writing this document |
+| **`/api/authorize` object check skips ownership when both scopes are absent** | Low–Medium | `IsObjectInScopeAsync` checks only that the namespace is known when the caller is deployment-level *and* the subject token has no `org_id`. The `System` namespace is refused to every caller before this point, so what remains is an unowned check against `Organisations` / `Projects` / `UserLists` | Not named by any report; found while writing this document. The `System` half was closed in `75e9576`; the rest needs a decision about what a deployment-level caller with an org-less token may legitimately ask |
 | **`GET /admin/system/health` returns raw `ex.Message`** | Low | the SMTP username is redacted; two branches still return exception text (`SystemHealthController` `:222`, `:245`) | Treat this route as equivalent to a stack trace |
 | **Breach check fails open** | Low | `BreachCheckService.cs:35` — `return 0` on an outage | Deliberate availability trade |
 | **SAML pending state consumed before signature validation** | Low | `ReadSamlResponse` → `GetAndDeletePendingAsync` → `Unbind` | Unauthenticated in-flight login DoS, requiring an unguessable request id |
