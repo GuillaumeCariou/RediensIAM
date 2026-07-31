@@ -1,3 +1,4 @@
+using WireMock.Matchers;
 using WireMock.RequestBuilders;
 using WireMock.ResponseBuilders;
 using WireMock.Server;
@@ -90,6 +91,11 @@ public sealed class KetoStub : IDisposable
     /// <summary>
     /// Makes a specific permission check return denied.
     /// All other checks still return allowed.
+    ///
+    /// Matches the bare subject and its project-scoped form, <c>user:{id}|project:{pid}</c>, which
+    /// is what <c>KetoService.AssignManagementRoleAsync</c> writes for a scoped grant. Real Keto
+    /// has no tuple for either when the grant does not exist, so a stub that denied only the bare
+    /// subject modelled a state the store cannot be in — and let a scoped check through.
     /// </summary>
     public void DenySubject(string subjectId)
     {
@@ -97,7 +103,7 @@ public sealed class KetoStub : IDisposable
             .Given(Request.Create()
                 .WithPath("/relation-tuples/check")
                 .UsingGet()
-                .WithParam("subject_id", subjectId))
+                .WithParam("subject_id", new WildcardMatcher($"{subjectId}*")))
             .AtPriority(0)
             .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { allowed = false }));
     }

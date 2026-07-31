@@ -1,4 +1,14 @@
 {{- if .Values.rediensiam.dragonfly.local.enabled }}
+{{- if and .Values.rediensiam.dragonfly.local.tls.enabled (not .Values.rediensiam.dragonfly.local.password) }}
+{{- /*
+  Observed 2026-07-31, not theorised: with `--tls` and an empty `--requirepass`,
+  Dragonfly v1.25 logs `TLS configured but no authentication method is used!` and
+  exits, taking the cache — and therefore the DataProtection key ring, and therefore
+  every session — with it. `dragonfly.local.password` defaulted to "" and deploy.sh
+  never generated one, so this was the state of every install.
+*/}}
+{{- fail "rediensiam.dragonfly.local.tls.enabled needs rediensiam.dragonfly.local.password — Dragonfly refuses to start with TLS and no authentication method" }}
+{{- end }}
 {{- if .Values.rediensiam.dragonfly.local.tls.enabled }}
 # Cache transport encryption. Unlike Postgres this is a HARD cutover — with --tls Dragonfly
 # stops answering cleartext — so the cacheUrl secret must gain `ssl=true` in the same change.

@@ -52,9 +52,8 @@ Most integrations need both: the SPA obtains a token, your API validates it.
 ### Create a project, not a raw OAuth2 client
 
 **Creating a project creates its OIDC client for you**, with a deterministic id
-`client_<project_id>` (`OrgController.cs:105-118`, and the same three lines in
-`SystemAdminController.cs:489-500` and `ManagedApiController.cs:117-128`). The client is created
-as a public PKCE client (`token_endpoint_auth_method = "none"`) and carries
+`client_<project_id>` (`OrgController.cs:105-118` and `SystemAdminController.cs`). The client is
+created as a public PKCE client (`token_endpoint_auth_method = "none"`) and carries
 `metadata.project_id` / `metadata.org_id`, which is what ties issued tokens to a tenant.
 
 This is the path you want. Pick the endpoint that matches your caller's level:
@@ -63,7 +62,7 @@ This is the path you want. Pick the endpoint that matches your caller's level:
 |---|---|---|
 | `POST /org/projects` | OrgAdmin (`OrgController.cs:19`) | `CreateProjectRequest` (`:934`) |
 | `POST /admin/organizations/{orgId}/projects` | SuperAdmin (`SystemAdminController.cs:16`) | `AdminCreateProjectRequest` (`:1124`) |
-| `POST /api/manage/organizations/{orgId}/projects` | SuperAdmin (`ManagedApiController.cs:18`) | machine-to-machine variant |
+| `POST /api/manage/organizations/{orgId}/projects` | SuperAdmin (`SystemAdminController.cs:16`) | **the same action** — see [Management API](#management-api--admin-and-apimanage-are-one-surface) |
 
 ```bash
 PROJECT=$(curl -s -X POST "$IAM/admin/organizations/$ORG_ID/projects" \
@@ -201,17 +200,57 @@ service accounts that must *act*, not to unlock introspection.
 
 ### Call it
 
-`POST /api/introspect` (`IntrospectionController.cs:23,40`) is `[FromForm]`,
-`application/x-www-form-urlencoded`, per RFC 7662:
+`POST /api/introspect` is `[FromForm]`, `application/x-www-form-urlencoded`, per RFC 7662:
 
 ```bash
 curl -s -X POST "$IAM/api/introspect" \
   -H "Authorization: Bearer $SA_PAT" \
-  --data-urlencode "token=$USER_TOKEN"
+  --data-urlencode "token=$USER_TOKEN" \
+  --data-urlencode "aud=$PROJECT_ID"
 ```
 
 An unusable token answers `{"active": false}` with a 200 — never an error status, so a caller
 cannot distinguish malformed from revoked from expired.
+
+### `aud` is mandatory — read this before you upgrade
+
+**Breaking change (contract `ver: 1`).** `aud` names the tenant *your resource server serves*.
+Omit it and you get `400 {"error": "audience_required", "ver": 1}`. There is no grace period and
+no opt-out: **a resource server that declares no audience is no longer served.**
+
+Why the break was worth making. Introspection previously answered for whatever token you handed
+it, scoped only by *your* credential's organisation. A gateway holding a deployment-scoped
+(`__system__`) service account — which is exactly what a multi-tenant gateway must hold — got
+`active: true` for **every** tenant's token in the deployment, and was expected to compare
+`project_id` against its own configuration afterwards. Nothing enforced that, nothing tested it,
+and no SDK had a field for it. `has_project_role` made *role* checks safe by construction;
+nothing made the *tenant* check safe by construction. Now the tenant check is the request.
+
+| Field | Value |
+|---|---|
+| `aud` (request) | the project id your service serves, **or** the organisation id if you front a whole organisation |
+| `aud` (response) | echo of what you sent, on an active answer |
+| `ver` (response) | `1`, on **every** answer including `{"active": false}` and the 400 |
+
+A token is bound to `aud` when the value equals its `project_id`, equals its `org_id`, or appears
+in its OAuth2 `aud` claim. A token whose `project_id` and `org_id` are both empty matches no
+audience and can only be introspected by naming an explicit `aud` claim minted onto it.
+
+**Migration.** If you use a backend SDK, steps 2 and 3 are done for you — upgrade the SDK, set
+the one new option, and jump to the symptom list. The raw-HTTP version:
+
+1. Find every caller of `/api/introspect` and `/api/authorize`. Each one serves exactly one
+   tenant; write that tenant's id into its configuration. If a caller genuinely serves several,
+   it already knows which one each request is for — send that.
+2. Add `aud` to the request. Deploy the callers **before** the server, or accept a window of
+   400s: the old server ignores the unknown field, so adding it early is safe.
+3. Check `ver >= 1` in the response. This is the point of `ver`: a server that has not been
+   upgraded silently discards the `aud` you sent and answers without `ver`, so a client that
+   requires `ver` fails closed instead of believing it is bound when it is not.
+
+**Symptom you will see if you skip this:** every introspection returns
+`400 audience_required`, or — worse and quieter — an `{"active": false}` on a token you know is
+good, which means the `aud` you sent names a different tenant than the token belongs to.
 
 > `token_type_hint` is **not** part of the request record. RFC 7662 §2.1 makes it an optional
 > lookup hint the server may ignore and must not reject a token over, and RediensIAM identifies
@@ -224,12 +263,40 @@ For an authorisation decision rather than a validity check, `POST /api/authorize
 keeps the policy in RediensIAM instead of in every gateway:
 
 ```json
-{ "token": "…", "namespace": "Organisations", "object": "<org-id>", "relation": "org_admin" }
+{ "token": "…", "namespace": "Organisations", "object": "<org-id>",
+  "relation": "org_admin", "aud": "<project-or-org-id>" }
 ```
+
+`aud` is mandatory here too, on the same terms as introspection.
+
+**Also breaking: `object` is now tenant-scoped.** The object must belong to the tenant the answer
+is about — the caller's organisation, or, for a deployment-scoped caller, the organisation of the
+token being asked about. `Organisations`, `Projects` and `UserLists` are checked against the
+database; **any other namespace is refused**, because a namespace RediensIAM writes no objects
+into has no ownership to check and failing open there is the same finding under a new name.
+
+Refused requests answer `{"allowed": false}` — the same shape as a genuine "no", so the endpoint
+cannot be used to probe which objects exist. Every refusal writes an audit row
+(`api.authorize.object_out_of_scope`).
+
+Why: the subject of an authorisation check is always the presented token's user, so an unscoped
+`object` was never a way to forge a decision — but it was a way to read another tenant's relation
+graph one bit per request. If you were asking about objects outside your own organisation, you
+were relying on a bug.
 
 In practice, use a backend SDK rather than raw HTTP — see
 [`../sdk/README.md`](../sdk/README.md#c). Both SDKs cache positive answers briefly and never
 cache negative ones.
+
+> **The backend SDKs now send `aud`, and require it.** `RediensIamOptions.Audience` (C#) and
+> `Config::audience` (Rust) are **required options with no default** — a client constructed
+> without one throws at construction rather than 400-ing on its first request. Both also refuse
+> any answer that arrives without `ver`, which is how they detect a server that silently ignored
+> the `aud` they sent. Full migration in [`../sdk/README.md`](../sdk/README.md#aud-is-now-a-required-sdk-option).
+>
+> The browser SDK is unaffected: it never calls these endpoints, because introspection needs a
+> service-account credential and anything shipped to a browser is readable by anyone with
+> devtools.
 
 ---
 
@@ -247,8 +314,9 @@ Bodies are `snake_case`. Records cited so you can re-check against the source.
 | `POST /service-accounts/{id}/pat` | access to the SA | `{name, expires_at?}` | `ServiceAccountController.cs:181,346` |
 | `POST /service-accounts/{id}/roles` | access to the SA | `{role, org_id?, project_id?}` | `ServiceAccountController.cs:250,348` |
 | `POST /admin/organizations/{id}/admins` | SuperAdmin | `{user_id, role, scope_id?}` | `SystemAdminController.cs:1103` |
-| `POST /api/introspect` | service account | **form**: `token` | `IntrospectionController.cs:40` |
-| `POST /api/authorize` | service account | `{token, namespace, object, relation}` | `IntrospectionController.cs:78` |
+| `POST /api/introspect` | service account | **form**: `token`, `aud` (required) | `IntrospectionController.cs` |
+| `POST /api/authorize` | service account | `{token, namespace, object, relation, aud}` — `aud` required | `IntrospectionController.cs` |
+| `PATCH /admin/projects/{id}` | SuperAdmin | `AdminUpdateProjectRequest`; see [MFA](#turning-require_mfa-off) | `SystemAdminController.cs` |
 
 `role` values are validated against `KnownManagementRoles`
 (`SystemAdminController.cs:38` — `super_admin`, `org_admin`, `project_admin`); anything else is
@@ -256,7 +324,97 @@ Bodies are `snake_case`. Records cited so you can re-check against the source.
 
 Route prefixes: `/admin` is SuperAdmin-only at the class level
 (`SystemAdminController.cs:16`), `/org` is OrgAdmin-only (`OrgController.cs:19`), `/api/manage`
-is SuperAdmin-only (`ManagedApiController.cs:18`).
+is the same SuperAdmin surface as `/admin` under a second prefix — see
+[Management API](#management-api--admin-and-apimanage-are-one-surface).
+
+---
+
+## Management API — `/admin` and `/api/manage` are one surface
+
+`/api/manage` used to expose seven endpoints — create/list organisations and projects, create
+user lists, add users. An external service could *create* a tenant and then had to stop:
+suspending it, deleting it, updating its projects, managing roles, service accounts, PATs, Hydra
+clients, webhooks and SMTP all lived only on `/admin/*`, which in practice meant an interactive
+superadmin had to finish the job by hand.
+
+They are now **the same surface**. `SystemAdminController` carries both route prefixes, so every
+`/admin/x` is reachable at `/api/manage/x`, on the same action, behind the same class-level
+`RequireManagementLevel(SuperAdmin)` filter — one token check, one live Keto re-check, whichever
+prefix you used. `ManagedApiController` and its seven re-implementations are gone.
+
+This matters more than the convenience. A duplicated handler is where an authorisation check goes
+missing; the seven duplicates were also drifting (only the `/api/manage` copy refused a duplicate
+email in a user list, and only it checked that the organisation existed before creating a project
+under it — both are now on both prefixes).
+
+| | |
+|---|---|
+| Auth | SuperAdmin, by PAT or `client_credentials` access token, identical on both prefixes |
+| Route list | every route under `/admin` — `docs/` does not duplicate the list because it cannot drift: the pairing is asserted in `ApiSurfaceManagedParityTests` |
+| Audit | every mutation writes an audit row; a machine credential has no session to correlate afterwards |
+
+**Nothing you already call changes.** The seven original `/api/manage` routes keep their paths,
+bodies and status codes. Two of them are now *stricter* on the `/admin` side rather than the
+`/api/manage` side, which is the direction that closes a gap.
+
+New on `/api/manage` (non-exhaustive, all pre-existing `/admin` behaviour):
+`POST organizations/{id}/suspend`, `POST organizations/{id}/unsuspend`,
+`DELETE organizations/{id}`, `PATCH organizations/{id}`, `PATCH projects/{id}`,
+`DELETE projects/{id}`, `PUT projects/{id}/scopes`, `PUT|DELETE projects/{id}/userlist`,
+`GET|POST|DELETE projects/{id}/roles`, `GET|POST|DELETE organizations/{id}/admins`,
+`GET|PATCH users/{id}`, `POST users/{id}/unlock`, `GET|DELETE users/{id}/sessions`,
+`GET|PUT|DELETE organizations/{id}/smtp`, `POST organizations/{id}/smtp/test`,
+`GET|POST|DELETE hydra/clients`, `GET audit-log`, `GET metrics`, the export routes, the SAML
+provider routes and the key-rotation routes.
+
+`SystemHealthController` (`/admin/system/*`) and `AdminWebhookController` (`/admin/webhooks/*`)
+carry the second prefix on the same terms, so `/api/manage/system/*` and `/api/manage/webhooks/*`
+are live too.
+
+**Not aliased:** `/service-accounts` and its PAT routes. They are not under `/admin`, they are
+already reachable with a machine credential, and they run their own per-object authorisation —
+a route alias there would be a place for that check to be skipped. Use the existing paths.
+
+---
+
+## Turning `require_mfa` off
+
+`require_mfa` is opt-in at project creation and stays opt-in. Turning it **off** on a project
+whose users have already enrolled a factor is a two-step call.
+
+**First call** — `PATCH /admin/projects/{id}` (or `/api/manage/projects/{id}`, or
+`/org/projects/{id}`, or `/project/info`) with `{"require_mfa": false}`:
+
+```json
+409 {
+  "error": "mfa_downgrade_requires_confirmation",
+  "enrolled_user_count": 42,
+  "consequence": "Disabling require_mfa stops enrolled second factors from gating logins for 42 user(s) in this project. Their factors are not deleted, but a stolen password alone becomes sufficient to sign in. Users are not notified.",
+  "confirm_with": "confirm_mfa_downgrade"
+}
+```
+
+Nothing is applied — not the MFA change and not the rest of the body.
+
+**Second call** — repeat it with the confirmation in the **same body**:
+
+```json
+{ "require_mfa": false, "confirm_mfa_downgrade": true }
+```
+
+This proceeds and writes an audit row `project.mfa_requirement_removed` carrying
+`enrolled_user_count`.
+
+Notes.
+
+- `enrolled_user_count` counts users of the project's assigned user list holding a TOTP secret, a
+  verified phone, or a WebAuthn credential — the same three factors that satisfy an MFA login.
+- The count being `0` means there is nothing to downgrade, so no confirmation is asked for.
+- The confirmation travels in the body, not a header or query flag, so it cannot be replayed onto
+  a different request.
+- Enabling `require_mfa` is unguarded — it is the safe direction.
+- The guard is one shared function, so all four write paths behave identically. A guard on three
+  of four paths is not a guard.
 
 ---
 
@@ -283,5 +441,6 @@ it. Detail in [`2026-07-28-findings-securite-deploiement.md`](2026-07-28-finding
 4. **`POST /service-accounts` with only `{"name": …}`.** `user_list_id` is required → 400.
 5. **Assigning a role so a service account may introspect.** Unnecessary.
 6. **Sending JSON to `/api/introspect`.** It is form-encoded.
+6b. **Omitting `aud`.** Required since contract `ver: 1`. 400, every time.
 7. **Matching a bare tenant role name.** `ext.roles` carries tenant roles as
    `{project_id}/{name}`; `roles.contains("admin")` matches nothing. See the warning above.

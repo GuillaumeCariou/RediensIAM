@@ -28,6 +28,22 @@ rediensiam:
       # done, this is a known click-through warning on the most privileged UI.
       clusterIssuer: selfsigned
 
+  # R-15. Prod already requires cert-manager for the two ingress certs above, so the
+  # database certificate costs no new dependency. requireSsl makes pg_hba.conf admit
+  # `hostssl` only; deploy.sh writes matching DSNs on a fresh install because it
+  # greps this file for `requireSsl: true` before generating them.
+  #
+  # NOT YET RUN AGAINST A REAL PROD DATABASE — prod has never been deployed from this
+  # branch. On a FRESH install this is correct and self-consistent. On an EXISTING
+  # prod database it is a migration, not an upgrade: pg_hba.conf is written by initdb
+  # and a chart upgrade will not rewrite it. Follow §2 of
+  # .security-hardening/18-cnpg-tls-rls.md before the first upgrade that carries this.
+  postgres:
+    local:
+      tls:
+        enabled: true
+        requireSsl: true
+
   # cert-manager must already be installed in the cluster; this chart does not install it.
   certManager:
     acme:

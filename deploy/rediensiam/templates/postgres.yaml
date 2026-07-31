@@ -1,5 +1,32 @@
 {{- if .Values.rediensiam.postgres.local.enabled }}
-{{- if .Values.rediensiam.postgres.local.tls.enabled }}
+{{- $tls := .Values.rediensiam.postgres.local.tls }}
+{{- if $tls.requireSsl }}
+{{- /*
+  R-15 ordering guard. `hostssl` on a server with ssl=off answers nothing at all,
+  and `hostssl` with a cleartext DSN answers nothing to that component. Both are
+  total outages discovered at connection time. Fail at template time instead.
+*/}}
+{{- if not $tls.enabled }}
+{{- fail "rediensiam.postgres.local.tls.requireSsl needs tls.enabled — hostssl on a server with ssl=off refuses every client" }}
+{{- end }}
+{{- $dsns := dict "rediensiam.secrets.databaseUrl" (.Values.rediensiam.secrets.databaseUrl | default "") "hydra.hydra.config.dsn" (dig "hydra" "config" "dsn" "" .Values.hydra) "keto.keto.config.dsn" (dig "keto" "config" "dsn" "" .Values.keto) }}
+{{- /*
+  Only a DSN that actually points at PostgreSQL is judged.
+    - empty means "comes from the gitignored secrets file", which `helm lint` and
+      `helm template` on values.yaml + values.<env>.yaml alone never see; failing
+      there would break the repository's own gate on a file that is correct, and an
+      absent DSN fails at deploy time anyway because Hydra will not start without one.
+    - the Keto subchart ships `dsn: memory` as its default, which has no transport
+      to encrypt.
+  A cleartext Postgres DSN is still caught, which is the case that matters.
+*/}}
+{{- range $name, $dsn := $dsns }}
+{{- if and (regexMatch "(?i)^postgres|host *=" $dsn) (not (regexMatch "(?i)ssl ?mode *= *(require|verify)" $dsn)) }}
+{{- fail (printf "rediensiam.postgres.local.tls.requireSsl is set but %s does not request TLS — cut every DSN over to sslmode=require FIRST (18-cnpg-tls-rls.md §2)" $name) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if $tls.enabled }}
 # R-15. Server-side TLS for the bundled Postgres. Signed by the `selfsigned` ClusterIssuer,
 # so `sslmode=require` (encryption, no server authentication) is the honest ceiling here;
 # `verify-full` needs a real CA whose root is distributed to app, Hydra and Keto — see the
@@ -84,6 +111,22 @@ data:
       -- this the backup fails on the very first database it reaches.
       GRANT CONNECT ON DATABASE postgres   TO iam_backup;
     EOSQL
+{{- if .Values.rediensiam.postgres.local.tls.requireSsl }}
+
+    # R-15. `ssl=on` alone only makes TLS AVAILABLE — Postgres still accepts a
+    # cleartext client, so the encrypted path is a property of each DSN rather than
+    # of the server. `hostssl` makes the server refuse a TCP client that does not
+    # negotiate TLS, which is what turns "our clients are configured correctly"
+    # into a control. The `local` (unix socket) lines are left alone: that path
+    # never leaves the pod's network namespace and pg_isready uses it.
+    #
+    # initdb is the only point at which pg_hba.conf is generated, so this runs on a
+    # first-ever start only. On an existing database do it live — see
+    # .security-hardening/18-cnpg-tls-rls.md §2. `hostssl` never matches here
+    # because there is no whitespace after `host` in it.
+    sed -i -E 's/^host([[:space:]])/hostssl\1/' "$PGDATA/pg_hba.conf"
+    echo "R-15: pg_hba.conf host -> hostssl (cleartext TCP refused)"
+{{- end }}
 ---
 apiVersion: v1
 kind: Service

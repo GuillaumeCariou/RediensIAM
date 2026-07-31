@@ -153,6 +153,8 @@ public class OrgController(
         var isSuperAdmin = Claims.Roles.Contains(Roles.SuperAdmin);
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && (isSuperAdmin || p.OrgId == OrgId));
         if (project == null) return NotFound();
+        if (await MfaDowngradeGuard.CheckAsync(db, audit, ActorId, project, body.RequireMfa, body.ConfirmMfaDowngrade) is { } mfaErr)
+            return mfaErr;
         if (body.Name != null) project.Name = body.Name;
         if (body.RequireRoleToLogin.HasValue) project.RequireRoleToLogin = body.RequireRoleToLogin.Value;
         if (body.RequireMfa.HasValue) project.RequireMfa = body.RequireMfa.Value;
@@ -966,7 +968,9 @@ public record UpdateProjectRequest(
     string? EmailFromName,
     bool? ClearEmailFromName,
     string[]? IpAllowlist,
-    bool? CheckBreachedPasswords);
+    bool? CheckBreachedPasswords,
+    // Acknowledges the 409 from MfaDowngradeGuard. Only read when require_mfa goes true → false.
+    bool? ConfirmMfaDowngrade = null);
 public record UpdateScopesRequest(string[] Scopes);
 public record CreateSamlProviderRequest(string EntityId, string? MetadataUrl, string? SsoUrl, string? CertificatePem, string? EmailAttributeName, string? DisplayNameAttributeName, bool? JitProvisioning, Guid? DefaultRoleId);
 public record UpdateSamlProviderRequest(string? EntityId, string? MetadataUrl, string? SsoUrl, string? CertificatePem, string? EmailAttributeName, string? DisplayNameAttributeName, bool? JitProvisioning, Guid? DefaultRoleId, bool? Active);

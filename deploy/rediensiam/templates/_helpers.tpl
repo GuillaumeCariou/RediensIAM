@@ -69,6 +69,35 @@ carries `k8s-app: kube-dns` in the namespace named by networkPolicy.dnsNamespace
 {{- end -}}
 
 {{/*
+rediensiam.postgresPeer
+The NetworkPolicy peer list for ":5432 to the database", for the app, Hydra and Keto egress
+rules. With the built-in StatefulSet that is a pod label this chart owns. With an external
+CloudNativePG cluster the chart owns nothing about those pods, so the selector has to be
+supplied — `cnpg.io/cluster: <name>` is what CNPG stamps on its instances.
+
+Getting this wrong is a silent outage in one direction only: too narrow and the app cannot
+reach the database at all, which is loud. It is never fail-open, because the default-deny is
+ingress-only and it is `postgres-lockdown` (built-in mode) or the CNPG cluster's own policy
+(external mode) that decides who may connect.
+*/}}
+{{- define "rediensiam.postgresPeer" -}}
+{{- if .Values.rediensiam.postgres.local.enabled -}}
+- podSelector:
+    matchLabels:
+      app: {{ .Release.Name }}-postgres
+{{- else -}}
+- podSelector:
+    matchLabels:
+{{ toYaml .Values.rediensiam.postgres.external.podSelector | indent 6 }}
+{{- if .Values.rediensiam.postgres.external.namespace }}
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: {{ .Values.rediensiam.postgres.external.namespace }}
+{{- end }}
+{{- end -}}
+{{- end -}}
+
+{{/*
 rediensiam.ingressPublicHost
 Returns the public ingress hostname.
 Uses rediensiam.ingress.public.host if set; otherwise parses host from rediensiam.publicUrl.

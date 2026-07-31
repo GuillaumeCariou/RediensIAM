@@ -27,15 +27,15 @@ public class RequireManagementLevelAttribute(ManagementLevel minimum) : Attribut
             return;
         }
 
-        var level = claims.GetManagementLevel();
-        if (level > minimum)
+        // The claimed level decides *which* level to re-check. It is never the answer.
+        if (GrantedLevel.ClaimedLevel(claims) > minimum)
         {
             context.Result = new ObjectResult(new { error = "forbidden" }) { StatusCode = 403 };
             return;
         }
 
         var live = context.HttpContext.RequestServices.GetRequiredService<LiveAuthorizationService>();
-        if (!await live.IsStillGrantedAsync(claims, level))
+        if (await GrantedLevel.ResolveAsync(claims, live) is not { } granted || !granted.IsAtLeast(minimum))
         {
             context.Result = new ObjectResult(new { error = "forbidden", detail = "role_no_longer_granted" })
             {
@@ -43,6 +43,10 @@ public class RequireManagementLevelAttribute(ManagementLevel minimum) : Attribut
             };
             return;
         }
+
+        // Resolved once, here, so that the rest of the request reads a verified value
+        // synchronously — including inside EF expression trees, which cannot contain an await.
+        ClaimsExtensions.RecordGrantedLevel(claims, granted);
 
         await next();
     }

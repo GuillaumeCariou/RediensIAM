@@ -1537,7 +1537,7 @@ public class AuthController(
     //
     // The project a login flow belongs to is decided by the OAuth2 client that opened it,
     // never by the request. `client.metadata.project_id` is written by RediensIAM when the
-    // client is created (OrgController/SystemAdminController/ManagedApiController) and is
+    // client is created (OrgController/SystemAdminController) and is
     // the only authority here.
     //
     // The project_id carried in oidc_context.extra / the authorize URL is caller-controlled:

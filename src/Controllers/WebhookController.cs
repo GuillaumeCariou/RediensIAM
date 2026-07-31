@@ -168,6 +168,8 @@ public class OrgWebhookController(
 
 [ApiController]
 [Route("admin/webhooks")]
+// Second prefix, same actions, same filter — see the note on SystemAdminController.
+[Route("api/manage/webhooks")]
 [RequireManagementLevel(ManagementLevel.SuperAdmin)]
 public class AdminWebhookController(
     RediensIamDbContext db,

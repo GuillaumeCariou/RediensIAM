@@ -4,7 +4,8 @@ using RediensIAM.IntegrationTests.Infrastructure;
 namespace RediensIAM.IntegrationTests.Tests.ManagedApi;
 
 /// <summary>
-/// Covers ManagedApiController lines not hit by existing tests:
+/// Covers /api/manage lines not hit by existing tests. The handlers now live on
+/// SystemAdminController — /api/manage is its second route prefix, not a second controller.
 ///   - POST /api/manage/userlists/{id}/users — system list (OrgId=null, Immovable=true) → super_admin keto tuple (line 188)
 ///   - POST /api/manage/userlists/{id}/users — list with assigned project → default role (line 192)
 /// </summary>

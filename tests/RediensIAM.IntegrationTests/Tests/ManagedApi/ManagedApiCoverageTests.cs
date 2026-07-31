@@ -4,7 +4,8 @@ using RediensIAM.IntegrationTests.Infrastructure;
 namespace RediensIAM.IntegrationTests.Tests.ManagedApi;
 
 /// <summary>
-/// Covers ManagedApiController lines not hit by ManagedApiTests:
+/// Covers /api/manage lines not hit by ManagedApiTests. The handlers now live on
+/// SystemAdminController — /api/manage is its second route prefix, not a second controller.
 ///   - POST /api/manage/organizations/{id}/projects — Hydra unavailable (lines 131-136)
 /// </summary>
 [Collection("RediensIAM")]

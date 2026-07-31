@@ -17,31 +17,21 @@ public static class RediensIamServiceCollectionExtensions
     /// {
     ///     o.BaseUrl             = "https://auth.example.com";
     ///     o.ServiceAccountToken = builder.Configuration["RediensIAM:Token"]!;
+    ///     // The tenant this service serves. Required — see RediensIamOptions.Audience.
+    ///     o.Audience            = builder.Configuration["RediensIAM:ProjectId"]!;
     /// });
     /// </code>
     /// </summary>
+    /// <exception cref="ArgumentException">The configured options are missing or unusable.</exception>
     public static IServiceCollection AddRediensIam(
         this IServiceCollection services, Action<RediensIamOptions> configure)
     {
         var options = new RediensIamOptions();
         configure(options);
 
-        if (string.IsNullOrWhiteSpace(options.BaseUrl))
-            throw new ArgumentException("RediensIamOptions.BaseUrl is required.", nameof(configure));
-        if (string.IsNullOrWhiteSpace(options.ServiceAccountToken))
-            throw new ArgumentException("RediensIamOptions.ServiceAccountToken is required.", nameof(configure));
-
-        // The service-account credential and every token being introspected ride on BaseUrl, so
-        // cleartext there hands an on-path attacker both. http is accepted only on a loopback
-        // host: forbidding it outright breaks every local setup, and a flag to disable the check
-        // gets set in production too.
-        if (!Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out var baseUri))
-            throw new ArgumentException(
-                $"RediensIamOptions.BaseUrl is not an absolute URL: {options.BaseUrl}", nameof(configure));
-        if (baseUri.Scheme != Uri.UriSchemeHttps && !(baseUri.Scheme == Uri.UriSchemeHttp && baseUri.IsLoopback))
-            throw new ArgumentException(
-                $"RediensIamOptions.BaseUrl must be https — http is accepted only on localhost: {options.BaseUrl}",
-                nameof(configure));
+        // Same checks the client itself runs, done here so the failure lands at startup with the
+        // registration in the stack trace rather than at the first resolve.
+        options.Validated();
 
         services.AddSingleton(options);
         services.AddMemoryCache();

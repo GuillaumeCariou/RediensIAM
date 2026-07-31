@@ -171,8 +171,10 @@ public class BackendHardeningRegressionTests(TestFixture fixture)
         return (fixture.ClientWithToken(raw), org, list);
     }
 
-    private static FormUrlEncodedContent Form(string token) =>
-        new([new KeyValuePair<string, string>("token", token)]);
+    // `aud` is mandatory since the P-06 fix — the resource server names the tenant it serves.
+    private static FormUrlEncodedContent Form(string token, Guid aud) =>
+        new([new KeyValuePair<string, string>("token", token),
+             new KeyValuePair<string, string>("aud", aud.ToString())]);
 
     [Fact]
     public async Task Introspect_TokenFromAnotherOrganisation_IsNotResolved()
@@ -185,7 +187,7 @@ public class BackendHardeningRegressionTests(TestFixture fixture)
         var victim        = await fixture.Seed.CreateUserAsync(victimList.Id);
         var victimToken   = fixture.Seed.UserToken(victim.Id, victimOrg.Id, victimProject.Id);
 
-        var body = await (await client.PostAsync("/api/introspect", Form(victimToken)))
+        var body = await (await client.PostAsync("/api/introspect", Form(victimToken, victimProject.Id)))
             .Content.ReadFromJsonAsync<JsonElement>();
 
         body.GetProperty("active").GetBoolean().Should().BeFalse(
@@ -204,7 +206,7 @@ public class BackendHardeningRegressionTests(TestFixture fixture)
         var subject  = await fixture.Seed.CreateServiceAccountAsync(list.Id);
         var (raw, _) = await fixture.GetService<PatService>().GenerateAsync(subject.Id, "subject", null, null);
 
-        var body = await (await client.PostAsync("/api/introspect", Form(raw)))
+        var body = await (await client.PostAsync("/api/introspect", Form(raw, org.Id)))
             .Content.ReadFromJsonAsync<JsonElement>();
 
         body.GetProperty("active").GetBoolean().Should().BeTrue();
@@ -214,6 +216,10 @@ public class BackendHardeningRegressionTests(TestFixture fixture)
     /// <summary>
     /// A service account on the __system__ user list carries no org_id and stays unscoped — that
     /// is the credential a genuinely multi-tenant gateway has to hold.
+    ///
+    /// Since the P-06 fix, "unscoped" means *any tenant it names*, not *every tenant at once*:
+    /// the gateway still has to declare the audience it is serving on each call, and a token
+    /// from a different tenant reads inactive. See ApiSurfaceIntrospectionTests.
     /// </summary>
     [Fact]
     public async Task Introspect_FromASystemServiceAccount_IsStillUnscoped()
@@ -235,7 +241,7 @@ public class BackendHardeningRegressionTests(TestFixture fixture)
         var user        = await fixture.Seed.CreateUserAsync(list.Id);
         var token       = fixture.Seed.UserToken(user.Id, org.Id, project.Id);
 
-        var body = await (await client.PostAsync("/api/introspect", Form(token)))
+        var body = await (await client.PostAsync("/api/introspect", Form(token, project.Id)))
             .Content.ReadFromJsonAsync<JsonElement>();
 
         body.GetProperty("active").GetBoolean().Should().BeTrue();
@@ -260,6 +266,7 @@ public class BackendHardeningRegressionTests(TestFixture fixture)
             @namespace = Roles.KetoSystemNamespace,
             @object    = Roles.KetoSystemObject,
             relation   = Roles.KetoSuperAdminRelation,
+            aud        = org.Id,
         });
 
         (await res.Content.ReadFromJsonAsync<JsonElement>())

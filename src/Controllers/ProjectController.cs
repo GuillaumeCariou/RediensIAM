@@ -32,7 +32,9 @@ public class ProjectController(
         get
         {
 #pragma warning disable S6932 // model binding not available in a property getter
-            if (Claims.GetManagementLevel() <= ManagementLevel.OrgAdmin)
+            // The ?project_id= escalation branch: deciding it from a claim is the same defect
+            // one tier down from R-22, so it reads the live-verified grant (S-1).
+            if (HttpContext.GetGrantedLevel() is { } grant && grant.IsAtLeast(ManagementLevel.OrgAdmin))
             {
                 var q = HttpContext.Request.Query["project_id"].FirstOrDefault();
                 if (q != null && Guid.TryParse(q, out var g)) return g;
@@ -87,6 +89,8 @@ public class ProjectController(
         if (project == null) return NotFound();
         var allowlistErr = ApplyIpAllowlist(project, body.IpAllowlist);
         if (allowlistErr != null) return allowlistErr;
+        if (await MfaDowngradeGuard.CheckAsync(db, audit, ActorId, project, body.RequireMfa, body.ConfirmMfaDowngrade) is { } mfaErr)
+            return mfaErr;
         ApplyProjectFields(project, body);
         var roleErr = await ApplyDefaultRoleAsync(project, body.ClearDefaultRole, body.DefaultRoleId);
         if (roleErr != null) return roleErr;
@@ -433,7 +437,9 @@ public record UpdateProjectInfoRequest(string? Name, bool? Active, bool? Require
     // dropped them and the API answered 200 while applying nothing — an operator could
     // enable an IP allowlist that never took effect.
     string[]? IpAllowlist, bool? CheckBreachedPasswords,
-    string? EmailFromName, bool? ClearEmailFromName);
+    string? EmailFromName, bool? ClearEmailFromName,
+    // Acknowledges the 409 from MfaDowngradeGuard. Only read when require_mfa goes true → false.
+    bool? ConfirmMfaDowngrade = null);
 public record CreateProjectUserRequest(string Email, string? Username, string Password);
 public record AssignRoleRequest([property: System.Text.Json.Serialization.JsonRequired] Guid RoleId);
 public record CreateRoleRequest(string Name, string? Description, int? Rank);

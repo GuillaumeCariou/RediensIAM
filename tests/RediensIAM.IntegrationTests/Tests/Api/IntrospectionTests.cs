@@ -11,8 +11,10 @@ namespace RediensIAM.IntegrationTests.Tests.Api;
 [Collection("RediensIAM")]
 public class IntrospectionTests(TestFixture fixture)
 {
-    private static FormUrlEncodedContent Form(string token) =>
+    // `aud` names the tenant the calling resource server serves. Mandatory since the P-06 fix.
+    private static FormUrlEncodedContent Form(string token, Guid aud) =>
         new([new KeyValuePair<string, string>("token", token),
+             new KeyValuePair<string, string>("aud", aud.ToString()),
              new KeyValuePair<string, string>("token_type_hint", "access_token")]);
 
     /// <summary>Creates a service account with a PAT — the credential a gateway presents.</summary>
@@ -33,7 +35,7 @@ public class IntrospectionTests(TestFixture fixture)
     [Fact]
     public async Task Introspect_WithoutCredentials_IsRejected()
     {
-        var res = await fixture.Client.PostAsync("/api/introspect", Form("anything"));
+        var res = await fixture.Client.PostAsync("/api/introspect", Form("anything", Guid.NewGuid()));
 
         res.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
@@ -54,7 +56,7 @@ public class IntrospectionTests(TestFixture fixture)
         var user   = await fixture.Seed.CreateUserAsync(list.Id);
         var client = fixture.ClientWithToken(fixture.Seed.UserToken(user.Id, org.Id, project.Id));
 
-        var res = await client.PostAsync("/api/introspect", Form("anything"));
+        var res = await client.PostAsync("/api/introspect", Form("anything", org.Id));
 
         res.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
@@ -64,13 +66,13 @@ public class IntrospectionTests(TestFixture fixture)
     [Fact]
     public async Task Introspect_ValidPat_ReturnsActiveWithIdentity()
     {
-        var (client, _, list) = await GatewayClientAsync();
+        var (client, org, list) = await GatewayClientAsync();
 
         var subject = await fixture.Seed.CreateServiceAccountAsync(list.Id);
         var pats = fixture.GetService<PatService>();
         var (target, _) = await pats.GenerateAsync(subject.Id, "subject", null, null);
 
-        var res = await client.PostAsync("/api/introspect", Form(target));
+        var res = await client.PostAsync("/api/introspect", Form(target, org.Id));
         res.StatusCode.Should().Be(HttpStatusCode.OK);
 
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
@@ -82,9 +84,9 @@ public class IntrospectionTests(TestFixture fixture)
     [Fact]
     public async Task Introspect_UnknownToken_ReportsInactiveWithoutLeakingWhy()
     {
-        var (client, _, _) = await GatewayClientAsync();
+        var (client, org, _) = await GatewayClientAsync();
 
-        var res = await client.PostAsync("/api/introspect", Form("rediens_pat_definitely-not-real"));
+        var res = await client.PostAsync("/api/introspect", Form("rediens_pat_definitely-not-real", org.Id));
         res.StatusCode.Should().Be(HttpStatusCode.OK, "an unusable token is an answer, not an error");
 
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
@@ -100,13 +102,13 @@ public class IntrospectionTests(TestFixture fixture)
     [Fact]
     public async Task Introspect_AfterServiceAccountDeactivated_ReportsInactive()
     {
-        var (client, _, list) = await GatewayClientAsync();
+        var (client, org, list) = await GatewayClientAsync();
 
         var subject = await fixture.Seed.CreateServiceAccountAsync(list.Id);
         var pats = fixture.GetService<PatService>();
         var (target, _) = await pats.GenerateAsync(subject.Id, "subject", null, null);
 
-        (await (await client.PostAsync("/api/introspect", Form(target)))
+        (await (await client.PostAsync("/api/introspect", Form(target, org.Id)))
             .Content.ReadFromJsonAsync<JsonElement>())
             .GetProperty("active").GetBoolean().Should().BeTrue();
 
@@ -115,7 +117,7 @@ public class IntrospectionTests(TestFixture fixture)
         stored.Active = false;
         await fixture.Db.SaveChangesAsync();
 
-        var body = await (await client.PostAsync("/api/introspect", Form(target)))
+        var body = await (await client.PostAsync("/api/introspect", Form(target, org.Id)))
             .Content.ReadFromJsonAsync<JsonElement>();
 
         body.GetProperty("active").GetBoolean().Should().BeFalse(
@@ -140,7 +142,7 @@ public class IntrospectionTests(TestFixture fixture)
         fixture.Keto.AllowAll();
         await fixture.FlushCacheAsync();
 
-        var granted = await (await client.PostAsync("/api/introspect", Form(token)))
+        var granted = await (await client.PostAsync("/api/introspect", Form(token, org.Id)))
             .Content.ReadFromJsonAsync<JsonElement>();
         granted.GetProperty("roles").EnumerateArray().Select(r => r.GetString())
             .Should().Contain(Roles.SuperAdmin);
@@ -150,7 +152,7 @@ public class IntrospectionTests(TestFixture fixture)
 
         try
         {
-            var revoked = await (await client.PostAsync("/api/introspect", Form(token)))
+            var revoked = await (await client.PostAsync("/api/introspect", Form(token, org.Id)))
                 .Content.ReadFromJsonAsync<JsonElement>();
 
             revoked.GetProperty("roles").EnumerateArray().Select(r => r.GetString())
@@ -180,6 +182,7 @@ public class IntrospectionTests(TestFixture fixture)
             @namespace = Roles.KetoOrgsNamespace,
             @object    = org.Id.ToString(),
             relation   = Roles.KetoOrgAdminRelation,
+            aud        = org.Id,
         });
         allowed.StatusCode.Should().Be(HttpStatusCode.OK);
         (await allowed.Content.ReadFromJsonAsync<JsonElement>())
@@ -194,6 +197,7 @@ public class IntrospectionTests(TestFixture fixture)
                 @namespace = Roles.KetoOrgsNamespace,
                 @object    = org.Id.ToString(),
                 relation   = Roles.KetoOrgAdminRelation,
+                aud        = org.Id,
             });
 
             (await denied.Content.ReadFromJsonAsync<JsonElement>())
@@ -218,6 +222,7 @@ public class IntrospectionTests(TestFixture fixture)
             @namespace = Roles.KetoOrgsNamespace,
             @object    = org.Id.ToString(),
             relation   = Roles.KetoOrgAdminRelation,
+            aud        = org.Id,
         });
 
         (await res.Content.ReadFromJsonAsync<JsonElement>())

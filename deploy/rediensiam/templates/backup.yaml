@@ -1,4 +1,4 @@
-{{- if .Values.rediensiam.backup.enabled }}
+{{- if and .Values.rediensiam.backup.enabled .Values.rediensiam.postgres.local.enabled }}
 {{- /*
   No backup existed anywhere in this chart. Step 12 found it; no earlier step did.
   A disk failure destroyed every tenant permanently — the single largest gap in the
@@ -9,6 +9,14 @@
   domain to ship WAL to. A dump on the same node survives a dropped table, a bad
   migration and a tenant deleting itself — not the disk dying. Copying the PVC
   off-node is what actually closes that case; see the runbook in 13-monitoring-siem.md.
+
+  Gated on postgres.local.enabled as well as backup.enabled. With an external
+  CloudNativePG cluster the operator already has continuous WAL archiving to object
+  storage — a strictly better backup, off-node, with a recovery point measured in
+  seconds rather than a day. Running this alongside it produces a second backup with
+  a different recovery point and nothing that says which one is authoritative, and
+  it would need a CONNECT grant and a NetworkPolicy hole into someone else's
+  database to do it. It stands down instead. See values.yaml postgres.external.
 */}}
 apiVersion: v1
 kind: PersistentVolumeClaim

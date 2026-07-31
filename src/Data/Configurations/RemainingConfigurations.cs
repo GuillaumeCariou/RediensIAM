@@ -231,10 +231,16 @@ public class AuditLogConfiguration : IEntityTypeConfiguration<AuditLog>
                    v => JsonSerializer.Deserialize<Dictionary<string, object>>(v, JsonOptions) ?? new Dictionary<string, object>(),
                    DictComparer);
 
+        builder.Property(x => x.Hash).IsRequired().HasMaxLength(64).HasDefaultValue("");
+        builder.Property(x => x.PrevHash).HasMaxLength(64);
+
         builder.HasIndex(x => new { x.OrgId, x.CreatedAt });
         builder.HasIndex(x => new { x.ProjectId, x.CreatedAt });
         builder.HasIndex(x => new { x.ActorId, x.CreatedAt });
         builder.HasIndex(x => new { x.Action, x.CreatedAt });
+        // The chain is walked per organisation in id order; verification would otherwise be a
+        // full scan of the table for every org.
+        builder.HasIndex(x => new { x.OrgId, x.Id });
     }
 }
 

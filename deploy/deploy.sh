@@ -135,9 +135,30 @@ echo "  Ready at ${REGISTRY} (loopback only)"
 # is a different and worse thing than the value being weak.
 KNOWN_DEFAULTS='changeme|CHANGE_ME_HYDRA_SYSTEM_SECRET_32CHARS|Admin1234!'
 
+# R-15. The DSNs this function writes have to agree with the chart's Postgres TLS
+# posture, or a fresh install deadlocks: `requireSsl` makes pg_hba.conf admit
+# `hostssl` only, and a cleartext DSN against that connects to nothing.
+# `requireSsl` is grepped rather than `tls: enabled:` because the key name is
+# unique in these files — there are three separate `tls:` blocks and matching the
+# wrong one is how this kind of check becomes a lie.
+# The chart has a matching `fail` guard, so a mismatch is a template error and not
+# a 3am connection refusal; this is what stops that guard from ever firing.
+REQUIRE_SSL=false
+if grep -Eqs '^[[:space:]]*requireSsl:[[:space:]]*true' "${ENV_FILE}" "${CHART}/values.yaml"; then
+  REQUIRE_SSL=true
+fi
+
 write_secrets_file() {
   local file="$1" email="$2" password="$3"
-  local db db_app db_hydra db_keto db_backup hydra_sys enc_key pepper
+  local app_ssl="" ory_ssl="disable"
+  if [ "${REQUIRE_SSL}" = "true" ]; then
+    # `Trust Server Certificate=true` is the honest ceiling while the issuer is the
+    # `selfsigned` ClusterIssuer: encryption, no server authentication. `verify-full`
+    # needs a real CA whose root is distributed to app, Hydra and Keto.
+    app_ssl=";SSL Mode=Require;Trust Server Certificate=true"
+    ory_ssl="require"
+  fi
+  local db db_app db_hydra db_keto db_backup dfly hydra_sys enc_key pepper
   # The prod password is operator-chosen, so it can contain " \ or $, all of which break a
   # double-quoted YAML scalar. A single-quoted scalar only needs ' doubled.
   local password_yaml="'${password//\'/\'\'}'"
@@ -149,6 +170,14 @@ write_secrets_file() {
   db_hydra=$(openssl rand -hex 20)
   db_keto=$(openssl rand -hex 20)
   db_backup=$(openssl rand -hex 20)
+  # R-15. This was never generated. `dragonfly.local.password` defaulted to "" and this
+  # function never set it, so the chart rendered `--requirepass=` and the cache ran with
+  # NO authentication — protected only by `dragonfly-lockdown`, one NetworkPolicy away
+  # from being open to every pod in the namespace. It also holds the DataProtection key
+  # ring, so an unauthenticated writer there can mint session cookies.
+  # Found because Dragonfly refuses to start with TLS and no auth method:
+  #   E server_family.cc:292] TLS configured but no authentication method is used!
+  dfly=$(openssl rand -hex 24)
   hydra_sys=$(openssl rand -hex 32)
   enc_key=$(openssl rand -hex 32)   # must be exactly 64 hex chars (32 bytes) — HKDF root
   pepper=$(openssl rand -hex 32)    # Security__Argon2Pepper; was generated and then dropped
@@ -165,8 +194,8 @@ write_secrets_file() {
     cat > "${file}" <<EOF
 rediensiam:
   secrets:
-    databaseUrl: "Host=rediensiam-postgres;Database=rediensiam;Username=iam_app;Password=${db_app}"
-    cacheUrl: "rediensiam-dragonfly:6379,abortConnect=false"
+    databaseUrl: "Host=rediensiam-postgres;Database=rediensiam;Username=iam_app;Password=${db_app}${app_ssl}"
+    cacheUrl: "rediensiam-dragonfly:6379,abortConnect=false,password=${dfly}"
     encryptionKey: "${enc_key}"
     smtpPassword: ""
     bootstrapEmail: "${email}"
@@ -181,11 +210,14 @@ rediensiam:
         hydraPassword: ${db_hydra}
         ketoPassword: ${db_keto}
         backupPassword: ${db_backup}
+  dragonfly:
+    local:
+      password: ${dfly}
 
 hydra:
   hydra:
     config:
-      dsn: "postgres://iam_hydra:${db_hydra}@rediensiam-postgres:5432/hydra?sslmode=disable"
+      dsn: "postgres://iam_hydra:${db_hydra}@rediensiam-postgres:5432/hydra?sslmode=${ory_ssl}"
       secrets:
         # Hydra reads this list newest-first: element 0 encrypts, the rest only decrypt. That is
         # what makes a rotation non-destructive — prepend, upgrade, then drop the tail once the
@@ -196,7 +228,7 @@ hydra:
 keto:
   keto:
     config:
-      dsn: "postgres://iam_keto:${db_keto}@rediensiam-postgres:5432/keto?sslmode=disable"
+      dsn: "postgres://iam_keto:${db_keto}@rediensiam-postgres:5432/keto?sslmode=${ory_ssl}"
 EOF
   )
   chmod 600 "${file}"
@@ -290,6 +322,29 @@ else
       exit 1
     fi
     echo "  WARNING: continuing (dev). The backup CronJob will fail until you migrate."
+    echo ""
+  fi
+
+  # R-15. A secrets file written before the cache had a password renders
+  # `--requirepass=` and an unauthenticated Dragonfly. Unlike the T-04 case this is
+  # recoverable in place: add the two lines, redeploy, and the cache restarts.
+  if ! grep -q '^      password:.*' <(sed -n '/^  dragonfly:/,/^[a-z]/p' "${SECRETS_FILE}") 2>/dev/null; then
+    echo ""
+    echo "  ┌─ R-15: this install has no cache password ─────────────────────────"
+    echo "  │  ${SECRETS_FILE} sets no rediensiam.dragonfly.local.password, so"
+    echo "  │  Dragonfly runs with --requirepass= (no authentication) and cannot"
+    echo "  │  have TLS enabled at all — it refuses to start without an auth method."
+    echo "  │  Fix (dev or prod, no data loss beyond the cache itself):"
+    echo "  │    PW=\$(openssl rand -hex 24)"
+    echo "  │    add to ${SECRETS_FILE}:"
+    echo "  │      rediensiam.dragonfly.local.password: \$PW"
+    echo "  │    and append ',password='\$PW to rediensiam.secrets.cacheUrl"
+    echo "  └────────────────────────────────────────────────────────────────────"
+    if [ "${PROD}" = "true" ]; then
+      echo "  ERROR: refusing to deploy prod with an unauthenticated cache."
+      exit 1
+    fi
+    echo "  WARNING: continuing (dev) with an unauthenticated cache."
     echo ""
   fi
 fi

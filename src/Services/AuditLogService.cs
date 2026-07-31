@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using RediensIAM.Data;
 using RediensIAM.Data.Entities;
 
@@ -49,5 +50,31 @@ public class AuditLogService(IServiceScopeFactory scopeFactory, IHttpContextAcce
                 metadata
             }, orgId, projectId);
         }
+    }
+
+    /// <summary>
+    /// Walks one organisation's hash chain and returns the id of the first row that does not link
+    /// (S-3). Null means every surviving row is exactly as it was written and none has been
+    /// removed from the middle.
+    ///
+    /// <para>
+    /// This is detection, not prevention: the application holds the credentials that could rewrite
+    /// the table, so nothing at this layer can stop a determined writer. What it can do is make
+    /// the result inconsistent, which is the difference between an audit log and a list of rows.
+    /// Run it from an operator surface or on a schedule; the answer is only useful if somebody
+    /// looks at it.
+    /// </para>
+    /// </summary>
+    public async Task<long?> VerifyChainAsync(Guid? orgId, CancellationToken cancellationToken = default)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<RediensIamDbContext>();
+
+        var rows = await db.AuditLogs.AsNoTracking()
+            .Where(a => a.OrgId == orgId)
+            .OrderBy(a => a.Id)
+            .ToListAsync(cancellationToken);
+
+        return AuditChain.FirstBreak(rows);
     }
 }

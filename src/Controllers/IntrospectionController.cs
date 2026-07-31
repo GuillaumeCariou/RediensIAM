@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using RediensIAM.Config;
+using RediensIAM.Data;
 using RediensIAM.Middleware;
 using RediensIAM.Models;
 using RediensIAM.Services;
@@ -22,6 +24,7 @@ namespace RediensIAM.Controllers;
 [ApiController]
 [Route("api")]
 public class IntrospectionController(
+    RediensIamDbContext db,
     HydraService hydra,
     PatService pats,
     KetoService keto,
@@ -29,6 +32,15 @@ public class IntrospectionController(
     AuditLogService audit,
     AppConfig appConfig) : ControllerBase
 {
+    /// <summary>
+    /// Contract version of this surface. It exists so a client can tell an audience-enforcing
+    /// server from one that silently ignores the <c>aud</c> it sent: an older RediensIAM drops
+    /// the unknown field and answers without <c>ver</c>, so an SDK that requires
+    /// <c>ver &gt;= 1</c> fails closed instead of believing it is bound when it is not. Every
+    /// answer carries it, including <c>{"active": false}</c>.
+    /// </summary>
+    public const int ContractVersion = 1;
+
     private TokenClaims Caller => HttpContext.GetClaims()!;
 
     /// <summary>
@@ -48,6 +60,12 @@ public class IntrospectionController(
     /// RFC 7662 token introspection. Accepts form-encoded parameters as the RFC specifies.
     /// Answers <c>{ "active": false }</c> for anything not currently valid — never an error,
     /// so a caller cannot distinguish "malformed" from "revoked" from "expired".
+    ///
+    /// <para><b>Breaking:</b> <c>aud</c> is required. A resource server that does not declare
+    /// which tenant it serves is refused with 400, because the alternative — the pre-1 behaviour
+    /// — is that a deployment-scoped gateway credential resolves every tenant's token as
+    /// <c>active: true</c> and the resource server has to remember to compare
+    /// <c>project_id</c> itself. Nobody remembers. See P-06.</para>
     /// </summary>
     [HttpPost("introspect")]
     [ProducesResponseType(typeof(IntrospectionResult), StatusCodes.Status200OK)]
@@ -56,11 +74,20 @@ public class IntrospectionController(
         if (!IsServiceAccountCaller())
             return StatusCode(403, new { error = "service_account_required" });
 
+        // 400, not {"active":false}: this is a defect in the caller's own request, not a
+        // statement about the token, and answering "inactive" would let an un-migrated
+        // integration keep running while believing it had merely been handed a dead token.
+        if (string.IsNullOrWhiteSpace(body.Aud))
+            return BadRequest(new { error = "audience_required", ver = ContractVersion });
+
         if (string.IsNullOrWhiteSpace(body.Token))
             return Ok(IntrospectionResult.Inactive);
 
         var claims = await ResolveAsync(body.Token);
         if (claims is null) return Ok(IntrospectionResult.Inactive);
+
+        if (!await IsBoundToAudienceAsync(claims, body.Aud, "api.introspect.audience_mismatch"))
+            return Ok(IntrospectionResult.Inactive);
 
         // Out of scope answers "inactive", not "forbidden": the RFC 7662 contract here is that a
         // caller cannot distinguish malformed from revoked from expired, and telling it "that
@@ -70,7 +97,9 @@ public class IntrospectionController(
 
         // Roles are re-verified against Keto/DB, so a role revoked after the token was minted
         // does not survive in the answer.
-        var level = claims.GetManagementLevel();
+        // Legitimate: this asks what the *presented* token claims, not what the caller is granted.
+        // The name says so, so it cannot be mistaken for an authorisation decision (S-1).
+        var level = GrantedLevel.ClaimedLevel(claims);
         var roles = level != ManagementLevel.None && !await live.IsStillGrantedAsync(claims, level)
             ? claims.Roles.Where(r => !IsManagementRole(r)).ToList()
             : claims.Roles;
@@ -83,13 +112,17 @@ public class IntrospectionController(
             ProjectId: NullIfEmpty(claims.ProjectId),
             Roles:     roles,
             ClientId:  NullIfEmpty(claims.ClientId),
-            IsServiceAccount: claims.IsServiceAccount));
+            IsServiceAccount: claims.IsServiceAccount,
+            Aud:       body.Aud));
     }
 
     /// <summary>
     /// Permission decision for a gateway: "may the bearer of this token do X?", expressed as a
     /// Keto relation check. Keeps the policy in one place instead of every gateway
     /// reimplementing its own interpretation of the roles claim.
+    ///
+    /// <para><b>Breaking:</b> <c>aud</c> is required here too, and the <c>object</c> is now
+    /// scoped to the tenant the answer is about (P-05).</para>
     /// </summary>
     [HttpPost("authorize")]
     [ProducesResponseType(typeof(AuthorizationResult), StatusCodes.Status200OK)]
@@ -98,11 +131,17 @@ public class IntrospectionController(
         if (!IsServiceAccountCaller())
             return StatusCode(403, new { error = "service_account_required" });
 
+        if (string.IsNullOrWhiteSpace(body.Aud))
+            return BadRequest(new { error = "audience_required", ver = ContractVersion });
+
         var claims = await ResolveAsync(body.Token);
-        if (claims is null) return Ok(new AuthorizationResult(false, null));
+        if (claims is null) return Ok(AuthorizationResult.Denied);
+
+        if (!await IsBoundToAudienceAsync(claims, body.Aud, "api.authorize.audience_mismatch"))
+            return Ok(AuthorizationResult.Denied);
 
         if (!await IsInCallerScopeAsync(claims, "api.authorize.out_of_scope"))
-            return Ok(new AuthorizationResult(false, null));
+            return Ok(AuthorizationResult.Denied);
 
         // The System namespace holds exactly one object and one interesting relation:
         // rediensiam#super_admin. A tenant credential asking about it is enumerating the
@@ -112,8 +151,11 @@ public class IntrospectionController(
         {
             await audit.RecordAsync(CallerOrgScope, null, Caller.ParsedUserId,
                 "api.authorize.out_of_scope", "keto_namespace", body.Namespace);
-            return Ok(new AuthorizationResult(false, null));
+            return Ok(AuthorizationResult.Denied);
         }
+
+        if (!await IsObjectInScopeAsync(claims, body.Namespace, body.Object))
+            return Ok(AuthorizationResult.Denied);
 
         var subject = $"user:{claims.ParsedUserId}";
         var allowed = await keto.CheckAsync(body.Namespace, body.Object, body.Relation, subject);
@@ -122,6 +164,63 @@ public class IntrospectionController(
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// P-06. The resource server names the tenant it serves; a token from anywhere else is not
+    /// its business and reads inactive.
+    ///
+    /// A token is bound to <paramref name="aud"/> when the value is the token's
+    /// <c>project_id</c>, its <c>org_id</c> (the only tenant a token without a project has), or
+    /// one of the OAuth2 audiences Hydra minted it for. Both id forms are accepted because a
+    /// service-account PAT carries no project — a gateway fronting a whole organisation declares
+    /// the org id, one fronting a single application declares the project id, and neither can
+    /// name a tenant it does not belong to.
+    ///
+    /// The comparison is fail-closed on emptiness: a token whose <c>project_id</c> and
+    /// <c>org_id</c> are both blank matches no audience at all and can only be introspected by
+    /// naming an explicit <c>aud</c> claim on it.
+    /// </summary>
+    private async Task<bool> IsBoundToAudienceAsync(TokenClaims subject, string aud, string auditAction)
+    {
+        if (Matches(subject.ProjectId) || Matches(subject.OrgId)
+            || subject.Audiences.Contains(aud, StringComparer.Ordinal))
+            return true;
+
+        await audit.RecordAsync(CallerOrgScope, null, Caller.ParsedUserId, auditAction, "audience", aud);
+        return false;
+
+        bool Matches(string? value) =>
+            !string.IsNullOrEmpty(value) && value.Equals(aud, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// P-05. <c>object</c> used to reach Keto unchecked, so an org-scoped gateway could ask
+    /// "does my user hold relation R on <i>someone else's</i> object?" and read the answer one
+    /// bit at a time — enumeration of another tenant's relation graph through a decision
+    /// endpoint. The subject is always the presented token's user, so the answer was never a
+    /// forged decision; it was still a disclosure.
+    ///
+    /// The scope is the same one introspection uses — the caller's organisation — falling back
+    /// to the subject token's organisation for a deployment-level caller, which the audience
+    /// binding above has already pinned to one tenant. Unknown namespaces are refused rather
+    /// than passed through: a namespace this deployment does not write objects into has no
+    /// ownership to check, and failing open there would reopen the finding under a new name.
+    /// </summary>
+    private async Task<bool> IsObjectInScopeAsync(TokenClaims subject, string ns, string obj)
+    {
+        var scope = CallerOrgScope
+                 ?? (Guid.TryParse(subject.OrgId, out var subjectOrg) ? subjectOrg : (Guid?)null);
+        if (scope is null) return true;
+
+        return await IsOwnedByAsync(ns, obj, scope.Value) || await RefuseAsync();
+
+        async Task<bool> RefuseAsync()
+        {
+            await audit.RecordAsync(scope, null, Caller.ParsedUserId,
+                "api.authorize.object_out_of_scope", ns, obj);
+            return false;
+        }
+    }
 
     /// <summary>Both token shapes RediensIAM issues: personal access tokens and OAuth2 access tokens.</summary>
     private async Task<TokenClaims?> ResolveAsync(string token)
@@ -158,6 +257,22 @@ public class IntrospectionController(
         return false;
     }
 
+    /// <summary>
+    /// Whether <paramref name="obj"/> is an object of <paramref name="orgId"/>. Unknown
+    /// namespaces are not owned by anyone here, so they answer false.
+    /// </summary>
+    private async Task<bool> IsOwnedByAsync(string ns, string obj, Guid orgId)
+    {
+        if (!Guid.TryParse(obj, out var objectId)) return false;
+
+        if (Same(ns, Roles.KetoOrgsNamespace))      return objectId == orgId;
+        if (Same(ns, Roles.KetoProjectsNamespace))  return await db.Projects.AnyAsync(p => p.Id == objectId && p.OrgId == orgId);
+        if (Same(ns, Roles.KetoUserListsNamespace)) return await db.UserLists.AnyAsync(l => l.Id == objectId && l.OrgId == orgId);
+        return false;
+
+        static bool Same(string a, string b) => a.Equals(b, StringComparison.OrdinalIgnoreCase);
+    }
+
     private bool IsServiceAccountCaller() =>
         Caller.IsServiceAccount
         || Caller.ClientId.StartsWith(Roles.ServiceAccountClientPrefix, StringComparison.Ordinal);
@@ -178,7 +293,13 @@ public class IntrospectionController(
 /// is worse than not declaring it; a client that sends it is unaffected, the value is discarded
 /// during model binding exactly as it was before.
 /// </summary>
-public record IntrospectionRequest(string Token);
+/// <summary>
+/// <c>aud</c> is <b>required</b> and is the tenant this resource server serves — a project id,
+/// or an organisation id for a gateway that fronts a whole organisation. RFC 7662 §2.1 does not
+/// define it; RFC 8693 and the OAuth2 audience-restriction model do, and without it this
+/// endpoint answers for every tenant in the deployment at once.
+/// </summary>
+public record IntrospectionRequest(string Token, string? Aud = null);
 
 /// <summary>RFC 7662 response. Field names are serialised snake_case by the global JSON options.</summary>
 public record IntrospectionResult(
@@ -189,7 +310,11 @@ public record IntrospectionResult(
     string? ProjectId = null,
     List<string>? Roles = null,
     string? ClientId = null,
-    bool IsServiceAccount = false)
+    bool IsServiceAccount = false,
+    /// <summary>Echo of the audience the answer was scoped to. Null on an inactive answer.</summary>
+    string? Aud = null,
+    /// <summary>See <see cref="IntrospectionController.ContractVersion"/>. Always present.</summary>
+    int Ver = IntrospectionController.ContractVersion)
 {
     public static readonly IntrospectionResult Inactive = new(false);
 }
@@ -198,6 +323,10 @@ public record AuthorizationRequest(
     string Token,
     string Namespace,
     string Object,
-    string Relation);
+    string Relation,
+    string? Aud = null);
 
-public record AuthorizationResult(bool Allowed, string? UserId);
+public record AuthorizationResult(bool Allowed, string? UserId, int Ver = IntrospectionController.ContractVersion)
+{
+    public static readonly AuthorizationResult Denied = new(false, null);
+}

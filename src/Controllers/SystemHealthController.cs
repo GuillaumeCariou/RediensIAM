@@ -24,6 +24,8 @@ public sealed record ComponentHealth(
 
 [ApiController]
 [Route("admin/system")]
+// Second prefix, same actions, same filter — see the note on SystemAdminController.
+[Route("api/manage/system")]
 [RequireManagementLevel(ManagementLevel.SuperAdmin)]
 public class SystemHealthController(
     RediensIamDbContext db,

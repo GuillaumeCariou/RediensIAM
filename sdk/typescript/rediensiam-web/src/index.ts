@@ -12,6 +12,10 @@
  * cannot be shipped to a browser — anyone with devtools would have it. Token validation belongs
  * on your server; use `rediensiam-client` (C#/Rust) there.
  *
+ * That is also why the mandatory `aud` on `/api/introspect` and `/api/authorize` does not reach
+ * this SDK: it declares no audience because it never calls those endpoints. The backend SDKs
+ * require one — see `sdk/README.md`.
+ *
  * Claims exposed by {@link RediensIam.claims} are for **rendering decisions only** — showing a
  * menu, hiding a button. They are read from the token without verification. Never gate anything
  * that matters on them; the server re-checks every request.

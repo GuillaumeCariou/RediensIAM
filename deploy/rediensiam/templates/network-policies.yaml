@@ -45,9 +45,7 @@ spec:
   egress:
     - ports: [{port: 5432}]
       to:
-        - podSelector:
-            matchLabels:
-              app: {{ .Release.Name }}-postgres
+{{ include "rediensiam.postgresPeer" . | indent 8 }}
     - ports: [{port: 6379}]
       to:
         - podSelector:
@@ -137,9 +135,7 @@ spec:
   egress:
     - ports: [{port: 5432}]
       to:
-        - podSelector:
-            matchLabels:
-              app: {{ .Release.Name }}-postgres
+{{ include "rediensiam.postgresPeer" . | indent 8 }}
 {{ include "rediensiam.dnsEgress" . | indent 4 }}
 ---
 # ── Keto ──────────────────────────────────────────────────────────────────────────────────
@@ -164,9 +160,7 @@ spec:
   egress:
     - ports: [{port: 5432}]
       to:
-        - podSelector:
-            matchLabels:
-              app: {{ .Release.Name }}-postgres
+{{ include "rediensiam.postgresPeer" . | indent 8 }}
 {{ include "rediensiam.dnsEgress" . | indent 4 }}
 {{- if .Values.rediensiam.postgres.local.enabled }}
 ---
@@ -199,6 +193,12 @@ spec:
         - podSelector:
             matchLabels:
               app: {{ .Release.Name }}-backup
+        # S-5. The RLS hook Job, when postgres.rls.enabled. Same lesson as the backup
+        # above: a Job that is not named here is refused at the network layer and the
+        # only symptom is a hook that fails long after anyone is watching.
+        - podSelector:
+            matchLabels:
+              app: {{ .Release.Name }}-rls
       ports: [{port: 5432}]
   egress:
     # The database originates nothing. DNS only, so a write primitive inside Postgres has no

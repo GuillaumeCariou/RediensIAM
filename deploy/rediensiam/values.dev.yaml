@@ -13,6 +13,25 @@ rediensiam:
       # acceptable on a dev box, never on a deployed node. Prod does not set this.
       type: NodePort
 
+  # R-15, live on this cluster since 2026-07-31. cert-manager v1.21.1 is installed
+  # (namespace `cert-manager`) and the bundled Postgres serves TLS 1.3 from a
+  # `selfsigned`-issued Certificate. requireSsl means pg_hba.conf admits `hostssl`
+  # only, so cleartext is refused by the server rather than merely unused.
+  #
+  # These are NOT chart defaults: an install without cert-manager cannot render the
+  # Certificate at all. They live here because this cluster has it and because the
+  # alternative — carrying the state only in `helm --set` — is exactly the
+  # "deployed ≠ repository" drift step 12 exists to catch. Turning them off on an
+  # already-migrated database is an outage: pg_hba.conf lives on the PVC and still
+  # says hostssl.
+  #
+  # dragonfly.local.tls stays off — see .security-hardening/18-cnpg-tls-rls.md §2.
+  postgres:
+    local:
+      tls:
+        enabled: true
+        requireSsl: true
+
   ingress:
     public:
       tls:

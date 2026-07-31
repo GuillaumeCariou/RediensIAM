@@ -74,28 +74,68 @@ public class KetoService(IHttpClientFactory http, AppConfig appConfig, RediensIa
     }
 
     // ── Role level resolution ─────────────────────────────────────────────────
+    //
+    // S-8. One question, one implementation, one store.
+    //
+    // There used to be three: LiveAuthorizationService resolved project_admin as "Keto manager of
+    // some project OR an org_roles row anywhere", GetActorManagementLevelForOrgAsync as "an
+    // org_roles row in this org", GetActorManagementLevelForProjectAsync as "Keto manager of this
+    // project". Three answers to one question, two of them sourced from a store the other did not
+    // consult, and no code path that could ever notice them disagreeing.
+    //
+    // Keto is now the single authority for every management level, because it is the store every
+    // grant writes to *first* (AssignManagementRoleAsync, AssignOrgAdmin) — so a row without a
+    // tuple is a failed grant, which fails closed, while a tuple without a row is a grant whose
+    // bookkeeping lagged, which still works. org_roles keeps holding the scope, the display name
+    // and the grant provenance; it is no longer consulted as an answer.
 
-    public async Task<ManagementLevel> GetActorManagementLevelForProjectAsync(Guid actorId, Guid projectId, Guid orgId)
+    /// <summary>
+    /// Whether <paramref name="level"/> is granted to the actor within the given scope. The scopes
+    /// are the ones the grant paths actually write, so the check reads the tuple the grant wrote.
+    /// </summary>
+    public async Task<bool> IsManagementLevelGrantedAsync(Guid actorId, ManagementLevel level, Guid? orgId, Guid? projectId)
     {
-        if (await CheckAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{actorId}"))
-            return ManagementLevel.SuperAdmin;
-        if (await CheckAsync(Roles.KetoOrgsNamespace, orgId.ToString(), Roles.KetoOrgAdminRelation, $"user:{actorId}"))
-            return ManagementLevel.OrgAdmin;
-        if (await CheckAsync(Roles.KetoProjectsNamespace, projectId.ToString(), Roles.KetoManagerRelation, $"user:{actorId}"))
-            return ManagementLevel.ProjectAdmin;
+        var subject = $"user:{actorId}";
+        return level switch
+        {
+            ManagementLevel.SuperAdmin => await CheckAsync(
+                Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, subject),
+
+            // An org_admin claim must name the org it applies to. Falling back to "admin of any
+            // org" let an orphaned grant — one whose organisation had been deleted — satisfy the
+            // check while carrying an empty org_id downstream.
+            ManagementLevel.OrgAdmin => orgId is { } org
+                && await CheckAsync(Roles.KetoOrgsNamespace, org.ToString(), Roles.KetoOrgAdminRelation, subject),
+
+            // Both shapes AssignManagementRoleAsync writes: unscoped (org-wide project_admin) and
+            // scoped to one project. Plus the Projects#manager relation, which is what
+            // GetConsent reads to decide the role goes in the token at all.
+            ManagementLevel.ProjectAdmin =>
+                (projectId is { } proj && await CheckAsync(
+                    Roles.KetoProjectsNamespace, proj.ToString(), Roles.KetoManagerRelation, subject))
+                || (orgId is { } o && await CheckAsync(
+                    Roles.KetoOrgsNamespace, o.ToString(), Roles.ProjectAdmin, subject))
+                || (orgId is { } o2 && projectId is { } p2 && await CheckAsync(
+                    Roles.KetoOrgsNamespace, o2.ToString(), Roles.ProjectAdmin, $"{subject}|project:{p2}")),
+
+            _ => false,
+        };
+    }
+
+    /// <summary>Most privileged level the actor holds in the given scope, or None.</summary>
+    public async Task<ManagementLevel> ResolveManagementLevelAsync(Guid actorId, Guid? orgId, Guid? projectId)
+    {
+        foreach (var level in (ManagementLevel[])[ManagementLevel.SuperAdmin, ManagementLevel.OrgAdmin, ManagementLevel.ProjectAdmin])
+            if (await IsManagementLevelGrantedAsync(actorId, level, orgId, projectId))
+                return level;
         return ManagementLevel.None;
     }
 
-    public async Task<ManagementLevel> GetActorManagementLevelForOrgAsync(Guid actorId, Guid orgId)
-    {
-        if (await CheckAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{actorId}"))
-            return ManagementLevel.SuperAdmin;
-        if (await CheckAsync(Roles.KetoOrgsNamespace, orgId.ToString(), Roles.KetoOrgAdminRelation, $"user:{actorId}"))
-            return ManagementLevel.OrgAdmin;
-        var pmRole = await db.OrgRoles.AnyAsync(r => r.OrgId == orgId && r.UserId == actorId && r.Role == Roles.ProjectAdmin);
-        if (pmRole) return ManagementLevel.ProjectAdmin;
-        return ManagementLevel.None;
-    }
+    public Task<ManagementLevel> GetActorManagementLevelForProjectAsync(Guid actorId, Guid projectId, Guid orgId)
+        => ResolveManagementLevelAsync(actorId, orgId, projectId);
+
+    public Task<ManagementLevel> GetActorManagementLevelForOrgAsync(Guid actorId, Guid orgId)
+        => ResolveManagementLevelAsync(actorId, orgId, null);
 
     // ── Role assignment ───────────────────────────────────────────────────────
 

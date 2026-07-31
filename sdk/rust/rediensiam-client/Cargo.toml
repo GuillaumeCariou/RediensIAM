@@ -16,4 +16,6 @@ tokio = { version = "1", features = ["sync", "time"] }
 thiserror = "2"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+# net + io-util: the wire tests run a one-shot loopback listener, because the only proof that
+# `aud` is sent is reading the bytes the client actually wrote.
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util"] }

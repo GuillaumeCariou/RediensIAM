@@ -21,6 +21,10 @@ Setting up the clients, projects and service accounts these SDKs need is
 first time — in particular, **every JSON body on this API is `snake_case`**, and a camelCase key
 binds to nothing without erroring.
 
+> **Upgrading an existing integration?** The backend SDKs gained one **required** option and it
+> is a breaking change on both sides of the wire. Read
+> [`aud` is now a required SDK option](#aud-is-now-a-required-sdk-option) first.
+
 ---
 
 ## Backend SDKs
@@ -62,6 +66,73 @@ See [`docs/INTEGRATION.md`](../docs/INTEGRATION.md#introspection--the-backend-pa
 
 ---
 
+## `aud` is now a required SDK option
+
+**Two breaking changes, one migration.** The server made `aud` mandatory on `/api/introspect` and
+`/api/authorize`; the SDKs gained a required option to send it. You need both halves, and this is
+the whole of it.
+
+### What broke, and why it had to
+
+Introspection used to answer for whatever token you handed it. Scoping came from *the caller's*
+organisation — and a multi-tenant gateway must hold a deployment-level service account, which has
+no organisation, so it stayed deliberately unscoped. One gateway credential therefore resolved
+**every** tenant's token in the deployment as `active: true`, and each resource server was
+expected to compare `project_id` against its own configuration afterwards. Nothing enforced that,
+and no SDK had a field for it. That is finding P-06.
+
+So the tenant a resource server serves is now declared, per request, as `aud`:
+
+| Language | Option | Value |
+|---|---|---|
+| C# | `RediensIamOptions.Audience` | the project id this service serves, **or** the organisation id if it fronts a whole organisation |
+| Rust | `Config::audience` | same |
+| Browser | — | not applicable; see below |
+
+**There is no default and there will not be one.** A default is a guess about which tenant your
+service belongs to, and a wrong guess reproduces P-06 under a new name. A client built without an
+audience throws at construction — `ArgumentException` in C#, `Error::Config` in Rust — the same
+place and the same way a cleartext `BaseUrl` already fails. It is a startup failure with a
+message naming the fix, not a 400 on every request once traffic arrives.
+
+### The `ver` check, and why it is not optional
+
+The SDKs also **refuse any answer that arrives without `ver`**, throwing
+`InvalidOperationException` (C#) or returning `Error::ServerTooOld` (Rust).
+
+This matters more than it looks. A RediensIAM older than contract version 1 does not reject the
+`aud` you send — it silently discards the unknown field and answers exactly as it always did. An
+SDK that only *sent* `aud` therefore could not tell an enforcing server from an ignoring one, and
+would report success while being bound to nothing. `ver` is present on every answer from an
+upgraded server, including `{"active": false}` and the 400, so requiring it turns that silent
+failure into a loud one.
+
+### Migration
+
+1. **Upgrade the SDK and set the option.** One line per service — see the C# and Rust examples
+   below. Each caller serves exactly one tenant; that tenant's id is the value.
+2. **Deploy your services, then the server.** In that order. The old server ignores the `aud` the
+   new SDK sends, so there is no window of 400s — but a new server rejects an old SDK
+   immediately. The `ver` check makes step 2's intermediate state safe to sit in: while the old
+   server is still up, the new SDK fails closed rather than pretending to be audience-bound.
+   Do not run an upgraded SDK against an un-upgraded server for longer than the rollout takes —
+   it will refuse every answer, by design.
+3. **Nothing to do in the browser.** `rediensiam-web` never called these endpoints.
+
+| Symptom | Cause |
+|---|---|
+| Throws at startup, message naming `Audience` / `audience` | Step 1 not done for that service |
+| `400 audience_required` | An un-upgraded SDK, or a raw-HTTP caller, against an upgraded server |
+| `ver=0, expected at least 1` | An upgraded SDK against an un-upgraded server — step 2 out of order |
+| `{"active": false}` on a token you know is good | The `aud` you configured names a different tenant than the token belongs to |
+
+That last row is the quiet one. An audience mismatch is deliberately indistinguishable from
+expired or revoked — the endpoint must not confirm that someone else's token exists — so it
+surfaces as a token that simply will not work. Check the id you configured against the token's
+`project_id` and `org_id`.
+
+---
+
 ## The API these wrap
 
 Both SDKs speak two endpoints on the public port. Callers authenticate as a **service account**
@@ -74,11 +145,11 @@ token validity.
 Form-encoded, per the RFC.
 
 ```
-token=<token>&token_type_hint=access_token
+token=<token>&token_type_hint=access_token&aud=<project-or-org-id>
 ```
 
-`token_type_hint` is sent for RFC conformance; the server does not read it, and pins its own hint
-when it asks Hydra. Only `token` matters.
+`aud` is **required** — see [above](#aud-is-now-a-required-sdk-option). `token_type_hint` is sent
+for RFC conformance; the server does not read it, and pins its own hint when it asks Hydra.
 
 ```json
 {
@@ -89,22 +160,29 @@ when it asks Hydra. Only `token` matters.
   "project_id": "8ac4…",
   "roles": ["org_admin"],
   "client_id": "client_admin_system",
-  "is_service_account": false
+  "is_service_account": false,
+  "aud": "8ac4…",
+  "ver": 1
 }
 ```
 
-An unusable token answers `{"active": false}` with everything else null — never an error status,
-so a caller cannot distinguish "malformed" from "revoked" from "expired". Management roles are
-re-verified against Keto before being reported, so a revoked role does not appear.
+An unusable token answers `{"active": false, "ver": 1}` with everything else null — never an error
+status, so a caller cannot distinguish "malformed" from "revoked" from "expired". A token
+belonging to another tenant answers the same way. Management roles are re-verified against Keto
+before being reported, so a revoked role does not appear.
+
+`ver` is on every answer, including the inactive one and the `400 audience_required`. The SDKs
+refuse anything without it.
 
 ### `POST /api/authorize`
 
 ```json
-{ "token": "…", "namespace": "Organisations", "object": "3f21…", "relation": "org_admin" }
+{ "token": "…", "namespace": "Organisations", "object": "3f21…", "relation": "org_admin",
+  "aud": "<project-or-org-id>" }
 ```
 
 ```json
-{ "allowed": true, "user_id": "0b7c…" }
+{ "allowed": true, "user_id": "0b7c…", "ver": 1 }
 ```
 
 Keeps the policy in RediensIAM instead of every gateway reimplementing its own reading of the
@@ -123,9 +201,13 @@ builder.Services.AddRediensIam(o =>
 {
     o.BaseUrl             = "https://auth.example.com";
     o.ServiceAccountToken = builder.Configuration["RediensIAM:Token"]!;
+    // Required. The tenant this service serves — no default, see above.
+    o.Audience            = builder.Configuration["RediensIAM:ProjectId"]!;
     o.CacheDuration       = TimeSpan.FromSeconds(30);
 });
 ```
+
+Omit `Audience` and this throws `ArgumentException` at startup, not on the first request.
 
 Use it directly:
 
@@ -169,6 +251,8 @@ use rediensiam_client::{Config, RediensIamClient};
 let iam = RediensIamClient::new(Config {
     base_url: "https://auth.example.com".into(),
     service_account_token: std::env::var("REDIENSIAM_TOKEN")?,
+    // Required. The tenant this service serves — no default, see above.
+    audience: std::env::var("REDIENSIAM_PROJECT_ID")?,
     ..Default::default()
 })?;
 
@@ -180,6 +264,8 @@ if !info.belongs_to_org(&org_id) {
     return Err(forbidden());   // tenant check — do not skip this
 }
 ```
+
+Omit `audience` and `new` returns `Error::Config` — the client never exists.
 
 `RediensIamClient` is cheap to clone; share one instance across handlers.
 
@@ -198,6 +284,11 @@ Cache keys are digests, never the token itself: keys surface in dumps and diagno
 ## Frontend (`rediensiam-web`)
 
 Zero dependencies — Web Crypto and `fetch` cover the whole flow.
+
+**Unaffected by the `aud` change.** This SDK never calls `/api/introspect` or `/api/authorize`,
+so it has no audience to declare and needs no migration. Those endpoints require a service-account
+credential, and a credential shipped to a browser belongs to anyone who opens devtools — which is
+also why there is no browser-side audience option to add.
 
 ```bash
 npm install rediensiam-web

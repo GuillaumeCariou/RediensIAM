@@ -173,6 +173,12 @@ rediensiam:
   # A dump beside the database is not disaster recovery — copy the PVC off-node for
   # that. It does cover the cases that actually happen: a bad migration, a dropped
   # table, a tenant deleting itself.
+  #
+  # This CronJob renders only when postgres.local.enabled is true. An external
+  # CloudNativePG cluster does continuous WAL archiving to object storage, which is
+  # strictly better than a nightly logical dump — running both would give you two
+  # backups with different recovery points and no statement about which one is
+  # authoritative. See postgres.external below.
   backup:
     enabled: true
     schedule: "0 3 * * *"
@@ -180,6 +186,9 @@ rediensiam:
     retainCopies: 14
 
   postgres:
+    # ── Built-in StatefulSet (the default) ─────────────────────────────────────
+    # Set local.enabled=false to run against an external PostgreSQL instead — see
+    # postgres.external below for what the chart still needs to know in that mode.
     local:
       enabled: true
       image: postgres:16-alpine
@@ -209,6 +218,21 @@ rediensiam:
       # break anything; it is the DSN change that actually enforces it.
       tls:
         enabled: false
+        # Step 3 of the same runbook: once every DSN carries sslmode, rewrite the
+        # `host` lines in pg_hba.conf to `hostssl` so the SERVER refuses a client
+        # that does not negotiate TLS. Until this is set, TLS is a client-side
+        # preference — correct today, and silently undone by the next service
+        # someone points at this database with sslmode=disable.
+        #
+        # Ordering matters and the chart enforces it: setting this without
+        # tls.enabled, or without `SSL Mode=Require` in every DSN, is a `helm
+        # template` failure rather than a database that answers nothing.
+        #
+        # This only takes effect on a FIRST-EVER start — pg_hba.conf is written by
+        # initdb. On a running database do it live (one sed and pg_reload_conf, no
+        # restart, reversible) and set this flag so a rebuild reproduces it:
+        #   .security-hardening/18-cnpg-tls-rls.md §2
+        requireSsl: false
       resources:
         requests:
           cpu: 100m
@@ -218,6 +242,68 @@ rediensiam:
           cpu: 1000m
           memory: 1Gi
           ephemeral-storage: 2Gi
+
+    # ── External PostgreSQL (CloudNativePG) — used when local.enabled is false ──
+    # The chart does NOT install CloudNativePG and does not create the Cluster; an
+    # operator brings both. What the chart needs from you in this mode:
+    #
+    #   1. Three DSNs in your secrets file pointing at the CNPG read/write service
+    #      (`<cluster>-rw`), one per component, each naming its own role:
+    #        rediensiam.secrets.databaseUrl  → iam_app  @ database `rediensiam`
+    #        hydra.hydra.config.dsn          → iam_hydra @ database `hydra`
+    #        keto.keto.config.dsn            → iam_keto  @ database `keto`
+    #      The T-04 role split is not optional here — see
+    #      .security-hardening/18-cnpg-tls-rls.md for the Cluster manifest that
+    #      creates the same four roles, databases and CONNECT grants that
+    #      postgres.yaml's init.sh creates for the built-in StatefulSet.
+    #   2. podSelector below, so the NetworkPolicies that let the app, Hydra and
+    #      Keto reach :5432 select the right pods. The chart cannot guess this:
+    #      with the built-in StatefulSet it is `app: <release>-postgres`, and CNPG
+    #      labels its instance pods `cnpg.io/cluster: <cluster-name>`.
+    #
+    # What stands down automatically in this mode:
+    #   - the postgres StatefulSet, Service, init ConfigMap and TLS Certificate
+    #   - `<release>-postgres-lockdown` (nothing here owns those pods)
+    #   - the nightly pg_dumpall CronJob and its PVC — CNPG's own continuous
+    #     backup (WAL archiving + base backups to object storage) supersedes it.
+    #     Configure `.spec.backup` on the Cluster; the chart will not do it for you
+    #     and will not warn you if you forget.
+    external:
+      # Labels carried by the database pods. CNPG stamps every instance pod with
+      # `cnpg.io/cluster: <metadata.name of the Cluster>`.
+      podSelector:
+        cnpg.io/cluster: rediensiam-db
+      # Namespace those pods live in. Empty means this release's namespace. A CNPG
+      # Cluster in another namespace also needs that namespace to carry the
+      # `kubernetes.io/metadata.name` label (kubelet sets it by default since 1.21).
+      namespace: ""
+
+    # ── S-5 phase 2 — Postgres row-level security ──────────────────────────────
+    # OFF, and it must stay off until the application half is deployed. These
+    # policies are fail-closed by design: a connection that has not set
+    # `rediensiam.org_id` sees zero rows in every tenant table, which for this
+    # application is a total outage, not a degraded mode.
+    #
+    # What the application must do before this is turned on:
+    #   - issue `SET rediensiam.org_id = '<org uuid>'` on every connection it
+    #     rents, for the tenant the request belongs to;
+    #   - issue `SET rediensiam.org_id = 'system'` for the paths that legitimately
+    #     cross tenants (login before a tenant is known, bootstrap, the audit
+    #     retention sweep, SuperAdmin listings, EF migrations);
+    #   - never leave it unset.
+    # And one thing an operator must do, once, as superuser:
+    #   ALTER ROLE iam_backup BYPASSRLS;
+    # without it pg_dumpall aborts on the first RLS table and the nightly backup
+    # stops working. Full runbook and verification query:
+    #   .security-hardening/18-cnpg-tls-rls.md §3
+    #
+    # Enabling this renders a post-install/post-upgrade Job that applies
+    # files/rls.sql as the table owner. The SQL is idempotent and re-runnable.
+    rls:
+      enabled: false
+      # Applied to the application database only. Hydra and Keto own their own
+      # schemas, have no tenant column, and are isolated by the T-04 role split.
+      database: rediensiam
 
   # ── Dragonfly (Redis-compatible cache) ────────────────────────────────────────
   dragonfly:

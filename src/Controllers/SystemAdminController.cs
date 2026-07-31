@@ -11,8 +11,20 @@ using RediensIAM.Services;
 
 namespace RediensIAM.Controllers;
 
+/// <summary>
+/// The SuperAdmin management surface.
+///
+/// It is served under two prefixes on purpose. <c>/admin</c> is what the admin SPA calls;
+/// <c>/api/manage</c> is the machine-to-machine name, reachable with a SuperAdmin PAT or a
+/// client_credentials token. They are the *same actions on the same class*, not two
+/// implementations — which is the whole point: <c>ManagedApiController</c> used to re-implement
+/// seven of them, and a re-implementation is exactly where an authorisation check goes missing.
+/// Every route below therefore passes through one <see cref="RequireManagementLevelAttribute"/>,
+/// i.e. one live Keto re-check, whichever prefix the caller used.
+/// </summary>
 [ApiController]
 [Route("admin")]
+[Route("api/manage")]
 [RequireManagementLevel(ManagementLevel.SuperAdmin)]
 public class SystemAdminController(
     RediensIamDbContext db,
@@ -389,6 +401,12 @@ var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(u
     {
         var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(ul => ul.Id == id);
         if (ul == null) return NotFound();
+        // Only the ManagedApi copy of this handler had the uniqueness check, so the /admin path
+        // happily created a second user with the same email in the same list — two rows the
+        // login lookup then cannot tell apart.
+        var normalizedEmail = body.Email.ToLowerInvariant();
+        if (await db.Users.AnyAsync(u => u.UserListId == id && u.Email == normalizedEmail))
+            return Conflict(new { error = "email_already_exists" });
         if (UserHelpers.PasswordFloorError(body.Password) is { } floorErr) return floorErr;
         var username = body.Username ?? body.Email.Split('@')[0];
         var discriminator = await UserHelpers.GenerateDiscriminatorAsync(db, id, username);
@@ -559,10 +577,23 @@ var projects = await db.Projects
     }
 
 
+    /// <summary>Projects of one organisation. Kept from the old ManagedApiController surface.</summary>
+    [HttpGet("organizations/{id}/projects")]
+    public async Task<IActionResult> AdminListOrgProjects(Guid id)
+    {
+        if (!await db.Organisations.AnyAsync(o => o.Id == id)) return NotFound();
+        var projects = await db.Projects
+            .Where(p => p.OrgId == id)
+            .Select(p => new { p.Id, p.Name, p.Slug, p.Active, p.HydraClientId, p.CreatedAt })
+            .ToListAsync();
+        return Ok(projects);
+    }
+
     [HttpPost("organizations/{id}/projects")]
     public async Task<IActionResult> AdminCreateProject(Guid id, [FromBody] AdminCreateProjectRequest body)
     {
 var actorId = GetActorId();
+        if (!await db.Organisations.AnyAsync(o => o.Id == id)) return NotFound();
         var project = new Project
         {
             OrgId = id, Name = body.Name, Slug = body.Slug,
@@ -605,6 +636,8 @@ var actorId = GetActorId();
     {
 var project = await db.Projects.FindAsync(id);
         if (project == null) return NotFound();
+        if (await MfaDowngradeGuard.CheckAsync(db, audit, GetActorId(), project, body.RequireMfa, body.ConfirmMfaDowngrade) is { } mfaErr)
+            return mfaErr;
         if (body.Name != null) project.Name = body.Name;
         if (body.RequireRoleToLogin.HasValue)       project.RequireRoleToLogin       = body.RequireRoleToLogin.Value;
         if (body.RequireMfa.HasValue)               project.RequireMfa               = body.RequireMfa.Value;
@@ -1225,7 +1258,9 @@ public record AdminCreateUserListRequest(string Name, [property: System.Text.Jso
 public record AdminCreateProjectRequest(string Name, string Slug, bool? RequireRoleToLogin, string[]? RedirectUris);
 public record AdminUpdateProjectRequest(string? Name, bool? RequireRoleToLogin, bool? RequireMfa, bool? AllowSelfRegistration, bool? EmailVerificationEnabled,
     bool? SmsVerificationEnabled, bool? Active, Guid? DefaultRoleId, bool? ClearDefaultRole, string[]? AllowedEmailDomains, Dictionary<string, object>? LoginTheme,
-    string[]? IpAllowlist, bool? CheckBreachedPasswords);
+    string[]? IpAllowlist, bool? CheckBreachedPasswords,
+    // Acknowledges the 409 from MfaDowngradeGuard. Only read when require_mfa goes true → false.
+    bool? ConfirmMfaDowngrade = null);
 public record AdminAssignUserListRequest([property: System.Text.Json.Serialization.JsonRequired] Guid UserListId);
 public record AdminCreateRoleRequest(string Name, string? Description, int? Rank);
 public record CreateHydraClientRequest(string ClientName, string[] GrantTypes, string[] RedirectUris, string? Scope,

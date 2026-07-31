@@ -11,6 +11,8 @@
 //! let iam = RediensIamClient::new(Config {
 //!     base_url: "https://auth.example.com".into(),
 //!     service_account_token: std::env::var("REDIENSIAM_TOKEN")?,
+//!     // The tenant this service serves. Required — see [`Config::audience`].
+//!     audience: "<project-or-org-id>".into(),
 //!     ..Default::default()
 //! })?;
 //!
@@ -43,7 +45,24 @@ pub enum Error {
 
     #[error("invalid configuration: {0}")]
     Config(String),
+
+    /// The answer carried no `ver`, so it did not come from an audience-enforcing RediensIAM.
+    ///
+    /// A server older than contract version 1 silently discards the unknown `aud` form field and
+    /// answers exactly as it always did. Sending `aud` therefore proves nothing on its own — only
+    /// the presence of `ver` distinguishes a server that enforced the audience from one that
+    /// ignored it. Failing here is the point: the alternative is believing an answer is scoped to
+    /// one tenant when it was scoped to the whole deployment.
+    #[error(
+        "RediensIAM answered with ver={found}, expected at least 1: this server predates \
+         mandatory audience binding and silently ignored the `aud` this client sent. Upgrade \
+         RediensIAM before trusting its answers."
+    )]
+    ServerTooOld { found: u32 },
 }
+
+/// Contract version this client requires on every answer. See [`Error::ServerTooOld`].
+pub const CONTRACT_VERSION: u32 = 1;
 
 /// Answer to an introspection call.
 ///
@@ -67,6 +86,16 @@ pub struct TokenInfo {
     pub client_id: Option<String>,
     #[serde(default)]
     pub is_service_account: bool,
+
+    /// Echo of the `aud` this client sent, on an active answer.
+    #[serde(default)]
+    pub aud: Option<String>,
+
+    /// Contract version of the answer. `0` means the field was absent — see
+    /// [`Error::ServerTooOld`]; [`RediensIamClient::introspect`] refuses such an answer before it
+    /// ever reaches you.
+    #[serde(default)]
+    pub ver: u32,
 }
 
 impl TokenInfo {
@@ -110,6 +139,16 @@ pub struct Config {
     /// (`rediens_pat_…`) is the simplest option.
     pub service_account_token: String,
 
+    /// The tenant **this resource server serves** — the project id it fronts, or the organisation
+    /// id if it fronts a whole organisation. Sent as `aud` on every introspect and authorize
+    /// call, and mandatory at the server since contract version 1.
+    ///
+    /// Required, with deliberately no default. A default would be a guess about which tenant this
+    /// service belongs to, and a wrong guess is P-06 exactly: a deployment-scoped service-account
+    /// credential resolving *every* tenant's token as `active: true`, leaving the resource server
+    /// to remember a `project_id` comparison nobody remembers.
+    pub audience: String,
+
     /// How long a positive introspection is reused. This is the upper bound on how long a
     /// revoked token keeps working here, so keep it short. `Duration::ZERO` disables caching.
     pub cache_duration: Duration,
@@ -122,6 +161,7 @@ impl Default for Config {
         Self {
             base_url: String::new(),
             service_account_token: String::new(),
+            audience: String::new(),
             cache_duration: Duration::from_secs(30),
             timeout: Duration::from_secs(5),
         }
@@ -134,11 +174,14 @@ struct AuthorizeRequest<'a> {
     namespace: &'a str,
     object: &'a str,
     relation: &'a str,
+    aud: &'a str,
 }
 
 #[derive(Deserialize)]
 struct AuthorizeResponse {
     allowed: bool,
+    #[serde(default)]
+    ver: u32,
 }
 
 struct CacheEntry {
@@ -163,6 +206,17 @@ impl RediensIamClient {
         }
         if config.service_account_token.is_empty() {
             return Err(Error::Config("service_account_token is required".into()));
+        }
+        // Checked here rather than on the first call, for the same reason the https check is:
+        // a resource server with no declared tenant is a deployment mistake, and it should stop
+        // the process at startup instead of returning 400s under load.
+        if config.audience.is_empty() {
+            return Err(Error::Config(
+                "audience is required: name the project id this resource server serves, or its \
+                 organisation id if it fronts a whole organisation. RediensIAM sends it as `aud` \
+                 and refuses a request without one (400 audience_required)."
+                    .into(),
+            ));
         }
         require_secure_url(&config.base_url)?;
 
@@ -200,11 +254,16 @@ impl RediensIamClient {
             .http
             .post(url)
             .bearer_auth(&self.config.service_account_token)
-            .form(&[("token", token), ("token_type_hint", "access_token")])
+            .form(&[
+                ("token", token),
+                ("token_type_hint", "access_token"),
+                ("aud", self.config.audience.as_str()),
+            ])
             .send()
             .await?;
 
         let info: TokenInfo = self.parse(response).await?;
+        require_contract(info.ver)?;
 
         // Only positive answers are cached: caching "inactive" would keep denying a token that
         // has since become valid, and buys nothing.
@@ -240,11 +299,18 @@ impl RediensIamClient {
             .http
             .post(url)
             .bearer_auth(&self.config.service_account_token)
-            .json(&AuthorizeRequest { token, namespace, object, relation })
+            .json(&AuthorizeRequest {
+                token,
+                namespace,
+                object,
+                relation,
+                aud: &self.config.audience,
+            })
             .send()
             .await?;
 
         let parsed: AuthorizeResponse = self.parse(response).await?;
+        require_contract(parsed.ver)?;
         Ok(parsed.allowed)
     }
 
@@ -264,6 +330,16 @@ impl RediensIamClient {
         }
         Ok(response.json().await?)
     }
+}
+
+/// Refuses an answer that is not from an audience-enforcing server. See [`Error::ServerTooOld`]:
+/// the `aud` we send is invisible to an older RediensIAM, so `ver` is the only evidence that it
+/// was read at all.
+fn require_contract(found: u32) -> Result<(), Error> {
+    if found < CONTRACT_VERSION {
+        return Err(Error::ServerTooOld { found });
+    }
+    Ok(())
 }
 
 /// The service-account credential and every token being introspected ride on `base_url`, so
@@ -303,6 +379,16 @@ fn cache_key(token: &str) -> String {
 mod tests {
     use super::*;
 
+    /// A usable configuration, for tests that vary one field of it.
+    fn config(base_url: &str) -> Config {
+        Config {
+            base_url: base_url.into(),
+            service_account_token: "rediens_pat_x".into(),
+            audience: "proj-1".into(),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn requires_base_url_and_token() {
         assert!(RediensIamClient::new(Config::default()).is_err());
@@ -314,16 +400,30 @@ mod tests {
         .is_err());
     }
 
+    /// P-06: a resource server that declares no tenant is refused by the server with
+    /// `400 audience_required`. Refusing at construction turns that into a startup failure with a
+    /// message naming the fix, instead of a runtime 400 on every request once traffic arrives.
+    #[test]
+    fn audience_is_required_at_construction() {
+        // `let Err(..) else` rather than `expect_err`: the client deliberately has no `Debug`,
+        // which would print the service-account token.
+        let Err(err) = RediensIamClient::new(Config {
+            audience: String::new(),
+            ..config("https://auth.example.com")
+        }) else {
+            panic!("a client with no audience must not be constructible");
+        };
+
+        assert!(matches!(err, Error::Config(_)));
+        assert!(err.to_string().contains("audience"), "{err}");
+
+        assert!(RediensIamClient::new(config("https://auth.example.com")).is_ok());
+    }
+
     /// R-30: the credential rides on every call, so the transport has to be authenticated.
     #[test]
     fn base_url_must_be_https_except_on_loopback() {
-        let with = |base_url: &str| {
-            RediensIamClient::new(Config {
-                base_url: base_url.into(),
-                service_account_token: "rediens_pat_x".into(),
-                ..Default::default()
-            })
-        };
+        let with = |base_url: &str| RediensIamClient::new(config(base_url));
 
         assert!(with("https://auth.example.com").is_ok());
         assert!(with("http://localhost:8080").is_ok());
@@ -393,5 +493,120 @@ mod tests {
         assert!(!info.active);
         assert!(info.roles.is_empty());
         assert!(!info.belongs_to_org("org-1"));
+    }
+
+    // ── Wire tests ────────────────────────────────────────────────────────────
+    //
+    // A one-shot loopback listener, so the assertions are about bytes actually sent rather than
+    // about a mock the client was handed. `aud` being absent is invisible to an old server by
+    // design, so nothing short of reading the request proves it is there.
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// Accepts one request, answers `body`, and yields the raw request text.
+    async fn serve_once(body: &'static str) -> (String, tokio::task::JoinHandle<String>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+
+        let handle = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+
+            let mut request = Vec::new();
+            loop {
+                let mut chunk = [0u8; 1024];
+                let n = socket.read(&mut chunk).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                request.extend_from_slice(&chunk[..n]);
+                if request_is_complete(&request) {
+                    break;
+                }
+            }
+
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+            socket.flush().await.unwrap();
+
+            String::from_utf8_lossy(&request).into_owned()
+        });
+
+        (base_url, handle)
+    }
+
+    /// Headers plus the whole declared body have arrived. Without this the test races the socket
+    /// and reads only the headers on a slow machine.
+    fn request_is_complete(buffer: &[u8]) -> bool {
+        let text = String::from_utf8_lossy(buffer);
+        let Some(head_len) = text.find("\r\n\r\n").map(|i| i + 4) else {
+            return false;
+        };
+        let declared = text
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length: ").or(line.strip_prefix("Content-Length: ")))
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        buffer.len() >= head_len + declared
+    }
+
+    /// P-06: the audience has to reach the wire. The whole change is worthless if the field is
+    /// configured and then not sent.
+    #[tokio::test]
+    async fn introspect_sends_the_audience() {
+        let (base_url, server) = serve_once(r#"{"active":true,"ver":1}"#).await;
+        let iam = RediensIamClient::new(config(&base_url)).unwrap();
+
+        let info = iam.introspect("rediens_pat_x").await.unwrap();
+        assert!(info.active);
+
+        let request = server.await.unwrap();
+        assert!(request.contains("POST /api/introspect"), "{request}");
+        assert!(request.contains("aud=proj-1"), "aud missing from the form body: {request}");
+    }
+
+    #[tokio::test]
+    async fn authorize_sends_the_audience() {
+        let (base_url, server) = serve_once(r#"{"allowed":true,"ver":1}"#).await;
+        let iam = RediensIamClient::new(config(&base_url)).unwrap();
+
+        assert!(iam.authorize("t", "Organisations", "org-1", "org_admin").await.unwrap());
+
+        let request = server.await.unwrap();
+        assert!(request.contains("POST /api/authorize"), "{request}");
+        assert!(request.contains(r#""aud":"proj-1""#), "aud missing from the JSON body: {request}");
+    }
+
+    /// The anti-downgrade signal. An un-upgraded RediensIAM drops the unknown `aud` and answers
+    /// without `ver` — byte-for-byte what it always answered. Accepting that answer would mean
+    /// believing a deployment-wide result was scoped to one tenant, so it must fail closed.
+    #[tokio::test]
+    async fn an_answer_without_ver_is_refused() {
+        let (base_url, server) = serve_once(r#"{"active":true,"org_id":"org-9"}"#).await;
+        let iam = RediensIamClient::new(config(&base_url)).unwrap();
+
+        let err = iam
+            .introspect("rediens_pat_x")
+            .await
+            .expect_err("an answer without `ver` must not be trusted");
+
+        assert!(matches!(err, Error::ServerTooOld { found: 0 }), "{err}");
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn an_authorize_answer_without_ver_is_refused() {
+        let (base_url, server) = serve_once(r#"{"allowed":true}"#).await;
+        let iam = RediensIamClient::new(config(&base_url)).unwrap();
+
+        let err = iam
+            .authorize("t", "Organisations", "org-1", "org_admin")
+            .await
+            .expect_err("an allow without `ver` must not be trusted");
+
+        assert!(matches!(err, Error::ServerTooOld { found: 0 }), "{err}");
+        let _ = server.await;
     }
 }

@@ -39,11 +39,12 @@ public sealed class LiveAuthorizationService(
         var userId = claims.ParsedUserId;
         if (userId == Guid.Empty) return false;
 
-        // Every decision below super_admin is a function of claims.OrgId — the org-active
-        // check in CheckAsync reads it — so a cached answer is only valid for the scope it was
-        // decided under. The scope travels in the value rather than the key so InvalidateAsync
-        // can still drop every decision for a user without enumerating orgs.
-        var scope = level == ManagementLevel.SuperAdmin ? "" : claims.OrgId;
+        // Every decision below super_admin is a function of claims.OrgId — the org-active check in
+        // CheckAsync reads it — and project_admin is additionally a function of claims.ProjectId,
+        // so a cached answer is only valid for the scope it was decided under. The scope travels
+        // in the value rather than the key so InvalidateAsync can still drop every decision for a
+        // user without enumerating orgs.
+        var scope = level == ManagementLevel.SuperAdmin ? "" : $"{claims.OrgId}/{claims.ProjectId}";
         var cacheKey = $"authz:{userId}:{(int)level}";
         var cached = await cache.GetStringAsync(cacheKey);
         if (cached != null && cached.Split('|', 2) is [var verdict, var cachedScope] && cachedScope == scope)
@@ -52,7 +53,7 @@ public sealed class LiveAuthorizationService(
         bool granted;
         try
         {
-            granted = await CheckAsync(userId, level, claims.OrgId);
+            granted = await CheckAsync(userId, level, claims.OrgId, claims.ProjectId);
         }
         catch (Exception ex)
         {
@@ -67,7 +68,7 @@ public sealed class LiveAuthorizationService(
         return granted;
     }
 
-    private async Task<bool> CheckAsync(Guid userId, ManagementLevel level, string orgIdClaim)
+    private async Task<bool> CheckAsync(Guid userId, ManagementLevel level, string orgIdClaim, string projectIdClaim)
     {
         // Suspension has to remove authority, not just sessions. `AdminLogin` consults no
         // organisation, so a system-list org_admin — one granted by AssignOrgAdmin on a user
@@ -82,28 +83,13 @@ public sealed class LiveAuthorizationService(
             && await db.Organisations.AnyAsync(o => o.Id == claimedOrg && !o.Active))
             return false;
 
-        var subject = $"user:{userId}";
-        return level switch
-        {
-            ManagementLevel.SuperAdmin => await keto.CheckAsync(
-                Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, subject),
-
-            // An org_admin claim must name the org it applies to. Falling back to "admin of any
-            // org" let an orphaned grant — one whose organisation had been deleted — satisfy the
-            // check while carrying an empty org_id downstream.
-            ManagementLevel.OrgAdmin => Guid.TryParse(orgIdClaim, out var orgId)
-                && await keto.CheckAsync(Roles.KetoOrgsNamespace, orgId.ToString(), Roles.KetoOrgAdminRelation, subject),
-
-            // project_admin has two grant paths and both are authoritative: a Keto manager
-            // relation on a project (what GetConsent reads to put the role in the token) and an
-            // org_roles row (what KetoService.GetActorManagementLevelForOrgAsync reads). Checking
-            // only Keto denied admins who were granted the role the other way.
-            ManagementLevel.ProjectAdmin =>
-                await keto.HasAnyRelationAsync(Roles.KetoProjectsNamespace, Roles.KetoManagerRelation, subject)
-                || await db.OrgRoles.AnyAsync(r => r.UserId == userId && r.Role == Roles.ProjectAdmin),
-
-            _ => false,
-        };
+        // S-8: one implementation, in KetoService. This method used to carry a second one — with
+        // an unscoped `db.OrgRoles` fallback that answered "project_admin somewhere" to the
+        // question "project_admin here" (R-22 residual 3).
+        return await keto.IsManagementLevelGrantedAsync(
+            userId, level,
+            Guid.TryParse(orgIdClaim, out var orgId) ? orgId : null,
+            Guid.TryParse(projectIdClaim, out var projectId) ? projectId : null);
     }
 
     /// <summary>

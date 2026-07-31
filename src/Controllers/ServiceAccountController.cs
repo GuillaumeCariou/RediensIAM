@@ -33,7 +33,9 @@ public class ServiceAccountController(
     private const string AuditSa = "service_account";
 
     private TokenClaims Claims     => HttpContext.GetClaims()!;
-    private ManagementLevel Level  => Claims.GetManagementLevel();
+    // The grant, not the claim (S-1 / R-22). The class carries [RequireManagementLevel], which is
+    // what makes the `!` safe — that dependency is the invariant S-1 exists to make explicit.
+    private ManagementLevel Level  => HttpContext.GetGrantedLevel()!.Value.Value;
     private Guid ActorId           => Claims.ParsedUserId;
     // Guid.Empty, never null. A null here compared equal to UserList.OrgId IS NULL — the
     // __system__ list — so a token whose org_id failed to parse gained access to the most

@@ -24,6 +24,16 @@ public sealed record TokenInfo
     [JsonPropertyName("client_id")]          public string? ClientId { get; init; }
     [JsonPropertyName("is_service_account")] public bool IsServiceAccount { get; init; }
 
+    /// <summary>Echo of the <c>aud</c> this client sent, on an active answer.</summary>
+    [JsonPropertyName("aud")]                public string? Audience { get; init; }
+
+    /// <summary>
+    /// Contract version of the answer; 0 means the field was absent. See
+    /// <see cref="RediensIamClient.RequiredContractVersion"/> — an answer below the required
+    /// version never reaches a caller.
+    /// </summary>
+    [JsonPropertyName("ver")]                public int Ver { get; init; }
+
     public static readonly TokenInfo Inactive = new() { Active = false };
 
     /// <summary>
@@ -59,12 +69,58 @@ public sealed class RediensIamOptions
     public string ServiceAccountToken { get; set; } = "";
 
     /// <summary>
+    /// The tenant <b>this resource server serves</b> — the project id it fronts, or the
+    /// organisation id if it fronts a whole organisation. Sent as <c>aud</c> on every
+    /// introspection and authorisation call, and mandatory at the server since contract
+    /// <c>ver: 1</c>.
+    ///
+    /// <para>Required, with deliberately no default. A default would be a guess about which
+    /// tenant this service belongs to, and a wrong guess is P-06 exactly: a deployment-scoped
+    /// service-account credential resolving <i>every</i> tenant's token as active, leaving the
+    /// resource server to remember a <c>project_id</c> comparison nobody remembers.</para>
+    /// </summary>
+    public string Audience { get; set; } = "";
+
+    /// <summary>
     /// How long a positive introspection is reused. Keep it short — it is the upper bound on how
     /// long a revoked token keeps working at this gateway. Zero disables caching.
     /// </summary>
     public TimeSpan CacheDuration { get; set; } = TimeSpan.FromSeconds(30);
 
     public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Throws unless these options can produce a working client, and returns them.
+    ///
+    /// <para>Called at construction, never on the first request: a missing audience or a
+    /// cleartext <see cref="BaseUrl"/> is a deployment mistake, and it should stop the process at
+    /// startup rather than turn into 400s once traffic arrives.</para>
+    /// </summary>
+    /// <exception cref="ArgumentException">Any option is missing or unusable.</exception>
+    public RediensIamOptions Validated()
+    {
+        if (string.IsNullOrWhiteSpace(BaseUrl))
+            throw new ArgumentException("RediensIamOptions.BaseUrl is required.");
+        if (string.IsNullOrWhiteSpace(ServiceAccountToken))
+            throw new ArgumentException("RediensIamOptions.ServiceAccountToken is required.");
+        if (string.IsNullOrWhiteSpace(Audience))
+            throw new ArgumentException(
+                "RediensIamOptions.Audience is required: name the project id this resource server " +
+                "serves, or its organisation id if it fronts a whole organisation. RediensIAM sends " +
+                "it as aud and refuses a request without one (400 audience_required).");
+
+        // The service-account credential and every token being introspected ride on BaseUrl, so
+        // cleartext there hands an on-path attacker both. http is accepted only on a loopback
+        // host: forbidding it outright breaks every local setup, and a flag to disable the check
+        // gets set in production too.
+        if (!Uri.TryCreate(BaseUrl, UriKind.Absolute, out var baseUri))
+            throw new ArgumentException($"RediensIamOptions.BaseUrl is not an absolute URL: {BaseUrl}");
+        if (baseUri.Scheme != Uri.UriSchemeHttps && !(baseUri.Scheme == Uri.UriSchemeHttp && baseUri.IsLoopback))
+            throw new ArgumentException(
+                $"RediensIamOptions.BaseUrl must be https — http is accepted only on localhost: {BaseUrl}");
+
+        return this;
+    }
 }
 
 /// <summary>
@@ -73,13 +129,44 @@ public sealed class RediensIamOptions
 /// Prefer this over validating JWTs locally against JWKS: local validation cannot see a role
 /// revoked, a service account disabled, or an organisation suspended after the token was minted.
 /// </summary>
-public sealed class RediensIamClient(
-    HttpClient http,
-    RediensIamOptions options,
-    IMemoryCache cache,
-    ILogger<RediensIamClient>? logger = null)
+public sealed class RediensIamClient
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
+
+    /// <summary>
+    /// Contract version this client requires on every answer.
+    ///
+    /// <para>RediensIAM stamps <c>ver</c> on every answer it gives, including
+    /// <c>{"active": false}</c>. A server older than this silently discards the unknown <c>aud</c>
+    /// this client sends and answers exactly as it always did — so sending <c>aud</c> proves
+    /// nothing on its own, and only the presence of <c>ver</c> distinguishes a server that
+    /// enforced the audience from one that ignored it. Failing on an absent <c>ver</c> is the
+    /// point: the alternative is believing an answer is scoped to one tenant when it was scoped
+    /// to the whole deployment.</para>
+    /// </summary>
+    public const int RequiredContractVersion = 1;
+
+    private readonly HttpClient http;
+    private readonly RediensIamOptions options;
+    private readonly IMemoryCache cache;
+    private readonly ILogger<RediensIamClient>? logger;
+
+    /// <summary>
+    /// Options are validated here rather than on the first request, so a service with no declared
+    /// audience — or a cleartext base URL — fails to start instead of failing under load.
+    /// </summary>
+    /// <exception cref="ArgumentException"><paramref name="options"/> is unusable.</exception>
+    public RediensIamClient(
+        HttpClient http,
+        RediensIamOptions options,
+        IMemoryCache cache,
+        ILogger<RediensIamClient>? logger = null)
+    {
+        this.http    = http;
+        this.options = options.Validated();
+        this.cache   = cache;
+        this.logger  = logger;
+    }
 
     /// <summary>
     /// Introspects a token (RFC 7662). Returns <see cref="TokenInfo.Inactive"/> rather than
@@ -101,6 +188,7 @@ public sealed class RediensIamClient(
             [
                 new KeyValuePair<string, string>("token", token),
                 new KeyValuePair<string, string>("token_type_hint", "access_token"),
+                new KeyValuePair<string, string>("aud", options.Audience),
             ]),
         };
         Authorize(request);
@@ -108,7 +196,10 @@ public sealed class RediensIamClient(
         using var response = await http.SendAsync(request, ct);
         response.EnsureSuccessStatusCode();
 
-        var info = await response.Content.ReadFromJsonAsync<TokenInfo>(Json, ct) ?? TokenInfo.Inactive;
+        // An empty body is a broken server, not an inactive token — say so rather than denying.
+        var info = await response.Content.ReadFromJsonAsync<TokenInfo>(Json, ct)
+                   ?? throw new InvalidOperationException("RediensIAM returned an empty introspection answer.");
+        RequireContract(info.Ver);
 
         // Only positive answers are cached. Caching "inactive" would keep denying a token that
         // has since become valid, and buys nothing.
@@ -135,6 +226,7 @@ public sealed class RediensIamClient(
                 @namespace,
                 @object,
                 relation,
+                aud = options.Audience,
             }),
         };
         Authorize(request);
@@ -142,8 +234,24 @@ public sealed class RediensIamClient(
         using var response = await http.SendAsync(request, ct);
         response.EnsureSuccessStatusCode();
 
-        var result = await response.Content.ReadFromJsonAsync<AuthorizeResponse>(Json, ct);
-        return result?.Allowed ?? false;
+        var result = await response.Content.ReadFromJsonAsync<AuthorizeResponse>(Json, ct)
+                     ?? throw new InvalidOperationException("RediensIAM returned an empty authorisation answer.");
+        RequireContract(result.Ver);
+        return result.Allowed;
+    }
+
+    /// <summary>
+    /// Refuses an answer that did not come from an audience-enforcing server. See
+    /// <see cref="RequiredContractVersion"/>.
+    /// </summary>
+    private static void RequireContract(int ver)
+    {
+        if (ver >= RequiredContractVersion) return;
+
+        throw new InvalidOperationException(
+            $"RediensIAM answered with ver={ver}, expected at least {RequiredContractVersion}: this " +
+            "server predates mandatory audience binding and silently ignored the aud this client " +
+            "sent. Upgrade RediensIAM before trusting its answers.");
     }
 
     /// <summary>Drops any cached decision for a token — call on logout to make it immediate.</summary>
@@ -161,5 +269,6 @@ public sealed class RediensIamClient(
 
     private sealed record AuthorizeResponse(
         [property: JsonPropertyName("allowed")] bool Allowed,
-        [property: JsonPropertyName("user_id")] string? UserId);
+        [property: JsonPropertyName("user_id")] string? UserId,
+        [property: JsonPropertyName("ver")] int Ver = 0);
 }

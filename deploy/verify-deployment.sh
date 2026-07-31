@@ -292,6 +292,74 @@ else
   fail V-22 "no ${RELEASE}-backup CronJob — nothing is backing this database up"
 fi
 
+# ── V-23 · R-15 — Postgres transport encryption ─────────────────────────────
+# Credential-free, same discipline as V-20/V-21: the server side is read from the
+# pod, the client side from the DSNs' sslmode keyword only. A password is never
+# read and never printed.
+if kubectl get pod -n "${NS}" "${PGPOD}" >/dev/null 2>&1; then
+  PGARGS=$(kubectl get statefulset -n "${NS}" "${RELEASE}-postgres" -o jsonpath='{.spec.template.spec.containers[0].args}' 2>/dev/null)
+  HBA23=$(kubectl exec -n "${NS}" "${PGPOD}" -- \
+            grep -Ev '^[[:space:]]*#|^[[:space:]]*$' /var/lib/postgresql/data/pg_hba.conf 2>/dev/null)
+  case "${PGARGS}" in
+    *ssl=on*) pass V-23/server "Postgres runs with ssl=on" ;;
+    *)        fail V-23/server "Postgres has no ssl=on — every DSN below is cleartext on the wire" ;;
+  esac
+
+  # `host` (as opposed to `hostssl`) is what lets a client skip TLS entirely. With
+  # only `hostssl` left, TLS stops being a client-side preference.
+  if [ -z "${HBA23}" ]; then
+    fail V-23/hba "could not read pg_hba.conf — assertion not evaluated"
+  elif printf '%s\n' "${HBA23}" | grep -qE '^host[[:space:]]'; then
+    fail V-23/hba "pg_hba.conf still admits cleartext TCP: $(printf '%s' "${HBA23}" | grep -E '^host[[:space:]]' | tr '\n' ';')"
+  else
+    pass V-23/hba "pg_hba.conf admits TLS only (hostssl; local socket unaffected)"
+  fi
+
+  # Client side. Npgsql spells it `SSL Mode=Require`, libpq `sslmode=require`.
+  CLEAR=""
+  APPDSN=$(kubectl get secret -n "${NS}" "${RELEASE}-secrets" -o jsonpath='{.data.database-url}' 2>/dev/null | base64 -d 2>/dev/null)
+  printf '%s' "${APPDSN}" | grep -qiE 'ssl ?mode *= *(require|verify)' || CLEAR="${CLEAR} app"
+  for s in "${RELEASE}-hydra" "${RELEASE}-keto"; do
+    D=$(kubectl get secret -n "${NS}" "${s}" -o jsonpath='{.data.dsn}' 2>/dev/null | base64 -d 2>/dev/null)
+    [ -n "${D}" ] || continue
+    printf '%s' "${D}" | grep -qiE 'sslmode=(require|verify)' || CLEAR="${CLEAR} ${s##*-}"
+  done
+  if [ -z "${APPDSN}" ]; then
+    skip V-23/dsn "could not read the app DSN — assertion not evaluated"
+  elif [ -n "${CLEAR}" ]; then
+    fail V-23/dsn "these DSNs do not request TLS:${CLEAR}"
+  else
+    pass V-23/dsn "app, hydra and keto DSNs all request TLS"
+  fi
+else
+  skip V-23 "no ${PGPOD} pod — Postgres TLS assertions not evaluated (external database?)"
+fi
+
+# ── V-24 · R-15 — the cache is authenticated ────────────────────────────────
+# `dragonfly.local.password` defaulted to "" and deploy.sh never generated one, so
+# the chart rendered `--requirepass=` and the cache — which holds the DataProtection
+# key ring, i.e. the ability to mint session cookies — accepted anyone who could
+# reach :6379. Only `dragonfly-lockdown` stood between that and the namespace.
+if kubectl get deploy -n "${NS}" "${RELEASE}-dragonfly" >/dev/null 2>&1; then
+  DFLYPW=$(kubectl get secret -n "${NS}" "${RELEASE}-secrets" -o jsonpath='{.data.dragonfly-password}' 2>/dev/null | base64 -d 2>/dev/null | wc -c)
+  [ "${DFLYPW:-0}" -ge 16 ] && pass V-24 "cache requires a password (${DFLYPW} chars)" \
+                            || fail V-24 "cache password is ${DFLYPW:-0} chars — Dragonfly runs with --requirepass= and accepts anyone who reaches :6379"
+else
+  skip V-24 "no ${RELEASE}-dragonfly deployment"
+fi
+
+# ── V-25 · S-5 — RLS is applied when the chart says it is ───────────────────
+# The `<release>-rls` ConfigMap is rendered only when postgres.rls.enabled. If it is
+# there and pg_policies is empty, the hook Job failed and tenant isolation is back to
+# being 200 hand-written conjuncts while the chart claims otherwise.
+if kubectl get configmap -n "${NS}" "${RELEASE}-rls" >/dev/null 2>&1; then
+  RLSJOB=$(kubectl get job -n "${NS}" "${RELEASE}-rls" -o jsonpath='{.status.succeeded}' 2>/dev/null)
+  [ "${RLSJOB}" = "1" ] && pass V-25 "RLS hook Job succeeded (policies applied)" \
+                        || fail V-25 "postgres.rls.enabled is set but the ${RELEASE}-rls Job has not succeeded — no policy is in force"
+else
+  skip V-25 "postgres.rls.enabled is off — tenant isolation is application-side only (S-5 phase 2 open)"
+fi
+
 echo "───────────────────────────────────────────────────────────────"
 printf ' %d passed · %d failed · %d skipped\n' "${PASS}" "${FAIL}" "${SKIP}"
 if [ "${FAIL}" -gt 0 ]; then

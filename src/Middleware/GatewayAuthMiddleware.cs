@@ -1,5 +1,8 @@
+using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Microsoft.AspNetCore.Mvc.Controllers;
 using RediensIAM.Config;
+using RediensIAM.Filters;
 using RediensIAM.Models;
 using RediensIAM.Services;
 
@@ -52,8 +55,49 @@ public class GatewayAuthMiddleware(RequestDelegate next, AppConfig appConfig)
         }
 
         ctx.Items["Claims"] = claims;
+        // Records that this TokenClaims instance is the *caller's* identity for this request, so
+        // that reading an unverified management level off it can be refused (see
+        // ClaimsExtensions.GetManagementLevel). Every request deserialises its own instance
+        // (HydraService.ValidateJwtAsync from cache, PatService above), so the mark never outlives
+        // the request that made it.
+        ClaimsExtensions.MarkCallerClaims(claims);
+
+        // Default deny (S-1a). The management prefixes are opt-in today: an action is privileged
+        // because somebody remembered [RequireManagementLevel]. ServiceAccountController did not
+        // (R-22) and the /admin GET branch was safe only because every controller happened to
+        // carry one (I-02). A new controller on these paths now fails closed instead.
+        if (IsManagementSurface(ctx.Request.Path) && !HasManagementGate(ctx))
+        {
+            ctx.Response.StatusCode = 403;
+            ctx.Response.ContentType = "application/json";
+            await ctx.Response.WriteAsJsonAsync(new { error = "forbidden", detail = "no_authorisation_gate" });
+            return;
+        }
 
         await next(ctx);
+    }
+
+    /// <summary>
+    /// Controllers on a management prefix that gate themselves rather than by management level, and
+    /// are therefore exempt from the default-deny above. This list is the whole exemption set — a
+    /// greppable artefact a reviewer can audit, which 200 remembered attributes are not.
+    /// </summary>
+    private static readonly string[] SelfGatedControllers =
+    [
+        // /api/introspect and /api/authorize are RFC 7662 surfaces for service accounts, not for
+        // administrators: IntrospectionController.IsServiceAccountCaller is their gate and a
+        // management level would be the wrong question to ask of them.
+        "Introspection",
+    ];
+
+    private static bool HasManagementGate(HttpContext ctx)
+    {
+        var endpoint = ctx.GetEndpoint();
+        // No MVC action behind this path: a static asset, the SPA fallback, or a minimal endpoint.
+        // UseRouting has already run for every branch this middleware is mounted on.
+        if (endpoint?.Metadata.GetMetadata<ControllerActionDescriptor>() is not { } action) return true;
+        if (endpoint.Metadata.GetMetadata<RequireManagementLevelAttribute>() is not null) return true;
+        return SelfGatedControllers.Contains(action.ControllerName, StringComparer.Ordinal);
     }
 
     private static readonly string[] ManagementPrefixes =
@@ -78,17 +122,74 @@ public class GatewayAuthMiddleware(RequestDelegate next, AppConfig appConfig)
 
 public static class ClaimsExtensions
 {
+    /// <summary>
+    /// Caller-identity claims seen this request, and the <see cref="GrantedLevel"/> that
+    /// <see cref="RequireManagementLevelAttribute"/> verified for them (null until it has).
+    ///
+    /// A weak table rather than <c>HttpContext.Items</c> because the check has to be reachable from
+    /// an extension method on <see cref="TokenClaims"/>, which has no context. Entries are keyed by
+    /// object identity and every request produces its own instance, so nothing leaks between them.
+    /// </summary>
+    private static readonly ConditionalWeakTable<TokenClaims, StrongBox<GrantedLevel?>> CallerGrants = new();
+
     public static TokenClaims? GetClaims(this HttpContext ctx)
         => ctx.Items["Claims"] as TokenClaims;
 
     public static bool HasRole(this TokenClaims claims, params string[] roles)
         => roles.Any(r => claims.Roles.Contains(r));
 
-    public static ManagementLevel GetManagementLevel(this TokenClaims claims)
+    /// <summary>
+    /// Marks these claims as the caller's own identity. Public only so tests can reach it; it can
+    /// never loosen a check, it only makes <see cref="GetManagementLevel"/> stricter about them.
+    /// </summary>
+    public static void MarkCallerClaims(TokenClaims claims)
+        => CallerGrants.GetValue(claims, _ => new StrongBox<GrantedLevel?>(null));
+
+    /// <summary>
+    /// Records the verified level. In practice only <see cref="RequireManagementLevelAttribute"/>
+    /// calls it, and nothing else can usefully do so: the argument is a
+    /// <see cref="GrantedLevel"/>, which no other type can construct.
+    /// </summary>
+    public static void RecordGrantedLevel(TokenClaims claims, GrantedLevel granted)
+        => CallerGrants.GetValue(claims, _ => new StrongBox<GrantedLevel?>(null)).Value = granted;
+
+    /// <summary>
+    /// The caller's management level as verified against the authorisation store earlier in this
+    /// request. Null when no live check has run — which is the only honest answer, and is why this
+    /// is the accessor an access decision should use.
+    /// </summary>
+    public static GrantedLevel? GetGrantedLevel(this HttpContext ctx)
+        => ctx.GetClaims() is { } claims && CallerGrants.TryGetValue(claims, out var box) ? box.Value : null;
+
+    /// <summary>
+    /// The management level a set of claims <i>asserts</i>.
+    ///
+    /// <para>
+    /// Refuses when asked about the caller's own token before a live check has run. That read is
+    /// the shape of R-22 and of the password-floor bypass: a token snapshot, used as if it were an
+    /// authorisation decision, on a path where nothing re-verified it. Asking about somebody
+    /// else's token — introspection — is a different question and is allowed.
+    /// </para>
+    ///
+    /// <para>
+    /// This is a runtime backstop for a defect that ought to be a compile error. Making it one
+    /// means deleting this method and pointing its three callers at
+    /// <see cref="GetGrantedLevel"/> / <see cref="GrantedLevel.ClaimedLevel"/>; see
+    /// <c>.security-hardening/17-structural-debt.md</c> for the exact lines.
+    /// </para>
+    /// </summary>
+    /// <summary>
+    /// Private by design (S-1). A management level taken from <c>ext.roles</c> is a claim, not a
+    /// grant, and this used to be the public way to confuse the two — which is how R-22 and P-01
+    /// both happened. Callers now have two options and the compiler enforces the choice:
+    /// <c>HttpContext.GetGrantedLevel()</c> for the caller's own verified authority, or
+    /// <see cref="GrantedLevel.ClaimedLevel"/> to read a presented token's claim on purpose.
+    /// The runtime throw this used to carry is gone with it: the mistake no longer compiles.
+    /// </summary>
+    private static ManagementLevel GetManagementLevel(this TokenClaims claims)
     {
-        if (claims.Roles.Contains(Roles.SuperAdmin))   return ManagementLevel.SuperAdmin;
-        if (claims.Roles.Contains(Roles.OrgAdmin))     return ManagementLevel.OrgAdmin;
-        if (claims.Roles.Contains(Roles.ProjectAdmin)) return ManagementLevel.ProjectAdmin;
-        return ManagementLevel.None;
+        if (CallerGrants.TryGetValue(claims, out var box) && box.Value is { } granted)
+            return granted.Value;
+        return GrantedLevel.ClaimedLevel(claims);
     }
 }
