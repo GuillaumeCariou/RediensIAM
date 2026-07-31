@@ -137,19 +137,19 @@ export default function ProjectServiceAccounts() {
               <tr><th>Name</th><th>Status</th><th>Last Used</th><th style={{ width: 36 }}></th></tr>
             </thead>
             <tbody>
-              {loading ? (
-                Array.from({ length: 3 }, (_, i) => (
+              {(() => {
+                if (loading) return Array.from({ length: 3 }, (_, i) => (
                   <tr key={i}>{Array.from({ length: 4 }, (_, j) => <td key={j}><div style={{ height: 14, background: 'var(--surface-2)', borderRadius: 4, width: '70%' }} /></td>)}</tr>
-                ))
-              ) : accounts.length === 0 ? (
-                <tr><td colSpan={4}>
-                  <div className="iam-empty">
-                    <div className="iam-empty-title">No service accounts</div>
-                    <div className="iam-empty-desc">{assignedListId ? 'Create one for automation.' : 'Assign a user list to this project first.'}</div>
-                  </div>
-                </td></tr>
-              ) : (
-                accounts.map(sa => (
+                ));
+                if (accounts.length === 0) return (
+                  <tr><td colSpan={4}>
+                    <div className="iam-empty">
+                      <div className="iam-empty-title">No service accounts</div>
+                      <div className="iam-empty-desc">{assignedListId ? 'Create one for automation.' : 'Assign a user list to this project first.'}</div>
+                    </div>
+                  </td></tr>
+                );
+                return accounts.map(sa => (
                   <tr key={sa.id}>
                     <td>
                       <div style={{ fontWeight: 500 }}>{sa.name}</div>
@@ -165,8 +165,8 @@ export default function ProjectServiceAccounts() {
                       />
                     </td>
                   </tr>
-                ))
-              )}
+                ));
+              })()}
             </tbody>
           </table>
         </div>

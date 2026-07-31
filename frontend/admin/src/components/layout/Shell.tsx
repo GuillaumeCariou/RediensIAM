@@ -27,7 +27,8 @@ export default function Shell({ children }: Readonly<{ children: React.ReactNode
           {children}
         </div>
       </div>
-      <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
+      {/* Mounted only while open, so the query and cursor start fresh every time. */}
+      {cmdOpen && <CommandPalette onClose={() => setCmdOpen(false)} />}
       <TweaksButton />
     </div>
   );

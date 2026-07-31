@@ -69,9 +69,9 @@ export default function ProjectUsers() {
       <div className="iam-page" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div className="iam-card iam-card-pad">
           <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--fg-subtle)', marginBottom: 12 }}>Assigned User List</div>
-          {loading ? (
-            <div style={{ height: 36, width: 288, background: 'var(--surface-2)', borderRadius: 6 }} />
-          ) : isOrgAdmin ? (
+          {(() => {
+            if (loading) return <div style={{ height: 36, width: 288, background: 'var(--surface-2)', borderRadius: 6 }} />;
+            if (isOrgAdmin) return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <select className="iam-input" style={{ maxWidth: 288 }}
                 value={assignedListId ?? '__none__'} onChange={e => handleAssignList(e.target.value)}>
@@ -84,13 +84,15 @@ export default function ProjectUsers() {
                 <p style={{ fontSize: 12, color: 'var(--warn)' }}>No user list assigned — users cannot log in to this project.</p>
               )}
             </div>
-          ) : (
+            );
+            return (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {assignedListName
                 ? <IamChip tone="accent">{assignedListName}</IamChip>
                 : <span style={{ fontSize: 13, color: 'var(--fg-muted)', fontStyle: 'italic' }}>No user list assigned</span>}
             </div>
-          )}
+            );
+          })()}
         </div>
 
         {isOrgAdmin && assignedListId && (

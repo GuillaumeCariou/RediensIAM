@@ -70,6 +70,9 @@ export type RediensIamErrorCode =
   | 'config_invalid'
   | 'untrusted_target';
 
+/** Anything `fetch` accepts as its first argument. */
+export type FetchTarget = string | URL | Request;
+
 export class RediensIamError extends Error {
   // Plain field rather than a constructor parameter property: Node's type-stripping runs
   // strip-only, and parameter properties would need a transform.
@@ -261,7 +264,7 @@ export class RediensIam {
    * The target must be this app's origin or one listed in `apiOrigins`; anything else throws
    * `untrusted_target` rather than handing the access token to it.
    */
-  async fetch(input: string | URL | Request, init: RequestInit = {}): Promise<Response> {
+  async fetch(input: FetchTarget, init: RequestInit = {}): Promise<Response> {
     if (!isTrustedTarget(input, globalThis.location?.origin, this.#apiOrigins)) {
       throw new RediensIamError(
         `refusing to attach the access token to ${targetUrl(input)} — add its origin to apiOrigins if it is yours`,
@@ -448,7 +451,7 @@ function secureOrigin(value: string, what: string): string {
   return url.origin;
 }
 
-function targetUrl(target: string | URL | Request): string {
+function targetUrl(target: FetchTarget): string {
   return typeof target === 'string' || target instanceof URL ? target.toString() : target.url;
 }
 
@@ -460,7 +463,7 @@ function targetUrl(target: string | URL | Request): string {
  * nothing.
  */
 export function isTrustedTarget(
-  target: string | URL | Request,
+  target: FetchTarget,
   appOrigin: string | undefined,
   apiOrigins: ReadonlySet<string>,
 ): boolean {
@@ -475,8 +478,9 @@ export function isTrustedTarget(
 
 export function base64UrlEncode(bytes: Uint8Array): string {
   let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  // Every element is 0-255, so fromCodePoint is byte-for-byte identical to fromCharCode here.
+  for (const byte of bytes) binary += String.fromCodePoint(byte);
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 }
 
 export function randomUrlSafe(byteLength: number): string {
@@ -494,7 +498,7 @@ export function decodeJwtPayload(token: string): Record<string, unknown> | null 
   const parts = token.split('.');
   if (parts.length !== 3) return null;
   try {
-    const padded = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = parts[1].replaceAll('-', '+').replaceAll('_', '/');
     return JSON.parse(atob(padded)) as Record<string, unknown>;
   } catch {
     return null;

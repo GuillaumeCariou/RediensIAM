@@ -40,6 +40,18 @@ const METHODS: { id: MfaMode; name: string; desc: string; icon: React.ReactNode 
   },
 ];
 
+/** Six OTP inputs, fixed order — stable keys so React never keys on the array index. */
+const OTP_CELL_IDS = ['otp-1', 'otp-2', 'otp-3', 'otp-4', 'otp-5', 'otp-6'];
+
+function methodInstruction(mode: MfaMode, phoneHint: string): string {
+  switch (mode) {
+    case 'totp':     return 'Enter the 6-digit code from your authenticator app.';
+    case 'sms':      return `Code sent to ${phoneHint || 'your phone'}.`;
+    case 'webauthn': return 'Touch your passkey or security key to continue.';
+    default:         return 'Enter one of your 8-character backup codes.';
+  }
+}
+
 export default function MfaChallenge() {
   const initialMfaType = (sessionStorage.getItem('mfa_type') ?? 'totp') as MfaMode;
   const phoneHint = sessionStorage.getItem('mfa_phone_hint') ?? '';
@@ -196,13 +208,7 @@ export default function MfaChallenge() {
     }
   }
 
-  const methodDesc = mode === 'totp'
-    ? 'Enter the 6-digit code from your authenticator app.'
-    : mode === 'sms'
-    ? `Code sent to ${phoneHint || 'your phone'}.`
-    : mode === 'webauthn'
-    ? 'Touch your passkey or security key to continue.'
-    : 'Enter one of your 8-character backup codes.';
+  const methodDesc = methodInstruction(mode, phoneHint);
 
   return (
     <div className="login-center">
@@ -239,7 +245,8 @@ export default function MfaChallenge() {
         )}
         {resent && <div className="alert alert-success" style={{ marginTop: 12 }}>Code resent!</div>}
 
-        {mode === 'webauthn' ? (
+        {(() => {
+          if (mode === 'webauthn') return (
           <div style={{ marginTop: 24, padding: 32, background: 'var(--surface-2)', borderRadius: 12, textAlign: 'center' }}>
             <div style={{ display: 'inline-grid', placeItems: 'center', width: 56, height: 56, borderRadius: 16, background: 'var(--accent-soft)', color: 'var(--accent)', marginBottom: 14 }}>
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -256,7 +263,8 @@ export default function MfaChallenge() {
               </button>
             )}
           </div>
-        ) : mode === 'backup' ? (
+          );
+          if (mode === 'backup') return (
           <form onSubmit={handleSubmit} style={{ marginTop: 20 }}>
             <label className="label">{methodDesc}</label>
             <input
@@ -271,7 +279,8 @@ export default function MfaChallenge() {
               {loading ? 'Verifying…' : 'Verify'}
             </button>
           </form>
-        ) : (
+          );
+          return (
           <form onSubmit={handleSubmit}>
             {mode === 'sms' && (
               <div className="deny-banner" style={{ marginTop: 16, marginBottom: 0 }}>
@@ -282,13 +291,13 @@ export default function MfaChallenge() {
             <div>
               <div className="label" style={{ textAlign: 'center', marginTop: 16 }}>Enter 6-digit code</div>
               <div className="otp-grid">
-                {cells.map((c, i) => (
+                {OTP_CELL_IDS.map((cellId, i) => (
                   <input
-                    key={i}
+                    key={cellId}
                     ref={el => { cellRefs.current[i] = el; }}
                     className="otp-cell"
                     type="text" inputMode="numeric"
-                    maxLength={1} value={c}
+                    maxLength={1} value={cells[i]}
                     autoFocus={i === 0}
                     aria-label={`Digit ${i + 1} of 6`}
                     onChange={e => handleCellChange(i, e.target.value)}
@@ -304,7 +313,8 @@ export default function MfaChallenge() {
               </div>
             )}
           </form>
-        )}
+          );
+        })()}
 
         <button className="btn btn-ghost btn-sm" style={{ marginTop: 20 }} onClick={() => globalThis.history.back()}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15,18 9,12 15,6"/></svg>

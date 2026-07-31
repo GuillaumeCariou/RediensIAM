@@ -130,16 +130,16 @@ export default function Projects() {
               </tr>
             </thead>
             <tbody>
-              {loading ? (
-                Array.from({ length: 4 }, (_, i) => (
+              {(() => {
+                if (loading) return Array.from({ length: 4 }, (_, i) => (
                   <tr key={i}>{Array.from({ length: 7 }, (_, j) => <td key={j}><div style={{ height: 14, background: 'var(--surface-2)', borderRadius: 4, width: '70%' }} /></td>)}</tr>
-                ))
-              ) : projects.length === 0 ? (
-                <tr><td colSpan={7}>
-                  <div className="iam-empty"><div className="iam-empty-title">No projects yet</div></div>
-                </td></tr>
-              ) : (
-                projects.map(p => (
+                ));
+                if (projects.length === 0) return (
+                  <tr><td colSpan={7}>
+                    <div className="iam-empty"><div className="iam-empty-title">No projects yet</div></div>
+                  </td></tr>
+                );
+                return projects.map(p => (
                   <tr key={p.id} style={{ cursor: 'pointer' }} onClick={() => navigate(projectUrl(p.id))}>
                     <td style={{ fontWeight: 500 }}>{p.name}</td>
                     <td><span className="iam-mono" style={{ fontSize: 11, color: 'var(--fg-muted)' }}>{p.slug}</span></td>
@@ -165,8 +165,8 @@ export default function Projects() {
                       />
                     </td>
                   </tr>
-                ))
-              )}
+                ));
+              })()}
             </tbody>
           </table>
         </div>

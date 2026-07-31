@@ -206,7 +206,10 @@ public sealed class RediensIamClient
         if (info.Active && options.CacheDuration > TimeSpan.Zero)
             cache.Set(cacheKey, info, options.CacheDuration);
 
-        logger?.LogDebug("Introspected token: active={Active} user={UserId}", info.Active, info.UserId);
+        // Guarded: introspection runs per request, and the unguarded call boxes info.Active into
+        // the params array even when Debug logging is off.
+        if (logger?.IsEnabled(LogLevel.Debug) == true)
+            logger.LogDebug("Introspected token: active={Active} user={UserId}", info.Active, info.UserId);
         return info;
     }
 

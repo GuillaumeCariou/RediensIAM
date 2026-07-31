@@ -14,6 +14,22 @@ function LoginLogo() {
   );
 }
 
+/** Six OTP inputs, fixed order — stable keys so React never keys on the array index. */
+const OTP_CELL_IDS = ['otp-1', 'otp-2', 'otp-3', 'otp-4', 'otp-5', 'otp-6'];
+
+function scoreLabel(score: number): string {
+  if (score < 35) return 'weak';
+  if (score < 65) return 'fair';
+  if (score < 85) return 'strong';
+  return 'excellent';
+}
+
+function scoreColor(score: number): string {
+  if (score < 35) return 'var(--danger)';
+  if (score < 65) return 'var(--warn)';
+  return 'var(--success)';
+}
+
 function strengthScore(pw: string): number {
   return Math.min(100,
     pw.length * 11 +
@@ -42,8 +58,8 @@ export default function Register() {
 
   const code = cells.join('');
   const strength = strengthScore(password);
-  const strengthLabel = strength < 35 ? 'weak' : strength < 65 ? 'fair' : strength < 85 ? 'strong' : 'excellent';
-  const strengthColor = strength < 35 ? 'var(--danger)' : strength < 65 ? 'var(--warn)' : 'var(--success)';
+  const strengthLabel = scoreLabel(strength);
+  const strengthColor = scoreColor(strength);
 
   async function handleSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -130,10 +146,10 @@ export default function Register() {
         <form onSubmit={handleVerify}>
           <div className="label" style={{ textAlign: 'center', marginTop: 20 }}>Verification code</div>
           <div className="otp-grid">
-            {cells.map((c, i) => (
-              <input key={i} ref={el => { cellRefs.current[i] = el; }}
+            {OTP_CELL_IDS.map((cellId, i) => (
+              <input key={cellId} ref={el => { cellRefs.current[i] = el; }}
                 className="otp-cell" type="text" inputMode="numeric"
-                maxLength={1} value={c} autoFocus={i === 0}
+                maxLength={1} value={cells[i]} autoFocus={i === 0}
                 aria-label={`Digit ${i + 1} of 6`}
                 onChange={e => handleCellChange(i, e.target.value)}
                 onKeyDown={e => handleCellKeyDown(e, i)}

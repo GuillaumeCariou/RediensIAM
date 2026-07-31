@@ -867,10 +867,8 @@
 /* =====================================================================
    DIALOGS
    ===================================================================== */
-.iam-dialog-scrim {
-  position: fixed; inset: 0; z-index: 100;
+.iam-dialog::backdrop {
   background: oklch(0 0 0 / 0.5); backdrop-filter: blur(3px);
-  display: grid; place-items: center;
   animation: iam-scrim-in 150ms ease;
 }
 @keyframes iam-scrim-in { from { opacity: 0; } to { opacity: 1; } }
@@ -899,15 +897,14 @@
 /* =====================================================================
    COMMAND PALETTE
    ===================================================================== */
-.iam-cmdk-scrim {
-  position: fixed; inset: 0; z-index: 200;
+.iam-cmdk::backdrop {
   background: oklch(0 0 0 / 0.5); backdrop-filter: blur(4px);
-  display: grid; place-items: start center; padding-top: 14vh;
   animation: iam-scrim-in 120ms ease;
 }
 .iam-cmdk {
   background: var(--surface); border: 1px solid var(--border-strong);
   border-radius: var(--iam-radius-lg); width: min(620px, 92vw);
+  margin: 14vh auto auto;
   box-shadow: var(--shadow-lg); overflow: hidden;
   animation: iam-dialog-in 160ms cubic-bezier(0.2, 0.8, 0.3, 1);
 }

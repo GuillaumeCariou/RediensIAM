@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type ReactNode } from 'react';
 
 interface IamDialogProps {
   open: boolean;
@@ -11,31 +11,37 @@ interface IamDialogProps {
 }
 
 export default function IamDialog({ open, onClose, title, desc, children, footer, wide }: Readonly<IamDialogProps>) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  const descId = useId();
+
+  // showModal() gives focus containment, an inert background and Escape-to-close for free;
+  // closedby="any" restores the click-outside-to-close the old scrim div provided. Set here
+  // rather than in JSX because the linters do not know the attribute yet.
   useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    globalThis.addEventListener('keydown', handler);
-    return () => globalThis.removeEventListener('keydown', handler);
-  }, [open, onClose]);
+    const dialog = ref.current;
+    if (!open || !dialog || dialog.open) return;
+    dialog.setAttribute('closedby', 'any');
+    dialog.showModal();
+  }, [open]);
 
   if (!open) return null;
 
   return (
-    <div role="none" className="iam-dialog-scrim" onClick={onClose}>
-      <dialog
-        open
-        className="iam-dialog"
-        style={wide ? { width: 'min(720px, 92vw)' } : undefined}
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
-      >
-        <div className="iam-dialog-head">
-          <div className="iam-dialog-title">{title}</div>
-          {desc && <div className="iam-dialog-desc">{desc}</div>}
-        </div>
-        <div className="iam-dialog-body">{children}</div>
-        {footer && <div className="iam-dialog-foot">{footer}</div>}
-      </dialog>
-    </div>
+    <dialog
+      ref={ref}
+      className="iam-dialog"
+      style={wide ? { width: 'min(720px, 92vw)' } : undefined}
+      aria-labelledby={titleId}
+      aria-describedby={desc ? descId : undefined}
+      onClose={onClose}
+    >
+      <div className="iam-dialog-head">
+        <div className="iam-dialog-title" id={titleId}>{title}</div>
+        {desc && <div className="iam-dialog-desc" id={descId}>{desc}</div>}
+      </div>
+      <div className="iam-dialog-body">{children}</div>
+      {footer && <div className="iam-dialog-foot">{footer}</div>}
+    </dialog>
   );
 }

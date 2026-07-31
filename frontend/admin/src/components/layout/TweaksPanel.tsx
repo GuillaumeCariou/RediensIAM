@@ -1,5 +1,20 @@
 import { useTheme, PRESETS, isDarkPreset, isLightPreset } from '@/context/ThemeContext';
 
+// Decorative skeleton bars in the preset thumbnail. Fixed lists, so each row carries its own key.
+const MINI_NAV_BARS = [
+  { id: 'nav-1', width: 0.7, opacity: 0.9 },
+  { id: 'nav-2', width: 0.5, opacity: 0.4 },
+  { id: 'nav-3', width: 0.5, opacity: 0.4 },
+  { id: 'nav-4', width: 0.4, opacity: 0.4 },
+];
+const MINI_STAT_TILES = ['stat-1', 'stat-2', 'stat-3'];
+const MINI_TABLE_ROWS = [
+  { id: 'row-1', width: 0.9 },
+  { id: 'row-2', width: 0.7 },
+  { id: 'row-3', width: 0.8 },
+  { id: 'row-4', width: 0.6 },
+];
+
 function PresetCard({ label, bg, accent, sidebar, active, onClick }: Readonly<{
   label: string; bg: string; accent: string; sidebar: string;
   active: boolean; onClick: () => void;
@@ -17,21 +32,21 @@ function PresetCard({ label, bg, accent, sidebar, active, onClick }: Readonly<{
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {/* Sidebar strip */}
         <div style={{ width: '28%', background: sidebar, display: 'flex', flexDirection: 'column', padding: '5px 4px', gap: 3 }}>
-          {[0.7, 0.5, 0.5, 0.4].map((w, i) => (
-            <div key={i} style={{ height: 3, borderRadius: 2, width: `${w * 100}%`, background: accent, opacity: i === 0 ? 0.9 : 0.4 }} />
+          {MINI_NAV_BARS.map(bar => (
+            <div key={bar.id} style={{ height: 3, borderRadius: 2, width: `${bar.width * 100}%`, background: accent, opacity: bar.opacity }} />
           ))}
         </div>
         {/* Content area */}
         <div style={{ flex: 1, padding: '5px 5px', display: 'flex', flexDirection: 'column', gap: 3 }}>
           {/* Stat row */}
           <div style={{ display: 'flex', gap: 2, marginBottom: 2 }}>
-            {[1, 1, 1].map((_, i) => (
-              <div key={i} style={{ flex: 1, height: 8, borderRadius: 3, background: accent, opacity: 0.15 }} />
+            {MINI_STAT_TILES.map(id => (
+              <div key={id} style={{ flex: 1, height: 8, borderRadius: 3, background: accent, opacity: 0.15 }} />
             ))}
           </div>
           {/* Table rows */}
-          {[0.9, 0.7, 0.8, 0.6].map((w, i) => (
-            <div key={i} style={{ height: 3, borderRadius: 2, width: `${w * 100}%`, background: accent, opacity: 0.2 }} />
+          {MINI_TABLE_ROWS.map(row => (
+            <div key={row.id} style={{ height: 3, borderRadius: 2, width: `${row.width * 100}%`, background: accent, opacity: 0.2 }} />
           ))}
         </div>
       </div>
@@ -84,6 +99,9 @@ export default function TweaksPanel({ onClose }: Readonly<{ onClose: () => void 
               ].map(({ label, icon, value }) => {
                 const isActive = dark === value;
                 const disabled = value ? isLightPreset(preset) : isDarkPreset(preset);
+                let labelColor = 'var(--fg-muted)';
+                if (isActive) labelColor = 'var(--accent-fg)';
+                else if (disabled) labelColor = 'var(--fg-subtle)';
                 return (
                   <button key={label} onClick={() => { if (!disabled && dark !== value) toggleDark(); }}
                     disabled={disabled}
@@ -91,7 +109,7 @@ export default function TweaksPanel({ onClose }: Readonly<{ onClose: () => void 
                       flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                       padding: '8px 0', fontSize: 12, fontWeight: 500, border: 'none', cursor: disabled ? 'not-allowed' : 'pointer',
                       background: isActive ? 'var(--ia-accent)' : 'var(--surface)',
-                      color: isActive ? 'var(--accent-fg)' : disabled ? 'var(--fg-subtle)' : 'var(--fg-muted)',
+                      color: labelColor,
                       transition: 'background 150ms, color 150ms',
                     }}>
                     {icon}{label}
