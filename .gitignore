@@ -50,3 +50,9 @@ sdk/typescript/**/node_modules/
 
 # Editor/backup copies — one `cp values.secret.yaml values.secret.yaml.bak` from being a leak
 *.bak
+
+# April 2026 planning scratch from a UI overhaul; superseded and confusing next to
+# .security-hardening/. Ignored so they do not come back.
+findings.md
+progress.md
+task_plan.md
