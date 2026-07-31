@@ -155,14 +155,7 @@ public class OrgController(
         if (project == null) return NotFound();
         if (await MfaDowngradeGuard.CheckAsync(db, audit, ActorId, project, body.RequireMfa, body.ConfirmMfaDowngrade) is { } mfaErr)
             return mfaErr;
-        if (body.Name != null) project.Name = body.Name;
-        if (body.RequireRoleToLogin.HasValue) project.RequireRoleToLogin = body.RequireRoleToLogin.Value;
-        if (body.RequireMfa.HasValue) project.RequireMfa = body.RequireMfa.Value;
-        if (body.AllowSelfRegistration.HasValue) project.AllowSelfRegistration = body.AllowSelfRegistration.Value;
-        if (body.EmailVerificationEnabled.HasValue) project.EmailVerificationEnabled = body.EmailVerificationEnabled.Value;
-        if (body.SmsVerificationEnabled.HasValue) project.SmsVerificationEnabled = body.SmsVerificationEnabled.Value;
-        if (body.Active.HasValue) project.Active = body.Active.Value;
-        if (body.AllowedEmailDomains != null) project.AllowedEmailDomains = body.AllowedEmailDomains;
+        ApplyProjectFields(project, body);
         var roleErr = await ApplyDefaultRoleAsync(project, body.ClearDefaultRole, body.DefaultRoleId, id);
         if (roleErr != null) return roleErr;
         // This route reached ApplyLoginTheme without any validation at all — so the org path
@@ -176,6 +169,22 @@ public class OrgController(
         project.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         return Ok(new { project.Id, project.Name });
+    }
+
+    /// <summary>
+    /// The plain field copies of <see cref="UpdateProject"/>. Split out for readability only —
+    /// same fields, same conditions, applied at the same point in the method.
+    /// </summary>
+    private static void ApplyProjectFields(Project project, UpdateProjectRequest body)
+    {
+        if (body.Name != null) project.Name = body.Name;
+        if (body.RequireRoleToLogin.HasValue) project.RequireRoleToLogin = body.RequireRoleToLogin.Value;
+        if (body.RequireMfa.HasValue) project.RequireMfa = body.RequireMfa.Value;
+        if (body.AllowSelfRegistration.HasValue) project.AllowSelfRegistration = body.AllowSelfRegistration.Value;
+        if (body.EmailVerificationEnabled.HasValue) project.EmailVerificationEnabled = body.EmailVerificationEnabled.Value;
+        if (body.SmsVerificationEnabled.HasValue) project.SmsVerificationEnabled = body.SmsVerificationEnabled.Value;
+        if (body.Active.HasValue) project.Active = body.Active.Value;
+        if (body.AllowedEmailDomains != null) project.AllowedEmailDomains = body.AllowedEmailDomains;
     }
 
     private async Task<IActionResult?> ApplyDefaultRoleAsync(Project project, bool? clearRole, Guid? newRoleId, Guid projectId)
@@ -643,24 +652,15 @@ public class OrgController(
             return BadRequest(new { error = "unknown_role", allowed = SystemAdminController.KnownManagementRoles });
 
         var actorLevel = await keto.GetActorManagementLevelForOrgAsync(ActorId, orgId);
-        var targetLevel = (body.Role ?? role.Role) switch
-        {
-            Roles.SuperAdmin   => ManagementLevel.SuperAdmin,
-            Roles.OrgAdmin     => ManagementLevel.OrgAdmin,
-            Roles.ProjectAdmin => ManagementLevel.ProjectAdmin,
-            _                  => ManagementLevel.None,
-        };
+        var targetLevel = ManagementLevelForRole(body.Role ?? role.Role);
         if (actorLevel == ManagementLevel.None || targetLevel < actorLevel)
             return StatusCode(403, new { error = "insufficient_management_level" });
 
-        if (body.ScopeId != null && body.ScopeId != role.ScopeId)
-        {
-            var projectExists = await db.Projects.AnyAsync(p => p.Id == body.ScopeId && p.OrgId == orgId);
-            if (!projectExists) return BadRequest(new { error = "project_not_in_org" });
-        }
+        if (await ValidateScopeIsInOrgAsync(body.ScopeId, role.ScopeId, orgId) is { } scopeErr)
+            return scopeErr;
 
         // Delete old Keto tuple before updating
-        var oldSubject = role.ScopeId.HasValue ? $"user:{role.UserId}|project:{role.ScopeId}" : $"user:{role.UserId}";
+        var oldSubject = KetoSubject(role.UserId, role.ScopeId);
         await keto.DeleteRelationTupleAsync(Roles.KetoOrgsNamespace, orgId.ToString(), role.Role, oldSubject);
 
         if (body.Role != null) role.Role = body.Role;
@@ -668,7 +668,7 @@ public class OrgController(
         await db.SaveChangesAsync();
 
         // Write new Keto tuple
-        var newSubject = role.ScopeId.HasValue ? $"user:{role.UserId}|project:{role.ScopeId}" : $"user:{role.UserId}";
+        var newSubject = KetoSubject(role.UserId, role.ScopeId);
         await keto.WriteRelationTupleAsync(Roles.KetoOrgsNamespace, orgId.ToString(), role.Role, newSubject);
         await live.InvalidateAsync(role.UserId);
         await audit.RecordAsync(orgId, null, ActorId, "role.management.assigned", "user", role.UserId.ToString(),
@@ -676,6 +676,33 @@ public class OrgController(
 
         return Ok(new { role.Id, role.Role, role.ScopeId });
     }
+
+    private static ManagementLevel ManagementLevelForRole(string roleName) => roleName switch
+    {
+        Roles.SuperAdmin   => ManagementLevel.SuperAdmin,
+        Roles.OrgAdmin     => ManagementLevel.OrgAdmin,
+        Roles.ProjectAdmin => ManagementLevel.ProjectAdmin,
+        _                  => ManagementLevel.None,
+    };
+
+    /// <summary>
+    /// Rejects a scope change that points at a project outside this org. Unchanged (or absent)
+    /// scopes are not re-checked, exactly as before — the tuple they produce is the one already
+    /// stored.
+    /// </summary>
+    private async Task<IActionResult?> ValidateScopeIsInOrgAsync(Guid? newScopeId, Guid? currentScopeId, Guid orgId)
+    {
+        if (newScopeId != null && newScopeId != currentScopeId)
+        {
+            var projectExists = await db.Projects.AnyAsync(p => p.Id == newScopeId && p.OrgId == orgId);
+            if (!projectExists) return BadRequest(new { error = "project_not_in_org" });
+        }
+        return null;
+    }
+
+    /// <summary>The Keto subject string for a management grant — scoped to a project when the grant is.</summary>
+    private static string KetoSubject(Guid userId, Guid? scopeId)
+        => scopeId.HasValue ? $"user:{userId}|project:{scopeId}" : $"user:{userId}";
 
     [HttpDelete("admins/{id}")]
     public async Task<IActionResult> RemoveOrgListManager(Guid id)

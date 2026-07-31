@@ -34,7 +34,7 @@ public class AuthController(
     private ISmsService smsService         => svc.Sms;
     private IFido2 fido2                   => svc.Fido2;
     private SocialLoginService socialLogin  => svc.SocialLogin;
-    private BreachCheckService breachCheck  => svc.BreachCheck;
+    private const string MfaSetupRequired    = "mfa_setup_required";
     private const string MfaPendingUser      = "mfa_pending_user";
     private const string MfaPendingProject   = "mfa_pending_project";
     private const string MfaPendingChallenge = "mfa_pending_challenge";
@@ -347,9 +347,9 @@ public class AuthController(
                          await db.WebAuthnCredentials.AnyAsync(w => w.UserId == user.Id);
             if (!hasMfa)
             {
-                HttpContext.Session.SetString("mfa_setup_required", "true");
+                HttpContext.Session.SetString(MfaSetupRequired, "true");
                 SetMfaSession(user.Id.ToString(), loginChallenge, projectId);
-                IamMetrics.LoginAttempts.WithLabels("mfa_setup_required").Inc();
+                IamMetrics.LoginAttempts.WithLabels(MfaSetupRequired).Inc();
                 return Ok(new { requires_mfa_setup = true });
             }
         }
@@ -1130,9 +1130,9 @@ public class AuthController(
         // flow the tenant path uses — the login SPA handles requires_mfa_setup generically.
         if (appConfig.RequireAdminMfa)
         {
-            HttpContext.Session.SetString("mfa_setup_required", "true");
+            HttpContext.Session.SetString(MfaSetupRequired, "true");
             SetMfaSession(user.Id.ToString(), body.LoginChallenge, null);
-            IamMetrics.LoginAttempts.WithLabels("mfa_setup_required").Inc();
+            IamMetrics.LoginAttempts.WithLabels(MfaSetupRequired).Inc();
             return Ok(new { requires_mfa_setup = true });
         }
 

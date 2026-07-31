@@ -72,6 +72,7 @@ public class SocialLoginService(
     };
 
     private const string Email = "email";
+    private const string UserInfoEndpoint = "userinfo_endpoint";
 
     // In-process cache for OIDC discovery documents
     // ConcurrentDictionary: SocialLoginService is registered as Singleton and the cache
@@ -365,7 +366,7 @@ public class SocialLoginService(
     private async Task<SocialUserProfile?> GetOidcProfileAsync(ProviderConfig provider, string accessToken)
     {
         var disco       = await GetDiscoveryAsync(provider.IssuerUrl!);
-        var userInfoUrl = await EnsureSafeEndpointAsync(disco.RootElement.GetProperty("userinfo_endpoint").GetString()!, "userinfo_endpoint");
+        var userInfoUrl = await EnsureSafeEndpointAsync(disco.RootElement.GetProperty(UserInfoEndpoint).GetString()!, UserInfoEndpoint);
         using var doc   = await GetBearerJsonAsync(userInfoUrl, accessToken);
         if (doc == null) return null;
         var sub           = TryGet(doc, "sub");
@@ -386,7 +387,7 @@ public class SocialLoginService(
     {
         if (BuiltinEndpoints.TryGetValue(provider.Type, out var ep)) return ep.UserInfo;
         var disco = await GetDiscoveryAsync(provider.IssuerUrl!);
-        return await EnsureSafeEndpointAsync(disco.RootElement.GetProperty("userinfo_endpoint").GetString()!, "userinfo_endpoint");
+        return await EnsureSafeEndpointAsync(disco.RootElement.GetProperty(UserInfoEndpoint).GetString()!, UserInfoEndpoint);
     }
 
     /// <summary>

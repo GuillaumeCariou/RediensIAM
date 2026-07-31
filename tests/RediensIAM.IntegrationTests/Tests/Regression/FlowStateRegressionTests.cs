@@ -14,8 +14,11 @@ namespace RediensIAM.IntegrationTests.Tests.Regression;
 /// actually matters: the flow completes with **no session cookie at all**.
 /// </summary>
 [Collection("RediensIAM")]
-public class FlowStateRegressionTests(TestFixture fixture)
+public partial class FlowStateRegressionTests(TestFixture fixture)
 {
+    [global::System.Text.RegularExpressions.GeneratedRegex(@"\bID=""([^""]+)""")]
+    private static partial global::System.Text.RegularExpressions.Regex AuthnRequestIdRegex();
+
     private async Task<(Organisation Org, Project Project, UserList List)> CreateTenantAsync()
     {
         var (org, _) = await fixture.Seed.CreateOrgAsync();
@@ -143,7 +146,7 @@ public class FlowStateRegressionTests(TestFixture fixture)
             input, global::System.IO.Compression.CompressionMode.Decompress);
         using var reader = new StreamReader(inflate);
         var xml = reader.ReadToEnd();
-        var match = global::System.Text.RegularExpressions.Regex.Match(xml, @"\bID=""([^""]+)""");
+        var match = AuthnRequestIdRegex().Match(xml);
         match.Success.Should().BeTrue("the AuthnRequest must carry an ID");
         return match.Groups[1].Value;
     }

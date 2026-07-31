@@ -133,40 +133,50 @@ public class PasswordService(AppConfig appConfig)
     {
         if (storedHash.StartsWith("sha256:", StringComparison.Ordinal))
         {
-            var rest = storedHash[7..];
-            string storedHex;
-            byte[] keyForHash;
-            // Format variants:
-            //   sha256:{keyId}:{hex} → versioned format
-            //   sha256:{hex}         → legacy unversioned (always pepper-less)
-            var colon = rest.IndexOf(':', StringComparison.Ordinal);
-            if (colon > 0)
-            {
-                var keyId = rest[..colon];
-                storedHex = rest[(colon + 1)..];
-                if (keyId == "0")
-                    keyForHash = DefaultBackupCodeKey;
-                else
-                {
-                    // "p" is the pre-rotation marker for pepper id 1; anything else is a numeric id.
-                    var pepperId = -1;
-                    if (keyId == "p") pepperId = LegacyPepperId;
-                    else if (int.TryParse(keyId, out var n)) pepperId = n;
-                    // Fail closed: a code stored under a pepper that is no longer configured
-                    // must not silently fall back to the unpeppered key.
-                    if (pepperId < 1 || !TryGetPepperStrict(pepperId, out keyForHash)) return false;
-                }
-            }
-            else
-            {
-                storedHex = rest;
-                keyForHash = DefaultBackupCodeKey;
-            }
+            if (!TryResolveBackupCodeKey(storedHash[7..], out var storedHex, out var keyForHash)) return false;
             var expected = Convert.FromHexString(storedHex);
             var actual = HMACSHA256.HashData(keyForHash, Encoding.UTF8.GetBytes(submitted));
             return CryptographicOperations.FixedTimeEquals(actual, expected);
         }
         return Verify(submitted, storedHash);
+    }
+
+    /// <summary>
+    /// Splits the part of a stored backup-code hash after <c>sha256:</c> into its hex digest and
+    /// the key that must have produced it. Returns false when the key id names a pepper that is
+    /// not configured — the fail-closed case.
+    /// </summary>
+    private bool TryResolveBackupCodeKey(string rest, out string storedHex, out byte[] keyForHash)
+    {
+        storedHex  = "";
+        keyForHash = [];
+        // Format variants:
+        //   sha256:{keyId}:{hex} → versioned format
+        //   sha256:{hex}         → legacy unversioned (always pepper-less)
+        var colon = rest.IndexOf(':', StringComparison.Ordinal);
+        if (colon > 0)
+        {
+            var keyId = rest[..colon];
+            storedHex = rest[(colon + 1)..];
+            if (keyId == "0")
+                keyForHash = DefaultBackupCodeKey;
+            else
+            {
+                // "p" is the pre-rotation marker for pepper id 1; anything else is a numeric id.
+                var pepperId = -1;
+                if (keyId == "p") pepperId = LegacyPepperId;
+                else if (int.TryParse(keyId, out var n)) pepperId = n;
+                // Fail closed: a code stored under a pepper that is no longer configured
+                // must not silently fall back to the unpeppered key.
+                if (pepperId < 1 || !TryGetPepperStrict(pepperId, out keyForHash)) return false;
+            }
+        }
+        else
+        {
+            storedHex = rest;
+            keyForHash = DefaultBackupCodeKey;
+        }
+        return true;
     }
 
     /// <summary>Pepper lookup with no legacy fallback — used where a missing pepper must fail.</summary>

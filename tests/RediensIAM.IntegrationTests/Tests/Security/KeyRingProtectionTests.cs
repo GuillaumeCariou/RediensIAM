@@ -267,7 +267,7 @@ public class KeyRingProtectionTests(TestFixture fixture)
         private readonly List<XElement> _elements = [];
         public IReadOnlyCollection<XElement> GetAllElements() => [.. _elements];
         public void StoreElement(XElement element, string friendlyName) => _elements.Add(element);
-        public IEnumerable<XElement> Dumped() => _elements;
+        public List<XElement> Dumped() => _elements;
         public string Dump() => string.Concat(_elements.Select(e => e.ToString()));
     }
 }

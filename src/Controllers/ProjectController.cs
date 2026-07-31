@@ -113,14 +113,23 @@ public class ProjectController(
         if (body.EmailVerificationEnabled.HasValue) project.EmailVerificationEnabled = body.EmailVerificationEnabled.Value;
         if (body.SmsVerificationEnabled.HasValue)   project.SmsVerificationEnabled  = body.SmsVerificationEnabled.Value;
         if (body.AllowedEmailDomains != null)       project.AllowedEmailDomains     = body.AllowedEmailDomains;
+        ApplyPasswordPolicyFields(project, body);
+        if (body.ClearEmailFromName == true)          project.EmailFromName              = null;
+        else if (body.EmailFromName != null)          project.EmailFromName              = body.EmailFromName;
+    }
+
+    /// <summary>
+    /// The password-policy half of <see cref="ApplyProjectFields"/>. Split out for readability
+    /// only — the same fields are copied, under the same conditions, at the same point.
+    /// </summary>
+    private static void ApplyPasswordPolicyFields(Project project, UpdateProjectInfoRequest body)
+    {
         if (body.MinPasswordLength.HasValue)          project.MinPasswordLength          = Math.Max(0, body.MinPasswordLength.Value);
         if (body.PasswordRequireUppercase.HasValue)   project.PasswordRequireUppercase   = body.PasswordRequireUppercase.Value;
         if (body.PasswordRequireLowercase.HasValue)   project.PasswordRequireLowercase   = body.PasswordRequireLowercase.Value;
         if (body.PasswordRequireDigit.HasValue)       project.PasswordRequireDigit       = body.PasswordRequireDigit.Value;
         if (body.PasswordRequireSpecial.HasValue)     project.PasswordRequireSpecial     = body.PasswordRequireSpecial.Value;
         if (body.CheckBreachedPasswords.HasValue)     project.CheckBreachedPasswords     = body.CheckBreachedPasswords.Value;
-        if (body.ClearEmailFromName == true)          project.EmailFromName              = null;
-        else if (body.EmailFromName != null)          project.EmailFromName              = body.EmailFromName;
     }
 
     /// <summary>

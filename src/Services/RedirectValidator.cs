@@ -45,17 +45,7 @@ public static class RedirectValidator
         if (!Uri.TryCreate(url, UriKind.Absolute, out var u)) return false;
         if (u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps) return false;
         var origin = $"{u.Scheme}://{u.Authority}";
-        var allowed = false;
-        foreach (var raw in trustedOrigins)
-        {
-            if (string.IsNullOrWhiteSpace(raw)) continue;
-            if (string.Equals(TrimOrigin(raw), origin, StringComparison.OrdinalIgnoreCase))
-            {
-                allowed = true;
-                break;
-            }
-        }
-        if (!allowed) return false;
+        if (!IsTrustedOrigin(origin, trustedOrigins)) return false;
         // Rebuild via UriBuilder so the final string is composed from already-parsed
         // (host, port, path, query) values rather than the raw input.
         var builder = new UriBuilder(u.Scheme, u.Host)
@@ -66,6 +56,21 @@ public static class RedirectValidator
         };
         safeUrl = builder.Uri.AbsoluteUri;
         return true;
+    }
+
+    /// <summary>
+    /// True when <paramref name="origin"/> equals one of the trusted origins. Blank entries are
+    /// skipped rather than matched — an unset config value must never make everything trusted.
+    /// </summary>
+    private static bool IsTrustedOrigin(string origin, IEnumerable<string> trustedOrigins)
+    {
+        foreach (var raw in trustedOrigins)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            if (string.Equals(TrimOrigin(raw), origin, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 
     public static string TrimOrigin(string s)

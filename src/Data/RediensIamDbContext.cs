@@ -83,11 +83,12 @@ public class RediensIamDbContext(DbContextOptions<RediensIamDbContext> options) 
     /// </summary>
     private void RejectAuditLogTampering()
     {
-        foreach (var entry in ChangeTracker.Entries<AuditLog>())
-            if (entry.State is EntityState.Modified or EntityState.Deleted)
-                throw new InvalidOperationException(
-                    $"The audit log is append-only: attempted to {entry.State.ToString().ToLowerInvariant()} " +
-                    $"audit row {entry.Entity.Id}.");
+        var tampered = ChangeTracker.Entries<AuditLog>()
+            .FirstOrDefault(e => e.State is EntityState.Modified or EntityState.Deleted);
+        if (tampered != null)
+            throw new InvalidOperationException(
+                $"The audit log is append-only: attempted to {tampered.State.ToString().ToLowerInvariant()} " +
+                $"audit row {tampered.Entity.Id}.");
     }
 
     private List<AuditLog> PendingAuditRows()

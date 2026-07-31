@@ -83,9 +83,10 @@ public class KeyRotationService(RediensIamDbContext db, AppConfig appConfig, ILo
         rewritten += await SweepProjectsAsync(ct);
 
         var status = await GetStatusAsync(ct);
-        logger.LogInformation(
-            "Key rotation sweep re-encrypted {Rewritten} value(s) under key id {ActiveKeyId}; {Pending} still pending",
-            rewritten, status.ActiveKeyId, status.TotalPending);
+        if (logger.IsEnabled(LogLevel.Information))
+            logger.LogInformation(
+                "Key rotation sweep re-encrypted {Rewritten} value(s) under key id {ActiveKeyId}; {Pending} still pending",
+                rewritten, status.ActiveKeyId, status.TotalPending);
         return status;
     }
 

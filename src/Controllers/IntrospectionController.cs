@@ -301,7 +301,13 @@ public class IntrospectionController(
 /// </summary>
 public record IntrospectionRequest(string Token, string? Aud = null);
 
-/// <summary>RFC 7662 response. Field names are serialised snake_case by the global JSON options.</summary>
+/// <summary>
+/// RFC 7662 response. Field names are serialised snake_case by the global JSON options.
+///
+/// <para><c>Aud</c> echoes the audience the answer was scoped to and is null on an inactive
+/// answer. <c>Ver</c> is always present — see
+/// <see cref="IntrospectionController.ContractVersion"/>.</para>
+/// </summary>
 public record IntrospectionResult(
     bool Active,
     string? Sub = null,
@@ -311,9 +317,7 @@ public record IntrospectionResult(
     List<string>? Roles = null,
     string? ClientId = null,
     bool IsServiceAccount = false,
-    /// <summary>Echo of the audience the answer was scoped to. Null on an inactive answer.</summary>
     string? Aud = null,
-    /// <summary>See <see cref="IntrospectionController.ContractVersion"/>. Always present.</summary>
     int Ver = IntrospectionController.ContractVersion)
 {
     public static readonly IntrospectionResult Inactive = new(false);

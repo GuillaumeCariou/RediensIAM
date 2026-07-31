@@ -140,7 +140,8 @@ public static class ClaimsExtensions
 
     /// <summary>
     /// Marks these claims as the caller's own identity. Public only so tests can reach it; it can
-    /// never loosen a check, it only makes <see cref="GetManagementLevel"/> stricter about them.
+    /// never loosen a check, it only makes <see cref="GetGrantedLevel"/> stricter about them —
+    /// marked-but-unverified claims read back as null rather than as a level.
     /// </summary>
     public static void MarkCallerClaims(TokenClaims claims)
         => CallerGrants.GetValue(claims, _ => new StrongBox<GrantedLevel?>(null));
@@ -157,39 +158,18 @@ public static class ClaimsExtensions
     /// The caller's management level as verified against the authorisation store earlier in this
     /// request. Null when no live check has run — which is the only honest answer, and is why this
     /// is the accessor an access decision should use.
+    ///
+    /// <para>
+    /// It is also the only such accessor, deliberately (S-1). A level taken from <c>ext.roles</c>
+    /// is a claim, not a grant, and one reader that returned either — depending on whether a live
+    /// check happened to have run — is how R-22 and the password-floor bypass both happened. The
+    /// two questions are separate members now, so the compiler enforces the choice: this one for
+    /// the caller's own verified authority, and <see cref="GrantedLevel.ClaimedLevel"/> (internal)
+    /// to read a presented token's claim on purpose, which is what introspection wants. The reader
+    /// that conflated them carried a runtime throw for the misuse; it is deleted because the misuse
+    /// no longer compiles, and <c>StructuralDebtTests</c> asserts it cannot come back.
+    /// </para>
     /// </summary>
     public static GrantedLevel? GetGrantedLevel(this HttpContext ctx)
         => ctx.GetClaims() is { } claims && CallerGrants.TryGetValue(claims, out var box) ? box.Value : null;
-
-    /// <summary>
-    /// The management level a set of claims <i>asserts</i>.
-    ///
-    /// <para>
-    /// Refuses when asked about the caller's own token before a live check has run. That read is
-    /// the shape of R-22 and of the password-floor bypass: a token snapshot, used as if it were an
-    /// authorisation decision, on a path where nothing re-verified it. Asking about somebody
-    /// else's token — introspection — is a different question and is allowed.
-    /// </para>
-    ///
-    /// <para>
-    /// This is a runtime backstop for a defect that ought to be a compile error. Making it one
-    /// means deleting this method and pointing its three callers at
-    /// <see cref="GetGrantedLevel"/> / <see cref="GrantedLevel.ClaimedLevel"/>; see
-    /// <c>.security-hardening/17-structural-debt.md</c> for the exact lines.
-    /// </para>
-    /// </summary>
-    /// <summary>
-    /// Private by design (S-1). A management level taken from <c>ext.roles</c> is a claim, not a
-    /// grant, and this used to be the public way to confuse the two — which is how R-22 and P-01
-    /// both happened. Callers now have two options and the compiler enforces the choice:
-    /// <c>HttpContext.GetGrantedLevel()</c> for the caller's own verified authority, or
-    /// <see cref="GrantedLevel.ClaimedLevel"/> to read a presented token's claim on purpose.
-    /// The runtime throw this used to carry is gone with it: the mistake no longer compiles.
-    /// </summary>
-    private static ManagementLevel GetManagementLevel(this TokenClaims claims)
-    {
-        if (CallerGrants.TryGetValue(claims, out var box) && box.Value is { } granted)
-            return granted.Value;
-        return GrantedLevel.ClaimedLevel(claims);
-    }
 }

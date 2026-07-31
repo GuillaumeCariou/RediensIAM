@@ -30,17 +30,8 @@ ValidateEncryptionKey(appConfig, builder.Environment);
 // from the URLs this deployment already declares as its own. Kubernetes probes send an explicit
 // Host header matching App__PublicUrl, so they are covered. An operator who sets a real
 // AllowedHosts list still wins — this only replaces the wildcard.
-builder.Services.PostConfigure<Microsoft.AspNetCore.HostFiltering.HostFilteringOptions>(o =>
-{
-    if (!o.AllowedHosts.Contains("*")) return;
-    var derived = new[] { appConfig.PublicUrl, appConfig.AdminSpaOrigin }
-        .Select(u => Uri.TryCreate(u, UriKind.Absolute, out var uri) ? uri.Host : null)
-        .Append(appConfig.Domain)
-        .Where(h => !string.IsNullOrWhiteSpace(h))
-        .Distinct(StringComparer.OrdinalIgnoreCase)
-        .ToList();
-    if (derived.Count > 0) o.AllowedHosts = derived!;
-});
+builder.Services.PostConfigure<Microsoft.AspNetCore.HostFiltering.HostFilteringOptions>(
+    o => ReplaceWildcardAllowedHosts(o, appConfig));
 
 // ── Database ───────────────────────────────────────────────────────────────
 // The interceptor publishes the request's tenant scope as the rediensiam.org_id session variable
@@ -206,19 +197,15 @@ var logger = app.Services.GetRequiredService<ILogger<Program>>();
 if (appConfig.HasPlaceholderEncryptionKey)
     logger.LogWarning("WARNING: an encryption root is the default all-zero dev placeholder. Override via Security__TotpSecretEncryptionKey (or Security__EncryptionKeys) before production.");
 
-logger.LogInformation(
-    "Encryption key ring: active key id {ActiveKeyId}, configured ids [{KeyIds}]; Argon2 pepper ids [{PepperIds}]",
-    appConfig.ActiveEncryptionKeyId,
-    string.Join(',', appConfig.ConfiguredEncryptionKeyIds),
-    string.Join(',', appConfig.Argon2PepperRing.Select(p => p.Id)));
+if (logger.IsEnabled(LogLevel.Information))
+    logger.LogInformation(
+        "Encryption key ring: active key id {ActiveKeyId}, configured ids [{KeyIds}]; Argon2 pepper ids [{PepperIds}]",
+        appConfig.ActiveEncryptionKeyId,
+        string.Join(',', appConfig.ConfiguredEncryptionKeyIds),
+        string.Join(',', appConfig.Argon2PepperRing.Select(p => p.Id)));
 
 if (app.Environment.IsProduction())
-{
-    if (!appConfig.PublicUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-        logger.LogError("SECURITY: App__PublicUrl is not HTTPS in production ({Url}). OAuth2 tokens, session cookies, and redirects will be insecure.", appConfig.PublicUrl);
-    if (!appConfig.AdminSpaOrigin.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-        logger.LogWarning("WARNING: App__AdminSpaOrigin is not HTTPS in production ({Url}).", appConfig.AdminSpaOrigin);
-}
+    WarnOnNonHttpsProductionUrls(logger, appConfig);
 
 // ── Ensure DB schema exists ─────────────────────────────────────────────────
 await EnsureDbSchemaAsync(app);
@@ -415,6 +402,29 @@ app.MapFallback("/admin/{**path}", async (string path, HttpContext ctx) =>
 app.MapFallbackToFile("index.html");
 
 await app.RunAsync();
+
+// Body of the HostFilteringOptions PostConfigure above — extracted verbatim. Runs at
+// PostConfigure time, not registration time, so an operator-supplied AllowedHosts list still wins.
+static void ReplaceWildcardAllowedHosts(Microsoft.AspNetCore.HostFiltering.HostFilteringOptions o, AppConfig cfg)
+{
+    if (!o.AllowedHosts.Contains("*")) return;
+    var derived = new[] { cfg.PublicUrl, cfg.AdminSpaOrigin }
+        .Select(u => Uri.TryCreate(u, UriKind.Absolute, out var uri) ? uri.Host : null)
+        .Append(cfg.Domain)
+        .Where(h => !string.IsNullOrWhiteSpace(h))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+    if (derived.Count > 0) o.AllowedHosts = derived!;
+}
+
+// The two production URL warnings from the startup block — same messages, same levels, same order.
+static void WarnOnNonHttpsProductionUrls(ILogger log, AppConfig cfg)
+{
+    if (!cfg.PublicUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        log.LogError("SECURITY: App__PublicUrl is not HTTPS in production ({Url}). OAuth2 tokens, session cookies, and redirects will be insecure.", cfg.PublicUrl);
+    if (!cfg.AdminSpaOrigin.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        log.LogWarning("WARNING: App__AdminSpaOrigin is not HTTPS in production ({Url}).", cfg.AdminSpaOrigin);
+}
 
 static void ValidateEncryptionKey(AppConfig cfg, IWebHostEnvironment env)
 {

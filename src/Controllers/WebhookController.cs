@@ -338,19 +338,25 @@ public static class WebhookUrlValidator
         // mapped form — the address resolves to exactly the same host.
         if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
 
-        if (ip.AddressFamily == AddressFamily.InterNetworkV6)
-        {
-            if (ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal) return true;
-            if (ip.Equals(IPAddress.IPv6Loopback) || ip.Equals(IPAddress.IPv6Any)) return true;
-            var v6 = ip.GetAddressBytes();
-            // fc00::/7 — unique-local, the IPv6 equivalent of RFC1918. IsIPv6SiteLocal only
-            // covers the deprecated fec0::/10 and misses this entirely.
-            if ((v6[0] & 0xFE) == 0xFC) return true;
-            // 2001:db8::/32 — documentation range, never legitimate egress.
-            return v6[0] == 0x20 && v6[1] == 0x01 && v6[2] == 0x0D && v6[3] == 0xB8;
-        }
+        if (ip.AddressFamily == AddressFamily.InterNetworkV6) return IsPrivateIpv6(ip);
 
-        var b = ip.GetAddressBytes();
+        return IsPrivateIpv4(ip.GetAddressBytes());
+    }
+
+    private static bool IsPrivateIpv6(IPAddress ip)
+    {
+        if (ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal) return true;
+        if (ip.Equals(IPAddress.IPv6Loopback) || ip.Equals(IPAddress.IPv6Any)) return true;
+        var v6 = ip.GetAddressBytes();
+        // fc00::/7 — unique-local, the IPv6 equivalent of RFC1918. IsIPv6SiteLocal only
+        // covers the deprecated fec0::/10 and misses this entirely.
+        if ((v6[0] & 0xFE) == 0xFC) return true;
+        // 2001:db8::/32 — documentation range, never legitimate egress.
+        return v6[0] == 0x20 && v6[1] == 0x01 && v6[2] == 0x0D && v6[3] == 0xB8;
+    }
+
+    private static bool IsPrivateIpv4(byte[] b)
+    {
         return b[0] == 10
             || (b[0] == 172 && b[1] >= 16 && b[1] <= 31)
             || (b[0] == 192 && b[1] == 168)

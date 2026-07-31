@@ -24,7 +24,8 @@ public static class LoginThemeValidator
     /// value — and the backslash is what would rebuild it from <c>\28</c>. The rest match the
     /// guard the preview page already applies.
     /// </summary>
-    private const string ForbiddenValueChars = ";{}()<>\"'`\\";
+    private static readonly System.Buffers.SearchValues<char> ForbiddenValueChars =
+        System.Buffers.SearchValues.Create(";{}()<>\"'`\\");
 
     /// <summary>
     /// Constructs refused outright rather than stripped. Each is either an exfiltration
