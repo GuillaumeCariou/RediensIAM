@@ -311,10 +311,19 @@ rediensiam:
       enabled: true
       image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.25.0
       password: ""
-      # Plaintext cache connection. Same cert-manager prerequisite as Postgres, but this one
+      # Cache transport encryption. Same cert-manager prerequisite as Postgres, but this one
       # is a HARD cutover: with --tls Dragonfly stops accepting cleartext, so the cacheUrl
-      # secret must gain `ssl=true` in the same change or the app cannot reach the cache.
-      # Off by default for that reason; runbook in 09-infra-security.md.
+      # secret must gain `ssl=true` in the same change or the app cannot reach the cache —
+      # and the cache holds the DataProtection key ring.
+      #
+      # deploy.sh derives that `ssl=true` from this flag, and templates/dragonfly.yaml fails
+      # the render if the flag and the DSN ever disagree in either direction, so the pair
+      # cannot be split by accident. On the reuse path (a secrets file that already exists)
+      # deploy.sh stops and prints the one-line edit instead.
+      #
+      # Still off by default only because cert-manager is not this chart's to install; it is
+      # on in values.dev.yaml. `enabled: true` also requires `password` to be set — Dragonfly
+      # refuses to start with TLS and no auth method. Runbook: 09-infra-security.md §6.5.
       tls:
         enabled: false
       resources:

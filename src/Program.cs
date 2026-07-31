@@ -70,8 +70,13 @@ builder.Services.AddStackExchangeRedisCache(o =>
 });
 
 // ── Data Protection — persist keys to Redis so pod restarts don't invalidate sessions ──
+// The ring is what mints session cookies, and by default it is written to the cache in the clear.
+// ProtectKeysWithRootKey encrypts it under a purpose-derived subkey of the HKDF root and refuses
+// to read a key that arrived unencrypted — see Config/KeyRingProtection.cs. This is deliberately
+// independent of cache TLS: TLS protects the wire, this protects the stored bytes.
 builder.Services.AddDataProtection()
     .PersistKeysToStackExchangeRedis(cacheMultiplexer, "rediensiam:dataprotection:keys")
+    .ProtectKeysWithRootKey(appConfig)
     .SetApplicationName("rediensiam");
 
 // ── Session (for MFA state) — backed by Redis so it survives pod restarts ──

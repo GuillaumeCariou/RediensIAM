@@ -1,5 +1,16 @@
 {{- if .Values.rediensiam.dragonfly.local.enabled }}
-{{- if and .Values.rediensiam.dragonfly.local.tls.enabled (not .Values.rediensiam.dragonfly.local.password) }}
+{{- $tls := .Values.rediensiam.dragonfly.local.tls.enabled }}
+{{- $cacheUrl := .Values.rediensiam.secrets.cacheUrl | default "" }}
+{{- /*
+  R-15 cutover guards. All three are gated on a non-empty cacheUrl, for the reason
+  postgres.yaml states verbatim: empty means the credential comes from the gitignored
+  secrets file, which `helm lint` and `helm template` on values.yaml + values.<env>.yaml
+  alone never see, and failing there would break the repository's own gate on a
+  configuration that is correct. Every real deploy layers that file, so every real
+  deploy is judged.
+*/}}
+{{- if $cacheUrl }}
+{{- if and $tls (not .Values.rediensiam.dragonfly.local.password) }}
 {{- /*
   Observed 2026-07-31, not theorised: with `--tls` and an empty `--requirepass`,
   Dragonfly v1.25 logs `TLS configured but no authentication method is used!` and
@@ -8,6 +19,21 @@
   never generated one, so this was the state of every install.
 */}}
 {{- fail "rediensiam.dragonfly.local.tls.enabled needs rediensiam.dragonfly.local.password — Dragonfly refuses to start with TLS and no authentication method" }}
+{{- end }}
+{{- /*
+  The cutover itself, guarded in both directions. Same shape as the Postgres guard, but
+  the cache needs the mirror case too: Dragonfly with `--tls` refuses cleartext AND
+  Dragonfly without it speaks no TLS, so either half of the pair on its own is a total
+  cache outage — which, because the cache holds the DataProtection key ring, is every
+  session. A template error is the only place to catch that before it is an incident.
+*/}}
+{{- $wantsSsl := regexMatch "(?i)(^|,) *ssl *= *true" $cacheUrl }}
+{{- if and $tls (not $wantsSsl) }}
+{{- fail "rediensiam.dragonfly.local.tls.enabled is set but rediensiam.secrets.cacheUrl has no `ssl=true` — Dragonfly stops answering cleartext, so both must change in the SAME upgrade (09-infra-security.md §6.5)" }}
+{{- end }}
+{{- if and (not $tls) $wantsSsl }}
+{{- fail "rediensiam.secrets.cacheUrl asks for `ssl=true` but rediensiam.dragonfly.local.tls.enabled is off — the cache serves no TLS and the app will not connect (09-infra-security.md §6.5)" }}
+{{- end }}
 {{- end }}
 {{- if .Values.rediensiam.dragonfly.local.tls.enabled }}
 # Cache transport encryption. Unlike Postgres this is a HARD cutover — with --tls Dragonfly

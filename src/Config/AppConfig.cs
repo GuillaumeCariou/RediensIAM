@@ -190,12 +190,21 @@ public class AppConfig(IConfiguration config)
     private Services.KeyRing? _webhookEncKey;
     private Services.KeyRing? _smtpEncKey;
     private Services.KeyRing? _themeEncKey;
+    private Services.KeyRing? _dataProtectionKey;
     private byte[]? _deviceFpKey;
 
     public Services.KeyRing TotpEncKey    => _totpEncKey    ??= DeriveRing("rediensiam-totp-secret-v1");
     public Services.KeyRing WebhookEncKey => _webhookEncKey ??= DeriveRing("rediensiam-webhook-secret-v1");
     public Services.KeyRing SmtpEncKey    => _smtpEncKey    ??= DeriveRing("rediensiam-smtp-password-v1");
     public Services.KeyRing ThemeEncKey   => _themeEncKey   ??= DeriveRing("rediensiam-theme-secret-v1");
+
+    /// <summary>
+    /// Wraps the DataProtection key ring before it is written to the cache — see
+    /// <see cref="KeyRingProtection"/>. Its own purpose string, so a compromise of any other
+    /// derived subkey does not yield the ability to mint session cookies, and the purpose is
+    /// versioned because changing it would orphan every key already stored under the old one.
+    /// </summary>
+    public Services.KeyRing DataProtectionKey => _dataProtectionKey ??= DeriveRing("rediensiam-dataprotection-v1");
 
     /// <summary>
     /// HMAC key for device fingerprints. Not a ciphertext key — fingerprints are one-way and

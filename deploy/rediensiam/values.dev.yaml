@@ -25,12 +25,23 @@ rediensiam:
   # already-migrated database is an outage: pg_hba.conf lives on the PVC and still
   # says hostssl.
   #
-  # dragonfly.local.tls stays off — see .security-hardening/18-cnpg-tls-rls.md §2.
   postgres:
     local:
       tls:
         enabled: true
         requireSsl: true
+
+  # Cache TLS, on since step 23. Step 18 stopped here because the client could not trust a
+  # cert-manager root; src/Config/CacheTls.cs now pins to the CA the app Deployment mounts at
+  # /etc/cache-tls/ca.crt, so the connection is both encrypted and authenticated.
+  #
+  # Unlike Postgres this is not a preference the DSN can decline: --tls makes Dragonfly stop
+  # answering cleartext, so deploy.sh writes `,ssl=true` into cacheUrl from this same flag and
+  # templates/dragonfly.yaml fails the render if the two ever disagree in either direction.
+  dragonfly:
+    local:
+      tls:
+        enabled: true
 
   ingress:
     public:
