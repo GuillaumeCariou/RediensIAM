@@ -146,6 +146,17 @@ rediensiam:
     bootstrapPassword: ""
 
   # ── PostgreSQL ────────────────────────────────────────────────────────────────
+  # Nightly pg_dumpall to a PVC. On by default: until this existed, a disk failure
+  # destroyed every tenant permanently and nothing in the chart said so.
+  # A dump beside the database is not disaster recovery — copy the PVC off-node for
+  # that. It does cover the cases that actually happen: a bad migration, a dropped
+  # table, a tenant deleting itself.
+  backup:
+    enabled: true
+    schedule: "0 3 * * *"
+    storage: 5Gi
+    retainCopies: 14
+
   postgres:
     local:
       enabled: true

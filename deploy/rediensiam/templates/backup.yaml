@@ -1,0 +1,114 @@
+{{- if .Values.rediensiam.backup.enabled }}
+{{- /*
+  No backup existed anywhere in this chart. Step 12 found it; no earlier step did.
+  A disk failure destroyed every tenant permanently — the single largest gap in the
+  system, and not a security-control problem.
+
+  Deliberately a pg_dump to a PVC, not WAL archiving to object storage: this is a
+  single-node k3s cluster with local-path storage, so there is no second failure
+  domain to ship WAL to. A dump on the same node survives a dropped table, a bad
+  migration and a tenant deleting itself — not the disk dying. Copying the PVC
+  off-node is what actually closes that case; see the runbook in 13-monitoring-siem.md.
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-backup
+  namespace: {{ .Release.Namespace }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.rediensiam.backup.storage }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-backup
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: {{ .Values.rediensiam.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/instance: {{ .Release.Name }}
+        spec:
+          restartPolicy: OnFailure
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 70
+            runAsGroup: 70
+            fsGroup: 70
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: dump
+              image: {{ .Values.rediensiam.postgres.local.image }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              env:
+                - name: PGHOST
+                  value: {{ .Release.Name }}-postgres
+                - name: PGUSER
+                  value: iam
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Release.Name }}-secrets
+                      key: postgres-password
+                - name: RETAIN
+                  value: {{ .Values.rediensiam.backup.retainCopies | quote }}
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  # Dump every database in the cluster: the app, Hydra and Keto each own one,
+                  # and restoring the app alone would leave consent and permission state behind.
+                  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+                  tmp="/backup/.in-progress-${stamp}.sql.gz"
+                  out="/backup/rediensiam-${stamp}.sql.gz"
+
+                  # Write to a dot-prefixed name and rename only on success: a truncated dump
+                  # that looks like a backup is worse than an obvious gap.
+                  pg_dumpall --clean --if-exists | gzip -9 > "${tmp}"
+                  mv "${tmp}" "${out}"
+                  echo "wrote ${out} ($(wc -c < "${out}") bytes)"
+
+                  # A tiny dump means pg_dumpall failed while gzip still exited 0.
+                  if [ "$(wc -c < "${out}")" -lt 1024 ]; then
+                    echo "FATAL: dump is implausibly small — treating as failure" >&2
+                    exit 1
+                  fi
+
+                  # Prune oldest first, keeping RETAIN copies. Never touches .in-progress files.
+                  ls -1t /backup/rediensiam-*.sql.gz 2>/dev/null | tail -n "+$((RETAIN + 1))" | \
+                    while read -r old; do echo "pruning ${old}"; rm -f "${old}"; done
+
+                  # Leftover in-progress files are failed runs; a day is well past any real dump.
+                  find /backup -name '.in-progress-*' -mtime +1 -delete 2>/dev/null || true
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+          volumes:
+            - name: backup
+              persistentVolumeClaim:
+                claimName: {{ .Release.Name }}-backup
+            - name: tmp
+              emptyDir: {}
+{{- end }}
