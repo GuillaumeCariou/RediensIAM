@@ -132,7 +132,7 @@ public class EntityModelTests
     [Fact]
     public void TotpEncryption_DecryptString_RoundTrips()
     {
-        var key       = Convert.FromHexString(new string('0', 64));
+        var key       = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         var plaintext = "hello world";
         var encrypted = TotpEncryption.EncryptString(key, plaintext);
         TotpEncryption.DecryptString(key, encrypted).Should().Be(plaintext);
@@ -534,14 +534,14 @@ public class EntityModelTests
     [Fact]
     public void TotpEncryption_EncryptProviderSecrets_NullIncoming_ReturnsNull()
     {
-        var key = Convert.FromHexString(new string('0', 64));
+        var key = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         TotpEncryption.EncryptProviderSecretsInTheme(null, null, key).Should().BeNull();
     }
 
     [Fact]
     public void TotpEncryption_EncryptProviderSecrets_NoProvidersKey_ReturnsIncoming()
     {
-        var key     = Convert.FromHexString(new string('0', 64));
+        var key     = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         var incoming = new Dictionary<string, object> { ["color"] = "blue" };
         TotpEncryption.EncryptProviderSecretsInTheme(incoming, null, key).Should().BeSameAs(incoming);
     }
@@ -549,7 +549,7 @@ public class EntityModelTests
     [Fact]
     public void TotpEncryption_EncryptProviderSecrets_ProvidersNotArray_ReturnsIncoming()
     {
-        var key = Convert.FromHexString(new string('0', 64));
+        var key = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         var doc = JsonDocument.Parse("{\"providers\": \"not-array\"}");
         var incoming = new Dictionary<string, object>
         {
@@ -562,7 +562,7 @@ public class EntityModelTests
     public void TotpEncryption_EncryptProviderSecrets_ExistingNull_BuildsEmptyMap()
     {
         // existing is null → BuildExistingSecretsMap returns empty map
-        var key = Convert.FromHexString(new string('0', 64));
+        var key = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         var doc = JsonDocument.Parse("""{"providers": [{"id": "gh", "client_id": "abc"}]}""");
         var incoming = new Dictionary<string, object>
         {
@@ -576,7 +576,7 @@ public class EntityModelTests
     public void TotpEncryption_EncryptProviderSecrets_ExistingNoProviders_UsesEmptyMap()
     {
         // existing dict exists but has no "providers" key → BuildExistingSecretsMap returns empty
-        var key = Convert.FromHexString(new string('0', 64));
+        var key = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         var doc = JsonDocument.Parse("""{"providers": [{"id": "gh", "client_id": "abc"}]}""");
         var incoming = new Dictionary<string, object>
         {
@@ -591,7 +591,7 @@ public class EntityModelTests
     public void TotpEncryption_EncryptProviderSecrets_ExistingProvidersNotArray_UsesEmptyMap()
     {
         // existing has "providers" but it's a non-array JsonElement
-        var key = Convert.FromHexString(new string('0', 64));
+        var key = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         var inDoc = JsonDocument.Parse("""{"providers": [{"id": "gh"}]}""");
         var exDoc = JsonDocument.Parse("""{"providers": "not-array"}""");
         var incoming = new Dictionary<string, object>
@@ -610,7 +610,7 @@ public class EntityModelTests
     public void TotpEncryption_EncryptProviderSecrets_ProviderNoId_NoSecret_LeavesDictClean()
     {
         // Provider has no "id" property → providerId is null → else-if skipped
-        var key = Convert.FromHexString(new string('0', 64));
+        var key = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         var doc = JsonDocument.Parse("""{"providers": [{"client_id": "abc"}]}""");
         var incoming = new Dictionary<string, object>
         {
@@ -624,7 +624,7 @@ public class EntityModelTests
     public void TotpEncryption_EncryptProviderSecrets_ProviderHasId_ExistingSecretPreserved()
     {
         // Provider has id but no client_secret → falls to else-if → looks up existing secret
-        var key = Convert.FromHexString(new string('0', 64));
+        var key = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         var plaintext = "original-secret";
         var existingEnc = TotpEncryption.EncryptString(key, plaintext);
 

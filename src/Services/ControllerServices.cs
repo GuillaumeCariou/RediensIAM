@@ -82,7 +82,8 @@ public sealed class OrgAdminServices(
     AuditLogService audit,
     IEmailService email,
     IDistributedCache cache,
-    LiveAuthorizationService live)
+    LiveAuthorizationService live,
+    KeyRotationService keyRotation)
 {
     public HydraService Hydra      => hydra;
     public KetoService Keto        => keto;
@@ -91,6 +92,7 @@ public sealed class OrgAdminServices(
     public IEmailService Email     => email;
     public IDistributedCache Cache => cache;
     public LiveAuthorizationService Live => live;
+    public KeyRotationService KeyRotation => keyRotation;
 }
 
 /// <summary>Service bundle for ManagedApiController — groups 5 dependencies (S107).</summary>

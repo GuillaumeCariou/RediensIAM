@@ -38,8 +38,14 @@ rediensiam:
   # ── Argon2 password hashing ───────────────────────────────────────────────────
   # Optional hex-encoded server-side pepper. Generate with `openssl rand -hex 32`.
   # Set in values.secret.yaml; maps to Security__Argon2Pepper.
+  #
+  # argon2Peppers : S-10 rotation, "id:hex,id:hex" with the ACTIVE pepper first. Supersedes
+  #   argon2Pepper. Unlike encryption keys there is no sweep — a hash cannot be re-derived
+  #   without the password, so accounts re-pepper on their next successful login and the old
+  #   pepper must stay listed for as long as you are unwilling to lock out dormant accounts.
   security:
     argon2Pepper: ""
+    argon2Peppers: ""
 
   # ── Networking ────────────────────────────────────────────────────────────────
   service:
@@ -146,8 +152,15 @@ rediensiam:
   # encryptionKey : 64-char hex — encrypts TOTP secrets, SMTP passwords, webhook secrets
   # databaseUrl   : full PostgreSQL connection string
   # cacheUrl      : full Redis/Dragonfly connection string
+  #
+  # encryptionKeys : S-10 rotation. Empty until you rotate. Format "id:hex,id:hex" with the
+  #   ACTIVE key first — everything new is encrypted under it, everything listed can decrypt.
+  #   Ids are positive integers and must never be reused. Setting this supersedes encryptionKey.
+  #   Runbook: .security-hardening/16-key-rotation.md §7. Do not drop the old key until
+  #   GET /admin/key-rotation reports totalPending: 0.
   secrets:
     encryptionKey: ""
+    encryptionKeys: ""
     databaseUrl: ""
     cacheUrl: ""
     smtpPassword: ""

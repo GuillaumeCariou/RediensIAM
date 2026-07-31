@@ -297,7 +297,23 @@ public class AuthController(
             await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.failure");
             return Unauthorized(new { error = ErrInvalidCreds });
         }
+
+        // S-10: the Argon2 pepper can only be rotated here — a password hash cannot be
+        // re-derived without the plaintext, and this is the one moment we hold it.
+        await RepepperIfNeededAsync(user, body.Password);
         return null;
+    }
+
+    /// <summary>
+    /// Re-hashes the password under the active pepper when the stored hash is under an older
+    /// one. Called only after a successful verify. Accounts that never sign in keep their old
+    /// pepper indefinitely — that tail is the reason a retired pepper cannot simply be dropped.
+    /// </summary>
+    private async Task RepepperIfNeededAsync(User user, string password)
+    {
+        if (user.PasswordHash == null || !passwords.NeedsRepepper(user.PasswordHash)) return;
+        user.PasswordHash = passwords.Hash(password);
+        await db.SaveChangesAsync();
     }
 
     private async Task<IActionResult?> CheckProjectAccessAsync(User user, Project project, string loginChallenge)
@@ -1094,6 +1110,7 @@ public class AuthController(
         if (!await HasManagementRoleAsync(user.Id))
             return Unauthorized(new { error = "insufficient_role" });
 
+        await RepepperIfNeededAsync(user, body.Password);
         user.FailedLoginCount = 0;
         user.LastLoginAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
@@ -1490,7 +1507,7 @@ public class AuthController(
         return null;
     }
 
-    private static ProviderConfig? TryBuildProviderConfig(JsonElement p, string providerId, byte[] encKey)
+    private static ProviderConfig? TryBuildProviderConfig(JsonElement p, string providerId, KeyRing encKey)
     {
         if (!p.TryGetProperty("id", out var idProp) || idProp.GetString() != providerId) return null;
         if (p.TryGetProperty("enabled", out var enProp) && !enProp.GetBoolean()) return null;
@@ -1501,7 +1518,7 @@ public class AuthController(
         return new ProviderConfig(providerId, type, clientId, ResolveProviderSecret(p, encKey), issuerUrl);
     }
 
-    private static string ResolveProviderSecret(JsonElement p, byte[] encKey)
+    private static string ResolveProviderSecret(JsonElement p, KeyRing encKey)
     {
         if (p.TryGetProperty("client_secret_enc", out var csEnc) && !string.IsNullOrEmpty(csEnc.GetString()))
         {

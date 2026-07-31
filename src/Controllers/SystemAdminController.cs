@@ -40,6 +40,30 @@ public class SystemAdminController(
     private TokenClaims Claims => HttpContext.GetClaims()!;
     private Guid GetActorId() => Claims.ParsedUserId;
 
+    // ── Key rotation (S-10) ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Progress of a root-key rotation. <c>totalPending</c> reaching 0 is the only signal that
+    /// the retired key may be removed from <c>Security:EncryptionKeys</c>.
+    /// </summary>
+    [HttpGet("key-rotation")]
+    public async Task<IActionResult> KeyRotationStatus(CancellationToken ct)
+        => Ok(await svc.KeyRotation.GetStatusAsync(ct));
+
+    /// <summary>
+    /// Re-encrypts every stored ciphertext under the active key. Idempotent and safe to re-run;
+    /// encryption is already lazy on write, but cold rows (a TOTP secret written once at
+    /// enrolment) never migrate on their own.
+    /// </summary>
+    [HttpPost("key-rotation/reencrypt")]
+    public async Task<IActionResult> KeyRotationReEncrypt(CancellationToken ct)
+    {
+        var status = await svc.KeyRotation.ReEncryptAsync(ct);
+        await audit.RecordAsync(null, null, GetActorId(), "system.key_rotation.reencrypt",
+            "encryption_key", status.ActiveKeyId.ToString());
+        return Ok(status);
+    }
+
     // ── Organisations ─────────────────────────────────────────────────────────
 
     [HttpGet("organizations")]

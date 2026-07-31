@@ -138,11 +138,11 @@ public class WebhookDeliveryTests(TestFixture fixture)
         var (orgId, _, client, anchorId) = await ScaffoldAsync();
 
         // Encrypt with the same HKDF-derived key the app uses for WebhookEncKey
-        var encKey = HKDF.DeriveKey(
+        var encKey = new KeyRing(1, HKDF.DeriveKey(
             HashAlgorithmName.SHA256,
             Convert.FromHexString(new string('0', 64)),
             32,
-            info: Encoding.UTF8.GetBytes("rediensiam-webhook-secret-v1"));
+            info: Encoding.UTF8.GetBytes("rediensiam-webhook-secret-v1")));
         var rawSecret   = Convert.ToBase64String(Encoding.UTF8.GetBytes("super-secret"));
         var secretEnc   = TotpEncryption.EncryptString(encKey, rawSecret);
         var wh = await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"], secretEnc: secretEnc);

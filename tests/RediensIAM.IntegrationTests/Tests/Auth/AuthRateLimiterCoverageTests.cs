@@ -21,7 +21,7 @@ namespace RediensIAM.IntegrationTests.Tests.Auth;
 [Collection("RediensIAM")]
 public class AuthRateLimiterCoverageTests(TestFixture fixture)
 {
-    private static readonly byte[] TestEncKey = Convert.FromHexString(new string('0', 64));
+    private static readonly KeyRing TestEncKey = new(1, Convert.FromHexString(new string('0', 64)));
 
     private static string BackupHash(string raw) =>
         Convert.ToHexString(

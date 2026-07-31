@@ -60,6 +60,14 @@ public sealed class TestFixture : IAsyncLifetime
     /// <summary>Direct DB access for seeding and assertions.</summary>
     public RediensIamDbContext Db { get; private set; } = null!;
 
+    /// <summary>
+    /// Connection string of the test PostgreSQL container. Needed by tests that must run against
+    /// a database of their own rather than the shared one — the key-rotation sweep, for instance,
+    /// rewrites every encrypted row in the database it is pointed at, which would trample the
+    /// rows other tests in this collection depend on.
+    /// </summary>
+    public string PostgresConnectionString => _postgres.GetConnectionString();
+
     /// <summary>Root DI service provider from the test host.</summary>
     public IServiceProvider Services => _factory.Services;
 

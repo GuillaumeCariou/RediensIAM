@@ -105,11 +105,25 @@ spec:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secrets
                   key: totp-key
+            # S-10: when non-empty, supersedes Security__TotpSecretEncryptionKey.
+            - name: Security__EncryptionKeys
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: encryption-keys
+                  optional: true
             - name: Security__Argon2Pepper
               valueFrom:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secrets
                   key: argon2-pepper
+                  optional: true
+            # S-10: when non-empty, supersedes Security__Argon2Pepper.
+            - name: Security__Argon2Peppers
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: argon2-peppers
                   optional: true
             - name: Smtp__Password
               valueFrom:

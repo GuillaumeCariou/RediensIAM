@@ -100,6 +100,7 @@ builder.Services.AddSingleton(_ => System.Threading.Channels.Channel.CreateUnbou
 builder.Services.AddSingleton<IWebhookQueue, RedisWebhookQueue>();
 builder.Services.AddSingleton<IWebhookSsrfValidator, WebhookSsrfValidator>();
 builder.Services.AddScoped<WebhookService>();
+builder.Services.AddScoped<KeyRotationService>();
 builder.Services.AddHostedService<WebhookDispatcherService>();
 builder.Services.AddHostedService<AuditLogRetentionService>();
 // Every client that dials a URL chosen by a tenant or by a remote provider gets the SSRF-safe
@@ -187,8 +188,14 @@ var app = builder.Build();
 
 var logger = app.Services.GetRequiredService<ILogger<Program>>();
 
-if (appConfig.TotpSecretEncryptionKey == new string('0', 64))
-    logger.LogWarning("WARNING: TotpSecretEncryptionKey is the default all-zero dev placeholder. Override via Security__TotpSecretEncryptionKey before production.");
+if (appConfig.HasPlaceholderEncryptionKey)
+    logger.LogWarning("WARNING: an encryption root is the default all-zero dev placeholder. Override via Security__TotpSecretEncryptionKey (or Security__EncryptionKeys) before production.");
+
+logger.LogInformation(
+    "Encryption key ring: active key id {ActiveKeyId}, configured ids [{KeyIds}]; Argon2 pepper ids [{PepperIds}]",
+    appConfig.ActiveEncryptionKeyId,
+    string.Join(',', appConfig.ConfiguredEncryptionKeyIds),
+    string.Join(',', appConfig.Argon2PepperRing.Select(p => p.Id)));
 
 if (app.Environment.IsProduction())
 {
@@ -396,14 +403,21 @@ await app.RunAsync();
 
 static void ValidateEncryptionKey(AppConfig cfg, IWebHostEnvironment env)
 {
-    var encKeyVal = cfg.TotpSecretEncryptionKey;
-    if (encKeyVal.Length != 64 || !encKeyVal.All(Uri.IsHexDigit))
+    if (string.IsNullOrWhiteSpace(cfg.EncryptionKeys))
+    {
+        var encKeyVal = cfg.TotpSecretEncryptionKey;
+        if (encKeyVal.Length != 64 || !encKeyVal.All(Uri.IsHexDigit))
+            throw new InvalidOperationException(
+                "Security:TotpSecretEncryptionKey must be exactly 64 hex characters (32 bytes). " +
+                "Generate one with: openssl rand -hex 32");
+    }
+    // Forces the key ring to parse: malformed Security:EncryptionKeys must fail at startup,
+    // not on the first TOTP decrypt. Also forces the pepper ring for the same reason.
+    _ = cfg.ConfiguredEncryptionKeyIds;
+    _ = cfg.Argon2PepperRing;
+    if (cfg.HasPlaceholderEncryptionKey && env.IsProduction())
         throw new InvalidOperationException(
-            "Security:TotpSecretEncryptionKey must be exactly 64 hex characters (32 bytes). " +
-            "Generate one with: openssl rand -hex 32");
-    if (encKeyVal == new string('0', 64) && env.IsProduction())
-        throw new InvalidOperationException(
-            "TotpSecretEncryptionKey must not be the default all-zero dev placeholder in production.");
+            "The encryption root must not be the default all-zero dev placeholder in production.");
 }
 
 static void AddSecurityHeaders(HttpContext ctx, string issuerOrigin)

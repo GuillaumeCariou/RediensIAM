@@ -56,8 +56,18 @@ public class AppConfig(IConfiguration config)
     public int    ArgonMemoryCost         => Math.Max(config.GetValue<int>("Security:ArgonMemoryCost", 65536), 19456);
     public int    ArgonParallelism        => Math.Clamp(config.GetValue<int>("Security:ArgonParallelism", 4), 1, 16);
     /// <summary>Optional hex-encoded server-side pepper mixed via HMAC-SHA256 into Argon2 input.
-    /// Empty value means no pepper (back-compat with existing hashes).</summary>
+    /// Empty value means no pepper (back-compat with existing hashes).
+    /// This is pepper id 1 — see <see cref="Argon2PepperRing"/> for rotation.</summary>
     public string Argon2Pepper            => config["Security:Argon2Pepper"] ?? "";
+
+    /// <summary>
+    /// Optional multi-pepper list for Argon2 pepper rotation. Format <c>id:hex,id:hex,…</c>,
+    /// <b>first entry active</b>, same convention as <see cref="EncryptionKeys"/>. When unset,
+    /// <see cref="Argon2Pepper"/> is pepper id 1 (or, if empty, there is no pepper at all — id 0).
+    /// Unlike ciphertexts, password hashes cannot be re-derived without the plaintext: rotation
+    /// happens one login at a time. See <c>.security-hardening/16-key-rotation.md</c> §5.
+    /// </summary>
+    public string? Argon2Peppers          => config["Security:Argon2Peppers"];
     public string PatPrefix               => config["Security:PatPrefix"] ?? "rediens_pat_";
     /// <summary>Upper bound on a service-account PAT's lifetime. A credential that never expires
     /// outlives every revocation path the deployment has.</summary>
@@ -83,25 +93,120 @@ public class AppConfig(IConfiguration config)
         (config["Security:ManagementClientIds"] ?? Roles.AdminClientId)
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-    // ── Per-purpose derived keys (HKDF-SHA256 from TotpSecretEncryptionKey) ──
-    // Each purpose gets an independent 32-byte subkey; compromise of one does not
-    // expose data encrypted under other purposes.
-    private byte[]? _totpEncKey;
-    private byte[]? _webhookEncKey;
-    private byte[]? _smtpEncKey;
-    private byte[]? _themeEncKey;
+    // ── Root encryption keys (S-10 key rotation) ──────────────────────────────
+    /// <summary>
+    /// Optional multi-root key list, enabling incremental rotation of the HKDF root.
+    /// Format: <c>id:hex,id:hex,…</c> — <b>the first entry is the active key</b> (everything new
+    /// is encrypted under it), every entry can decrypt. Ids are small positive integers and must
+    /// never be reused for a different key. When unset, <see cref="TotpSecretEncryptionKey"/> is
+    /// used as key id 1, which is byte-for-byte the pre-rotation behaviour.
+    /// Ordering deliberately matches Ory Hydra's <c>secrets.system</c> convention.
+    /// </summary>
+    public string? EncryptionKeys => config["Security:EncryptionKeys"];
+
+    private List<(int Id, byte[] Root)>? _roots;
+    private List<(int Id, byte[] Root)> Roots => _roots ??= ParseRoots();
+
+    /// <summary>Key id every new ciphertext is written under.</summary>
+    public int ActiveEncryptionKeyId => Roots[0].Id;
+
+    /// <summary>Every key id that can currently decrypt, active first.</summary>
+    public IReadOnlyList<int> ConfiguredEncryptionKeyIds => [.. Roots.Select(r => r.Id)];
+
+    /// <summary>True when any configured root is the all-zero dev placeholder. Checked at startup.</summary>
+    public bool HasPlaceholderEncryptionKey => Roots.Any(r => Array.TrueForAll(r.Root, b => b == 0));
+
+    private List<(int Id, byte[] Root)> ParseRoots()
+    {
+        if (string.IsNullOrWhiteSpace(EncryptionKeys))
+            return [(Services.TotpEncryption.LegacyKeyId, Convert.FromHexString(TotpSecretEncryptionKey))];
+
+        var parsed = new List<(int Id, byte[] Root)>();
+        foreach (var entry in EncryptionKeys.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var sep = entry.IndexOf(':', StringComparison.Ordinal);
+            if (sep <= 0)
+                throw new InvalidOperationException(
+                    "Security:EncryptionKeys entries must be 'id:hex' — e.g. '2:<64 hex>,1:<64 hex>' with the active key first.");
+            if (!int.TryParse(entry[..sep], out var id) || id < 1)
+                throw new InvalidOperationException("Security:EncryptionKeys key ids must be positive integers.");
+            if (parsed.Exists(p => p.Id == id))
+                throw new InvalidOperationException($"Security:EncryptionKeys contains duplicate key id {id}.");
+
+            var hex = entry[(sep + 1)..];
+            if (hex.Length != 64 || !hex.All(Uri.IsHexDigit))
+                throw new InvalidOperationException(
+                    $"Security:EncryptionKeys key id {id} must be exactly 64 hex characters (32 bytes). Generate one with: openssl rand -hex 32");
+            parsed.Add((id, Convert.FromHexString(hex)));
+        }
+        return parsed;
+    }
+
+    // ── Per-purpose derived keys (HKDF-SHA256 from each root) ─────────────────
+    // Each purpose gets an independent 32-byte subkey per root; compromise of one purpose
+    // does not expose data encrypted under other purposes, and each purpose's ring can
+    // decrypt under every configured root while encrypting only under the active one.
+    private Services.KeyRing? _totpEncKey;
+    private Services.KeyRing? _webhookEncKey;
+    private Services.KeyRing? _smtpEncKey;
+    private Services.KeyRing? _themeEncKey;
     private byte[]? _deviceFpKey;
 
-    public byte[] TotpEncKey     => _totpEncKey     ??= DeriveKey("rediensiam-totp-secret-v1");
-    public byte[] WebhookEncKey  => _webhookEncKey  ??= DeriveKey("rediensiam-webhook-secret-v1");
-    public byte[] SmtpEncKey     => _smtpEncKey     ??= DeriveKey("rediensiam-smtp-password-v1");
-    public byte[] ThemeEncKey    => _themeEncKey    ??= DeriveKey("rediensiam-theme-secret-v1");
-    public byte[] DeviceFpKey    => _deviceFpKey    ??= DeriveKey("rediensiam-device-fingerprint-v1");
+    public Services.KeyRing TotpEncKey    => _totpEncKey    ??= DeriveRing("rediensiam-totp-secret-v1");
+    public Services.KeyRing WebhookEncKey => _webhookEncKey ??= DeriveRing("rediensiam-webhook-secret-v1");
+    public Services.KeyRing SmtpEncKey    => _smtpEncKey    ??= DeriveRing("rediensiam-smtp-password-v1");
+    public Services.KeyRing ThemeEncKey   => _themeEncKey   ??= DeriveRing("rediensiam-theme-secret-v1");
 
-    private byte[] DeriveKey(string purpose) =>
-        HKDF.DeriveKey(HashAlgorithmName.SHA256,
-            Convert.FromHexString(TotpSecretEncryptionKey), 32,
-            info: Encoding.UTF8.GetBytes(purpose));
+    /// <summary>
+    /// HMAC key for device fingerprints. Not a ciphertext key — fingerprints are one-way and
+    /// carry no key id, so this deliberately follows the <b>active</b> root only. Retiring a root
+    /// therefore invalidates the new-device cache: users get one extra "new device" notification
+    /// each. That is the intended trade; versioning fingerprints would buy nothing.
+    /// </summary>
+    public byte[] DeviceFpKey => _deviceFpKey ??= DeriveKey(Roots[0].Root, "rediensiam-device-fingerprint-v1");
+
+    // ── Argon2 pepper ring (S-10) ─────────────────────────────────────────────
+    private List<(int Id, byte[] Pepper)>? _pepperRing;
+
+    /// <summary>
+    /// Configured peppers, active first. Empty means "no pepper configured" (pepper id 0).
+    /// A stored hash with no pepper marker is by definition pepper id 1 — the pre-rotation value.
+    /// </summary>
+    public IReadOnlyList<(int Id, byte[] Pepper)> Argon2PepperRing => _pepperRing ??= ParsePeppers();
+
+    private List<(int Id, byte[] Pepper)> ParsePeppers()
+    {
+        if (string.IsNullOrWhiteSpace(Argon2Peppers))
+            return string.IsNullOrEmpty(Argon2Pepper)
+                ? []
+                : [(1, Convert.FromHexString(Argon2Pepper))];
+
+        var parsed = new List<(int Id, byte[] Pepper)>();
+        foreach (var entry in Argon2Peppers.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var sep = entry.IndexOf(':', StringComparison.Ordinal);
+            if (sep <= 0)
+                throw new InvalidOperationException(
+                    "Security:Argon2Peppers entries must be 'id:hex' — e.g. '2:<64 hex>,1:<64 hex>' with the active pepper first.");
+            if (!int.TryParse(entry[..sep], out var id) || id < 1)
+                throw new InvalidOperationException("Security:Argon2Peppers pepper ids must be positive integers.");
+            if (parsed.Exists(p => p.Id == id))
+                throw new InvalidOperationException($"Security:Argon2Peppers contains duplicate pepper id {id}.");
+
+            var hex = entry[(sep + 1)..];
+            if (hex.Length != 64 || !hex.All(Uri.IsHexDigit))
+                throw new InvalidOperationException(
+                    $"Security:Argon2Peppers pepper id {id} must be exactly 64 hex characters (32 bytes). Generate one with: openssl rand -hex 32");
+            parsed.Add((id, Convert.FromHexString(hex)));
+        }
+        return parsed;
+    }
+
+    private Services.KeyRing DeriveRing(string purpose) =>
+        new(Roots[0].Id, Roots.ToDictionary(r => r.Id, r => DeriveKey(r.Root, purpose)));
+
+    private static byte[] DeriveKey(byte[] root, string purpose) =>
+        HKDF.DeriveKey(HashAlgorithmName.SHA256, root, 32, info: Encoding.UTF8.GetBytes(purpose));
 
     // ── Audit ─────────────────────────────────────────────────────────────────
 

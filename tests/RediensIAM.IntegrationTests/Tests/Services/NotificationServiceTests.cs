@@ -177,7 +177,7 @@ public class NotificationServiceTests(TestFixture fixture)
         var (org, smtpCfg) = await SeedOrgWithSmtpAsync();
 
         // Encrypt a dummy password into PasswordEnc
-        var key      = Convert.FromHexString(new string('0', 64));
+        var key      = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         var encPwd   = TotpEncryption.Encrypt(key, Encoding.UTF8.GetBytes("secret"));
         smtpCfg.PasswordEnc = encPwd;
         smtpCfg.Username    = "orguser";
@@ -258,7 +258,7 @@ public class NotificationServiceTests(TestFixture fixture)
     {
         var (org, smtpCfg) = await SeedOrgWithSmtpAsync();
 
-        var key      = Convert.FromHexString(new string('0', 64));
+        var key      = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         var encPwd   = TotpEncryption.Encrypt(key, Encoding.UTF8.GetBytes("secret"));
         smtpCfg.PasswordEnc = encPwd;
         smtpCfg.Username    = "orguser";
