@@ -108,11 +108,16 @@ rediensiam:
 
   # ── NetworkPolicy ─────────────────────────────────────────────────────────────
   networkPolicy:
-    # Release-scoped default-deny on ingress: any pod of this release that no other policy
-    # selects receives nothing. Deliberately NOT namespace-wide — deploy.sh installs into
-    # `default`, which on a real cluster carries unrelated workloads that a namespace-wide
-    # deny would cut off. See 09-infra-security.md for the dedicated-namespace upgrade.
+    # Default-deny on ingress: any pod the scope selects, that no other policy selects,
+    # receives nothing.
     defaultDenyIngress: true
+    # `release` (instance-labelled pods) or `namespace` (every pod in the namespace).
+    # Step 9 had to pick `release`: `default` then held nine unrelated `yandee-*` pods and a
+    # namespace-wide deny would have cut them off. Those were uninstalled on 2026-07-31 and
+    # `default` now holds this release only, so the stronger scope costs nothing here.
+    # Set this back to `release` if you install into a namespace you share with anything else
+    # — a namespace-wide deny is an outage for a neighbour that has no policy of its own.
+    defaultDenyScope: namespace
     # Namespace running the ingress controller (k3s: Traefik in kube-system).
     ingressControllerNamespace: kube-system
     # Namespace running cluster DNS. Egress to :53 is narrowed to kube-dns pods here.
@@ -166,7 +171,23 @@ rediensiam:
       enabled: true
       image: postgres:16-alpine
       storage: 2Gi
+      # The bootstrap SUPERUSER `iam`. T-04: this used to be the credential the app, Hydra
+      # and Keto all shared. Nothing uses it at runtime any more — it is initdb's owner and
+      # the break-glass account. Keep it, rotate it, do not put it in a DSN.
       password: ""
+      # T-04. Per-component least-privilege login roles, created by postgres.yaml's init.sh
+      # on a first-ever start. Each owns exactly one database and cannot CONNECT to the
+      # others; none is superuser and none can create roles or databases.
+      #   iam_app    → rediensiam    iam_hydra → hydra
+      #   iam_keto   → keto          iam_backup → read-only across all of them
+      # deploy.sh generates all four. An existing installation does NOT get them from a
+      # chart upgrade — init.sh only ever runs against an empty data directory — so see the
+      # migration runbook in .security-hardening/15c-infra-residuals.md.
+      roles:
+        appPassword: ""
+        hydraPassword: ""
+        ketoPassword: ""
+        backupPassword: ""
       # R-15. Turns on server-side TLS using a cert-manager Certificate issued by the
       # `selfsigned` ClusterIssuer. Off by default because it has two hard prerequisites:
       #   1. cert-manager must be installed (this chart does not install it), and

@@ -100,7 +100,7 @@ public class AccountBranchCoverageTests(TestFixture fixture)
         var res = await client.PatchAsJsonAsync("/account/password", new
         {
             current_password = "old",
-            new_password     = "NewP@ss!1"
+            new_password     = "NewP@ssw0rd!1"
         });
 
         res.StatusCode.Should().Be(HttpStatusCode.NotFound);
@@ -142,7 +142,7 @@ public class AccountBranchCoverageTests(TestFixture fixture)
         var res = await client.PatchAsJsonAsync("/account/password", new
         {
             current_password = "anything",
-            new_password     = "NewP@ss!1"
+            new_password     = "NewP@ssw0rd!1"
         });
 
         res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -170,7 +170,7 @@ public class AccountBranchCoverageTests(TestFixture fixture)
         var res = await client.PatchAsJsonAsync("/account/password", new
         {
             current_password = "P@ssw0rd!Test",
-            new_password     = "NewP@ss!2"
+            new_password     = "NewP@ssw0rd!2"
         });
 
         // With no org_id in claims, the audit call gets null — should still succeed

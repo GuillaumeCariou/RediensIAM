@@ -250,6 +250,20 @@ await iam.logout();
   cannot read it and it does not outlive the tab
 - Refresh on expiry, single-flight so concurrent 401s cause one refresh, not ten
 - `redirectUri` origin checked against the app origin at construction
+- `issuer` must be `https:`, and every endpoint the discovery document names must sit on the
+  issuer's own origin — otherwise whoever answers for the issuer chooses where the PKCE verifier
+  and the refresh token are sent
+- `fetch()` attaches the bearer only to the app's own origin, or to an origin you declared in
+  `apiOrigins`. Anything else throws `untrusted_target` rather than leaking the token:
+
+  ```ts
+  const iam = createRediensIam({ …, apiOrigins: ['https://api.example.com'] });
+  ```
+
+**Local development:** `http://` is accepted on `localhost`, `127.0.0.1` and `[::1]` only — for
+`issuer` and for `apiOrigins`, and in the C#/Rust SDKs for `BaseUrl`/`base_url`. That is the whole
+opt-out; there is deliberately no flag to disable the check, because a flag gets set in production
+too.
 
 ---
 

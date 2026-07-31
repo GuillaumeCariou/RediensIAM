@@ -610,6 +610,81 @@ public partial class SamlControllerTests(TestFixture fixture)
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("error").GetString().Should().Be("saml_email_missing");
     }
+
+    // ── T-26: SAML XML processing — XXE and signature wrapping ───────────────
+
+    /// <summary>Re-encodes a built ACS form with the SAMLResponse XML rewritten.</summary>
+    private static async Task<FormUrlEncodedContent> MutateSamlResponseAsync(
+        FormUrlEncodedContent form, Func<string, string> mutate)
+    {
+        var fields = Microsoft.AspNetCore.WebUtilities.QueryHelpers
+            .ParseQuery(await form.ReadAsStringAsync());
+        var xml = Encoding.UTF8.GetString(Convert.FromBase64String(fields["SAMLResponse"].ToString()));
+        return new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["SAMLResponse"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(mutate(xml))),
+            ["RelayState"]   = fields["RelayState"].ToString(),
+        });
+    }
+
+    /// <summary>
+    /// The ACS parses attacker-reachable XML before anything is authenticated. ITfoxtec loads it
+    /// through XmlReader with DtdProcessing.Prohibit and a null XmlResolver, so a DOCTYPE is
+    /// refused outright — which closes external-entity retrieval and internal entity expansion in
+    /// one move. Asserted here because nothing else in the suite would notice if that loader were
+    /// swapped for XmlDocument.LoadXml.
+    /// </summary>
+    [Fact]
+    public async Task Acs_ResponseCarryingADoctype_IsRefused()
+    {
+        var (idp, cert) = await SeedAcsSamlIdpAsync();
+        var challenge   = Guid.NewGuid().ToString("N");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
+        var client = fixture.NewSessionClient();
+        var form   = await BuildAcsFormAsync(client, challenge, idp, cert);
+
+        var hostile = await MutateSamlResponseAsync(form, xml =>
+            "<!DOCTYPE Response [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]>" + xml);
+
+        var res = await client.PostAsync("/auth/saml/acs", hostile);
+
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await res.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("error").GetString().Should().Be("saml_response_invalid");
+        (await fixture.Db.Users.AnyAsync(u => u.Email == "saml-user@test.com"))
+            .Should().BeFalse("a document the parser refused must not provision anyone");
+    }
+
+    /// <summary>
+    /// Classic signature wrapping: keep the genuine signed assertion so the signature still
+    /// verifies, and append a copy the SP might read instead. ITfoxtec requires exactly one
+    /// Assertion element in the document and binds the signature reference to the element it
+    /// validates, so the response is refused rather than half-trusted.
+    /// </summary>
+    [Fact]
+    public async Task Acs_ResponseWithASecondWrappedAssertion_IsRefused()
+    {
+        var (idp, cert) = await SeedAcsSamlIdpAsync();
+        var challenge   = Guid.NewGuid().ToString("N");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
+        var client = fixture.NewSessionClient();
+        var form   = await BuildAcsFormAsync(client, challenge, idp, cert);
+
+        var hostile = await MutateSamlResponseAsync(form, xml =>
+        {
+            var doc = new XmlDocument { XmlResolver = null };
+            doc.LoadXml(xml);
+            var assertion = doc.DocumentElement!.SelectSingleNode("*[local-name()='Assertion']")!;
+            doc.DocumentElement.AppendChild(assertion.CloneNode(deep: true));
+            return doc.OuterXml;
+        });
+
+        var res = await client.PostAsync("/auth/saml/acs", hostile);
+
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await res.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("error").GetString().Should().Be("saml_response_invalid");
+    }
 }
 
 // ── SamlService unit tests (no fixture required) ─────────────────────────────
@@ -937,6 +1012,36 @@ public class SamlServiceUnitTests
             idp, "https://sp.example.com/saml/metadata", new Uri("https://sp.example.com/saml/acs"));
 
         config.SignatureValidationCertificates.Should().HaveCount(1);
+    }
+
+    /// <summary>
+    /// T-26. CertificateValidationMode.None disables ITfoxtec's certificate validator outright,
+    /// so nothing looked at NotBefore/NotAfter on the explicitly configured signing certificate —
+    /// the metadata branch filters expired certs, this one did not. A key an IdP has rotated away
+    /// from stayed authoritative here for ever.
+    /// </summary>
+    [Fact]
+    public async Task BuildConfigAsync_ExpiredExplicitCertificate_IsRefused()
+    {
+        using var rsa = RSA.Create(2048);
+        var req = new CertificateRequest("CN=ExpiredIdP", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        using var expired = req.CreateSelfSigned(
+            DateTimeOffset.UtcNow.AddYears(-2), DateTimeOffset.UtcNow.AddDays(-1));
+
+        var svc = BuildService();
+        var idp = new SamlIdpConfig
+        {
+            Id             = Guid.NewGuid(),
+            EntityId       = "https://idp.example.com",
+            SsoUrl         = "https://idp.example.com/sso",
+            CertificatePem = expired.ExportCertificatePem(),
+        };
+
+        var act = async () => await svc.BuildConfigAsync(
+            idp, "https://sp.example.com/saml/metadata", new Uri("https://sp.example.com/saml/acs"));
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage($"*{idp.Id}*validity window*");
     }
 }
 

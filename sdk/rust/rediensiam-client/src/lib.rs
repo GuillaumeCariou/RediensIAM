@@ -101,6 +101,9 @@ impl TokenInfo {
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Base URL of the RediensIAM public API, e.g. `https://auth.example.com`.
+    ///
+    /// Must be `https`. The one exception is a loopback host (`localhost`, `127.0.0.1`, `::1`),
+    /// so a local development setup does not have to switch the check off everywhere.
     pub base_url: String,
 
     /// Credential this service presents. A service-account personal access token
@@ -161,6 +164,7 @@ impl RediensIamClient {
         if config.service_account_token.is_empty() {
             return Err(Error::Config("service_account_token is required".into()));
         }
+        require_secure_url(&config.base_url)?;
 
         let http = reqwest::Client::builder().timeout(config.timeout).build()?;
 
@@ -262,6 +266,23 @@ impl RediensIamClient {
     }
 }
 
+/// The service-account credential and every token being introspected ride on `base_url`, so
+/// cleartext there hands an on-path attacker both. `http` is accepted only on a loopback host:
+/// forbidding it outright breaks every local setup, and a flag to disable the check gets set in
+/// production too.
+fn require_secure_url(base_url: &str) -> Result<(), Error> {
+    let url = reqwest::Url::parse(base_url)
+        .map_err(|e| Error::Config(format!("base_url is not a valid URL: {e}")))?;
+
+    match url.scheme() {
+        "https" => Ok(()),
+        "http" if matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1")) => Ok(()),
+        _ => Err(Error::Config(format!(
+            "base_url must be https — http is accepted only on localhost: {base_url}"
+        ))),
+    }
+}
+
 /// Cache on a digest, never the token itself: keys end up in dumps and diagnostics.
 ///
 /// It has to be a cryptographic digest. The map it keys returns a full `TokenInfo` — roles
@@ -291,6 +312,25 @@ mod tests {
             ..Default::default()
         })
         .is_err());
+    }
+
+    /// R-30: the credential rides on every call, so the transport has to be authenticated.
+    #[test]
+    fn base_url_must_be_https_except_on_loopback() {
+        let with = |base_url: &str| {
+            RediensIamClient::new(Config {
+                base_url: base_url.into(),
+                service_account_token: "rediens_pat_x".into(),
+                ..Default::default()
+            })
+        };
+
+        assert!(with("https://auth.example.com").is_ok());
+        assert!(with("http://localhost:8080").is_ok());
+        assert!(with("http://127.0.0.1:8080").is_ok());
+
+        assert!(with("http://auth.example.com").is_err());
+        assert!(with("auth.example.com").is_err(), "must be an absolute URL");
     }
 
     #[test]

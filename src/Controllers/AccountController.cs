@@ -327,6 +327,12 @@ public class AccountController(
     [HttpPost("mfa/phone/setup")]
     public async Task<IActionResult> SetupPhone([FromBody] PhoneSetupRequest body)
     {
+        // The stub provider drops the message. Enrolling anyway makes SMS a factor the account
+        // can never satisfy — and on a project with RequireMfa that is a lockout, not an
+        // inconvenience. The login and registration paths already refuse for the same reason.
+        if (!smsService.IsConfigured)
+            return StatusCode(503, new { error = "sms_provider_not_configured" });
+
         await otpCache.EnforceSmsRateLimitAsync(Claims.ParsedUserId);
         var code = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
         await otpCache.StorePendingAsync(PhoneSetupPrefix, Claims.UserId, body.Phone,

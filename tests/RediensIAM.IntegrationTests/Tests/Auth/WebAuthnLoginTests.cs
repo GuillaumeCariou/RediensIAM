@@ -24,7 +24,8 @@ public class WebAuthnLoginTests(TestFixture fixture)
         var project  = await fixture.Seed.CreateProjectAsync(org.Id);
         var list     = await fixture.Seed.CreateUserListAsync(org.Id);
         project.AssignedUserListId = list.Id;
-        await fixture.Db.SaveChangesAsync();
+        project.RequireMfa         = false;   // these tests reach WebAuthn through the user's own
+        await fixture.Db.SaveChangesAsync();  // factor, not through the project's enrolment gate
         return (org, project, list);
     }
 

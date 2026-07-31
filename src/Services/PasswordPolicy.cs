@@ -25,8 +25,11 @@ public enum PasswordPolicyResult
 /// </summary>
 public sealed class PasswordPolicyService(BreachCheckService breachCheck)
 {
-    /// <summary>Absolute floor applied when no project context is available.</summary>
-    public const int AbsoluteMinimumLength = 8;
+    /// <summary>
+    /// Absolute floor applied when no project context is available. 12 is the ASVS L2 §2.1.1
+    /// minimum; a tenant may raise it with <c>MinPasswordLength</c> but not lower it.
+    /// </summary>
+    public const int AbsoluteMinimumLength = 12;
 
     public async Task<(PasswordPolicyResult Result, int BreachCount)> EvaluateAsync(
         Project? project, string password)

@@ -102,7 +102,7 @@ public class OrgMoreCoverageTests(TestFixture fixture)
         var res = await client.PostAsJsonAsync($"/org/userlists/{list.Id}/users", new
         {
             email    = SeedData.UniqueEmail(),
-            password = "P@ssword1!"
+            password = "P@ssword1!Long"
         });
 
         res.StatusCode.Should().Be(HttpStatusCode.Created);

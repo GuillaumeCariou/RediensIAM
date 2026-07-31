@@ -161,6 +161,7 @@ public class ManagedApiController(
         var normalizedEmail = body.Email.ToLowerInvariant();
         if (await db.Users.AnyAsync(u => u.UserListId == id && u.Email == normalizedEmail))
             return Conflict(new { error = "email_already_exists" });
+        if (UserHelpers.PasswordFloorError(body.Password) is { } floorErr) return floorErr;
 
         var username = body.Username ?? body.Email.Split('@')[0];
         var discriminator = await UserHelpers.GenerateDiscriminatorAsync(db, id, username);

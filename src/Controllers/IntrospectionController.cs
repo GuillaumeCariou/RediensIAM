@@ -170,7 +170,15 @@ public class IntrospectionController(
 
 // ── Wire contract ─────────────────────────────────────────────────────────────
 
-public record IntrospectionRequest(string Token, string? TokenTypeHint = null);
+/// <summary>
+/// RFC 7662 §2.1 also defines an optional <c>token_type_hint</c>. It is deliberately absent:
+/// the RFC makes it a lookup hint the server MAY ignore and MUST NOT reject a token over, and
+/// <c>ResolveAsync</c> already picks the token shape in constant time from its prefix — so
+/// honouring it could only be a no-op. Declaring a field nothing reads
+/// is worse than not declaring it; a client that sends it is unaffected, the value is discarded
+/// during model binding exactly as it was before.
+/// </summary>
+public record IntrospectionRequest(string Token);
 
 /// <summary>RFC 7662 response. Field names are serialised snake_case by the global JSON options.</summary>
 public record IntrospectionResult(

@@ -29,14 +29,60 @@ metadata:
   name: {{ .Release.Name }}-postgres-init
   namespace: {{ .Release.Namespace }}
 data:
+  # T-04. This file runs ONCE, on a first-ever start against an empty PGDATA. It has no
+  # effect on an existing database — see the migration runbook in
+  # .security-hardening/15c-infra-residuals.md for the path that does.
   init.sh: |
     #!/bin/bash
     set -e
-    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "postgres" <<-EOSQL
-      CREATE DATABASE hydra;
-      CREATE DATABASE keto;
-      GRANT ALL PRIVILEGES ON DATABASE hydra TO $POSTGRES_USER;
-      GRANT ALL PRIVILEGES ON DATABASE keto TO $POSTGRES_USER;
+    # The local socket authenticates with scram-sha-256 now (POSTGRES_INITDB_ARGS on the
+    # StatefulSet below), not `trust`, so even this script needs the superuser password.
+    export PGPASSWORD="$POSTGRES_PASSWORD"
+
+    # Previously: one role, `iam`, created by initdb with SUPERUSER + CREATEROLE + CREATEDB
+    # and no expiry, shared by the app, Hydra and Keto. Any one of the three DSNs was a
+    # superuser credential for all of them, and `local all all trust` meant `kubectl exec`
+    # into this pod was superuser with no credential at all.
+    #
+    # Now: `iam` remains the bootstrap superuser and is used by NOTHING at runtime. Each
+    # component gets its own non-superuser login role that owns exactly one database and
+    # cannot CONNECT to the other two.
+    #
+    # Passwords are passed as psql variables, so :'name' quotes and escapes them. They are
+    # never interpolated into the SQL text by the shell.
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "postgres" \
+      -v app_pw="$APP_DB_PASSWORD" \
+      -v hydra_pw="$HYDRA_DB_PASSWORD" \
+      -v keto_pw="$KETO_DB_PASSWORD" \
+      -v backup_pw="$BACKUP_DB_PASSWORD" <<-'EOSQL'
+      CREATE ROLE iam_app    LOGIN PASSWORD :'app_pw'    NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+      CREATE ROLE iam_hydra  LOGIN PASSWORD :'hydra_pw'  NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+      CREATE ROLE iam_keto   LOGIN PASSWORD :'keto_pw'   NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+      -- The backup needs to read every database and nothing else. pg_read_all_data covers
+      -- SELECT on all tables plus USAGE on all schemas, which is what pg_dumpall needs when
+      -- it is run with --no-role-passwords (the only part that requires superuser).
+      CREATE ROLE iam_backup LOGIN PASSWORD :'backup_pw' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+      GRANT pg_read_all_data TO iam_backup;
+
+      -- `rediensiam` used to be created by the app itself, which is why `iam` needed
+      -- CREATEDB. Pre-creating it here is what lets iam_app drop that attribute.
+      CREATE DATABASE rediensiam OWNER iam_app;
+      CREATE DATABASE hydra      OWNER iam_hydra;
+      CREATE DATABASE keto       OWNER iam_keto;
+
+      -- PUBLIC holds CONNECT on every new database by default. Leaving it is what would
+      -- let a leaked Keto DSN open Hydra's database and read every consent record.
+      REVOKE CONNECT ON DATABASE rediensiam FROM PUBLIC;
+      REVOKE CONNECT ON DATABASE hydra      FROM PUBLIC;
+      REVOKE CONNECT ON DATABASE keto       FROM PUBLIC;
+      REVOKE CONNECT ON DATABASE postgres   FROM PUBLIC;
+
+      GRANT CONNECT ON DATABASE rediensiam TO iam_app,   iam_backup;
+      GRANT CONNECT ON DATABASE hydra      TO iam_hydra, iam_backup;
+      GRANT CONNECT ON DATABASE keto       TO iam_keto,  iam_backup;
+      -- pg_dumpall iterates every database with datallowconn, `postgres` included; without
+      -- this the backup fails on the very first database it reaches.
+      GRANT CONNECT ON DATABASE postgres   TO iam_backup;
     EOSQL
 ---
 apiVersion: v1
@@ -95,6 +141,33 @@ spec:
                   key: postgres-password
             - name: POSTGRES_DB
               value: postgres
+            # T-04. initdb writes `local all all trust` and `host all all 127.0.0.1/32 trust`
+            # by default, which is why `kubectl exec … psql -U iam` needed no password. These
+            # two flags are the only way to change that at initdb time; on an already-created
+            # data directory pg_hba.conf must be rewritten by hand (migration runbook).
+            - name: POSTGRES_INITDB_ARGS
+              value: "--auth-local=scram-sha-256 --auth-host=scram-sha-256"
+            # Consumed by init.sh above, on first start only.
+            - name: APP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: postgres-app-password
+            - name: HYDRA_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: postgres-hydra-password
+            - name: KETO_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: postgres-keto-password
+            - name: BACKUP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: postgres-backup-password
           {{- if .Values.rediensiam.postgres.local.tls.enabled }}
           args:
             - -c

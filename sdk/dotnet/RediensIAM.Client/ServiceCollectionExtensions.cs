@@ -31,6 +31,18 @@ public static class RediensIamServiceCollectionExtensions
         if (string.IsNullOrWhiteSpace(options.ServiceAccountToken))
             throw new ArgumentException("RediensIamOptions.ServiceAccountToken is required.", nameof(configure));
 
+        // The service-account credential and every token being introspected ride on BaseUrl, so
+        // cleartext there hands an on-path attacker both. http is accepted only on a loopback
+        // host: forbidding it outright breaks every local setup, and a flag to disable the check
+        // gets set in production too.
+        if (!Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out var baseUri))
+            throw new ArgumentException(
+                $"RediensIamOptions.BaseUrl is not an absolute URL: {options.BaseUrl}", nameof(configure));
+        if (baseUri.Scheme != Uri.UriSchemeHttps && !(baseUri.Scheme == Uri.UriSchemeHttp && baseUri.IsLoopback))
+            throw new ArgumentException(
+                $"RediensIamOptions.BaseUrl must be https — http is accepted only on localhost: {options.BaseUrl}",
+                nameof(configure));
+
         services.AddSingleton(options);
         services.AddMemoryCache();
         services.AddHttpClient<RediensIamClient>(client =>

@@ -484,7 +484,7 @@ public class SystemAdminBranchCoverageTests(TestFixture fixture)
         var res = await client.PostAsJsonAsync($"/admin/userlists/{list.Id}/users", new
         {
             email          = SeedData.UniqueEmail(),
-            password       = "P@ssw0rd!1",
+            password       = "P@ssw0rd!Adm1n",
             email_verified = true
         });
 

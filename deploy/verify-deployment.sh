@@ -238,6 +238,60 @@ else
   skip V-19 "values.yaml pins no image digest — cannot check for drift"
 fi
 
+# ── V-20 · T-04 — Postgres least privilege ──────────────────────────────────
+# Two halves, both checkable without a database credential.
+PGPOD="${RELEASE}-postgres-0"
+if kubectl get pod -n "${NS}" "${PGPOD}" >/dev/null 2>&1; then
+  # (a) pg_hba.conf must not grant `trust` anywhere. `local all all trust` made anyone
+  # with `kubectl exec` on this pod a superuser with no credential at all.
+  HBA=$(kubectl exec -n "${NS}" "${PGPOD}" -- \
+          grep -Ev '^[[:space:]]*#|^[[:space:]]*$' /var/lib/postgresql/data/pg_hba.conf 2>/dev/null)
+  if [ -z "${HBA}" ]; then
+    fail V-20 "could not read pg_hba.conf — assertion not evaluated"
+  elif printf '%s\n' "${HBA}" | grep -qE '[[:space:]]trust[[:space:]]*$'; then
+    fail V-20 "pg_hba.conf still grants 'trust': $(printf '%s' "${HBA}" | grep -E '[[:space:]]trust[[:space:]]*$' | tr '\n' ';')"
+  else
+    pass V-20 "pg_hba.conf grants no 'trust' (all methods are scram-sha-256)"
+  fi
+
+  # (b) No component may connect as the bootstrap superuser. Only the username is read
+  # out of each DSN — this never prints a password.
+  DSN_USERS=""
+  APPU=$(kubectl get secret -n "${NS}" "${RELEASE}-secrets" -o jsonpath='{.data.database-url}' 2>/dev/null \
+           | base64 -d 2>/dev/null | sed -n 's/.*Username=\([^;]*\).*/\1/p')
+  for s in "${RELEASE}-hydra" "${RELEASE}-keto"; do
+    D=$(kubectl get secret -n "${NS}" "${s}" -o jsonpath='{.data.dsn}' 2>/dev/null | base64 -d 2>/dev/null)
+    [ -n "${D}" ] && DSN_USERS="${DSN_USERS} $(printf '%s' "${D}" | sed -n 's|.*://\([^:]*\):.*|\1|p')"
+  done
+  ALLU="${APPU}${DSN_USERS}"
+  if [ -z "$(printf '%s' "${ALLU}" | tr -d ' ')" ]; then
+    skip V-21 "could not read any DSN username — assertion not evaluated"
+  elif printf '%s' " ${ALLU} " | grep -qE '[[:space:]]iam[[:space:]]'; then
+    fail V-21 "a component still connects as the bootstrap superuser 'iam' (users:${ALLU})"
+  else
+    pass V-21 "no component connects as superuser 'iam' (users:${ALLU})"
+  fi
+else
+  skip V-20 "no ${PGPOD} pod — Postgres privilege assertions not evaluated"
+fi
+
+# ── V-22 · T-03 — the backup has actually run ───────────────────────────────
+# `LAST SCHEDULE <none>` is what a backup that has never executed looks like, and it is
+# indistinguishable from a working one until you look. A CronJob object is not a backup.
+if kubectl get cronjob -n "${NS}" "${RELEASE}-backup" >/dev/null 2>&1; then
+  LAST_OK=$(kubectl get cronjob -n "${NS}" "${RELEASE}-backup" -o jsonpath='{.status.lastSuccessfulTime}' 2>/dev/null)
+  LAST_RUN=$(kubectl get cronjob -n "${NS}" "${RELEASE}-backup" -o jsonpath='{.status.lastScheduleTime}' 2>/dev/null)
+  if [ -n "${LAST_OK}" ]; then
+    pass V-22 "backup CronJob last succeeded ${LAST_OK}"
+  elif [ -n "${LAST_RUN}" ]; then
+    fail V-22 "backup CronJob was scheduled ${LAST_RUN} but has never SUCCEEDED"
+  else
+    fail V-22 "backup CronJob has never run (no lastScheduleTime) — an untested backup is a hypothesis"
+  fi
+else
+  fail V-22 "no ${RELEASE}-backup CronJob — nothing is backing this database up"
+fi
+
 echo "───────────────────────────────────────────────────────────────"
 printf ' %d passed · %d failed · %d skipped\n' "${PASS}" "${FAIL}" "${SKIP}"
 if [ "${FAIL}" -gt 0 ]; then

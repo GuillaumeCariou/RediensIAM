@@ -95,7 +95,19 @@ public class SamlService(
                 $"SAML IdP {idp.Id}: CertificatePem is required when no MetadataUrl is configured. " +
                 "Assertions cannot be validated without a signing certificate.");
 
-        config.SignatureValidationCertificates.Add(X509Certificate2.CreateFromPem(idp.CertificatePem));
+        // CertificateValidationMode.None (above) switches off ITfoxtec's certificate validator
+        // entirely — which is the point for a pinned self-signed cert, but it also means nothing
+        // looks at NotBefore/NotAfter. The metadata branch filters on IsValidLocalTime(); without
+        // this the explicit branch accepted a superseded signing key for ever, which is exactly
+        // the key an IdP rotates away from.
+        var cert = X509Certificate2.CreateFromPem(idp.CertificatePem);
+        var now = DateTime.Now;
+        if (now < cert.NotBefore || now > cert.NotAfter)
+            throw new InvalidOperationException(
+                $"SAML IdP {idp.Id}: the configured signing certificate is outside its validity window " +
+                $"({cert.NotBefore:u} – {cert.NotAfter:u}). Upload the IdP's current certificate.");
+
+        config.SignatureValidationCertificates.Add(cert);
     }
 
     /// <summary>Extracts the user's email from a claims identity using the configured attribute name.</summary>

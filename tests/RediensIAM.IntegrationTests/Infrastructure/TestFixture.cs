@@ -540,8 +540,11 @@ public record SentNewDeviceAlert(string To, string IpAddress);
 /// <summary>Captures SMS OTP codes so tests can complete the MFA flow.</summary>
 public class StubSmsService : ISmsService
 {
-    /// <summary>True: this stub records messages, so tests can complete SMS flows.</summary>
-    public bool IsConfigured => true;
+    /// <summary>
+    /// True by default: this stub records messages, so tests can complete SMS flows. Settable so
+    /// a test can reproduce the production <c>StubSmsService</c>, which delivers nothing.
+    /// </summary>
+    public bool IsConfigured { get; set; } = true;
 
     public List<SentSms> SentMessages { get; } = [];
 

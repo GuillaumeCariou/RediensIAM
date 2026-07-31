@@ -14,7 +14,10 @@ public class Project
     public string? LoginTemplate { get; set; }
     public bool RequireRoleToLogin { get; set; }
     public bool AllowSelfRegistration { get; set; }
-    public bool RequireMfa { get; set; }
+    // Secure by default: a new project requires a second factor and refuses known-breached
+    // passwords. Both are opt-*out* — a tenant that wants password-only can say so, but nobody
+    // gets it by forgetting to look. Existing rows keep whatever they were created with.
+    public bool RequireMfa { get; set; } = true;
     public string[] AllowedEmailDomains { get; set; } = [];
     public bool EmailVerificationEnabled { get; set; }
     public bool SmsVerificationEnabled { get; set; }
@@ -31,7 +34,7 @@ public class Project
     public bool PasswordRequireSpecial { get; set; }
     public string? EmailFromName { get; set; }
     public string[] IpAllowlist { get; set; } = [];
-    public bool CheckBreachedPasswords { get; set; }
+    public bool CheckBreachedPasswords { get; set; } = true;
     public string[] AllowedScopes { get; set; } = [];
 
     public Organisation Organisation { get; set; } = null!;

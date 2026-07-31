@@ -18,8 +18,10 @@ public class LoginTests(TestFixture fixture) : IAsyncLifetime
         var project        = await fixture.Seed.CreateProjectAsync(org.Id);
         var list           = await fixture.Seed.CreateUserListAsync(org.Id);
 
-        // Assign user list to project
+        // Assign user list to project. RequireMfa defaults to true now, so a fixture that means
+        // to exercise password-only login has to opt out the way a tenant would.
         project.AssignedUserListId = list.Id;
+        project.RequireMfa         = false;
         await fixture.Db.SaveChangesAsync();
 
         var user = await fixture.Seed.CreateUserAsync(list.Id, password: password);

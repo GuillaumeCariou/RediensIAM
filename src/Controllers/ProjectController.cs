@@ -247,9 +247,12 @@ public class ProjectController(
         var project = await GetProjectAsync();
         if (project?.AssignedUserListId == null) return BadRequest(new { error = "no_user_list" });
 
-        // M1: enforce project-level password policy
-        if (project.MinPasswordLength > 0 && body.Password.Length < project.MinPasswordLength)
-            return BadRequest(new { error = "password_too_short",     min_length = project.MinPasswordLength });
+        // M1: enforce project-level password policy. The minimum is the project's own setting or
+        // the absolute floor, whichever is higher — reading MinPasswordLength directly let an
+        // admin-created user start below the floor every self-service path enforces.
+        var minLength = PasswordPolicyService.EffectiveMinimumLength(project);
+        if (body.Password.Length < minLength)
+            return BadRequest(new { error = "password_too_short",     min_length = minLength });
         if (project.PasswordRequireUppercase && !body.Password.Any(char.IsUpper))
             return BadRequest(new { error = "password_requires_uppercase" });
         if (project.PasswordRequireLowercase && !body.Password.Any(char.IsLower))

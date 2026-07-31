@@ -192,7 +192,7 @@ public class AccountUnlockTests(TestFixture fixture)
         var project   = await fixture.Seed.CreateProjectAsync(org.Id);
         var list      = await fixture.Seed.CreateUserListAsync(org.Id);
         project.AssignedUserListId = list.Id;
-        project.RequireMfa         = false;  // default — no MFA enforcement
+        project.RequireMfa         = false;  // explicit opt-out; the default is now true
         await fixture.Db.SaveChangesAsync();
 
         var user = await fixture.Seed.CreateUserAsync(list.Id);

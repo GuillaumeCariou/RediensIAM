@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using RediensIAM.Data;
 using RediensIAM.Data.Entities;
@@ -7,6 +8,21 @@ namespace RediensIAM.Controllers;
 
 internal static class UserHelpers
 {
+    /// <summary>
+    /// The absolute password floor for the admin-driven create/update paths, which have no
+    /// project to read a policy from and so ran no length check at all. An account seeded below
+    /// the floor keeps that password indefinitely — nothing re-evaluates it after the write.
+    /// A null or empty password is an invite: no hash is written, so there is nothing to check.
+    /// </summary>
+    internal static BadRequestObjectResult? PasswordFloorError(string? password) =>
+        string.IsNullOrEmpty(password) || password.Length >= PasswordPolicyService.AbsoluteMinimumLength
+            ? null
+            : new BadRequestObjectResult(new
+            {
+                error      = "password_too_short",
+                min_length = PasswordPolicyService.AbsoluteMinimumLength,
+            });
+
     /// <summary>
     /// Applies the update to <paramref name="user"/>. Reports what the caller must follow up on:
     /// a password rotation and a deactivation both invalidate every session already issued.

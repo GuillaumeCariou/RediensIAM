@@ -400,6 +400,7 @@ public class OrgController(
     {
         var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(ul => ul.Id == id && ul.OrgId == OrgId);
         if (ul == null) return NotFound();
+        if (UserHelpers.PasswordFloorError(body.Password) is { } floorErr) return floorErr;
 
         var username = body.Username ?? body.Email.Split('@')[0];
         var discriminator = await UserHelpers.GenerateDiscriminatorAsync(db, id, username);
@@ -521,6 +522,7 @@ public class OrgController(
 
     private async Task<IActionResult> ApplyUserUpdate(User user, UpdateUserRequest body)
     {
+        if (UserHelpers.PasswordFloorError(body.NewPassword) is { } floorErr) return floorErr;
         var (passwordChanged, deactivated) = UserHelpers.ApplyUpdate(user, body, passwords);
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();

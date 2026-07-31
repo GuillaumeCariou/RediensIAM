@@ -12,9 +12,18 @@ spec:
       app: {{ .Release.Name }}
   template:
     metadata:
+      annotations:
+        # Every credential reaches this pod through secretKeyRef, which Kubernetes resolves
+        # once at pod start. Without this annotation the pod template is byte-identical after
+        # a credential change, no rollout happens, and the app keeps serving with the old
+        # password until something unrelated restarts it. Found during the T-04 role
+        # migration: `helm upgrade` reported success and the app pod was still 32 minutes old
+        # holding the superuser DSN. deploy.sh happened to mask this because it also passes a
+        # fresh image digest on every run.
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
       labels:
         app: {{ .Release.Name }}
-        # Selected by the release-scoped default-deny ingress policy.
+        # Selected by the default-deny ingress policy.
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
       automountServiceAccountToken: false

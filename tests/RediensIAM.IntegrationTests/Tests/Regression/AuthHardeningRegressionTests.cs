@@ -209,7 +209,7 @@ public class AuthHardeningRegressionTests(TestFixture fixture)
         var res = await client.PatchAsJsonAsync("/account/password", new
         {
             current_password = "P@ssw0rd!Test",
-            new_password     = "shortpw123",   // 10 chars — passes the hardcoded 8, fails the tenant policy
+            new_password     = "shortpw123",   // 10 chars — below both the absolute floor and the tenant's 16
         });
 
         res.StatusCode.Should().Be(HttpStatusCode.BadRequest,

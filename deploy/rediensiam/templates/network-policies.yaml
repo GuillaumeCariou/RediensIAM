@@ -1,11 +1,20 @@
 {{- $np := .Values.rediensiam.networkPolicy }}
 {{- if $np.defaultDenyIngress }}
 # ── Baseline default-deny (ingress) ───────────────────────────────────────────────────────
-# Scoped to THIS RELEASE, not to the namespace. deploy.sh installs into `default`, which on a
-# real cluster carries unrelated workloads; a namespace-wide deny would cut those off. The
-# selector is the standard Helm instance label, which the subcharts already set and which the
-# app Deployment now sets too — so any pod this release grows in future starts closed.
-# Pods with an explicit policy below are unaffected (NetworkPolicy is additive/union).
+# Pods with an explicit policy below are unaffected — NetworkPolicy is additive/union, so this
+# only ever bites a pod that nothing else selects.
+#
+# `defaultDenyScope` decides who that covers:
+#   release   — pods carrying this release's instance label. Correct when the namespace is
+#               shared, which is why step 9 chose it: `default` then held nine unrelated pods.
+#   namespace — every pod in the namespace. Strictly stronger, and safe only when nothing
+#               else lives here. Verified 2026-07-31: `kubectl get all -n default` returns
+#               this release and the `kubernetes` Service, nothing more.
+#
+# Honest scope note: every RediensIAM pod is already selected by one of the explicit policies
+# below, so `namespace` buys nothing for the pods that exist today. What it buys is the next
+# pod — a debug shell, a co-tenant workload, a future job — which now starts closed instead of
+# starting open and waiting for someone to notice.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -13,8 +22,12 @@ metadata:
   namespace: {{ .Release.Namespace }}
 spec:
   podSelector:
+{{- if eq $np.defaultDenyScope "namespace" }}
+    {}
+{{- else }}
     matchLabels:
       app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
   policyTypes: [Ingress]
 ---
 {{- end }}
@@ -180,6 +193,12 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: keto
+        # T-03. The backup CronJob was missing from this list, so every run was refused at
+        # the network layer with "Connection refused". Because the CronJob had never fired
+        # (LAST SCHEDULE <none>), the backup looked present and worked never.
+        - podSelector:
+            matchLabels:
+              app: {{ .Release.Name }}-backup
       ports: [{port: 5432}]
   egress:
     # The database originates nothing. DNS only, so a write primitive inside Postgres has no

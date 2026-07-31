@@ -130,8 +130,10 @@ public class AuthMissingCoverageTests(TestFixture fixture)
         var (org, orgList) = await fixture.Seed.CreateOrgAsync();
         var project        = await fixture.Seed.CreateProjectAsync(org.Id);
 
-        // Project needs AssignedUserListId for login to proceed
+        // Project needs AssignedUserListId for login to proceed, and must opt out of the
+        // now-default MFA requirement so the login reaches the new-device alert.
         project.AssignedUserListId = orgList.Id;
+        project.RequireMfa         = false;
         await fixture.Db.SaveChangesAsync();
 
         var user = await fixture.Seed.CreateUserAsync(orgList.Id, password: password);

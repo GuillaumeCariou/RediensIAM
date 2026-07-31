@@ -213,11 +213,12 @@ curl -s -X POST "$IAM/api/introspect" \
 An unusable token answers `{"active": false}` with a 200 — never an error status, so a caller
 cannot distinguish malformed from revoked from expired.
 
-> `token_type_hint` is accepted on the wire and documented by the RFC, but this server does not
-> read it, and form binding would not map `token_type_hint` onto the record property anyway
-> (`IntrospectionController.cs:121`). Sending it is harmless; relying on it is not. The hint that
-> matters is the one RediensIAM sends to Hydra itself (`HydraService.cs:302`), which is what stops
-> a refresh token from authenticating an API call.
+> `token_type_hint` is **not** part of the request record. RFC 7662 §2.1 makes it an optional
+> lookup hint the server may ignore and must not reject a token over, and RediensIAM identifies
+> the token shape from its prefix in constant time — so there is nothing for a hint to optimise.
+> Sending it is harmless (the field is discarded during model binding); expecting it to change
+> the answer is not. The hint that matters is the one RediensIAM sends to Hydra itself
+> (`HydraService.cs:302`), which is what stops a refresh token from authenticating an API call.
 
 For an authorisation decision rather than a validity check, `POST /api/authorize` takes JSON and
 keeps the policy in RediensIAM instead of in every gateway:

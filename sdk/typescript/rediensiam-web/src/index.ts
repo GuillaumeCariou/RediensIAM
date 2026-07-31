@@ -18,7 +18,12 @@
  */
 
 export interface RediensIamConfig {
-  /** Issuer URL of the RediensIAM Hydra, e.g. `https://auth.example.com`. */
+  /**
+   * Issuer URL of the RediensIAM Hydra, e.g. `https://auth.example.com`.
+   *
+   * Must be `https:`. The one exception is a loopback host (`localhost`, `127.0.0.1`, `[::1]`),
+   * so a local development setup does not have to switch the check off everywhere.
+   */
   issuer: string;
   /** OAuth2 client ID registered for this application. */
   clientId: string;
@@ -33,6 +38,13 @@ export interface RediensIamConfig {
    * here only makes the login page render the right theme sooner.
    */
   projectId?: string;
+  /**
+   * Extra origins {@link RediensIam.fetch} may send the access token to, e.g.
+   * `['https://api.example.com']`. The app's own origin is always allowed; everything else is
+   * refused, because one caller-supplied URL would otherwise ship the token off-origin.
+   * Same scheme rule as {@link issuer}.
+   */
+  apiOrigins?: string[];
 }
 
 /**
@@ -51,7 +63,8 @@ export type RediensIamErrorCode =
   | 'state_mismatch'
   | 'token_exchange_failed'
   | 'discovery_failed'
-  | 'config_invalid';
+  | 'config_invalid'
+  | 'untrusted_target';
 
 export class RediensIamError extends Error {
   // Plain field rather than a constructor parameter property: Node's type-stripping runs
@@ -96,6 +109,8 @@ export class RediensIam {
   #refreshInFlight: Promise<string | null> | null = null;
 
   readonly #config: RediensIamConfig;
+  readonly #issuerOrigin: string;
+  readonly #apiOrigins: ReadonlySet<string>;
 
   constructor(config: RediensIamConfig) {
     this.#config = config;
@@ -103,6 +118,13 @@ export class RediensIam {
     if (!config.issuer) throw new RediensIamError('issuer is required', 'config_invalid');
     if (!config.clientId) throw new RediensIamError('clientId is required', 'config_invalid');
     if (!config.redirectUri) throw new RediensIamError('redirectUri is required', 'config_invalid');
+
+    // Everything the SDK carries — the PKCE verifier, the refresh token, the bearer — rides on
+    // these origins. Cleartext means anyone on the path collects the lot.
+    this.#issuerOrigin = secureOrigin(config.issuer, 'issuer');
+    this.#apiOrigins = new Set(
+      (config.apiOrigins ?? []).map((origin) => secureOrigin(origin, 'apiOrigins entry')),
+    );
 
     // The redirect target must be this origin. A redirect_uri pointing elsewhere would hand the
     // authorization code to another origin — Hydra also enforces its registered list, this is
@@ -231,8 +253,18 @@ export class RediensIam {
    * `fetch` with the bearer token attached. On 401 it refreshes once and retries; if that fails
    * the session is cleared, so callers can treat a thrown `not_authenticated` as "send them to
    * login".
+   *
+   * The target must be this app's origin or one listed in `apiOrigins`; anything else throws
+   * `untrusted_target` rather than handing the access token to it.
    */
   async fetch(input: string | URL | Request, init: RequestInit = {}): Promise<Response> {
+    if (!isTrustedTarget(input, globalThis.location?.origin, this.#apiOrigins)) {
+      throw new RediensIamError(
+        `refusing to attach the access token to ${targetUrl(input)} — add its origin to apiOrigins if it is yours`,
+        'untrusted_target',
+      );
+    }
+
     const token = await this.getToken();
     if (!token) throw new RediensIamError('No valid session', 'not_authenticated');
 
@@ -307,7 +339,22 @@ export class RediensIam {
       throw new RediensIamError(`OIDC discovery failed (${response.status})`, 'discovery_failed');
     }
 
-    this.#discovery = (await response.json()) as Discovery;
+    // An unvalidated discovery document is a redirect of the whole flow: whoever answers for the
+    // issuer names the token endpoint, and the PKCE verifier and refresh token go there. Every
+    // endpoint we use has to live on the issuer's own origin.
+    const discovered = (await response.json()) as Discovery;
+    for (const name of ['authorization_endpoint', 'token_endpoint', 'end_session_endpoint'] as const) {
+      const endpoint = discovered[name];
+      if (endpoint === undefined && name === 'end_session_endpoint') continue;
+      if (typeof endpoint !== 'string' || originOf(endpoint) !== this.#issuerOrigin) {
+        throw new RediensIamError(
+          `discovery ${name} is missing or outside the issuer origin ${this.#issuerOrigin}: ${endpoint}`,
+          'discovery_failed',
+        );
+      }
+    }
+
+    this.#discovery = discovered;
     return this.#discovery;
   }
 
@@ -361,6 +408,66 @@ export function createRediensIam(config: RediensIamConfig): RediensIam {
 }
 
 // ── Helpers (exported for testing) ──────────────────────────────────────────
+
+/**
+ * Hosts on which `http:` is still accepted. Forbidding cleartext outright breaks every local
+ * setup, and a flag to turn the check off gets set in production too — so the exemption is the
+ * loopback host itself, which no attacker on the network path can be.
+ */
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+function originOf(url: string): string | null {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
+/** Parses `value` and returns its origin, refusing anything that is not https or loopback http. */
+function secureOrigin(value: string, what: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new RediensIamError(`${what} is not an absolute URL: ${value}`, 'config_invalid');
+  }
+  const secure =
+    url.protocol === 'https:' ||
+    (url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname));
+  if (!secure) {
+    throw new RediensIamError(
+      `${what} must be https — http is accepted only on localhost: ${value}`,
+      'config_invalid',
+    );
+  }
+  return url.origin;
+}
+
+function targetUrl(target: string | URL | Request): string {
+  return typeof target === 'string' || target instanceof URL ? target.toString() : target.url;
+}
+
+/**
+ * True when the access token may be attached to `target`: the app's own origin, or one the app
+ * declared in `apiOrigins`. Exported for testing.
+ *
+ * Fails closed — an unparseable target, or no app origin at all (outside a browser), matches
+ * nothing.
+ */
+export function isTrustedTarget(
+  target: string | URL | Request,
+  appOrigin: string | undefined,
+  apiOrigins: ReadonlySet<string>,
+): boolean {
+  let origin: string;
+  try {
+    origin = new URL(targetUrl(target), appOrigin).origin;
+  } catch {
+    return false;
+  }
+  return origin === appOrigin || apiOrigins.has(origin);
+}
 
 export function base64UrlEncode(bytes: Uint8Array): string {
   let binary = '';

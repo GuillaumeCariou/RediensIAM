@@ -87,7 +87,7 @@ public class InviteFlowTests(TestFixture fixture)
             .ParseQuery(new Uri(invite.InviteUrl).Query)["token"].ToString();
 
         var res = await fixture.Client.PostAsJsonAsync("/auth/invite/complete",
-            new { token = inviteToken, password = "NewP@ss1!" });
+            new { token = inviteToken, password = "NewP@ssw0rd1!" });
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
@@ -103,7 +103,7 @@ public class InviteFlowTests(TestFixture fixture)
     public async Task InviteComplete_InvalidToken_Returns400()
     {
         var res = await fixture.Client.PostAsJsonAsync("/auth/invite/complete",
-            new { token = "not-a-real-token", password = "NewP@ss1!" });
+            new { token = "not-a-real-token", password = "NewP@ssw0rd1!" });
 
         res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
@@ -128,7 +128,7 @@ public class InviteFlowTests(TestFixture fixture)
             .ParseQuery(new Uri(invite.InviteUrl).Query)["token"].ToString();
 
         await fixture.Client.PostAsJsonAsync("/auth/invite/complete",
-            new { token = inviteToken, password = "NewP@ss1!" });
+            new { token = inviteToken, password = "NewP@ssw0rd1!" });
 
         var res2 = await fixture.Client.PostAsJsonAsync("/auth/invite/complete",
             new { token = inviteToken, password = "AnotherP@ss1!" });

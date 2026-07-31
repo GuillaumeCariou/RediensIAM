@@ -262,6 +262,7 @@ var user = await db.Users
     {
         var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id == id);
         if (user == null) return NotFound();
+        if (UserHelpers.PasswordFloorError(body.NewPassword) is { } floorErr) return floorErr;
         var (passwordChanged, deactivated) = UserHelpers.ApplyUpdate(user, body, passwords);
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
@@ -364,6 +365,7 @@ var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(u
     {
         var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(ul => ul.Id == id);
         if (ul == null) return NotFound();
+        if (UserHelpers.PasswordFloorError(body.Password) is { } floorErr) return floorErr;
         var username = body.Username ?? body.Email.Split('@')[0];
         var discriminator = await UserHelpers.GenerateDiscriminatorAsync(db, id, username);
         var emailVerified = body.EmailVerified ?? false;

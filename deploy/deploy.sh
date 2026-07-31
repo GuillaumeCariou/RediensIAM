@@ -137,11 +137,18 @@ KNOWN_DEFAULTS='changeme|CHANGE_ME_HYDRA_SYSTEM_SECRET_32CHARS|Admin1234!'
 
 write_secrets_file() {
   local file="$1" email="$2" password="$3"
-  local db hydra_sys enc_key pepper
+  local db db_app db_hydra db_keto db_backup hydra_sys enc_key pepper
   # The prod password is operator-chosen, so it can contain " \ or $, all of which break a
   # double-quoted YAML scalar. A single-quoted scalar only needs ' doubled.
   local password_yaml="'${password//\'/\'\'}'"
   db=$(openssl rand -hex 20)
+  # T-04. Four separate credentials, one per component, so that a leaked DSN is a leak of one
+  # database rather than of the whole cluster. `db` above is now only the bootstrap SUPERUSER
+  # `iam`, which appears in no DSN below.
+  db_app=$(openssl rand -hex 20)
+  db_hydra=$(openssl rand -hex 20)
+  db_keto=$(openssl rand -hex 20)
+  db_backup=$(openssl rand -hex 20)
   hydra_sys=$(openssl rand -hex 32)
   enc_key=$(openssl rand -hex 32)   # must be exactly 64 hex chars (32 bytes) — HKDF root
   pepper=$(openssl rand -hex 32)    # Security__Argon2Pepper; was generated and then dropped
@@ -158,7 +165,7 @@ write_secrets_file() {
     cat > "${file}" <<EOF
 rediensiam:
   secrets:
-    databaseUrl: "Host=rediensiam-postgres;Database=rediensiam;Username=iam;Password=${db}"
+    databaseUrl: "Host=rediensiam-postgres;Database=rediensiam;Username=iam_app;Password=${db_app}"
     cacheUrl: "rediensiam-dragonfly:6379,abortConnect=false"
     encryptionKey: "${enc_key}"
     smtpPassword: ""
@@ -169,11 +176,16 @@ rediensiam:
   postgres:
     local:
       password: ${db}
+      roles:
+        appPassword: ${db_app}
+        hydraPassword: ${db_hydra}
+        ketoPassword: ${db_keto}
+        backupPassword: ${db_backup}
 
 hydra:
   hydra:
     config:
-      dsn: "postgres://iam:${db}@rediensiam-postgres:5432/hydra?sslmode=disable"
+      dsn: "postgres://iam_hydra:${db_hydra}@rediensiam-postgres:5432/hydra?sslmode=disable"
       secrets:
         # Hydra reads this list newest-first: element 0 encrypts, the rest only decrypt. That is
         # what makes a rotation non-destructive — prepend, upgrade, then drop the tail once the
@@ -184,7 +196,7 @@ hydra:
 keto:
   keto:
     config:
-      dsn: "postgres://iam:${db}@rediensiam-postgres:5432/keto?sslmode=disable"
+      dsn: "postgres://iam_keto:${db_keto}@rediensiam-postgres:5432/keto?sslmode=disable"
 EOF
   )
   chmod 600 "${file}"
@@ -252,6 +264,33 @@ else
     echo "                  Every copy of the repo knows them. Re-roll with:"
     echo "                    ./deploy/deploy.sh --dev --rotate-secrets"
     echo "                  (discards dev DB state — dev data is disposable)"
+  fi
+
+  # T-04. The chart now expects four per-component Postgres roles. A secrets file written
+  # before that change still names the shared SUPERUSER `iam` in every DSN and carries no
+  # postgres.local.roles block — which would render an EMPTY backup password into the Secret
+  # and leave the superuser split undone, silently. Deploying the new chart over an old
+  # database is a migration, not an upgrade, and it must not happen by accident.
+  if grep -Eq 'Username=iam;|postgres://iam:' "${SECRETS_FILE}" \
+     || ! grep -q 'appPassword:' "${SECRETS_FILE}"; then
+    echo ""
+    echo "  ┌─ T-04: this install predates the Postgres role split ──────────────"
+    echo "  │  ${SECRETS_FILE} still points every component at the shared"
+    echo "  │  SUPERUSER 'iam'. postgres.yaml's init.sh only runs against an EMPTY"
+    echo "  │  data directory, so a helm upgrade will NOT create the new roles."
+    echo "  │"
+    echo "  │  Run the migration first — it is one psql session and a redeploy:"
+    echo "  │    .security-hardening/15c-infra-residuals.md  §T-04 migration runbook"
+    echo "  │"
+    echo "  │  Or, for a dev box with disposable data, start clean:"
+    echo "  │    ./deploy/deploy.sh --dev --rotate-secrets"
+    echo "  └────────────────────────────────────────────────────────────────────"
+    if [ "${PROD}" = "true" ]; then
+      echo "  ERROR: refusing to deploy prod across this migration."
+      exit 1
+    fi
+    echo "  WARNING: continuing (dev). The backup CronJob will fail until you migrate."
+    echo ""
   fi
 fi
 

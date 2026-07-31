@@ -39,10 +39,11 @@ public sealed class LiveAuthorizationService(
         var userId = claims.ParsedUserId;
         if (userId == Guid.Empty) return false;
 
-        // The OrgAdmin decision is a function of claims.OrgId, so a cached answer is only valid
-        // for the scope it was decided under. The scope travels in the value rather than the key
-        // so InvalidateAsync can still drop every decision for a user without enumerating orgs.
-        var scope = level == ManagementLevel.OrgAdmin ? claims.OrgId : "";
+        // Every decision below super_admin is a function of claims.OrgId — the org-active
+        // check in CheckAsync reads it — so a cached answer is only valid for the scope it was
+        // decided under. The scope travels in the value rather than the key so InvalidateAsync
+        // can still drop every decision for a user without enumerating orgs.
+        var scope = level == ManagementLevel.SuperAdmin ? "" : claims.OrgId;
         var cacheKey = $"authz:{userId}:{(int)level}";
         var cached = await cache.GetStringAsync(cacheKey);
         if (cached != null && cached.Split('|', 2) is [var verdict, var cachedScope] && cachedScope == scope)
@@ -68,6 +69,19 @@ public sealed class LiveAuthorizationService(
 
     private async Task<bool> CheckAsync(Guid userId, ManagementLevel level, string orgIdClaim)
     {
+        // Suspension has to remove authority, not just sessions. `AdminLogin` consults no
+        // organisation, so a system-list org_admin — one granted by AssignOrgAdmin on a user
+        // outside the org — simply logs in again and their new token carries the surviving Keto
+        // tuple. Checking here rather than at login covers every management request, whatever
+        // minted the token. super_admin is exempt by construction: its branch below takes no org
+        // id, and it is the level that unsuspends the org.
+        // Narrow on purpose: a *suspended* org is refused, an org id that matches no row is left
+        // to the controller, which answers 404. Turning "unknown org" into "forbidden" here would
+        // move every not-found into the filter and tell a caller nothing it did not already know.
+        if (level != ManagementLevel.SuperAdmin && Guid.TryParse(orgIdClaim, out var claimedOrg)
+            && await db.Organisations.AnyAsync(o => o.Id == claimedOrg && !o.Active))
+            return false;
+
         var subject = $"user:{userId}";
         return level switch
         {

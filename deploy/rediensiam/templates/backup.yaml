@@ -38,6 +38,12 @@ spec:
         metadata:
           labels:
             app.kubernetes.io/instance: {{ .Release.Name }}
+            # T-03. `rediensiam-postgres-lockdown` admits :5432 from an explicit list of pod
+            # labels. This job carried none of them, so every run was refused at the network
+            # layer — verified on 2026-07-31: `pg_dumpall: connection to server at
+            # "rediensiam-postgres" (10.42.0.198), port 5432 failed: Connection refused`.
+            # The CronJob had never fired, so nothing had ever surfaced it.
+            app: {{ .Release.Name }}-backup
         spec:
           restartPolicy: OnFailure
           automountServiceAccountToken: false
@@ -59,19 +65,38 @@ spec:
               env:
                 - name: PGHOST
                   value: {{ .Release.Name }}-postgres
+                # T-04. Was the SUPERUSER `iam`. A backup needs to read everything and write
+                # nothing, which is exactly `pg_read_all_data` — see postgres.yaml's init.sh.
                 - name: PGUSER
-                  value: iam
+                  value: iam_backup
                 - name: PGPASSWORD
                   valueFrom:
                     secretKeyRef:
                       name: {{ .Release.Name }}-secrets
-                      key: postgres-password
+                      key: postgres-backup-password
                 - name: RETAIN
                   value: {{ .Values.rediensiam.backup.retainCopies | quote }}
               command:
                 - /bin/sh
                 - -ec
                 - |
+                  # pipefail: without it the exit status of `pg_dumpall | gzip` is gzip's, so a
+                  # refused connection produced a 20-byte "backup" and a zero exit from the
+                  # pipeline. The size guard below caught it, but only after the rename had
+                  # already published the corrupt file under a real backup name.
+                  set -o pipefail
+
+                  # NetworkPolicy is programmed asynchronously as a pod starts, so a dump that
+                  # dials Postgres immediately can be refused for the first second of its life.
+                  # Observed once on the 2026-07-31 11:39 run: attempt 1 failed, the OnFailure
+                  # restart succeeded. backoffLimit is 2, so two such races in a row would be a
+                  # silently missed nightly backup. Wait instead of spending a retry.
+                  for i in $(seq 1 30); do
+                    pg_isready -q && break
+                    echo "waiting for ${PGHOST} (${i}/30)"; sleep 2
+                  done
+                  pg_isready || { echo "FATAL: ${PGHOST} unreachable after 60s" >&2; exit 1; }
+
                   # Dump every database in the cluster: the app, Hydra and Keto each own one,
                   # and restoring the app alone would leave consent and permission state behind.
                   stamp=$(date -u +%Y%m%dT%H%M%SZ)
@@ -80,15 +105,23 @@ spec:
 
                   # Write to a dot-prefixed name and rename only on success: a truncated dump
                   # that looks like a backup is worse than an obvious gap.
-                  pg_dumpall --clean --if-exists | gzip -9 > "${tmp}"
-                  mv "${tmp}" "${out}"
-                  echo "wrote ${out} ($(wc -c < "${out}") bytes)"
+                  # --no-role-passwords: reading role password hashes out of pg_authid is the
+                  # one thing pg_dumpall needs superuser for. Dropping it is what lets this run
+                  # as iam_backup, AND it keeps every credential hash in the cluster out of a
+                  # file that sits on disk for 14 days. Roles are recreated by init.sh or by
+                  # the migration runbook, so the dump never needed to carry them.
+                  pg_dumpall --clean --if-exists --no-role-passwords | gzip -9 > "${tmp}"
 
-                  # A tiny dump means pg_dumpall failed while gzip still exited 0.
-                  if [ "$(wc -c < "${out}")" -lt 1024 ]; then
+                  # A tiny dump means pg_dumpall failed while gzip still exited 0. Checked
+                  # BEFORE the rename — this guard used to run after it and so left a
+                  # 20-byte file named `rediensiam-<stamp>.sql.gz` behind on every failure.
+                  if [ "$(wc -c < "${tmp}")" -lt 1024 ]; then
                     echo "FATAL: dump is implausibly small — treating as failure" >&2
                     exit 1
                   fi
+
+                  mv "${tmp}" "${out}"
+                  echo "wrote ${out} ($(wc -c < "${out}") bytes)"
 
                   # Prune oldest first, keeping RETAIN copies. Never touches .in-progress files.
                   ls -1t /backup/rediensiam-*.sql.gz 2>/dev/null | tail -n "+$((RETAIN + 1))" | \

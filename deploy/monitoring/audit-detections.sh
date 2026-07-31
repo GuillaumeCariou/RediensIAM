@@ -20,7 +20,7 @@ set -uo pipefail
 
 NS="${NS:-default}"
 PGPOD="${PGPOD:-rediensiam-postgres-0}"
-PGUSER="${PGUSER:-iam}"
+PGUSER="${PGUSER:-iam_backup}"
 PGDB="${PGDB:-rediensiam}"
 WINDOW="24 hours"
 # Must match Audit:RetentionDays (AppConfig.cs:116, default 365). A per-org value
@@ -44,8 +44,21 @@ PAGES=""
 REVIEWS=""
 RC=0
 
+# Password pulled from the release Secret at run time, never held in a file. T-04 removed
+# `trust` from pg_hba.conf, so an unauthenticated `psql -U iam` now prompts and every rule
+# fails — which this script reported as "No hits" until the summary was fixed below.
+# iam_backup is the read-only role: detection must never be able to write.
+PGPASSWORD_CACHED=""
+db_password() {
+  [ -n "${PGPASSWORD_CACHED}" ] && { printf '%s' "${PGPASSWORD_CACHED}"; return; }
+  PGPASSWORD_CACHED="$(kubectl get secret -n "${NS}" "${SECRET:-rediensiam-secrets}" \
+    -o "jsonpath={.data.${PGPASSWORD_KEY:-postgres-backup-password}}" 2>/dev/null | base64 -d)"
+  printf '%s' "${PGPASSWORD_CACHED}"
+}
+
 psql_q() {
   kubectl exec -n "${NS}" "${PGPOD}" -- \
+    env PGPASSWORD="$(db_password)" \
     psql -U "${PGUSER}" -d "${PGDB}" -At -F ' | ' -c "$1" 2>&1
 }
 
@@ -268,7 +281,14 @@ fi
 if [ -n "${REVIEWS}" ]; then
   echo " REVIEW:"; printf '%s' "${REVIEWS}" | sed 's/^/   /'
 fi
-[ -z "${PAGES}${REVIEWS}" ] && echo " No hits."
+# "No hits" must mean the rules ran and found nothing — never that they failed to run.
+# Removing `trust` from pg_hba.conf broke every query and this line still printed the
+# all-clear, which is the same failure shape as V-02 in verify-deployment.sh.
+if [ "${RC}" -eq 2 ]; then
+  echo " RULES FAILED TO RUN — the output above is not an all-clear."
+elif [ -z "${PAGES}${REVIEWS}" ]; then
+  echo " No hits."
+fi
 
 # ── Routing ──────────────────────────────────────────────────────────────────
 # One channel, page-severity only. ALERT_URL is anything that accepts a POST body

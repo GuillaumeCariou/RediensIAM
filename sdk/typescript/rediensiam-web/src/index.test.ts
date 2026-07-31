@@ -6,6 +6,7 @@ import {
   RediensIamError,
   base64UrlEncode,
   decodeJwtPayload,
+  isTrustedTarget,
   matchProjectRole,
   randomUrlSafe,
   s256,
@@ -22,6 +23,102 @@ test('config is validated up front', () => {
   assert.throws(() => new RediensIam({ ...validConfig, clientId: '' }), RediensIamError);
   assert.throws(() => new RediensIam({ ...validConfig, redirectUri: '' }), RediensIamError);
   assert.doesNotThrow(() => new RediensIam(validConfig));
+});
+
+// R-30: the PKCE verifier, the refresh token and the bearer all ride on the issuer origin, so
+// cleartext there hands an on-path attacker the whole session. Loopback is the one exemption —
+// a check that has to be disabled for local development gets disabled in production too.
+test('issuer must be https, except on loopback', () => {
+  assert.throws(
+    () => new RediensIam({ ...validConfig, issuer: 'http://auth.example.com' }),
+    (e: RediensIamError) => e.code === 'config_invalid',
+  );
+  assert.throws(
+    () => new RediensIam({ ...validConfig, issuer: 'auth.example.com' }),
+    (e: RediensIamError) => e.code === 'config_invalid',
+  );
+  assert.doesNotThrow(() => new RediensIam({ ...validConfig, issuer: 'http://localhost:4444' }));
+  assert.doesNotThrow(() => new RediensIam({ ...validConfig, issuer: 'http://127.0.0.1:4444' }));
+});
+
+test('apiOrigins are held to the same scheme rule', () => {
+  assert.throws(
+    () => new RediensIam({ ...validConfig, apiOrigins: ['http://api.example.com'] }),
+    (e: RediensIamError) => e.code === 'config_invalid',
+  );
+  assert.doesNotThrow(
+    () => new RediensIam({ ...validConfig, apiOrigins: ['https://api.example.com'] }),
+  );
+});
+
+// R-31: without this, one user-influenced URL through iam.fetch() ships the access token
+// off-origin.
+test('the bearer only goes to the app origin or a declared api origin', () => {
+  const app = 'https://app.example.com';
+  const allowed = new Set(['https://api.example.com']);
+
+  assert.equal(isTrustedTarget('/api/me', app, allowed), true);
+  assert.equal(isTrustedTarget('https://app.example.com/api/me', app, allowed), true);
+  assert.equal(isTrustedTarget('https://api.example.com/v1/me', app, allowed), true);
+
+  assert.equal(isTrustedTarget('https://evil.example/collect', app, allowed), false);
+  assert.equal(isTrustedTarget('//evil.example/collect', app, allowed), false);
+  // A subdomain of the app origin is still another origin.
+  assert.equal(isTrustedTarget('https://cdn.app.example.com/x', app, allowed), false);
+  // A Request carries its own resolved URL.
+  assert.equal(isTrustedTarget(new Request('https://evil.example/'), app, allowed), false);
+  // Fails closed when there is no app origin to compare against.
+  assert.equal(isTrustedTarget('/api/me', undefined, allowed), false);
+});
+
+// R-30, second half: an unvalidated discovery document redirects the whole flow. Whoever answers
+// for the issuer names the token endpoint, and the PKCE verifier goes there.
+test('discovery endpoints must sit on the issuer origin', async () => {
+  const realFetch = globalThis.fetch;
+  const assigned: string[] = [];
+  const stub = <T,>(name: string, value: T) =>
+    Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
+
+  stub('location', {
+    origin: 'https://app.example.com',
+    href: 'https://app.example.com/',
+    assign: (url: string) => assigned.push(url),
+  });
+  stub('sessionStorage', { setItem() {}, getItem: () => null, removeItem() {} });
+
+  const respondWith = (document: unknown) => {
+    globalThis.fetch = (() =>
+      Promise.resolve(new Response(JSON.stringify(document)))) as typeof fetch;
+  };
+
+  try {
+    respondWith({
+      authorization_endpoint: 'https://auth.example.com/oauth2/auth',
+      token_endpoint: 'https://evil.example/oauth2/token',
+    });
+    await assert.rejects(
+      () => new RediensIam(validConfig).login(),
+      (e: RediensIamError) => e.code === 'discovery_failed',
+    );
+
+    // A document that stays on the issuer is still accepted — the check must not break the
+    // ordinary deployment.
+    respondWith({
+      authorization_endpoint: 'https://auth.example.com/oauth2/auth',
+      token_endpoint: 'https://auth.example.com/oauth2/token',
+    });
+    void new RediensIam(validConfig).login(); // never resolves: it navigates
+    // Discovery, then the PKCE digest — both genuinely async, so wait for the navigation.
+    for (let i = 0; i < 100 && assigned.length === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    assert.equal(assigned.length, 1);
+    assert.ok(assigned[0].startsWith('https://auth.example.com/oauth2/auth?'));
+  } finally {
+    globalThis.fetch = realFetch;
+    delete (globalThis as { location?: unknown }).location;
+    delete (globalThis as { sessionStorage?: unknown }).sessionStorage;
+  }
 });
 
 test('a fresh client is not authenticated', () => {
