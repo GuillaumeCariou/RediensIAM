@@ -133,12 +133,18 @@ SELECT \"Id\", \"Slug\", \"AuditRetentionDays\", \"UpdatedAt\"
 # D-11 · T-N2 / C-4 — the audit trail itself went quiet. A purge, a crash-looping
 # writer and a never-deployed build all look the same from here, and all three
 # mean detection is off.
+#
+# Suppressed while the deployment has no organisations: a freshly bootstrapped
+# instance has nothing to record, and paging every night on a dev cluster is how an
+# operator learns to ignore this rule — which costs exactly the signal it exists to
+# carry. One organisation is enough to arm it.
 run_rule D-11 page "audit log is empty or silent for >48h" $'
 SELECT CASE WHEN count(*) = 0 THEN \'audit_log is EMPTY - nothing is being recorded\'
             ELSE \'newest audit row is \' || age(now(), max("CreatedAt"))::text || \' old\'
        END AS state
   FROM audit_log
- HAVING count(*) = 0 OR max("CreatedAt") < now() - interval \'48 hours\';'
+ HAVING (SELECT count(*) FROM organisations) > 0
+    AND (count(*) = 0 OR max("CreatedAt") < now() - interval \'48 hours\');'
 
 # D-13 · 11b §6 residual — nested providers[].logo_url is not validated by
 # LoginThemeValidator, so a tenant admin can beacon every visitor to that
