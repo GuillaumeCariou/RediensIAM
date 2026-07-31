@@ -15,6 +15,7 @@ Multi-tenant Identity & Access Management built on Ory Hydra + Keto, ASP.NET Cor
 
 | Read this | For |
 |---|---|
+| [CHANGELOG.md](CHANGELOG.md) | **what breaks when you upgrade.** 0.2.0 changes the wire contract in four places and deploy order is load-bearing — read this first |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | how the system is put together and where authority lives |
 | [docs/SECURITY.md](docs/SECURITY.md) | what protects what, and what is deliberately still open — **read before trusting it with anything** |
 | [docs/API.md](docs/API.md) | all 184 routes: method, path, required authority, where each is reachable |
@@ -87,6 +88,25 @@ than guessing. [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) covers what each answer 
 
 **Production has never been deployed from this branch.** Every prod path is template-verified and
 preflight-verified; none has been run against a real production cluster.
+
+#### Encrypt Kubernetes secrets at rest
+
+The chart cannot do this for you — it is a flag on the cluster, not on the release. Without it
+every Secret this deployment creates, including the database passwords, the Argon2 pepper and the
+encryption root, sits in plaintext in the k3s datastore, readable by anyone who can read the file.
+
+```bash
+# On the k3s server node, as root
+sudo sed -i 's|^ExecStart=.*k3s server|& --secrets-encryption|' /etc/systemd/system/k3s.service
+sudo systemctl daemon-reload && sudo systemctl restart k3s
+
+sudo k3s secrets-encrypt status          # expect: Encryption Status: Enabled
+sudo k3s secrets-encrypt reencrypt       # rewrites Secrets that predate the flag
+```
+
+Fifteen minutes and a restart of the API server. Existing Secrets stay in plaintext until the
+`reencrypt` — enabling the flag alone protects only what is written afterwards, which is the part
+that is easy to miss.
 
 ### The stages, individually
 
