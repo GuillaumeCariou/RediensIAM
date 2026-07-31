@@ -144,10 +144,13 @@ public class IntrospectionController(
             return Ok(AuthorizationResult.Denied);
 
         // The System namespace holds exactly one object and one interesting relation:
-        // rediensiam#super_admin. A tenant credential asking about it is enumerating the
-        // deployment's administrators, never authorising its own request.
-        if (CallerOrgScope is not null &&
-            body.Namespace.Equals(Roles.KetoSystemNamespace, StringComparison.OrdinalIgnoreCase))
+        // rediensiam#super_admin. Asking about it is enumerating the deployment's
+        // administrators, never authorising the caller's own request — so it is refused to
+        // every caller, not only tenant-scoped ones. This was conditioned on CallerOrgScope,
+        // which left a __system__ service account free to ask. A resource server that needs
+        // to know whether a subject is a super_admin reads the roles field of
+        // /api/introspect, which re-verifies against Keto before answering.
+        if (body.Namespace.Equals(Roles.KetoSystemNamespace, StringComparison.OrdinalIgnoreCase))
         {
             await audit.RecordAsync(CallerOrgScope, null, Caller.ParsedUserId,
                 "api.authorize.out_of_scope", "keto_namespace", body.Namespace);
@@ -210,7 +213,13 @@ public class IntrospectionController(
     {
         var scope = CallerOrgScope
                  ?? (Guid.TryParse(subject.OrgId, out var subjectOrg) ? subjectOrg : (Guid?)null);
-        if (scope is null) return true;
+
+        // No scope on either side — a deployment-level caller asking about a token that names
+        // no organisation. There is no ownership to compare, so the only honest check left is
+        // that the namespace is one this deployment actually writes objects into. Returning
+        // true unconditionally here is what let a __system__ credential reach any namespace at
+        // all, which is the half of this guard the docstring above already claimed to cover.
+        if (scope is null) return IsKnownNamespace(ns) || await RefuseAsync();
 
         return await IsOwnedByAsync(ns, obj, scope.Value) || await RefuseAsync();
 
@@ -272,6 +281,17 @@ public class IntrospectionController(
 
         static bool Same(string a, string b) => a.Equals(b, StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// The namespaces this deployment writes objects into — exactly the three
+    /// <see cref="IsOwnedByAsync"/> can decide ownership for. Anything else has no owner to
+    /// check, so it cannot be scoped and is refused rather than passed through. Kept beside
+    /// that method so the two lists cannot drift apart.
+    /// </summary>
+    private static bool IsKnownNamespace(string ns) =>
+        ns.Equals(Roles.KetoOrgsNamespace, StringComparison.OrdinalIgnoreCase)
+        || ns.Equals(Roles.KetoProjectsNamespace, StringComparison.OrdinalIgnoreCase)
+        || ns.Equals(Roles.KetoUserListsNamespace, StringComparison.OrdinalIgnoreCase);
 
     private bool IsServiceAccountCaller() =>
         Caller.IsServiceAccount

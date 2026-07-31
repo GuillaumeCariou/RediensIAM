@@ -207,6 +207,48 @@ public class ApiSurfaceIntrospectionTests(TestFixture fixture)
     /// unscoped, which is where P-05 and P-06 meet: without the audience there is no tenant to
     /// scope the object to.
     /// </summary>
+    /// <summary>
+    /// The System namespace is refused to a deployment-scoped caller, not only to tenant ones.
+    ///
+    /// <para><b>This is defence in depth, not an exploit regression — and the distinction is the
+    /// point.</b> Writing SECURITY.md turned up a fail-open in <c>IsObjectInScopeAsync</c>: with
+    /// no org on the caller and none on the subject token it returned true outright, and the
+    /// System refusal above it was conditioned on the caller having a scope. Reaching it needs a
+    /// token carrying neither <c>org_id</c> nor <c>project_id</c>, which
+    /// <c>IsBoundToAudienceAsync</c> can only admit through <c>subject.Audiences</c> — and
+    /// nothing in this codebase populates <c>grant_access_token_audience</c>. P-06's audience
+    /// requirement, added in the same release, refuses that token shape upstream, so the
+    /// fail-open is unreachable today.</para>
+    ///
+    /// <para>It is closed anyway, because it becomes live the moment OAuth2 audiences start
+    /// being minted. This test pins the invariant so that change does not silently reopen it;
+    /// it does not claim to reproduce a vulnerability, and it passed before the fix as well.</para>
+    /// </summary>
+    [Fact]
+    public async Task Authorize_SystemNamespace_IsRefusedRegardlessOfCallerScope()
+    {
+        fixture.Keto.AllowAll();
+        var gateway = await SystemGatewayAsync();
+        var tenant  = await TenantAsync();
+
+        var user  = await fixture.Seed.CreateUserAsync(tenant.List.Id);
+        var token = $"p05sys-sysns-{user.Id:N}";
+        fixture.Hydra.RegisterToken(token, user.Id.ToString(), tenant.Org.Id.ToString(), tenant.Project.Id.ToString(), []);
+
+        var res = await gateway.PostAsJsonAsync("/api/authorize", new
+        {
+            token,
+            @namespace = Roles.KetoSystemNamespace,
+            @object    = Roles.KetoSystemObject,
+            relation   = Roles.SuperAdmin,
+            aud        = tenant.Project.Id,
+        });
+
+        (await res.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("allowed").GetBoolean().Should()
+            .BeFalse("Keto says yes — the refusal has to come from the controller, not the store");
+    }
+
     [Fact]
     public async Task Authorize_SystemGateway_ObjectIsScopedToTheSubjectsTenant()
     {
