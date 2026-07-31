@@ -6,6 +6,9 @@ The runbooks behind this guide live in `.security-hardening/`. That is an audit 
 install guide — this file is the install guide, and it points back at them wherever a procedure
 is too long or too situational to inline.
 
+Before you deploy this anywhere that matters, read [`SECURITY.md`](SECURITY.md) — in particular
+§8, which lists what is deliberately still open.
+
 ---
 
 ## The scripts
@@ -305,8 +308,8 @@ Carried forward deliberately; each has a runbook and a cost.
 |---|---|---|
 | Admin console served with a self-signed certificate | `09 §6.3` | internal CA, or ACME DNS-01 |
 | Local registry has no authentication and no TLS | `09 §6.2` | 2h; **required** if k3s is not on this host — bind and auth move together, never one without the other |
-| Dragonfly TLS off | `09 §6.5` / `18 §4` / `21` | the application side (A-3) is done; one chart change remains (mount the CA into the app pod). The cutover is atomic and user-visible either way — `cacheUrl` gains `ssl=true` in the *same* `helm upgrade` that sets `dragonfly.local.tls.enabled`, or the cache goes offline |
-| RLS off | `18 §3` | the application side (A-1) is done and undeployed; enabling before that build is running is a total outage |
+| Dragonfly TLS off **in prod only** | `09 §6.5` / `18 §2` / `23` | Nothing is missing but the flag. The application side is done and *pinned* to the mounted cluster CA (`src/Config/CacheTls.cs`), the chart mounts it (`templates/deployment.yaml:180-195`), and `values.dev.yaml` runs with it on and verified on the wire. `values.prod.yaml` sets no `dragonfly` block, so it inherits `false`. The cutover is atomic and user-visible either way — `cacheUrl` gains `ssl=true` in the *same* `helm upgrade` that sets `dragonfly.local.tls.enabled`, or the cache goes offline. The chart fails the render if the two ever disagree, in either direction |
+| RLS off | `18 §3` | the application side (A-1) is in the build — `src/Data/TenantScopeInterceptor.cs`; the flag is `false` in `values.yaml` and overridden nowhere. Enabling it before verifying the variable on a live connection is a total outage. Note also that RLS does **not** make the login path tenant-safe: it resolves users before a tenant is known and runs as `'system'` by necessity — [`SECURITY.md`](SECURITY.md#2-tenant-isolation-and-its-honest-limit) |
 | No WAF | `09 §6.6` | load the Traefik plugin **before** attaching the middleware, or Traefik answers 503 for the whole router |
 | No IDS/IPS | `09 §6.7` | Falco; needs an alert destination *and* a named owner |
 | k3s secrets not encrypted at rest | `10 §7.3` | 15 min, root on the server node |

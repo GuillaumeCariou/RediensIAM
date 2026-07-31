@@ -4,8 +4,13 @@ How to plug an application into RediensIAM: log users in, and let your backend d
 may do. Written against the code, with `file:line` references — if this document and the code
 disagree, the code wins and this document is a bug.
 
-Companion reads: [`../sdk/README.md`](../sdk/README.md) (which SDK, and why), and
-[`ARCHITECTURE.md`](ARCHITECTURE.md) (how the internals fit together).
+Companion reads: [`../sdk/README.md`](../sdk/README.md) (which SDK, and why),
+[`API.md`](API.md) (every route, its required authority and where it is reachable),
+[`ARCHITECTURE.md`](ARCHITECTURE.md) (how the internals fit together) and
+[`SECURITY.md`](SECURITY.md) (what protects what, and what is still open).
+
+> Source references below name **types and methods**, not `file:line`, for anything under
+> `src/Controllers/` — those files move often enough that line numbers rot within a release.
 
 ---
 
@@ -52,17 +57,17 @@ Most integrations need both: the SPA obtains a token, your API validates it.
 ### Create a project, not a raw OAuth2 client
 
 **Creating a project creates its OIDC client for you**, with a deterministic id
-`client_<project_id>` (`OrgController.cs:105-118` and `SystemAdminController.cs`). The client is
-created as a public PKCE client (`token_endpoint_auth_method = "none"`) and carries
+`client_<project_id>` (`OrgController.CreateProject`, `SystemAdminController.AdminCreateProject`).
+The client is created as a public PKCE client (`token_endpoint_auth_method = "none"`) and carries
 `metadata.project_id` / `metadata.org_id`, which is what ties issued tokens to a tenant.
 
 This is the path you want. Pick the endpoint that matches your caller's level:
 
 | Endpoint | Caller | Request record |
 |---|---|---|
-| `POST /org/projects` | OrgAdmin (`OrgController.cs:19`) | `CreateProjectRequest` (`:934`) |
-| `POST /admin/organizations/{orgId}/projects` | SuperAdmin (`SystemAdminController.cs:16`) | `AdminCreateProjectRequest` (`:1124`) |
-| `POST /api/manage/organizations/{orgId}/projects` | SuperAdmin (`SystemAdminController.cs:16`) | **the same action** — see [Management API](#management-api--admin-and-apimanage-are-one-surface) |
+| `POST /org/projects` | OrgAdmin (`OrgController` class filter) | `CreateProjectRequest` |
+| `POST /admin/organizations/{orgId}/projects` | SuperAdmin (`SystemAdminController` class filter) | `AdminCreateProjectRequest` |
+| `POST /api/manage/organizations/{orgId}/projects` | SuperAdmin | **the same action** — see [Management API](#management-api--admin-and-apimanage-are-one-surface) |
 
 ```bash
 PROJECT=$(curl -s -X POST "$IAM/admin/organizations/$ORG_ID/projects" \
@@ -80,12 +85,13 @@ Your `client_id` is `client_<project_id>` — stable, and derivable from the pro
 environment. That is the value `rediensiam-web` expects as `clientId`.
 
 If Hydra is unreachable the project creation is rolled back and you get `502 hydra_unavailable`
-(`OrgController.cs:119-126`) — you never end up with a project that has no client.
+(`OrgController.CreateProject`) — you never end up with a project that has no client.
 
 ### The escape hatch: `POST /admin/hydra/clients`
 
 For a client that is **not** a project — a machine client, or an app whose id must be a
-particular string — there is a raw endpoint (`SystemAdminController.cs:866`, SuperAdmin only):
+particular string — there is a raw endpoint (`SystemAdminController.CreateHydraClient`, SuperAdmin
+only):
 
 ```json
 {
@@ -132,7 +138,7 @@ protect with them.
 ### Changing redirect URIs later
 
 There is no update endpoint. `/admin/hydra/clients` exposes GET, POST and DELETE only
-(`SystemAdminController.cs:855, 866, 896, 904`), and `UpdateOAuth2ClientScopeAsync`
+(`SystemAdminController.{List,Create,Get,Delete}HydraClient`), and `UpdateOAuth2ClientScopeAsync`
 (`HydraService.cs:190`) patches the scope alone. To add a redirect URI you must `DELETE` the
 client and re-`POST` it with the same `client_id` — which is only painless because the id is
 either `client_<project_id>` or one you pinned yourself. Sessions issued for the old client are
@@ -169,11 +175,12 @@ a token revoked since. The trade-off table is in [`../sdk/README.md`](../sdk/REA
 
 ### Get a service account and a PAT
 
-Introspection callers authenticate as a service account (`IntrospectionController.cs:109-111`).
+Introspection callers authenticate as a service account
+(`IntrospectionController.IsServiceAccountCaller`).
 A plain user token is refused on purpose — otherwise the endpoint is an oracle any bearer could
 use to probe token validity.
 
-`user_list_id` is **required** (`ServiceAccountController.cs:345`, `[JsonRequired]`), so fetch a
+`user_list_id` is **required** (`CreateSaRequest`, `[JsonRequired]`), so fetch a
 user list first:
 
 ```bash
@@ -302,29 +309,32 @@ cache negative ones.
 
 ## Endpoint reference
 
+The routes below are the ones an integrator uses. **The complete list of all 184 routes — with
+required authority and whether each is reachable on the public hostname — is in
+[`API.md`](API.md).**
+
 Bodies are `snake_case`. Records cited so you can re-check against the source.
 
-| Endpoint | Auth required | Body | Source |
+| Endpoint | Auth required | Body | Request record |
 |---|---|---|---|
-| `POST /org/projects` | OrgAdmin | `{name, slug, require_role_to_login?, redirect_uris?}` | `OrgController.cs:90,934` |
-| `POST /admin/organizations/{id}/projects` | SuperAdmin | same | `SystemAdminController.cs:474,1124` |
-| `POST /admin/hydra/clients` | SuperAdmin | `{client_name, grant_types, redirect_uris, scope?, client_id?}` | `SystemAdminController.cs:866,1130` |
-| `GET/DELETE /admin/hydra/clients/{id}` | SuperAdmin | — | `SystemAdminController.cs:896,904` |
-| `POST /service-accounts` | any management level | `{name, description?, user_list_id}` | `ServiceAccountController.cs:92,345` |
-| `POST /service-accounts/{id}/pat` | access to the SA | `{name, expires_at?}` | `ServiceAccountController.cs:181,346` |
-| `POST /service-accounts/{id}/roles` | access to the SA | `{role, org_id?, project_id?}` | `ServiceAccountController.cs:250,348` |
-| `POST /admin/organizations/{id}/admins` | SuperAdmin | `{user_id, role, scope_id?}` | `SystemAdminController.cs:1103` |
-| `POST /api/introspect` | service account | **form**: `token`, `aud` (required) | `IntrospectionController.cs` |
-| `POST /api/authorize` | service account | `{token, namespace, object, relation, aud}` — `aud` required | `IntrospectionController.cs` |
-| `PATCH /admin/projects/{id}` | SuperAdmin | `AdminUpdateProjectRequest`; see [MFA](#turning-require_mfa-off) | `SystemAdminController.cs` |
+| `POST /org/projects` | OrgAdmin | `{name, slug, require_role_to_login?, redirect_uris?}` | `CreateProjectRequest` |
+| `POST /admin/organizations/{id}/projects` | SuperAdmin | same | `AdminCreateProjectRequest` |
+| `POST /admin/hydra/clients` | SuperAdmin | `{client_name, grant_types, redirect_uris, scope?, client_id?}` | `CreateHydraClientRequest` |
+| `GET/DELETE /admin/hydra/clients/{id}` | SuperAdmin | — | — |
+| `POST /service-accounts` | ProjectAdmin or above, plus per-object access | `{name, description?, user_list_id}` | `CreateSaRequest` |
+| `POST /service-accounts/{id}/pat` | access to the SA | `{name, expires_at?}` | `GenerateSaPatRequest` |
+| `POST /service-accounts/{id}/roles` | access to the SA | `{role, org_id?, project_id?}` | `AssignSaRoleRequest` |
+| `POST /admin/organizations/{id}/admins` | SuperAdmin | `{user_id, role, scope_id?}` | `AssignOrgAdminRequest` |
+| `POST /api/introspect` | service account | **form**: `token`, `aud` (required) | `IntrospectionRequest` |
+| `POST /api/authorize` | service account | `{token, namespace, object, relation, aud}` — `aud` required | `AuthorizationRequest` |
+| `PATCH /admin/projects/{id}` | SuperAdmin | see [MFA](#turning-require_mfa-off) | `AdminUpdateProjectRequest` |
 
-`role` values are validated against `KnownManagementRoles`
-(`SystemAdminController.cs:38` — `super_admin`, `org_admin`, `project_admin`); anything else is
-`400 unknown_role`.
+`role` values are validated against `SystemAdminController.KnownManagementRoles` — `super_admin`,
+`org_admin`, `project_admin`; anything else is `400 unknown_role`.
 
-Route prefixes: `/admin` is SuperAdmin-only at the class level
-(`SystemAdminController.cs:16`), `/org` is OrgAdmin-only (`OrgController.cs:19`), `/api/manage`
-is the same SuperAdmin surface as `/admin` under a second prefix — see
+Route prefixes, all enforced by a class-level `[RequireManagementLevel]`: `/admin` and
+`/api/manage` are SuperAdmin, `/org` is OrgAdmin, `/project` and `/service-accounts` are
+ProjectAdmin. `/api/manage` is the same SuperAdmin surface as `/admin` under a second prefix — see
 [Management API](#management-api--admin-and-apimanage-are-one-surface).
 
 ---
@@ -420,14 +430,16 @@ Notes.
 
 ## Deployment notes that bite integrators
 
-These are open issues, recorded here because each one looks like an integration bug when you hit
-it. Detail in [`2026-07-28-findings-securite-deploiement.md`](2026-07-28-findings-securite-deploiement.md).
+Recorded here because each one looks like an integration bug when you hit it. Detail in
+[`2026-07-28-findings-securite-deploiement.md`](2026-07-28-findings-securite-deploiement.md);
+current posture in [`SECURITY.md`](SECURITY.md).
 
-| Symptom | Cause | Workaround |
+| Symptom | Cause | Status |
 |---|---|---|
-| Pod in `CrashLoopBackOff` on a dev deploy | `App__TrustedProxies` must be set explicitly in Production, and the image runs as Production; `values.yaml`'s comment claiming an RFC1918 fallback is wrong | `--set rediensiam.app.trustedProxies="10.42.0.0/16,10.43.0.0/16"` (k3s pod CIDRs) |
-| Admin console login does nothing | its own CSP `connect-src 'self'` blocks the cross-origin discovery fetch when the console is served on a NodePort | widen `connect-src` to the issuer origin and rebuild, or drive the API with curl |
-| Serving RediensIAM under `https://host/iam` breaks OIDC | the ingress serves at a host root; issuer and discovery URLs are absolute | give it a dedicated host (`iam.example.com`) |
+| Serving RediensIAM under `https://host/iam` breaks OIDC | the ingress serves at a host root; issuer and discovery URLs are absolute | **Still open** (finding R-27). Give it a dedicated host — `iam.example.com` |
+| `/admin`, `/org`, `/project` or `/service-accounts` returns 403 from your gateway | the public host denies those prefixes at the ingress by design (finding P-04) | Working as intended. A machine caller wants `/api/manage/*`, which is the same super-admin surface and *is* served on the public host — see [Management API](#management-api--admin-and-apimanage-are-one-surface) |
+| Pod in `CrashLoopBackOff` on a dev deploy | `App__TrustedProxies` was empty and the image runs as Production, so the app refuses to start rather than silently trust RFC1918 | **Fixed.** `values.yaml` now ships the k3s pod and service CIDRs (`10.42.0.0/16,10.43.0.0/16`). Override it for any other cluster |
+| Admin console login does nothing | its own CSP `connect-src 'self'` blocked the cross-origin discovery fetch | **Fixed.** The header now names the issuer origin explicitly (`src/Program.cs:466-470`), resolved once at startup from the same value `/admin/config` hands the SPA |
 
 ---
 
