@@ -235,20 +235,21 @@ public class ResidualFindingsTests(TestFixture fixture)
     // ── T-07b/c: the two tenant defaults ─────────────────────────────────────
 
     /// <summary>
-    /// Both were false for every project ever created, so a tenant got the weaker setting by not
-    /// looking. They are opt-out now: the create paths never write either field, so the entity
-    /// initialiser is the whole policy. Existing rows are untouched.
+    /// Breached-password checking is opt-out: it costs the user nothing, so a tenant should not
+    /// get the weaker setting by not looking. MFA is opt-*in* by product decision — forcing a
+    /// second factor on every new tenant is a UX call that belongs to the tenant's owner. The
+    /// create paths never write either field, so the entity initialiser is the whole policy.
     /// </summary>
     [Fact]
-    public async Task ANewProject_RequiresMfaAndChecksBreachedPasswords_ByDefault()
+    public async Task ANewProject_ChecksBreachedPasswords_ButDoesNotForceMfa_ByDefault()
     {
         var (org, _) = await fixture.Seed.CreateOrgAsync();
         var project  = await fixture.Seed.CreateProjectAsync(org.Id);
 
         fixture.Db.ChangeTracker.Clear();
         var stored = await fixture.Db.Projects.AsNoTracking().FirstAsync(p => p.Id == project.Id);
-        stored.RequireMfa.Should().BeTrue();
         stored.CheckBreachedPasswords.Should().BeTrue();
+        stored.RequireMfa.Should().BeFalse();
     }
 
     // ── T-07d: an undeliverable factor must not be enrollable ────────────────

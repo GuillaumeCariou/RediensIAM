@@ -14,10 +14,11 @@ public class Project
     public string? LoginTemplate { get; set; }
     public bool RequireRoleToLogin { get; set; }
     public bool AllowSelfRegistration { get; set; }
-    // Secure by default: a new project requires a second factor and refuses known-breached
-    // passwords. Both are opt-*out* — a tenant that wants password-only can say so, but nobody
-    // gets it by forgetting to look. Existing rows keep whatever they were created with.
-    public bool RequireMfa { get; set; } = true;
+    // Opt-in, by product decision: forcing a second factor on every new tenant is a UX call that
+    // belongs to whoever owns the tenant. RediensIAM's own admin surface is separate and still
+    // defaults on (Security:RequireAdminMfa) — that one guards super_admin, so it is ours to set.
+    // Breached-password checking below stays on by default: it costs the user nothing.
+    public bool RequireMfa { get; set; }
     public string[] AllowedEmailDomains { get; set; } = [];
     public bool EmailVerificationEnabled { get; set; }
     public bool SmsVerificationEnabled { get; set; }
