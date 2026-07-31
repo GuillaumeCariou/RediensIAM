@@ -43,19 +43,30 @@ builder.Services.PostConfigure<Microsoft.AspNetCore.HostFiltering.HostFilteringO
 });
 
 // ── Database ───────────────────────────────────────────────────────────────
-builder.Services.AddDbContext<RediensIamDbContext>(options =>
-    options.UseNpgsql(appConfig.ConnectionString),
+// The interceptor publishes the request's tenant scope as the rediensiam.org_id session variable
+// the RLS policies read (S-5 phase 2). It is inert until the policies are applied, and applying
+// them without it is an outage — see Data/TenantScopeInterceptor.cs.
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton<TenantScopeInterceptor>();
+builder.Services.AddDbContext<RediensIamDbContext>((sp, options) =>
+    options.UseNpgsql(appConfig.ConnectionString)
+           .AddInterceptors(sp.GetRequiredService<TenantScopeInterceptor>()),
     ServiceLifetime.Scoped);
 
 // ── Redis / Dragonfly ──────────────────────────────────────────────────────
 builder.Services.Configure<ForwardedHeadersOptions>(o => ConfigureForwardedHeaders(o, builder.Configuration, builder.Environment));
 
-var cacheMultiplexer = await ConnectionMultiplexer.ConnectAsync(appConfig.CacheConnectionString);
+// ConnectAsync(string) validates the server certificate against the OS trust store and nothing in
+// the connection string changes that, which is what blocked cache TLS in step 18. CacheTls pins to
+// the mounted cluster CA instead; on a plaintext connection string it is a no-op.
+var cacheOptions = CacheTls.BuildOptions(appConfig.CacheConnectionString, appConfig.CacheTlsCaFile, Console.Error.WriteLine);
+var cacheMultiplexer = await ConnectionMultiplexer.ConnectAsync(cacheOptions);
 builder.Services.AddSingleton<IConnectionMultiplexer>(cacheMultiplexer);
 builder.Services.AddStackExchangeRedisCache(o =>
 {
-    o.Configuration  = appConfig.CacheConnectionString;
-    o.InstanceName   = appConfig.CacheInstanceName;
+    // Its own options instance: the cache builds a second multiplexer from these.
+    o.ConfigurationOptions = CacheTls.BuildOptions(appConfig.CacheConnectionString, appConfig.CacheTlsCaFile);
+    o.InstanceName         = appConfig.CacheInstanceName;
 });
 
 // ── Data Protection — persist keys to Redis so pod restarts don't invalidate sessions ──
@@ -112,7 +123,6 @@ builder.Services.AddHttpClient(SocialLoginService.NoRedirectClient)
     .ConfigurePrimaryHttpMessageHandler(() => WebhookUrlValidator.CreateSsrfSafeHandler());
 builder.Services.AddScoped<PatService>();
 builder.Services.AddSingleton<SocialLoginService>();
-builder.Services.AddHttpContextAccessor();
 
 // ── Controller service bundles (reduce constructor param counts, S107) ────────
 builder.Services.AddScoped<AuthCoreServices>();

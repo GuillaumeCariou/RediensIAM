@@ -15,11 +15,51 @@ public class AppConfig(IConfiguration config)
     public string? BootstrapPassword => config["IAM_BOOTSTRAP_PASSWORD"];
 
     // ── Database ──────────────────────────────────────────────────────────────
-    public string ConnectionString => config.GetConnectionString("Default")
-        ?? throw new InvalidOperationException("ConnectionStrings:Default is required — set via env var ConnectionStrings__Default");
+    public string ConnectionString => RequirePerCheckoutSessionState(
+        config.GetConnectionString("Default")
+        ?? throw new InvalidOperationException("ConnectionStrings:Default is required — set via env var ConnectionStrings__Default"));
+
+    /// <summary>
+    /// Refuses a DSN whose pooling settings would make a per-request session variable meaningless
+    /// (step 18 item A-2). <see cref="Data.TenantScopeInterceptor"/> writes
+    /// <c>rediensiam.org_id</c> once per connection checkout and relies on Npgsql clearing it on
+    /// return; both of these turn that into a cross-tenant read:
+    ///
+    /// <list type="bullet">
+    /// <item><c>No Reset On Close=true</c> suppresses the <c>DISCARD ALL</c> that clears the
+    /// setting, so one tenant's scope serves whichever request rents the connection next.</item>
+    /// <item><c>Multiplexing=true</c> interleaves commands from different logical connections over
+    /// one physical session, so there is no per-request session to scope at all.</item>
+    /// </list>
+    ///
+    /// A startup failure rather than a warning: both are performance flags somebody would add
+    /// deliberately, and the damage they do is silent and cross-tenant.
+    /// </summary>
+    private static string RequirePerCheckoutSessionState(string dsn)
+    {
+        var parsed = new Npgsql.NpgsqlConnectionStringBuilder(dsn);
+        if (parsed.NoResetOnClose)
+            throw new InvalidOperationException(
+                "ConnectionStrings:Default sets 'No Reset On Close=true'. Npgsql's DISCARD ALL on pool " +
+                "return is what clears the rediensiam.org_id row-level-security scope; without it one " +
+                "tenant's scope leaks into the next request that rents the connection.");
+        if (parsed.Multiplexing)
+            throw new InvalidOperationException(
+                "ConnectionStrings:Default sets 'Multiplexing=true'. Multiplexed commands from different " +
+                "logical connections share one physical session, so a per-request rediensiam.org_id " +
+                "row-level-security scope cannot be honoured.");
+        return dsn;
+    }
 
     // ── Cache / Redis ─────────────────────────────────────────────────────────
     public string CacheConnectionString => config["Cache:ConnectionString"] ?? "localhost:6379,abortConnect=false";
+    /// <summary>
+    /// PEM bundle holding the root the cache's TLS certificate must chain to. Defaults to the path
+    /// the chart is expected to mount the cert-manager CA at, so enabling cache TLS needs no
+    /// application configuration; absent, the file is simply not there and nothing changes.
+    /// See <see cref="CacheTls"/>.
+    /// </summary>
+    public string CacheTlsCaFile        => config["Cache:TlsCaFile"] ?? CacheTls.DefaultCaBundlePath;
     public string CacheInstanceName     => config["Cache:InstanceName"] ?? "rediensiam:";
     // Upper bound on how long a revoked PAT keeps working — see MaxLoginAttempts on clamping.
     public int    PatCacheTtlMinutes    => Math.Clamp(config.GetValue<int>("Cache:PatTtlMinutes", 5), 0, 15);

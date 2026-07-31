@@ -24,105 +24,54 @@ Multi-tenant Identity & Access Management system built on Ory Hydra + Keto, ASP.
 | .NET SDK | 10.0 |
 | Node.js | 20+ |
 
+The cluster also needs a default StorageClass, an IngressClass, Traefik's `Middleware` CRD and
+cert-manager. `./deploy/preflight.sh --dev` checks every one of them and names the fix; it can
+install cert-manager with `--install-cert-manager`.
+
 ---
 
 ## Deployment
 
-### 1. Create `values.secret.yaml`
+**Full guide: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).** What follows is the short version.
 
-The deploy script reads secrets from `deploy/rediensiam/values.secret.yaml`.  
-**This file must never be committed.**
-
-Copy the template and fill in real values:
+### Development
 
 ```bash
-cp deploy/rediensiam/values.secret.yaml deploy/rediensiam/values.secret.yaml.bak  # keep the example
+./deploy/setup.sh --dev
 ```
 
-Full annotated `values.secret.yaml`:
+One command, no manual steps, and **nothing to fill in first**. Preflight checks the cluster,
+both SPAs and the image are built, the chart is deployed pinned to the image digest,
+`verify-deployment.sh` asserts the security controls are live, and the bootstrap credentials are
+printed at the end.
 
-```yaml
-# ── Bootstrap super-admin account (created on first start) ──────────────────
-env:
-  IAM_BOOTSTRAP_EMAIL: "admin@example.com"
-  IAM_BOOTSTRAP_PASSWORD: "ChangeMe123!"   # min 8 chars; change immediately after first login
+Do not hand-write `values.secret.yaml`. Every credential — the four Postgres role passwords, the
+cache password, the HKDF root encryption key, the Argon2 pepper, the Hydra system secret and the
+bootstrap admin password — is generated per machine into `deploy/rediensiam/values.secret.yaml`
+(mode 600, gitignored). Earlier versions of this README shipped a template full of
+`CHANGE_ME_…` placeholders; every copy of the repository knew those values, and `deploy.sh` now
+refuses to deploy them to production.
 
-# ── Secrets injected as env vars ────────────────────────────────────────────
-secrets:
-  # PostgreSQL connection string for the IAM database
-  databaseUrl: "Host=rediensiam-postgres;Database=rediensiam;Username=iam;Password=STRONG_PASSWORD"
+Clean slate: `./deploy/reset-dev.sh` (lists exactly what it destroys, then asks).
 
-  # Dragonfly/Redis connection string
-  cacheUrl: "rediensiam-dragonfly:6379,abortConnect=false"
-
-  # Root encryption key: EXACTLY 64 hexadecimal characters (32 bytes).
-  # Per-purpose subkeys (TOTP secrets, webhook secrets, per-org SMTP passwords,
-  # login-theme provider secrets, device fingerprints) are derived from it via HKDF-SHA256.
-  # Any other format — base64 included — makes the app throw on startup.
-  # Generate: openssl rand -hex 32
-  totpEncryptionKey: "CHANGE_ME_64_HEX_CHARS_0123456789abcdef0123456789abcdef01234567"
-
-  # Random hex string used as Argon2 pepper for password hashing
-  # Generate: openssl rand -hex 32
-  argon2Pepper: "CHANGE_ME_64_HEX_CHARS"
-
-  # Global SMTP password (leave blank to use per-org SMTP only)
-  smtpPassword: ""
-
-# ── PostgreSQL password (must match the one in databaseUrl above) ────────────
-postgres:
-  password: STRONG_PASSWORD
-
-# ── Ory Hydra ────────────────────────────────────────────────────────────────
-hydra:
-  hydra:
-    config:
-      # Hydra's own database (can share the same Postgres instance)
-      dsn: "postgres://iam:STRONG_PASSWORD@rediensiam-postgres:5432/hydra?sslmode=disable"
-      secrets:
-        system:
-          # At least 32 characters; used to sign Hydra tokens
-          # Generate: openssl rand -hex 32
-          - "CHANGE_ME_HYDRA_SYSTEM_SECRET_AT_LEAST_32_CHARS"
-
-# ── Ory Keto ─────────────────────────────────────────────────────────────────
-keto:
-  keto:
-    config:
-      dsn: "postgres://iam:STRONG_PASSWORD@rediensiam-postgres:5432/keto?sslmode=disable"
-```
-
-> **Tip:** Run `openssl rand -hex 32` to generate each secret value.
-
----
-
-### 2. Deploy
+### Production
 
 ```bash
-# Dev — local k3s, HTTP, Hydra dev mode
-bash deploy/deploy.sh --dev
-
-# Dev — upgrade Helm dependencies first (after chart.yaml changes)
-bash deploy/deploy.sh --dev --upgrade
-
-# Prod — uses values.prod.secret.yaml (generated interactively if missing)
-bash deploy/deploy.sh --prod
+./deploy/setup.sh --prod --plan     # interview only — writes the answers, deploys nothing
+./deploy/setup.sh --prod
 ```
 
-The script does the following in order:
+The interview asks for the things nothing can default — public and admin hostnames, TLS issuer,
+CloudNativePG or the built-in StatefulSet, where the off-node backup copy goes — and fails rather
+than guessing at any of them. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for what each answer costs
+you, and for the day-2 runbooks (key rotation, RLS, Postgres TLS on an existing database).
 
-1. Starts the local Docker registry at `localhost:5000`
-2. Builds both SPAs (`npm ci && npm run build`)
-3. Builds and pushes the Docker image
-4. Resolves Helm chart dependencies (Hydra, Keto)
-5. Runs `helm upgrade --install` with the appropriate values
-6. Bootstraps the `client_admin_system` Hydra OAuth2 client
+### The stages, individually
 
-After deployment:
-
-```
-Login  →  http://localhost/login
-Admin  →  http://localhost/admin/
+```bash
+./deploy/preflight.sh --dev          # can this host and cluster run the chart?
+./deploy/deploy.sh --dev             # build and deploy only
+./deploy/verify-deployment.sh --dev  # are the security controls live in the cluster?
 ```
 
 ---

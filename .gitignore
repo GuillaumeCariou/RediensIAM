@@ -24,6 +24,11 @@ deploy/rediensiam/charts/
 *.key
 deploy/rediensiam/values.secret.yaml
 deploy/rediensiam/values.prod.secret.yaml
+# Operator decisions written by deploy/setup.sh — hostnames, issuer names, backup
+# destination. Not secrets, but per-installation: committing one makes the next
+# operator inherit somebody else's hostname.
+deploy/rediensiam/values.dev.override.yaml
+deploy/rediensiam/values.prod.override.yaml
 .sonar.env
 
 # ── OS ────────────────────────────────────────────────────────────────────────

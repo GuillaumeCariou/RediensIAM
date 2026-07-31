@@ -26,7 +26,10 @@ fi
 # NOTE: `default` is a shared namespace on this cluster. The chart's default-deny is
 # release-scoped for that reason. Moving this release to its own namespace is the
 # prerequisite for a true namespace-wide baseline deny — see .security-hardening/09.
-NAMESPACE=default
+# 15c recommends moving the release out of `default` at the FIRST install — it cannot be done
+# as an upgrade (no cross-namespace PVC move, and helm cannot change a release's namespace).
+# Overridable so that decision is available without editing this file:  NAMESPACE=rediensiam ./deploy/setup.sh --prod
+NAMESPACE="${NAMESPACE:-default}"
 REGISTRY="localhost:5000"
 # R-16: the registry listens on loopback only. Anyone who could reach TCP/5000 on this host
 # could previously push a replacement rediensiam:prod and own the next pod restart.
@@ -58,9 +61,24 @@ else
   echo "════════════════════════════════════════════════"
 fi
 
-# Read URLs from the env-specific values file
-PUBLIC_URL=$(grep '^\s*publicUrl:' "${ENV_FILE}" | head -1 | sed 's/.*publicUrl:[[:space:]]*//' | tr -d '"' | cut -d'#' -f1 | tr -d ' ')
-ADMIN_URL=$(grep '^\s*adminUrl:' "${ENV_FILE}" | head -1 | sed 's/.*adminUrl:[[:space:]]*//' | tr -d '"' | cut -d'#' -f1 | tr -d ' ')
+# Operator decisions written by `./deploy/setup.sh --prod` (gitignored, not a secrets file).
+# Layered after the env file and before the secrets file, so it wins over the committed
+# defaults and never over a credential.
+OVERRIDE_FILE="${ENV_FILE%.yaml}.override.yaml"
+OVERRIDE_ARGS=()
+if [ -f "${OVERRIDE_FILE}" ]; then
+  OVERRIDE_ARGS=(-f "${OVERRIDE_FILE}")
+  echo " Overrides: $(basename "${OVERRIDE_FILE}")"
+fi
+
+# Read URLs from the env-specific values file, then let the override correct them.
+read_url() { grep "^\s*$2:" "$1" 2>/dev/null | head -1 | sed "s/.*$2:[[:space:]]*//" | tr -d '"' | cut -d'#' -f1 | tr -d ' '; }
+PUBLIC_URL=$(read_url "${ENV_FILE}" publicUrl)
+ADMIN_URL=$(read_url "${ENV_FILE}" adminUrl)
+if [ -f "${OVERRIDE_FILE}" ]; then
+  O=$(read_url "${OVERRIDE_FILE}" publicUrl); [ -n "${O}" ] && PUBLIC_URL="${O}"
+  O=$(read_url "${OVERRIDE_FILE}" adminUrl);  [ -n "${O}" ] && ADMIN_URL="${O}"
+fi
 PUBLIC_HOST=$(echo "${PUBLIC_URL}" | sed 's|https\?://||' | cut -d: -f1)
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -146,6 +164,10 @@ KNOWN_DEFAULTS='changeme|CHANGE_ME_HYDRA_SYSTEM_SECRET_32CHARS|Admin1234!'
 REQUIRE_SSL=false
 if grep -Eqs '^[[:space:]]*requireSsl:[[:space:]]*true' "${ENV_FILE}" "${CHART}/values.yaml"; then
   REQUIRE_SSL=true
+fi
+# The override file layers last, so it can turn requireSsl back OFF as well as on.
+if [ -f "${OVERRIDE_FILE}" ] && grep -Eqs '^[[:space:]]*requireSsl:' "${OVERRIDE_FILE}"; then
+  grep -Eqs '^[[:space:]]*requireSsl:[[:space:]]*true' "${OVERRIDE_FILE}" && REQUIRE_SSL=true || REQUIRE_SSL=false
 fi
 
 write_secrets_file() {
@@ -392,6 +414,7 @@ if [ "${PROD}" = "true" ]; then
   helm_deploy rediensiam "${CHART}" \
     -f "${CHART}/values.yaml" \
     -f "${CHART}/values.prod.yaml" \
+    ${OVERRIDE_ARGS[@]+"${OVERRIDE_ARGS[@]}"} \
     -f "${SECRETS_FILE}" \
     --set rediensiam.image.repository="${REGISTRY}/rediensiam" \
     --set rediensiam.image.tag=prod \
@@ -402,6 +425,7 @@ else
   helm_deploy rediensiam "${CHART}" \
     -f "${CHART}/values.yaml" \
     -f "${CHART}/values.dev.yaml" \
+    ${OVERRIDE_ARGS[@]+"${OVERRIDE_ARGS[@]}"} \
     -f "${SECRETS_FILE}" \
     --set rediensiam.image.repository="${REGISTRY}/rediensiam" \
     --set rediensiam.image.tag=dev \

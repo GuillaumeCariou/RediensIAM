@@ -25,8 +25,16 @@ public sealed class InstanceConfigurationProvider(InstanceBootstrapOptions opts)
         // Provider runs before DI is built — open a one-shot DbContext from the
         // connection string directly. Migrations are idempotent so running them
         // here is safe even though Program.cs also retries them on startup.
+        // Carries the tenant-scope interceptor too, even though this provider only touches the
+        // deployment-global `instances` table. It is also where `Migrate()` runs for the first
+        // time, and a future migration that backfills data would otherwise write to tenant tables
+        // on a connection with no `rediensiam.org_id` — which under RLS is fail-closed, i.e. a
+        // migration that silently does nothing. There is no request in flight here, so the scope
+        // it sets is 'system'.
         var dbOpts = new DbContextOptionsBuilder<RediensIamDbContext>()
-            .UseNpgsql(opts.ConnectionString).Options;
+            .UseNpgsql(opts.ConnectionString)
+            .AddInterceptors(new Data.TenantScopeInterceptor(new HttpContextAccessor()))
+            .Options;
 
         try
         {
