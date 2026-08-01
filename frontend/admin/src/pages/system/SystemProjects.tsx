@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { IamChip } from '@/components/iam';
 import { adminListAllProjects } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';

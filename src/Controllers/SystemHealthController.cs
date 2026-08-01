@@ -32,11 +32,19 @@ public class SystemHealthController(
     IDistributedCache cache,
     AppConfig appConfig,
     IHttpClientFactory httpClientFactory,
-    IEmailService emailService) : ControllerBase
+    IEmailService emailService,
+    ILogger<SystemHealthController> logger) : ControllerBase
 {
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
     private const string CategoryStorage = "Storage";
     private const string StatsVersion    = "version";
+
+    // An exception from a failed dependency connection routinely carries a hostname, a port, a
+    // DSN fragment or a certificate subject, and this response lands in browser history and in
+    // audit metadata. The caller gets a stable code naming which side failed; the message goes
+    // to the server log, where the operator who needs it can already read everything else.
+    private const string DetailProbeFailed = "probe_failed";
+    private const string DetailCheckFailed = "check_failed";
 
     [HttpGet("health")]
     public async Task<IActionResult> GetHealth()
@@ -219,7 +227,8 @@ public class SystemHealthController(
         catch (Exception ex)
         {
             sw.Stop();
-            return (HealthStatus.Error, sw.ElapsedMilliseconds, ex.Message);
+            logger.LogWarning(ex, "System health probe of {Url} failed", url);
+            return (HealthStatus.Error, sw.ElapsedMilliseconds, DetailProbeFailed);
         }
     }
 
@@ -239,9 +248,10 @@ public class SystemHealthController(
         return new ComponentHealth(name, category, HealthStatus.Ok, sw.ElapsedMilliseconds, detail);
     }
 
-    private static ComponentHealth Err(string name, string category, Exception ex, Stopwatch sw)
+    private ComponentHealth Err(string name, string category, Exception ex, Stopwatch sw)
     {
         sw.Stop();
-        return new ComponentHealth(name, category, HealthStatus.Error, sw.ElapsedMilliseconds, ex.Message);
+        logger.LogWarning(ex, "System health check {Component} failed", name);
+        return new ComponentHealth(name, category, HealthStatus.Error, sw.ElapsedMilliseconds, DetailCheckFailed);
     }
 }

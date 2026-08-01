@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, useSearchParams } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useSearchParams } from 'react-router';
 import Login from './pages/Login';
 import MfaChallenge from './pages/MfaChallenge';
 import MfaSetup from './pages/MfaSetup';

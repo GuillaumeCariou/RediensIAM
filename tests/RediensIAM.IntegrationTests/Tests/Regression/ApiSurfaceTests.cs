@@ -249,6 +249,52 @@ public class ApiSurfaceIntrospectionTests(TestFixture fixture)
             .BeFalse("Keto says yes — the refusal has to come from the controller, not the store");
     }
 
+    /// <summary>
+    /// The other half of the same fail-open, and unlike the System-namespace half this one is
+    /// live. <c>IsObjectInScopeAsync</c> answered <i>true</i> whenever the caller had no
+    /// organisation and the subject token named none either, on the strength of the namespace
+    /// alone — no ownership was ever checked. Reaching it needs a token carrying neither
+    /// <c>org_id</c> nor <c>project_id</c>, which <c>IsBoundToAudienceAsync</c> admits through
+    /// <c>subject.Audiences</c>: a Hydra client with <c>grant_access_token_audience</c> set.
+    /// RediensIAM never mints one, but Hydra honours one written into its client store
+    /// directly, which is what this token shape represents.
+    ///
+    /// <para>Keto is told to allow everything, so a <c>true</c> here can only have come from the
+    /// controller declining to ask the ownership question.</para>
+    /// </summary>
+    [Fact]
+    public async Task Authorize_WithNoTenantOnEitherSide_IsRefusedInsteadOfPassedThrough()
+    {
+        fixture.Keto.AllowAll();
+        var gateway = await SystemGatewayAsync();
+        var tenant  = await TenantAsync();
+        var user    = await fixture.Seed.CreateUserAsync(tenant.List.Id);
+
+        const string audience = "https://resource.example.com";
+        var token = $"p05-noscope-{user.Id:N}";
+        fixture.Hydra.RegisterTokenForClient(token, user.Id.ToString(),
+            orgId: null, projectId: null, roles: [], clientId: "audience-bound-client",
+            audience: [audience]);
+
+        var res = await gateway.PostAsJsonAsync("/api/authorize", new
+        {
+            token,
+            @namespace = Roles.KetoOrgsNamespace,
+            @object    = tenant.Org.Id.ToString(),
+            relation   = Roles.KetoOrgAdminRelation,
+            aud        = audience,
+        });
+
+        (await res.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("allowed").GetBoolean().Should().BeFalse(
+                "no tenant on either side means there is no owner to compare the object against, " +
+                "and 'nobody owns this' is not 'you own this'");
+
+        await fixture.RefreshDbAsync();
+        fixture.Db.AuditLogs.Any(a => a.Action == "api.authorize.object_out_of_scope").Should().BeTrue(
+            "a refusal on this surface has to leave a trace, as every other one does");
+    }
+
     [Fact]
     public async Task Authorize_SystemGateway_ObjectIsScopedToTheSubjectsTenant()
     {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useProjectContext } from '@/hooks/useOrgContext';
 import { IamDialog } from '@/components/iam';
 import { getProjectInfo, updateProject, deleteProject } from '@/api';

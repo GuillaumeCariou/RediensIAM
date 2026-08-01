@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { ApiError } from '@/auth';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router';
 import { useAuth } from '@/context/AuthContext';
 import {
   ArrowLeft, PauseCircle, PlayCircle, Pencil, UserPlus,

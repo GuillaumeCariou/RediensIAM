@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { IamChip, IamAvatar, IamDialog } from '@/components/iam';
 import { listOrgs, createOrg, suspendOrg, unsuspendOrg, deleteOrg } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';

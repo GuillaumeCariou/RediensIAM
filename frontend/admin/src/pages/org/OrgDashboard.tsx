@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { IamChip, StatCard } from '@/components/iam';
 import { getOrgInfo, listProjects, listUserLists } from '@/api';
 import { useOrgContext } from '@/hooks/useOrgContext';

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { IamChip, IamDialog } from '@/components/iam';
 import { listProjects, createProject, deleteProject, listUserLists, assignUserList, unassignUserList } from '@/api';
 import { ApiError } from '@/auth';

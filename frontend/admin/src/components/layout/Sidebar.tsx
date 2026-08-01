@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router';
 import { useAuth } from '@/context/AuthContext';
 
 // ── Inline SVG icons (16×16 Lucide-compatible paths) ─────────────────────────

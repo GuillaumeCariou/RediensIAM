@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useAuth } from '@/context/AuthContext';
 
 function Kbd({ children }: Readonly<{ children: React.ReactNode }>) {

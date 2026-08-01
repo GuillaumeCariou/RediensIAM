@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router';
 import { getLoginChallenge, submitLogin } from '../api';
 import { useTheme, type Theme as ColorTheme } from '../useTheme';
 import { safeNavigate } from '../safeNavigate';

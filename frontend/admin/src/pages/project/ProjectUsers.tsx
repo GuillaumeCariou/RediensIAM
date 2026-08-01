@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { useProjectContext } from '@/hooks/useOrgContext';
 import { useAuth } from '@/context/AuthContext';
 import { IamChip } from '@/components/iam';

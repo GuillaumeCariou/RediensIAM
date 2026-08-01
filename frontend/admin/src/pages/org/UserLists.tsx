@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { IamChip, IamDialog } from '@/components/iam';
 import { listUserLists, createUserList } from '@/api';
 import { useOrgContext } from '@/hooks/useOrgContext';

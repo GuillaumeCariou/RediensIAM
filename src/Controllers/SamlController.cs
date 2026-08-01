@@ -13,6 +13,9 @@ namespace RediensIAM.Controllers;
 
 [ApiController]
 [Route("auth/saml")]
+// Eight dependencies, one over S107's threshold. The alternative is a DI aggregate for a single
+// added service, which relocates the count without lowering what this controller depends on.
+#pragma warning disable S107
 public class SamlController(
     RediensIamDbContext db,
     HydraService hydra,
@@ -20,7 +23,9 @@ public class SamlController(
     SamlService saml,
     AppConfig appConfig,
     OtpCacheService pending,
+    TenantScopeInterceptor tenantScope,
     ILogger<SamlController> logger) : ControllerBase
+#pragma warning restore S107
 {
     // The ACS is a cross-site POST issued by the IdP, so the ASP.NET session cookie
     // (SameSite=Strict) is never sent with it. Holding the pending AuthnRequest ID in the
@@ -31,6 +36,40 @@ public class SamlController(
 
     private Uri AcsUrl      => new($"{appConfig.PublicUrl}/auth/saml/acs");
     private string SpEntity => $"{appConfig.PublicUrl}/auth/saml/metadata";
+
+    // ── RLS scope ─────────────────────────────────────────────────────────────
+    //
+    // Same mechanism and the same rule as AuthController (see the note above its PinScopeAsync):
+    // a SAML login carries no token, so without a pin every query here runs as 'system' and
+    // row-level security enforces nothing on it. The argument is always a value the server read
+    // back — the organisation on the challenge's registered client metadata, or the one on the
+    // IdP's own project row — never request input.
+    //
+    // The two entry points differ in what they can pin from, and the difference is real:
+    //   Start has the Hydra login challenge in hand before it reads anything, so it pins from
+    //   client.metadata.org_id at zero database reads, exactly as the password path does.
+    //   The ACS does not: its challenge arrives in RelayState, which is browser-controlled and
+    //   outside the assertion signature, so it is not a scope source. It pins from the project
+    //   row the IdP hangs off instead — one read, the same documented limit
+    //   EnsureScopedToProjectAsync carries. That read is what decides the scope, so it cannot
+    //   run under it.
+
+    private Task PinScopeAsync(Guid orgId) =>
+        tenantScope.PinToOrganisationAsync(db, orgId, HttpContext.RequestAborted);
+
+    /// <summary>
+    /// Confirms the request is running under <paramref name="project"/>'s organisation, pinning
+    /// it from the project row if the challenge could not. False means the challenge client's
+    /// registered organisation and the project's disagree — impossible for a client this
+    /// application minted, and refused rather than reconciled.
+    /// </summary>
+    private async Task<bool> EnsureScopedToProjectAsync(Project project)
+    {
+        var scope = tenantScope.CurrentScope();
+        if (scope != TenantScopeInterceptor.SystemScope) return scope == project.OrgId.ToString();
+        await PinScopeAsync(project.OrgId);
+        return true;
+    }
 
     // ── SP-initiated SSO: build AuthnRequest and redirect to IdP ─────────────
 
@@ -50,9 +89,15 @@ public class SamlController(
         if (projectId == null || !Guid.TryParse(projectId, out var challengeProjectId))
             return BadRequest(new { error = "missing_project_id" });
 
+        if (LoginChallengeProject.ResolveOrgOrNull(req) is { } challengeOrgId)
+            await PinScopeAsync(challengeOrgId);
+
         var idp = await db.SamlIdpConfigs
+            .Include(x => x.Project)
             .FirstOrDefaultAsync(x => x.Id == idp_id && x.Active && x.ProjectId == challengeProjectId);
         if (idp == null) return NotFound(new { error = "saml_idp_not_found" });
+        if (!await EnsureScopedToProjectAsync(idp.Project))
+            return BadRequest(new { error = "project_org_mismatch" });
 
         var config = await saml.BuildConfigAsync(idp, SpEntity, AcsUrl);
 
@@ -149,6 +194,10 @@ public class SamlController(
                 .FirstOrDefaultAsync(x => x.Id == idpId && x.Active);
             if (idp == null) return (null, "saml_idp_not_found");
 
+            // Everything from here on — the user lookup, JIT provisioning, the role check, the
+            // audit row — runs under the IdP's own tenant.
+            await PinScopeAsync(idp.Project.OrgId);
+
             var config = await saml.BuildConfigAsync(idp, SpEntity, AcsUrl);
 
             var saml2AuthnResponse = new Saml2AuthnResponse(config);
@@ -179,6 +228,22 @@ public class SamlController(
                 throw new AuthenticationException(
                     $"Destination '{destination}' does not name this ACS endpoint");
 
+            // Signature validation, ordered ahead of the consume for the same reason the
+            // Destination check above is (I-10). GetAndDeletePendingAsync is single use, so
+            // validating afterwards let any unauthenticated caller who could guess or replay a
+            // request id destroy a legitimate login still in flight by POSTing a garbage
+            // document at it. Unbind re-parses the identical bytes ReadSamlResponse already
+            // parsed — Destination and InResponseTo come out the same — so nothing downstream
+            // changes except that a forged response never reaches the record.
+            //
+            // The residue, stated rather than papered over: an attacker who controls *any*
+            // registered active IdP can still sign a response of their own, name that IdP in
+            // RelayState and burn a guessed request id, because the checks that bind the
+            // response to the IdP and challenge it was issued for need the record in hand. Only
+            // consuming atomically prevents a valid captured response being redeemed twice, and
+            // that is worth more than closing the rest of this.
+            httpRequest.Binding.Unbind(httpRequest, saml2AuthnResponse);
+
             // Consume the pending request: single use, so a captured response cannot be replayed.
             var inResponseTo = saml2AuthnResponse.InResponseTo?.Value;
             if (string.IsNullOrEmpty(inResponseTo)) return (null, "saml_no_pending_request");
@@ -204,8 +269,6 @@ public class SamlController(
                 await hydra.GetLoginRequestAsync(loginChallenge));
             if (challengeProjectId == null || idp.ProjectId.ToString() != challengeProjectId)
                 throw new AuthenticationException("IdP does not belong to the challenge's project");
-
-            httpRequest.Binding.Unbind(httpRequest, saml2AuthnResponse);
 
             return (new SamlParsed(idp, loginChallenge, saml2AuthnResponse.ClaimsIdentity), null);
         }

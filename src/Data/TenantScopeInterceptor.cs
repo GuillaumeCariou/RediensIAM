@@ -77,7 +77,7 @@ public sealed class TenantScopeInterceptor(IHttpContextAccessor httpContextAcces
         "AuthController — the fallback read of `projects` for a client registered before org_id was in its metadata; that read is what decides the scope, so it cannot run under it",
         "AuthController.VerifyEmail / CompleteInvite / VerifyPasswordReset / ConfirmPasswordReset — the subject is named by a random token, not by a tenant",
         "GatewayAuthMiddleware — PAT introspection, which finds the token's owner by hash before the org is known",
-        "SamlController — resolves a project from the challenge exactly as AuthController does, so it CAN be pinned; not yet done (see 32-login-tenant-scope.md)",
+        "SamlController.AssertionConsumerService — the read of `saml_idp_configs` that names the IdP's project; the ACS's challenge arrives in browser-controlled RelayState and is not a scope source, so that row is what decides the scope and cannot run under it. Everything after it is pinned (see 38-residual-code-fixes.md)",
 
         // Deployment-wide work that is not any one tenant's.
         "Program.EnsureDbSchemaAsync — EF migrations",

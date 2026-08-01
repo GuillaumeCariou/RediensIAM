@@ -25,6 +25,18 @@
 //! # }
 //! ```
 //!
+//! # What this client trusts
+//!
+//! The TLS root store is the CA bundle compiled into the binary **plus** the host's own trust
+//! store — `/etc/ssl/certs` (or `SSL_CERT_FILE` / `SSL_CERT_DIR`) on Unix, the Keychain on macOS,
+//! the certificate store on Windows. A deployment behind a private CA works by installing that CA
+//! on the host, the same act that makes `curl` work, with nothing to configure here.
+//!
+//! Roots are only ever added: verification itself is unchanged, and a certificate from a CA the
+//! host does not trust is still refused. The cost is that the host store is now load-bearing —
+//! anything an operator adds there, this client will accept — the same exposure the .NET and
+//! browser SDKs have always had, and the same one `curl` has.
+//!
 //! [RediensIAM]: https://github.com/rediens/rediensiam
 
 use std::collections::HashMap;
@@ -117,7 +129,7 @@ impl TokenInfo {
     /// tenants — the issuer emits them as `{project_id}/{name}` and this is the matching read.
     pub fn has_project_role(&self, project_id: &str, role: &str) -> bool {
         let qualified = format!("{project_id}/{role}");
-        self.roles.iter().any(|r| *r == qualified)
+        self.roles.contains(&qualified)
     }
 
     /// True when the token belongs to `org_id` — the check a multi-tenant resource server needs

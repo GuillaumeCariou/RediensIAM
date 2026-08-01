@@ -211,9 +211,9 @@ public class IntrospectionController(
     ///
     /// The scope is the same one introspection uses — the caller's organisation — falling back
     /// to the subject token's organisation for a deployment-level caller, which the audience
-    /// binding above has already pinned to one tenant. Unknown namespaces are refused rather
-    /// than passed through: a namespace this deployment does not write objects into has no
-    /// ownership to check, and failing open there would reopen the finding under a new name.
+    /// binding above has already pinned to one tenant. When neither side names a tenant there is
+    /// no ownership to compare and the request is refused: "nobody owns this object" is not
+    /// "you own it".
     /// </summary>
     private async Task<bool> IsObjectInScopeAsync(TokenClaims subject, string ns, string obj)
     {
@@ -221,11 +221,13 @@ public class IntrospectionController(
                  ?? (Guid.TryParse(subject.OrgId, out var subjectOrg) ? subjectOrg : (Guid?)null);
 
         // No scope on either side — a deployment-level caller asking about a token that names
-        // no organisation. There is no ownership to compare, so the only honest check left is
-        // that the namespace is one this deployment actually writes objects into. Returning
-        // true unconditionally here is what let a __system__ credential reach any namespace at
-        // all, which is the half of this guard the docstring above already claimed to cover.
-        if (scope is null) return IsKnownNamespace(ns) || await RefuseAsync();
+        // no organisation. Reaching it needs a token carrying neither org_id nor project_id,
+        // which IsBoundToAudienceAsync admits only through subject.Audiences: a Hydra client
+        // with grant_access_token_audience set. RediensIAM does not mint one, but Hydra will
+        // honour one written into its client store directly, so this is a narrow live path
+        // rather than the dead code the earlier fix took it for. Answering the Keto question
+        // with no owner checked is the fail-open; refusing is the honest answer.
+        if (scope is null) return await RefuseAsync();
 
         return await IsOwnedByAsync(ns, obj, scope.Value) || await RefuseAsync();
 
@@ -287,17 +289,6 @@ public class IntrospectionController(
 
         static bool Same(string a, string b) => a.Equals(b, StringComparison.OrdinalIgnoreCase);
     }
-
-    /// <summary>
-    /// The namespaces this deployment writes objects into — exactly the three
-    /// <see cref="IsOwnedByAsync"/> can decide ownership for. Anything else has no owner to
-    /// check, so it cannot be scoped and is refused rather than passed through. Kept beside
-    /// that method so the two lists cannot drift apart.
-    /// </summary>
-    private static bool IsKnownNamespace(string ns) =>
-        ns.Equals(Roles.KetoOrgsNamespace, StringComparison.OrdinalIgnoreCase)
-        || ns.Equals(Roles.KetoProjectsNamespace, StringComparison.OrdinalIgnoreCase)
-        || ns.Equals(Roles.KetoUserListsNamespace, StringComparison.OrdinalIgnoreCase);
 
     private bool IsServiceAccountCaller() =>
         Caller.IsServiceAccount

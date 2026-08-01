@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { IamChip, IamDot } from '@/components/iam';
 import { getEmailOverview } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';

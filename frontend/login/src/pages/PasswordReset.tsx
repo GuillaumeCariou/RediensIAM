@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { requestPasswordReset, verifyPasswordResetOtp, confirmPasswordReset } from '../api';
 
 type Step = 'email' | 'otp' | 'password' | 'done';
