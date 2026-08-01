@@ -320,7 +320,8 @@ export default function Authentication() {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { client_secret_saved, ...rest } = p;
         if (p.client_secret_saved && !p.client_secret) {
-          const { client_secret: _cs, ...noSecret } = rest;
+          const noSecret = { ...rest };
+          delete noSecret.client_secret;
           return noSecret;
         }
         return rest;

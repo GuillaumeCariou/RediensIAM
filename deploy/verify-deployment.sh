@@ -457,7 +457,7 @@ if [ "${FAIL}" -gt 0 ]; then
   echo " Controls claimed by the repository that are NOT live:"
   printf '%s' "${FAILED_LIST}"
   echo ""
-  echo " Until these pass, the corresponding claims in .security-hardening/ are"
+  echo " Until these pass, the corresponding claims in `SECURITY-AUDIT-LOG.md` are"
   echo " true of files on disk and false of the running system."
   exit 1
 fi

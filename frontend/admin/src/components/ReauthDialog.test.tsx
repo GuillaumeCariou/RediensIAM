@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useReauth } from './ReauthDialog';
+import { isModal } from '@/test/setup';
 import { ApiError } from '@/auth';
 import type { MfaReauth } from '@/auth';
 
@@ -275,30 +276,30 @@ describe('dismissing the prompt', () => {
 });
 
 describe('focus containment', () => {
-  it('moves focus into the prompt and keeps Tab inside it', async () => {
-    const action = vi.fn().mockRejectedValue(reauthRequired(['current_password']));
-    const user = await start(action);
-    const dialog = await promptDialog();
-
-    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
-
-    // Tab all the way round. The link and the trigger live outside the dialog; if focus ever
-    // reaches one of them, the background is reachable while the prompt is up.
-    for (let i = 0; i < 12; i++) {
-      await user.tab();
-      expect(dialog.contains(document.activeElement)).toBe(true);
-    }
-  });
-
-  it('takes the page behind it out of the accessibility tree', async () => {
+  /**
+   * Focus trapping and an inert background used to be JavaScript this app shipped, and were
+   * asserted directly. They now come from `<dialog>.showModal()`, which the browser implements
+   * and jsdom does not — the shim in `src/test/setup.ts` only records that showModal(), rather
+   * than show(), was the call. So what is checkable here is that the prompt asks for the modal
+   * form; a non-modal dialog behind a scrim is the regression this guards against.
+   */
+  it('opens as a modal dialog, which is what contains focus and inerts the background', async () => {
     const action = vi.fn().mockRejectedValue(reauthRequired(['current_password']));
     await start(action);
-    await promptDialog();
+    const dialog = await promptDialog();
 
-    // The trigger is still rendered, but a screen reader must no longer be able to reach it.
-    expect(screen.getByText('a link behind the dialog').closest('[aria-hidden="true"]')).not.toBeNull();
-    expect(screen.queryByRole('link', { name: 'a link behind the dialog' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Regenerate backup codes' })).not.toBeInTheDocument();
+    expect(isModal(dialog as HTMLDialogElement)).toBe(true);
+  });
+
+  it('renders the prompt controls inside the dialog element, not beside it', async () => {
+    const action = vi.fn().mockRejectedValue(reauthRequired(['current_password']));
+    await start(action);
+    const dialog = await promptDialog();
+
+    // Anything rendered outside the <dialog> is not covered by the modal guarantee above.
+    expect(within(dialog).getByLabelText('Current password')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Confirm' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
   });
 });
 
@@ -306,7 +307,7 @@ describe('a mutation that fails after a good proof', () => {
   // Regression: `guard` used to resolve the moment the prompt opened, so the caller's catch was
   // out of scope by the time the mutation really ran. The rethrow from `submit` landed in the
   // form's onSubmit as an unhandled rejection: the prompt vanished and the user was told nothing,
-  // which reads exactly like success. See .security-hardening/28-frontend-tests.md.
+  // which reads exactly like success. See `SECURITY-AUDIT-LOG.md` step 28.
   it('closes the prompt and reports the failure to the page', async () => {
     const action = vi.fn()
       .mockRejectedValueOnce(reauthRequired(['current_password']))

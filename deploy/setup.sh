@@ -142,7 +142,7 @@ EOF
   echo "  selfsigned The chart's built-in Issuer, in this namespace. Known defect: it"
   echo "             trains operators"
   echo "             to click through a certificate warning on the single most"
-  echo "             privileged UI in the system. .security-hardening/09 §6.3."
+  echo "             privileged UI in the system. `SECURITY-AUDIT-LOG.md`09 §6.3."
   echo "  NOTE: ACME HTTP-01 cannot certify a name that only resolves inside a"
   echo "        Tailscale mesh — the challenge is fetched from the public internet."
   ask_choice ADM_TLS "Admin issuer" existing selfsigned
@@ -168,7 +168,7 @@ EOF
   if [ "${DB_MODE}" = cnpg ]; then
     kubectl get crd clusters.postgresql.cnpg.io >/dev/null 2>&1 \
       || die "the CloudNativePG operator is not installed in this cluster" \
-             "this chart does not install it. See .security-hardening/18-cnpg-tls-rls.md §1."
+             "this chart does not install it. See `SECURITY-AUDIT-LOG.md` step 18 §1."
     ask CNPG_CLUSTER "CNPG Cluster name (its read/write Service is <name>-rw)" "rediensiam-db"
     ask CNPG_NS "Namespace of that Cluster (blank = ${NAMESPACE})" "${NAMESPACE}"
     kubectl get cluster.postgresql.cnpg.io -n "${CNPG_NS}" "${CNPG_CLUSTER}" >/dev/null 2>&1 \
@@ -212,7 +212,7 @@ EOF
   echo "  variable on every pooled connection is deployed and verified against a"
   echo "  live connection. On a first install that build is not running yet, so"
   echo "  this script leaves RLS OFF and does not ask."
-  echo "  Enable it later with the runbook: .security-hardening/18-cnpg-tls-rls.md §3"
+  echo "  Enable it later with the runbook: `SECURITY-AUDIT-LOG.md` step 18 §3"
   RLS=false
 
   # ── SMTP ───────────────────────────────────────────────────────────────────
@@ -429,9 +429,9 @@ if [ "${ENVIRONMENT}" = prod ]; then
   echo "        kubectl delete pod -n ${NAMESPACE} np-test"
   echo "   2. Enable k3s secret encryption at rest (needs root on the server node):"
   echo "        sudo k3s secrets-encrypt status"
-  echo "      .security-hardening/10-secrets-management.md §7.3 — fifteen minutes."
+  echo "      `SECURITY-AUDIT-LOG.md` step 10 §7.3 — fifteen minutes."
   echo "   3. Prove the backup restores. A CronJob is not a backup:"
-  echo "      .security-hardening/15c-infra-residuals.md §T-03 restore test."
+  echo "      `SECURITY-AUDIT-LOG.md` step 15c §T-03 restore test."
   echo "   4. Move ${SECRETS_FILE} off this machine."
   echo ""
 fi

@@ -16,24 +16,26 @@ namespace RediensIAM.Controllers;
 
 [ApiController]
 [Route("auth")]
+#pragma warning disable S107 // what this controller depends on, listed; the bundle that hid the count only forwarded
 public class AuthController(
     RediensIamDbContext db,
-    AuthControllerServices svc,
+    HydraService hydra,
+    PasswordService passwords,
+    OtpCacheService otp,
+    LoginRateLimiter rateLimiter,
+    AuditLogService audit,
+    KetoService keto,
+    IEmailService emailService,
+    ISmsService smsService,
+    IFido2 fido2,
+    SocialLoginService socialLogin,
+    PasswordPolicyService passwordPolicy,
+    RediensIAM.Data.TenantScopeInterceptor tenantScope,
     AppConfig appConfig,
     Microsoft.Extensions.Caching.Distributed.IDistributedCache cache,
     ILogger<AuthController> logger) : ControllerBase
+#pragma warning restore S107
 {
-    // Bundle forwarders — the constructor takes one aggregate to satisfy S107; see ControllerServices.
-    private HydraService hydra            => svc.Hydra;
-    private PasswordService passwords      => svc.Passwords;
-    private OtpCacheService otp            => svc.Otp;
-    private LoginRateLimiter rateLimiter   => svc.RateLimiter;
-    private AuditLogService audit          => svc.Audit;
-    private KetoService keto               => svc.Keto;
-    private IEmailService emailService     => svc.Email;
-    private ISmsService smsService         => svc.Sms;
-    private IFido2 fido2                   => svc.Fido2;
-    private SocialLoginService socialLogin  => svc.SocialLogin;
     private const string MfaSetupRequired    = "mfa_setup_required";
     private const string MfaPendingUser      = "mfa_pending_user";
     private const string MfaPendingProject   = "mfa_pending_project";
@@ -74,7 +76,7 @@ public class AuthController(
 
     /// <summary>Runs the rest of this request under <paramref name="orgId"/>'s RLS scope.</summary>
     private Task PinScopeAsync(Guid orgId) =>
-        svc.TenantScope.PinToOrganisationAsync(db, orgId, HttpContext.RequestAborted);
+        tenantScope.PinToOrganisationAsync(db, orgId, HttpContext.RequestAborted);
 
     /// <summary>
     /// Pins to the organisation the challenge's OAuth2 client is registered to, before anything
@@ -99,7 +101,7 @@ public class AuthController(
     /// </summary>
     private async Task<bool> EnsureScopedToProjectAsync(Project project)
     {
-        var scope = svc.TenantScope.CurrentScope();
+        var scope = tenantScope.CurrentScope();
         if (scope != TenantScopeInterceptor.SystemScope) return scope == project.OrgId.ToString();
         await PinScopeAsync(project.OrgId);
         return true;
@@ -896,7 +898,7 @@ public class AuthController(
 
     private async Task<IActionResult?> ValidatePasswordPolicyAsync(Project project, string password)
     {
-        var (result, breachCount) = await svc.PasswordPolicy.EvaluateAsync(project, password);
+        var (result, breachCount) = await passwordPolicy.EvaluateAsync(project, password);
         return result switch
         {
             PasswordPolicyResult.Ok       => null,
@@ -1099,7 +1101,7 @@ public class AuthController(
 
         // body.ProjectId is caller-supplied, but the organisation is read off the project row it
         // names, so the scope is still server-decided. See the enumeration note in
-        // .security-hardening/32-login-tenant-scope.md: the user lookup below is already keyed
+        // `SECURITY-AUDIT-LOG.md` step 32: the user lookup below is already keyed
         // by this project's user list, so scoping it reveals nothing a caller could not observe.
         await PinScopeAsync(project.OrgId);
 

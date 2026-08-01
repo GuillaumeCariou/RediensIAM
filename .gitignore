@@ -7,6 +7,7 @@ obj/
 *.DotSettings.user
 .sonarqube/
 tests/**/TestResults/
+.idea/
 
 # ── Node / Frontend ───────────────────────────────────────────────────────────
 node_modules/
@@ -34,10 +35,6 @@ deploy/rediensiam/values.prod.override.yaml
 # ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
-
-# Build artifacts with mixed path separators (WSL/Windows quirk)
-src/bin\\Debug/
-**/bin\\Debug/
 
 deploy/rediensiam/tmpcharts-*/
 

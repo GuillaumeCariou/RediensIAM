@@ -19,6 +19,8 @@ if [[ -f "$ENV_FILE" ]]; then
     echo "warning: $ENV_FILE was mode $mode — tightening to 600 (R-08)" >&2
     chmod 600 "$ENV_FILE"
   fi
+  # SC1090: operator-supplied path, resolved at runtime and not in the repo, so there is nothing
+  # for shellcheck to follow. The mode check above is what vets the file.
   # shellcheck disable=SC1090
   source "$ENV_FILE"
 fi

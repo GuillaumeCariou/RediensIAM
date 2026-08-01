@@ -1,14 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Shield, UserPlus, Trash2, Pencil } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
   listOrgAdmins, assignOrgAdmin, removeOrgAdmin,
   listOrgListManagers, assignOrgListManager, removeOrgListManager,
@@ -20,6 +11,7 @@ import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
 import EditUserDialog from '@/components/EditUserDialog';
 import type { UserEditFields } from '@/components/EditUserDialog';
+import { IamChip, IamDialog } from '@/components/iam';
 
 interface OrgRole {
   id: string; user_id: string; user_email: string; user_name: string;
@@ -125,110 +117,101 @@ export default function OrgAdminsPage() {
       <PageHeader
         title="Organisation Admins"
         description="Manage who administers this organisation and its projects"
-        action={orgId ? <Button onClick={() => setAssignOpen(true)}><UserPlus className="h-4 w-4" />Assign Role</Button> : undefined}
+        action={orgId ? <button className="iam-btn iam-btn-primary" onClick={() => setAssignOpen(true)}><UserPlus className="h-4 w-4" />Assign Role</button> : undefined}
       />
 
       <div className="p-6">
         <div className="rounded-xl border bg-card overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>User</TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead>Scope</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Granted</TableHead>
-                <TableHead className="w-20" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+          <table className="iam-tbl">
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Role</th>
+                <th>Scope</th>
+                <th>Status</th>
+                <th>Granted</th>
+                <th className="w-20" />
+              </tr>
+            </thead>
+            <tbody>
               {(() => {
                 if (loading) return (
                   Array.from({ length: 3 }, (_, i) => `sk-row-${i}`).map(rowId => (
-                    <TableRow key={rowId}>
-                      {Array.from({ length: 6 }, (_, j) => `sk-cell-${j}`).map(cellId => <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>)}
-                    </TableRow>
+                    <tr key={rowId}>
+                      {Array.from({ length: 6 }, (_, j) => `sk-cell-${j}`).map(cellId => <td key={cellId}><div className="iam-skeleton h-4 w-full" /></td>)}
+                    </tr>
                   ))
                 );
                 if (roles.length === 0) return (
-                  <TableRow>
-                    <TableCell colSpan={6} className="text-center text-muted-foreground py-12">
+                  <tr>
+                    <td className="text-center text-muted-foreground py-12" colSpan={6}>
                       <Shield className="h-8 w-8 mx-auto mb-2 opacity-40" />No admins assigned yet.
-                    </TableCell>
-                  </TableRow>
+                    </td>
+                  </tr>
                 );
                 return roles.map(r => (
-                  <TableRow key={r.id}>
-                    <TableCell>
+                  <tr key={r.id}>
+                    <td>
                       <p className="font-medium text-sm">{r.user_name}</p>
                       <p className="text-xs text-muted-foreground">{r.user_email}</p>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={r.role === 'org_admin' ? 'default' : 'secondary'}>{r.role}</Badge>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
+                    </td>
+                    <td>
+                      <IamChip tone={r.role === 'org_admin' ? 'accent' : 'default'}>{r.role}</IamChip>
+                    </td>
+                    <td className="text-sm text-muted-foreground">
                       {r.scope_name ?? (r.scope_id ? `${r.scope_id.slice(0, 8)}…` : 'Entire org')}
-                    </TableCell>
-                    <TableCell>
+                    </td>
+                    <td>
                       {r.active === undefined
                         ? <span className="text-muted-foreground text-xs">—</span>
-                        : <Badge variant={r.active ? 'success' : 'secondary'}>{r.active ? 'Active' : 'Disabled'}</Badge>
+                        : <IamChip tone={r.active ? 'success' : 'default'}>{r.active ? 'Active' : 'Disabled'}</IamChip>
                       }
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{fmtDate(r.granted_at)}</TableCell>
-                    <TableCell>
+                    </td>
+                    <td className="text-sm text-muted-foreground">{fmtDate(r.granted_at)}</td>
+                    <td>
                       <div className="flex items-center justify-end gap-1">
-                        <Button variant="ghost" size="icon" onClick={() => openEdit(r.user_id, r.user_name)}>
+                        <button className="iam-btn iam-btn-ghost iam-btn-icon" onClick={() => openEdit(r.user_id, r.user_name)}>
                           <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                          onClick={() => setRemoveTarget({ id: r.id, label: `${r.user_name} (${r.role})` })}>
+                        </button>
+                        <button className="iam-btn iam-btn-ghost iam-btn-icon text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setRemoveTarget({ id: r.id, label: `${r.user_name} — ${r.role}` })}>
                           <Trash2 className="h-4 w-4" />
-                        </Button>
+                        </button>
                       </div>
-                    </TableCell>
-                  </TableRow>
+                    </td>
+                  </tr>
                 ));
               })()}
-            </TableBody>
-          </Table>
+            </tbody>
+          </table>
         </div>
       </div>
 
-      <Dialog open={assignOpen} onOpenChange={setAssignOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Assign Admin Role</DialogTitle>
-            <DialogDescription>Grant a user administrative access to this organisation.</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleAssign} className="space-y-4">
-            <div className="space-y-2"><Label>User ID</Label><Input value={assignForm.user_id} onChange={e => setAssignForm(f => ({ ...f, user_id: e.target.value }))} required placeholder="User UUID" /></div>
+      <IamDialog open={assignOpen} onClose={() => setAssignOpen(false)}
+      title="Assign Admin Role"
+      desc="Grant a user administrative access to this organisation."
+      footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={() => setAssignOpen(false)}>Cancel</button>
+              <button className="iam-btn iam-btn-primary" type="submit" disabled={assignSaving}>{assignSaving ? 'Assigning…' : 'Assign'}</button></>}
+    >
+<form onSubmit={handleAssign} className="space-y-4">
+            <div className="space-y-2"><label className="iam-label">User ID</label><input className="iam-input" value={assignForm.user_id} onChange={e => setAssignForm(f => ({ ...f, user_id: e.target.value }))} required placeholder="User UUID" /></div>
             <div className="space-y-2">
-              <Label>Role</Label>
-              <Select value={assignForm.role} onValueChange={v => setAssignForm(f => ({ ...f, role: v, scope_id: '' }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="org_admin">Org Admin</SelectItem>
-                  <SelectItem value="project_admin">Project Admin</SelectItem>
-                </SelectContent>
-              </Select>
+              <label className="iam-label">Role</label>
+              <select className="iam-select" value={assignForm.role} onChange={e => (v => setAssignForm(f => ({ ...f, role: v, scope_id: '' })))(e.target.value)}>
+<option value="org_admin">Org Admin</option>
+                  <option value="project_admin">Project Admin</option>
+</select>
             </div>
             {assignForm.role === 'project_admin' && (
               <div className="space-y-2">
-                <Label>Project scope</Label>
-                <Select value={assignForm.scope_id} onValueChange={v => setAssignForm(f => ({ ...f, scope_id: v }))}>
-                  <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
-                  <SelectContent>{projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
-                </Select>
+                <label className="iam-label">Project scope</label>
+                <select className="iam-select" value={assignForm.scope_id} onChange={e => (v => setAssignForm(f => ({ ...f, scope_id: v })))(e.target.value)}>
+{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+</select>
               </div>
             )}
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setAssignOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={assignSaving}>{assignSaving ? 'Assigning…' : 'Assign'}</Button>
-            </DialogFooter>
+            
           </form>
-        </DialogContent>
-      </Dialog>
+    </IamDialog>
 
       <EditUserDialog
         open={!!editTarget}
@@ -242,18 +225,13 @@ export default function OrgAdminsPage() {
         onClose={() => setEditTarget(null)}
       />
 
-      <AlertDialog open={!!removeTarget} onOpenChange={v => !v && setRemoveTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove {removeTarget?.label}?</AlertDialogTitle>
-            <AlertDialogDescription>This will revoke this management role from the user.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleRemove} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Remove</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <IamDialog open={!!removeTarget} onClose={() => (v => !v && setRemoveTarget(null))(false)}
+      title={<>Remove {removeTarget?.label}?</>}
+      desc="This will revoke this management role from the user."
+      footer={<><button className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleRemove}>Remove</button></>}
+    >
+
+    </IamDialog>
     </div>
   );
 }

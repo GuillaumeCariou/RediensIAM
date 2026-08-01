@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import CommandPalette from './CommandPalette';
-import TweaksButton from './TweaksButton';
 
 /**
  * CommandPalette is mounted conditionally rather than kept mounted and hidden: unmounting is what
@@ -33,7 +32,6 @@ export default function Shell({ children }: Readonly<{ children: React.ReactNode
         </div>
       </div>
       {cmdOpen && <CommandPalette onClose={() => setCmdOpen(false)} />}
-      <TweaksButton />
     </div>
   );
 }

@@ -426,7 +426,7 @@ postgres.local.roles.backupPassword
 > **These roles are created only on a first-ever start**, because they are created by initdb. An
 > **existing** installation is not migrated by upgrading the chart — it keeps running on `iam` and
 > gets none of the benefit. The manual migration is in
-> [`.security-hardening/15c-infra-residuals.md`](.security-hardening/15c-infra-residuals.md).
+> [`SECURITY-AUDIT-LOG.md` step 15c](`SECURITY-AUDIT-LOG.md` step 15c).
 
 The `iam` SUPERUSER with `local all all trust` in `pg_hba.conf` on an existing cluster remains the
 highest-ranked open finding in the ledger (T-04). Splitting the roles on a *new* install is the
@@ -506,7 +506,7 @@ first half of closing it.
 This release does not close everything. The ranked list of what is still open — including the
 `iam` SUPERUSER on existing clusters, the absence of a rotation story for the HKDF root and the
 Argon2 pepper, an untested backup restore, and 7 high npm advisories in each SPA — was
-`.security-hardening/14-finding-ledger.md` §9 and §10. That ledger has since been moved out of the
+`SECURITY-AUDIT-LOG.md` step 14 §9 and §10. That ledger has since been moved out of the
 repository for going stale; **[`docs/SECURITY.md`](docs/SECURITY.md) §8 is now the only current
 statement of what is open and why.**
 

@@ -64,7 +64,7 @@ describe('when no relay is configured', () => {
     // `Failed to load SMTP configuration.` is set on the error state, but that state is only
     // rendered inside the edit form — which is closed at this point. So a 500 shows the same
     // "Using global SMTP" card as a genuinely unconfigured org. Documented, not asserted as
-    // desirable: see .security-hardening/28-frontend-tests.md.
+    // desirable: see `SECURITY-AUDIT-LOG.md` step 28.
     api.getOrgSmtp.mockRejectedValue(new ApiError(500, null));
     await show();
 

@@ -24,7 +24,7 @@ rediensiam:
       enabled: true
       host: "auth.ts.rediens.net"
       # Still self-signed: nothing here can certify a headscale-issued name. Empty means the
-      # chart's own Issuer. The runbook in .security-hardening/09-infra-security.md gives the
+      # chart's own Issuer. The runbook in `SECURITY-AUDIT-LOG.md` step 09 gives the
       # two ways to fix that; until one is done, this is a known click-through warning on the
       # most privileged UI.
       clusterIssuer: ""
@@ -38,7 +38,7 @@ rediensiam:
   # branch. On a FRESH install this is correct and self-consistent. On an EXISTING
   # prod database it is a migration, not an upgrade: pg_hba.conf is written by initdb
   # and a chart upgrade will not rewrite it. Follow §2 of
-  # .security-hardening/18-cnpg-tls-rls.md before the first upgrade that carries this.
+  # `SECURITY-AUDIT-LOG.md` step 18 before the first upgrade that carries this.
   postgres:
     local:
       tls:
@@ -70,7 +70,7 @@ rediensiam:
   #      when the cache is upgraded separately or has been given persistence.
   #
   # NOT YET RUN AGAINST A REAL PROD CLUSTER — this is `helm template`-verified and reasoned
-  # from the dev cutover in .security-hardening/23-cache-hardening.md, not observed in prod.
+  # from the dev cutover in `SECURITY-AUDIT-LOG.md` step 23, not observed in prod.
   dragonfly:
     local:
       tls:

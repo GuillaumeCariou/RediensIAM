@@ -16,7 +16,7 @@ public static class LoginThemeValidator
     private const string CustomCssKey = "custom_css";
     private const string LogoUrlKey   = "logo_url";
     private const int MaxCustomCssLength = 20_000;
-    private const int MaxThemeValueLength = 120;
+    public const int MaxThemeValueLength = 120;   // mirrored by THEME_VALUE_MAX_LENGTH in sanitizeCss.ts
 
     /// <summary>
     /// Characters refused in every theme value other than <c>custom_css</c> and <c>logo_url</c>.
@@ -24,8 +24,15 @@ public static class LoginThemeValidator
     /// value — and the backslash is what would rebuild it from <c>\28</c>. The rest match the
     /// guard the preview page already applies.
     /// </summary>
+    /// <remarks>
+    /// Mirrored by <c>THEME_VALUE_FORBIDDEN</c> in <c>frontend/login/src/lib/sanitizeCss.ts</c>.
+    /// Two languages cannot share one literal, so both sides pin the exact string in a test:
+    /// widening either guard alone fails the paired test naming the other file.
+    /// </remarks>
+    public const string ForbiddenValueCharacters = ";{}()<>\"'`\\";
+
     private static readonly System.Buffers.SearchValues<char> ForbiddenValueChars =
-        System.Buffers.SearchValues.Create(";{}()<>\"'`\\");
+        System.Buffers.SearchValues.Create(ForbiddenValueCharacters);
 
     /// <summary>
     /// Constructs refused outright rather than stripped. Each is either an exfiltration

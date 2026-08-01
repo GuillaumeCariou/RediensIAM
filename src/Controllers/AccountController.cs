@@ -15,20 +15,21 @@ namespace RediensIAM.Controllers;
 
 [ApiController]
 [Route("account")]
+#pragma warning disable S107 // what this controller depends on, listed; the bundle that hid the count only forwarded
 public class AccountController(
     RediensIamDbContext db,
-    AccountControllerServices svc,
+    PasswordService passwords,
+    HydraService hydra,
+    ISmsService smsService,
+    OtpCacheService otpCache,
+    IFido2 fido2,
+    LoginRateLimiter rateLimiter,
+    PasswordPolicyService passwordPolicy,
     AuditLogService audit,
     AppConfig appConfig,
     ILogger<AccountController> logger) : ControllerBase
+#pragma warning restore S107
 {
-    // Bundle forwarders — the constructor takes one aggregate to satisfy S107; see ControllerServices.
-    private PasswordService passwords    => svc.Passwords;
-    private HydraService hydra           => svc.Hydra;
-    private ISmsService smsService       => svc.Sms;
-    private OtpCacheService otpCache     => svc.Otp;
-    private IFido2 fido2                 => svc.Fido2;
-    private LoginRateLimiter rateLimiter => svc.RateLimiter;
     private string Ip => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
     // Enrolment state lives in Redis keyed by the authenticated user, never in a cookie.
@@ -171,7 +172,7 @@ public class AccountController(
         var project = Guid.TryParse(Claims.ProjectId, out var pid)
             ? await db.Projects.FirstOrDefaultAsync(p => p.Id == pid)
             : null;
-        var (policy, breachCount) = await svc.PasswordPolicy.EvaluateAsync(project, body.NewPassword);
+        var (policy, breachCount) = await passwordPolicy.EvaluateAsync(project, body.NewPassword);
         if (policy != PasswordPolicyResult.Ok)
             return BadRequest(new
             {

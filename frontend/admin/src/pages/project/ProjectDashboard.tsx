@@ -16,10 +16,12 @@ export default function ProjectDashboard() {
   const { projectId, projectBase } = useProjectContext();
   const [project, setProject] = useState<Project | null>(null);
   const [stats, setStats] = useState<ProjectStats | null>(null);
-  const [loading, setLoading] = useState(true);
+  // See OrgDashboard: nothing to fetch means nothing to be loading, decided at init rather than
+  // by a synchronous setState inside the effect.
+  const [loading, setLoading] = useState(Boolean(projectId));
 
   useEffect(() => {
-    if (!projectId) { setLoading(false); return; }
+    if (!projectId) return;
     Promise.all([
       getProjectInfo(projectId).then(setProject),
       getProjectStats(projectId).then(setStats).catch(() => null),

@@ -5,7 +5,8 @@ interface IamDialogProps {
   onClose: () => void;
   title: ReactNode;
   desc?: ReactNode;
-  children: ReactNode;
+  /** Optional: a confirm dialog is a title, a description and two buttons. */
+  children?: ReactNode;
   footer?: ReactNode;
   wide?: boolean;
 }

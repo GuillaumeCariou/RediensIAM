@@ -10,7 +10,7 @@ using RediensIAM.Services;
 namespace RediensIAM.IntegrationTests.Tests.Regression;
 
 /// <summary>
-/// S-1, S-8 and S-3 from <c>.security-hardening/03-architecture-review.md</c> — the three
+/// S-1, S-8 and S-3 from <c>SECURITY-AUDIT-LOG.md</c> step 03 — the three
 /// structural findings, each of which exists because a class of defect had no representation in
 /// the code that could fail.
 /// </summary>

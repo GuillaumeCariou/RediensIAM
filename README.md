@@ -24,7 +24,7 @@ Multi-tenant Identity & Access Management built on Ory Hydra + Keto, ASP.NET Cor
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | bare cluster to working IdP, plus the day-2 runbooks |
 | [docs/TESTING.md](docs/TESTING.md) | running the suites, and what has no tests |
 | [sdk/README.md](sdk/README.md) | which SDK, and why |
-| `.security-hardening/` | the audit trail, finding by finding |
+| `SECURITY-AUDIT-LOG.md` | the audit trail, finding by finding |
 
 ---
 
@@ -91,7 +91,7 @@ than guessing. [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) covers what each answer 
 `setup.sh --prod`, driven through a real interview, into a scratch namespace on the single-node dev
 cluster, then destroyed. It found six defects, five of which made a first-ever install fail outright
 or report a control it had not measured; all six are fixed
-(`.security-hardening/33-prod-profile-proof.md`). That establishes that the chart, the scripts and
+(`SECURITY-AUDIT-LOG.md` step 33). That establishes that the chart, the scripts and
 the values files agree with each other. It does not establish that production works: ACME has never
 been executed, no publicly trusted certificate has ever been issued, no backup has been restored, no
 upgrade has been run across a schema migration, and nothing has been up for longer than an hour. A
@@ -177,7 +177,7 @@ Everything is under the top-level `rediensiam:` key unless noted.
 | Key | Notes |
 |---|---|
 | `secrets.encryptionKey` | **Required.** 64 hex chars (`openssl rand -hex 32`). Not base64. Every at-rest subkey is HKDF-derived from it |
-| `secrets.encryptionKeys` | Key **ring** for rotation: `"id:hex,id:hex"`, active key first. Supersedes `encryptionKey`. Never reuse an id. Runbook: `.security-hardening/16-key-rotation.md §7` |
+| `secrets.encryptionKeys` | Key **ring** for rotation: `"id:hex,id:hex"`, active key first. Supersedes `encryptionKey`. Never reuse an id. Runbook: `SECURITY-AUDIT-LOG.md` step 16 §7 |
 | `secrets.databaseUrl` | **Required.** Npgsql connection string, user `iam_app` |
 | `secrets.cacheUrl` | **Required.** Must carry `ssl=true` exactly when `dragonfly.local.tls.enabled` is on — the chart fails the render if they disagree |
 | `secrets.smtpPassword`, `secrets.bootstrapEmail`, `secrets.bootstrapPassword` | |
@@ -190,7 +190,7 @@ Everything is under the top-level `rediensiam:` key unless noted.
 |---|---|---|
 | `postgres.local.enabled` | `true` | `false` swaps in an external CloudNativePG cluster |
 | `postgres.local.password` | `""` | the bootstrap SUPERUSER `iam`. Used by **nothing** at runtime — initdb's owner and the break-glass account. Do not put it in a DSN |
-| `postgres.local.roles.{app,hydra,keto,backup}Password` | `""` | the four least-privilege roles. `deploy.sh` generates all four. **Created only on a first-ever start** — an existing installation needs the migration in `.security-hardening/15c-infra-residuals.md` |
+| `postgres.local.roles.{app,hydra,keto,backup}Password` | `""` | the four least-privilege roles. `deploy.sh` generates all four. **Created only on a first-ever start** — an existing installation needs the migration in `SECURITY-AUDIT-LOG.md` step 15c |
 | `postgres.local.tls.enabled` | `false` | **on in both shipped environments.** Needs cert-manager |
 | `postgres.local.tls.requireSsl` | `false` | **on in both shipped environments.** Rewrites `pg_hba.conf` to `hostssl`, so the *server* refuses cleartext. Takes effect only at initdb |
 | `postgres.rls.enabled` | `false` | Row-level security. **Off everywhere.** Fail-closed policies — enabling it before verifying the application half on a live connection is a total outage. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#turning-rls-on) |

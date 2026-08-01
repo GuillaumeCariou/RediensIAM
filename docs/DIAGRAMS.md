@@ -3,7 +3,7 @@
 Drawn against the code and the chart at `0.2.1` / `d4cfb31`, not against the design intent. Where a
 control is implemented but switched off, or switched on but never executed outside dev, the diagram
 says so on the diagram — a picture that shows an aspiration as fact is the failure mode
-`.security-hardening/README.md` exists to warn about.
+`SECURITY-AUDIT-LOG.md` exists to warn about.
 
 Prose companion: [`ARCHITECTURE.md`](ARCHITECTURE.md). Route table: [`API.md`](API.md). What is
 still open: [`SECURITY.md`](SECURITY.md). Operator procedures: [`DEPLOYMENT.md`](DEPLOYMENT.md).
@@ -1012,5 +1012,5 @@ including the record of the change that purged it.
   [`ARCHITECTURE.md`](ARCHITECTURE.md#configuration-model--zitadel-style), which is clearer than a
   flowchart.
 - **Anything under `~/Desktop/rediensiam-audit-perime/`.** Five reports were moved out of
-  `.security-hardening/` because they assert things that are no longer true. None of them informed
+  `SECURITY-AUDIT-LOG.md` because they assert things that are no longer true. None of them informed
   a diagram here.

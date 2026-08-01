@@ -25,7 +25,7 @@ export default function ProjectUsers() {
 
   const [project, setProject] = useState<Project | null>(null);
   const [userLists, setUserLists] = useState<UserList[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(Boolean(projectId));
 
   const orgId = oid ?? tokenOrgId;
   const defaultRoleId = project?.default_role_id ?? null;
@@ -35,9 +35,9 @@ export default function ProjectUsers() {
     ?? null;
   const movableLists = userLists.filter(ul => !ul.immovable);
 
-  const load = () => {
-    if (!projectId) { setLoading(false); return; }
-    setLoading(true);
+  /** The fetch alone. Sets no state synchronously, so an effect may call it directly. */
+  const fetchAll = () => {
+    if (!projectId) return;
     const fetches: Promise<unknown>[] = [
       getProjectInfo(projectId).then(p => setProject(p)).catch(() => null),
     ];
@@ -47,7 +47,10 @@ export default function ProjectUsers() {
     Promise.all(fetches).catch(console.error).finally(() => setLoading(false));
   };
 
-  useEffect(load, [projectId]);
+  /** What a user-triggered refresh calls: the spinner comes back, then the fetch. */
+  const load = () => { setLoading(true); fetchAll(); };
+
+  useEffect(fetchAll, [projectId]);
 
   const handleAssignList = async (ulId: string) => {
     if (!projectId) return;

@@ -15,23 +15,23 @@ namespace RediensIAM.Controllers;
 [ApiController]
 [Route("org")]
 [RequireManagementLevel(ManagementLevel.OrgAdmin)]
+#pragma warning disable S107 // what this controller depends on, listed; the bundle that hid the count only forwarded
 public class OrgController(
     RediensIamDbContext db,
-    OrgAdminServices svc,
+    HydraService hydra,
+    KetoService keto,
+    PasswordService passwords,
+    AuditLogService audit,
+    IEmailService emailService,
+    IDistributedCache cache,
+    LiveAuthorizationService live,
     AppConfig appConfig,
     ILogger<OrgController> logger) : ControllerBase
+#pragma warning restore S107
 {
     private static readonly string[] _hydraGrantTypes    = ["authorization_code", "refresh_token"];
     private static readonly string[] _hydraResponseTypes = ["code"];
 
-    // Bundle forwarders — the constructor takes one aggregate to satisfy S107; see ControllerServices.
-    private HydraService hydra         => svc.Hydra;
-    private KetoService keto           => svc.Keto;
-    private PasswordService passwords   => svc.Passwords;
-    private AuditLogService audit       => svc.Audit;
-    private IEmailService emailService  => svc.Email;
-    private IDistributedCache cache     => svc.Cache;
-    private LiveAuthorizationService live => svc.Live;
     private static readonly string[] BuiltInScopes = ["openid", "profile", "offline_access"];
     private const string KindInvite      = "invite";
     private const string AuditOrg        = "organisation";

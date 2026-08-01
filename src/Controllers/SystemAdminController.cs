@@ -26,20 +26,22 @@ namespace RediensIAM.Controllers;
 [Route("admin")]
 [Route("api/manage")]
 [RequireManagementLevel(ManagementLevel.SuperAdmin)]
+#pragma warning disable S107 // what this controller depends on, listed; the bundle that hid the count only forwarded
 public class SystemAdminController(
     RediensIamDbContext db,
-    OrgAdminServices svc,
+    HydraService hydra,
+    KetoService keto,
+    PasswordService passwords,
+    AuditLogService audit,
+    IEmailService emailService,
+    IDistributedCache cache,
+    LiveAuthorizationService live,
+    KeyRotationService keyRotation,
+    GrantReconciler grantReconciler,
     AppConfig appConfig,
     ILogger<SystemAdminController> logger) : ControllerBase
+#pragma warning restore S107
 {
-    // Bundle forwarders — the constructor takes one aggregate to satisfy S107; see ControllerServices.
-    private HydraService hydra         => svc.Hydra;
-    private KetoService keto           => svc.Keto;
-    private PasswordService passwords   => svc.Passwords;
-    private AuditLogService audit       => svc.Audit;
-    private IEmailService emailService  => svc.Email;
-    private IDistributedCache cache     => svc.Cache;
-    private LiveAuthorizationService live => svc.Live;
     private static readonly string[] OAuth2GrantTypes   = ["authorization_code", "refresh_token"];
     private static readonly string[] OAuth2ResponseTypes = ["code"];
     private static readonly string[] BuiltInScopes       = ["openid", "profile", "offline_access"];
@@ -60,7 +62,7 @@ public class SystemAdminController(
     /// </summary>
     [HttpGet("key-rotation")]
     public async Task<IActionResult> KeyRotationStatus(CancellationToken ct)
-        => Ok(await svc.KeyRotation.GetStatusAsync(ct));
+        => Ok(await keyRotation.GetStatusAsync(ct));
 
     /// <summary>
     /// Re-encrypts every stored ciphertext under the active key. Idempotent and safe to re-run;
@@ -70,7 +72,7 @@ public class SystemAdminController(
     [HttpPost("key-rotation/reencrypt")]
     public async Task<IActionResult> KeyRotationReEncrypt(CancellationToken ct)
     {
-        var status = await svc.KeyRotation.ReEncryptAsync(ct);
+        var status = await keyRotation.ReEncryptAsync(ct);
         await audit.RecordAsync(null, null, GetActorId(), "system.key_rotation.reencrypt",
             "encryption_key", status.ActiveKeyId.ToString());
         return Ok(status);
@@ -117,7 +119,7 @@ public class SystemAdminController(
     /// </summary>
     [HttpGet("grant-reconcile")]
     public async Task<IActionResult> GrantReconcileScan(CancellationToken ct)
-        => Ok(await svc.GrantReconciler.ScanAsync(ct));
+        => Ok(await grantReconciler.ScanAsync(ct));
 
     /// <summary>
     /// Repairs the divergence: revokes tuples with no backing row, deletes rows with no tuple.
@@ -126,7 +128,7 @@ public class SystemAdminController(
     /// </summary>
     [HttpPost("grant-reconcile/repair")]
     public async Task<IActionResult> GrantReconcileRepair(CancellationToken ct)
-        => Ok(await svc.GrantReconciler.RepairAsync(GetActorId(), ct));
+        => Ok(await grantReconciler.RepairAsync(GetActorId(), ct));
 
     // ── Organisations ─────────────────────────────────────────────────────────
 

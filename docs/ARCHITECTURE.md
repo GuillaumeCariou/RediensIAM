@@ -66,7 +66,7 @@ admin port. The real separation is the **public hostname**, enforced at the ingr
 
 ## Authorisation: the claim/grant split
 
-This is the S-1 structural change from `.security-hardening/03-architecture-review.md`, and unlike
+This is the S-1 structural change from `SECURITY-AUDIT-LOG.md` step 03, and unlike
 most of that list it is fully landed, including the compile-time half.
 
 ### The two types
@@ -325,7 +325,7 @@ Backup codes have their own versioned format `sha256:{keyId}:{hex}` (`:107-124`)
 
 ### The Hydra system secret
 
-Rotation is a **runbook only** (`.security-hardening/16-key-rotation.md §7.4`). There is no
+Rotation is a **runbook only** (`SECURITY-AUDIT-LOG.md` step 16 §7.4). There is no
 rotation code in `src/`. Hydra takes a list and signs with the first entry, so the procedure is
 prepend-never-replace and keep the old entry for at least the refresh-token TTL.
 
@@ -362,7 +362,7 @@ Authentication is **scram-sha-256** on both `local` and `host` lines
 
 `init.sh` only ever runs against an empty data directory, so **an existing installation does not
 get the split, or scram, from a chart upgrade**. The live migration is
-`.security-hardening/15c-infra-residuals.md §T-04`.
+`SECURITY-AUDIT-LOG.md` step 15c §T-04.
 
 Durable state: users, orgs, projects, roles and assignments; hashed PATs; service accounts;
 WebAuthn credentials; webhooks and delivery history; the audit log; and the single-row `instances`
@@ -574,7 +574,7 @@ Dragonfly TLS is a **hard cutover**: `--tls` makes Dragonfly stop answering clea
 by accident. It is set in **both** `values.dev.yaml` and `values.prod.yaml`. It has been executed in
 dev, and once under the prod profile in a scratch namespace on the dev cluster, where the server was
 confirmed to refuse cleartext and the app to read and write through the pinned tunnel
-(`.security-hardening/33-prod-profile-proof.md §3`). No production cluster has run it, and the
+(`SECURITY-AUDIT-LOG.md` step 33 §3). No production cluster has run it, and the
 *cutover* — flipping this on a cache that is already up and already holds a key ring — remains
 reasoned from the dev experience rather than observed.
 
@@ -621,4 +621,4 @@ which is the correct trade.
 | How to integrate an app or a resource server | [`INTEGRATION.md`](INTEGRATION.md) |
 | How to install, upgrade and rotate | [`DEPLOYMENT.md`](DEPLOYMENT.md) |
 | How to run the tests | [`TESTING.md`](TESTING.md) |
-| The audit trail itself, step by step | `.security-hardening/` — start with its `README.md`, which records which reports have been retired |
+| The audit trail itself, step by step | `SECURITY-AUDIT-LOG.md` — start with its `README.md`, which records which reports have been retired |

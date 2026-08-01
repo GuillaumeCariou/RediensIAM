@@ -2,7 +2,7 @@
 
 From a bare cluster to a working identity provider.
 
-The runbooks behind this guide live in `.security-hardening/`. That is an audit trail, not an
+The runbooks behind this guide live in `SECURITY-AUDIT-LOG.md`. That is an audit trail, not an
 install guide — this file is the install guide, and it points back at them wherever a procedure
 is too long or too situational to inline.
 
@@ -60,7 +60,7 @@ cert-manager is the only one it will install for you:
 
 Confirm the CNI actually enforces NetworkPolicy. Every policy in this chart is decorative if it
 does not, and Hydra's admin API is then open to the whole cluster
-(`.security-hardening/09-infra-security.md §6.8`):
+(`SECURITY-AUDIT-LOG.md` step 09 §6.8):
 
 ```bash
 kubectl run np-test --image=busybox --restart=Never -- sleep 3600
@@ -149,7 +149,7 @@ create a DNS record for you.
 known defect: it trains operators to click through a certificate warning on the most privileged
 UI in the system. Choosing it requires a typed acknowledgement. The two ways out are an internal
 CA ClusterIssuer with its root distributed to operator devices, or ACME **DNS-01** —
-`.security-hardening/09-infra-security.md §6.3`. HTTP-01 cannot certify a Tailscale MagicDNS name;
+`SECURITY-AUDIT-LOG.md` step 09 §6.3. HTTP-01 cannot certify a Tailscale MagicDNS name;
 the challenge is fetched from the public internet.
 
 **Database backend.** `builtin` (the chart's PostgreSQL StatefulSet) or `cnpg` (an external
@@ -166,7 +166,7 @@ in the chart will warn you later:
 
 The `Cluster` manifest that reproduces the four-role split — including the ordering trap that
 `postInitSQL` runs before the application database exists — is in
-`.security-hardening/18-cnpg-tls-rls.md §1`. It has not been run against a real cluster; treat it
+`SECURITY-AUDIT-LOG.md` step 18 §1. It has not been run against a real cluster; treat it
 as a starting point to verify.
 
 Note that `verify-deployment.sh` V-20, V-21 and V-23 **skip** under CNPG: they read
@@ -182,7 +182,7 @@ override file; the chart does not automate it.
 A CronJob is not a backup until a dump has been restored. The restore test —
 against a **throwaway** container, never the live server, and with the one non-obvious
 `GRANT pg_read_all_data TO iam_backup` that a restore silently loses — is
-`.security-hardening/15c-infra-residuals.md §T-03`.
+`SECURITY-AUDIT-LOG.md` step 15c §T-03.
 
 **Row-level security.** The script leaves it **off** and does not ask. The policies are
 fail-closed: a connection that has not issued `SET rediensiam.org_id` sees zero rows in every
@@ -204,7 +204,7 @@ Then, four things it cannot do for you:
 1. **Verify the CNI enforces NetworkPolicy** (above).
 2. **Enable k3s secret encryption at rest.** Needs root on the server node; without it every
    Secret is plaintext in the datastore. Fifteen minutes —
-   `.security-hardening/10-secrets-management.md §7.3`.
+   `SECURITY-AUDIT-LOG.md` step 10 §7.3.
 3. **Prove the backup restores** — §T-03 above.
 4. **Move `values.prod.secret.yaml` off this machine.** It holds the HKDF root key and the Argon2
    pepper as well as the passwords.
@@ -233,7 +233,7 @@ The alternative, if you must share a namespace, is
 Both shipped environments already set `postgres.local.tls.enabled` and `requireSsl`. On a **fresh**
 install that is self-consistent and needs nothing. On an **existing** database it is a migration,
 not an upgrade: `pg_hba.conf` is written by initdb, lives on the PVC, and a chart upgrade will not
-rewrite it. Run the live steps in `.security-hardening/18-cnpg-tls-rls.md §2` *before* the first
+rewrite it. Run the live steps in `SECURITY-AUDIT-LOG.md` step 18 §2 *before* the first
 upgrade that carries the flag.
 
 Order, and it is enforced by the chart as a `helm template` error rather than a 3am connection
@@ -254,7 +254,7 @@ containers — about four hours, described in the same section.
 ### Turning RLS on
 
 **Done in dev**, on the live cluster, with every command and its real output in
-`.security-hardening/29-rls-prod-tls.md`. `values.dev.yaml` carries the flag. Prod does not: on an
+`SECURITY-AUDIT-LOG.md` step 29. `values.dev.yaml` carries the flag. Prod does not: on an
 already-running database this is a migration, not an upgrade.
 
 Two of the five steps below are now enforced rather than remembered — `init.sh` grants `BYPASSRLS`
@@ -286,14 +286,14 @@ unconditional now; existing databases still need it applied by hand.
    partial — `gzip -dc` it and grep for a row you know is there.
 
 Full runbook, both verification queries and the rollback SQL:
-`.security-hardening/18-cnpg-tls-rls.md §3`. What it does *not* protect:
+`SECURITY-AUDIT-LOG.md` step 18 §3. What it does *not* protect:
 [`SECURITY.md`](SECURITY.md#2-tenant-isolation-and-its-honest-limit).
 
 ### Turning cache TLS on in production
 
 `values.prod.yaml` sets `dragonfly.local.tls.enabled: true`. **This has never been run against a
 production cluster.** It has been observed working under the prod profile on a from-scratch install
-in a scratch namespace (`.security-hardening/33-prod-profile-proof.md §3`): cleartext refused by the
+in a scratch namespace (`SECURITY-AUDIT-LOG.md` step 33 §3): cleartext refused by the
 server, TLS accepted against the mounted CA, the same connection rejected against the OS trust
 store, and the app reading and writing through the tunnel. What follows — the *cutover* on a cache
 that is already running and already holds a key ring — is still reasoned from the dev cutover, not
@@ -337,7 +337,7 @@ manifest alone.
 | Hydra client secrets | `10-secrets-management.md §4.4` | No dual-secret window in OAuth2. Deploy the new secret to the consumer in the same step. |
 | PATs | `10-secrets-management.md §4.3` | Issue → deploy → confirm traffic → revoke. |
 
-Before rotating anything cryptographic, read `.security-hardening/16-key-rotation.md §8` — it is
+Before rotating anything cryptographic, read `SECURITY-AUDIT-LOG.md` step 16 §8 — it is
 the table of which rollbacks are safe. Two of them are not.
 
 Dev has one shortcut, and it is a full state reset rather than a rotation:
@@ -377,7 +377,7 @@ Carried forward deliberately; each has a runbook and a cost.
 
 **No production cluster has ever run this.** The prod profile has been installed once, into a
 scratch namespace on the single-node dev cluster, and destroyed — see
-`.security-hardening/33-prod-profile-proof.md`, whose §8 lists in full what that does *not* prove.
+`SECURITY-AUDIT-LOG.md` step 33, whose §8 lists in full what that does *not* prove.
 The paths it could not touch are precisely the ones this guide warns about in prose: Postgres
 `requireSsl` against an existing `pg_hba.conf`, and the Dragonfly TLS cutover against a cache that
 already holds a key ring. Both remain reasoned about, not observed.
@@ -424,6 +424,6 @@ against a server without TLS fails closed, and so does a cleartext DSN against `
 chart turns both into template errors — if you got past that, `pg_hba.conf` on the PVC is ahead
 of your values.
 
-**Verify reports a failure.** Until it passes, the corresponding claim in `.security-hardening/`
+**Verify reports a failure.** Until it passes, the corresponding claim in `SECURITY-AUDIT-LOG.md`
 is true of files on disk and false of the running system. That is the entire reason the script
 exists.

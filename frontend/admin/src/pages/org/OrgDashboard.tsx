@@ -15,10 +15,12 @@ export default function OrgDashboard() {
   const [org, setOrg] = useState<Org | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [lists, setLists] = useState<UserList[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Starts false when there is no org: the effect below has nothing to fetch, and flipping the
+  // flag from inside it is a synchronous setState in an effect (react-hooks/set-state-in-effect).
+  const [loading, setLoading] = useState(Boolean(orgId));
 
   useEffect(() => {
-    if (!orgId) { setLoading(false); return; }
+    if (!orgId) return;
     Promise.all([
       getOrgInfo().then(setOrg),
       listProjects(orgId).then(r => setProjects(r.projects ?? r ?? [])),

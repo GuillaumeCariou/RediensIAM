@@ -334,7 +334,7 @@ else
   if grep -Eq "${KNOWN_DEFAULTS}" "${SECRETS_FILE}"; then
     MSG="$(basename "${SECRETS_FILE}") still holds a credential this repo shipped as a default — every copy of the repo knows it"
     if [ "${ENVIRONMENT}" = prod ]; then
-      bad "${MSG}" "deploy.sh --prod refuses this. Regenerate, then migrate state per .security-hardening/10-secrets-management.md §4."
+      bad "${MSG}" "deploy.sh --prod refuses this. Regenerate, then migrate state per `SECURITY-AUDIT-LOG.md` step 10 §4."
     else
       warn "${MSG}" "re-roll with ./deploy/reset-dev.sh (destroys dev DB state) — dev data is disposable"
     fi
@@ -344,7 +344,7 @@ else
   grep -q 'appPassword:' "${SECRETS_FILE}" \
     && ok "secrets file carries the T-04 four-role Postgres split" \
     || bad "secrets file predates the T-04 Postgres role split" \
-           "every component would connect as the superuser 'iam'. Migration: .security-hardening/15c-infra-residuals.md §T-04. Dev: ./deploy/reset-dev.sh"
+           "every component would connect as the superuser 'iam'. Migration: `SECURITY-AUDIT-LOG.md` step 15c §T-04. Dev: ./deploy/reset-dev.sh"
 fi
 
 # ── Prod-only: decisions that must not be defaults ───────────────────────────
@@ -382,7 +382,7 @@ if [ "${ENVIRONMENT}" = prod ]; then
 
   if [ -n "${RENDER_OUT}" ] && printf '%s' "${RENDER_OUT}" | grep -q 'kind: CronJob'; then
     warn "backups are the bundled nightly pg_dumpall to a PVC on this node" \
-         "a dump beside the database is not disaster recovery. Copy the ${RELEASE}-backup PVC off-node, or run CloudNativePG with WAL archiving (.security-hardening/18-cnpg-tls-rls.md §1)."
+         "a dump beside the database is not disaster recovery. Copy the ${RELEASE}-backup PVC off-node, or run CloudNativePG with WAL archiving (`SECURITY-AUDIT-LOG.md` step 18 §1)."
   fi
 fi
 

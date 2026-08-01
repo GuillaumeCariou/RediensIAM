@@ -1,7 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router';
-import { AuthProvider, useAuth } from './context/AuthContext';
-import { ThemeProvider } from './context/ThemeContext';
-import { ScopeProvider } from './context/ScopeContext';
+import { useAuth } from './context/AuthContext';
+import { AuthProvider } from './context/AuthProvider';
+import { ThemeProvider } from './context/ThemeProvider';
+import { ScopeProvider } from './context/ScopeProvider';
 import Shell from './components/layout/Shell';
 
 import AccountPage from './pages/account/AccountPage';

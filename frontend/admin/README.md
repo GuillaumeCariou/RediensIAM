@@ -178,7 +178,7 @@ is itself unverified in the current tree (`node_modules` absent — see
 
 `AccountPage.tsx` is not rendered directly; its MFA handlers are thin wrappers over `useReauth`,
 which is covered through a harness of the same shape. See
-[`.security-hardening/28-frontend-tests.md`](../../.security-hardening/28-frontend-tests.md) for
+`SECURITY-AUDIT-LOG.md` step 28 for
 what else was left out and why — and for the bug these tests found in `ReauthDialog.tsx`.
 
 ---
@@ -189,4 +189,4 @@ what else was left out and why — and for the bug these tests found in `ReauthD
 among them. The remaining fixes need `npm audit fix --force`, i.e. breaking major bumps, which was
 judged riskier than the advisories as reached by this SPA. That judgement has not been re-tested
 since the SPA was rewritten. Tracked as R-21 / R-03 / T-06 in
-[`.security-hardening/14-finding-ledger.md`](../../.security-hardening/14-finding-ledger.md) §9.
+`SECURITY-AUDIT-LOG.md` step 14 §9.

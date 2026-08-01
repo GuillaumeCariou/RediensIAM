@@ -58,7 +58,7 @@ metadata:
 data:
   # T-04. This file runs ONCE, on a first-ever start against an empty PGDATA. It has no
   # effect on an existing database — see the migration runbook in
-  # .security-hardening/15c-infra-residuals.md for the path that does.
+  # `SECURITY-AUDIT-LOG.md` step 15c for the path that does.
   init.sh: |
     #!/bin/bash
     set -e
@@ -136,7 +136,7 @@ data:
     #
     # initdb is the only point at which pg_hba.conf is generated, so this runs on a
     # first-ever start only. On an existing database do it live — see
-    # .security-hardening/18-cnpg-tls-rls.md §2. `hostssl` never matches here
+    # `SECURITY-AUDIT-LOG.md` step 18 §2. hostssl` never matches here
     # because there is no whitespace after `host` in it.
     sed -i -E 's/^host([[:space:]])/hostssl\1/' "$PGDATA/pg_hba.conf"
     echo "R-15: pg_hba.conf host -> hostssl (cleartext TCP refused)"

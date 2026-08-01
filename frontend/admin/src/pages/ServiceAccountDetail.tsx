@@ -1,16 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { ArrowLeft, Plus, Trash2, MoreHorizontal, Copy, Check, KeyRound } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   getServiceAccount, deleteServiceAccount,
   generatePat, revokePat,
@@ -21,6 +11,7 @@ import {
 import { useOrgContext } from '@/hooks/useOrgContext';
 import { useAuth } from '@/context/AuthContext';
 import { fmtDateShort } from '@/lib/utils';
+import { IamChip, IamDialog, IamMenu } from '@/components/iam';
 
 interface Sa {
   id: string; name: string; description: string | null;
@@ -79,12 +70,12 @@ function JwtProfileSection({ saId }: Readonly<{ saId: string }>) {
       <div className="flex items-center justify-between px-4 py-3 border-b">
         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">JWT Profile (private_key_jwt)</h2>
         {keyInfo?.has_key
-          ? <Button size="sm" variant="outline" className="text-destructive border-destructive/40 hover:bg-destructive/10" onClick={handleRemove} disabled={removing}>
+          ? <button className="iam-btn iam-btn-secondary iam-btn-sm text-destructive border-destructive/40 hover:bg-destructive/10" onClick={handleRemove} disabled={removing}>
               <Trash2 className="h-4 w-4" />{removing ? 'Removing…' : 'Remove key'}
-            </Button>
-          : <Button size="sm" onClick={handleGenerate} disabled={generating}>
+            </button>
+          : <button className="iam-btn iam-btn-primary iam-btn-sm" onClick={handleGenerate} disabled={generating}>
               <KeyRound className="h-4 w-4" />{generating ? 'Generating…' : 'Generate keypair'}
-            </Button>
+            </button>
         }
       </div>
       <div className="px-4 py-4 space-y-2">
@@ -237,13 +228,13 @@ export default function ServiceAccountDetail() {
 
   return (
     <div className="p-6 space-y-4">
-      <Button variant="ghost" size="sm" className="-ml-1" onClick={() => navigate(`${orgBase}/service-accounts`)}>
+      <button className="iam-btn iam-btn-ghost iam-btn-sm -ml-1" onClick={() => navigate(`${orgBase}/service-accounts`)}>
         <ArrowLeft className="h-4 w-4" />Back to Service Accounts
-      </Button>
+      </button>
 
       <div className="rounded-xl border bg-card p-6">
         {loading
-          ? <div className="space-y-2"><Skeleton className="h-6 w-48" /><Skeleton className="h-4 w-72" /></div>
+          ? <div className="space-y-2"><div className="iam-skeleton h-6 w-48" /><div className="iam-skeleton h-4 w-72" /></div>
           : sa && (
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -252,10 +243,10 @@ export default function ServiceAccountDetail() {
                 <p className="text-xs text-muted-foreground mt-1">Created {fmtDateShort(sa.created_at)}</p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <Badge variant={sa.active ? 'success' : 'secondary'}>{sa.active ? 'Active' : 'Inactive'}</Badge>
-                <Button variant="outline" size="sm" className="text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => setDeleteOpen(true)}>
+                <IamChip tone={sa.active ? 'success' : 'default'}>{sa.active ? 'Active' : 'Inactive'}</IamChip>
+                <button className="iam-btn iam-btn-secondary iam-btn-sm text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => setDeleteOpen(true)}>
                   <Trash2 className="h-4 w-4" />Delete
-                </Button>
+                </button>
               </div>
             </div>
           )
@@ -265,240 +256,193 @@ export default function ServiceAccountDetail() {
       <div className="rounded-xl border bg-card overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Assigned Roles</h2>
-          <Button size="sm" onClick={openRoleDialog}><Plus className="h-4 w-4" />Assign Role</Button>
+          <button className="iam-btn iam-btn-primary iam-btn-sm" onClick={openRoleDialog}><Plus className="h-4 w-4" />Assign Role</button>
         </div>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Role</TableHead>
-              <TableHead>Scope</TableHead>
-              <TableHead>Granted</TableHead>
-              <TableHead className="w-12"></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+        <table className="iam-tbl">
+          <thead>
+            <tr>
+              <th>Role</th>
+              <th>Scope</th>
+              <th>Granted</th>
+              <th className="w-12"></th>
+            </tr>
+          </thead>
+          <tbody>
             {(() => {
               if (loading) return (
                 Array.from({ length: 1 }, (_, i) => `sk-row-${i}`).map(rowId => (
-                    <TableRow key={rowId}>{Array.from({ length: 4 }, (_, j) => `sk-cell-${j}`).map(cellId => <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
+                    <tr key={rowId}>{Array.from({ length: 4 }, (_, j) => `sk-cell-${j}`).map(cellId => <td key={cellId}><div className="iam-skeleton h-4 w-full" /></td>)}</tr>
                   ))
               );
               if ((sa?.roles ?? []).length === 0) return (
-                <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-8">No roles assigned.</TableCell></TableRow>
+                <tr><td className="text-center text-muted-foreground py-8" colSpan={4}>No roles assigned.</td></tr>
               );
               return (
                 (sa?.roles ?? []).map(r => (
-                    <TableRow key={r.id}>
-                      <TableCell><Badge variant="outline" className="font-mono">{r.role}</Badge></TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
+                    <tr key={r.id}>
+                      <td><IamChip className="font-mono" tone="default">{r.role}</IamChip></td>
+                      <td className="text-sm text-muted-foreground">
                         {(() => {
                           if (r.project_id) return `project: ${r.project_id}`;
                           if (r.org_id) return `org: ${r.org_id}`;
                           return '—';
                         })()}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{fmtDateShort(r.granted_at)}</TableCell>
-                      <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent>
-                            <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setRemoveRoleTarget(r)}>
+                      </td>
+                      <td className="text-sm text-muted-foreground">{fmtDateShort(r.granted_at)}</td>
+                      <td>
+                        <IamMenu trigger={<><MoreHorizontal className="h-4 w-4" /></>}>
+<button type="button" className="iam-menu-item iam-menu-item-danger" onClick={() => setRemoveRoleTarget(r)}>
                               <Trash2 className="h-4 w-4" />Remove
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
+                            </button>
+</IamMenu>
+                      </td>
+                    </tr>
                   ))
               );
             })()}
-          </TableBody>
-        </Table>
+          </tbody>
+        </table>
       </div>
 
       <div className="rounded-xl border bg-card overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Personal Access Tokens</h2>
-          <Button size="sm" onClick={() => setPatOpen(true)}><Plus className="h-4 w-4" />Generate PAT</Button>
+          <button className="iam-btn iam-btn-primary iam-btn-sm" onClick={() => setPatOpen(true)}><Plus className="h-4 w-4" />Generate PAT</button>
         </div>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Expires</TableHead>
-              <TableHead>Last Used</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead className="w-12"></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+        <table className="iam-tbl">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Expires</th>
+              <th>Last Used</th>
+              <th>Created</th>
+              <th className="w-12"></th>
+            </tr>
+          </thead>
+          <tbody>
             {(() => {
               if (loading) return (
                 Array.from({ length: 2 }, (_, i) => `sk-row-${i}`).map(rowId => (
-                    <TableRow key={rowId}>{Array.from({ length: 5 }, (_, j) => `sk-cell-${j}`).map(cellId => <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
+                    <tr key={rowId}>{Array.from({ length: 5 }, (_, j) => `sk-cell-${j}`).map(cellId => <td key={cellId}><div className="iam-skeleton h-4 w-full" /></td>)}</tr>
                   ))
               );
               if ((sa?.pats ?? []).length === 0) return (
-                <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No tokens generated yet.</TableCell></TableRow>
+                <tr><td className="text-center text-muted-foreground py-8" colSpan={5}>No tokens generated yet.</td></tr>
               );
               return (
                 (sa?.pats ?? []).map(p => (
-                    <TableRow key={p.id}>
-                      <TableCell className="font-medium">{p.name}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{p.expires_at ? fmtDateShort(p.expires_at) : 'Never'}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{fmtDateShort(p.last_used_at)}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{fmtDateShort(p.created_at)}</TableCell>
-                      <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent>
-                            <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setRevokeTarget(p)}>
+                    <tr key={p.id}>
+                      <td className="font-medium">{p.name}</td>
+                      <td className="text-sm text-muted-foreground">{p.expires_at ? fmtDateShort(p.expires_at) : 'Never'}</td>
+                      <td className="text-sm text-muted-foreground">{fmtDateShort(p.last_used_at)}</td>
+                      <td className="text-sm text-muted-foreground">{fmtDateShort(p.created_at)}</td>
+                      <td>
+                        <IamMenu trigger={<><MoreHorizontal className="h-4 w-4" /></>}>
+<button type="button" className="iam-menu-item iam-menu-item-danger" onClick={() => setRevokeTarget(p)}>
                               <Trash2 className="h-4 w-4" />Revoke
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
+                            </button>
+</IamMenu>
+                      </td>
+                    </tr>
                   ))
               );
             })()}
-          </TableBody>
-        </Table>
+          </tbody>
+        </table>
       </div>
 
       {saId && <JwtProfileSection saId={saId} />}
 
-      <Dialog open={patOpen} onOpenChange={setPatOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Generate PAT</DialogTitle>
-            <DialogDescription>The raw token will be shown once — copy it before closing.</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleGeneratePat} className="space-y-4">
+      <IamDialog open={patOpen} onClose={() => setPatOpen(false)}
+      title="Generate PAT"
+      desc="The raw token will be shown once — copy it before closing."
+      footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={() => setPatOpen(false)}>Cancel</button>
+              <button className="iam-btn iam-btn-primary" type="submit" disabled={patSaving}>{patSaving ? 'Generating…' : 'Generate'}</button></>}
+    >
+<form onSubmit={handleGeneratePat} className="space-y-4">
             <div className="space-y-2">
-              <Label>Name</Label>
-              <Input value={newPat.name} onChange={e => setNewPat(p => ({ ...p, name: e.target.value }))} required placeholder="ci-pipeline" />
+              <label className="iam-label">Name</label>
+              <input className="iam-input" value={newPat.name} onChange={e => setNewPat(p => ({ ...p, name: e.target.value }))} required placeholder="ci-pipeline" />
             </div>
             <div className="space-y-2">
-              <Label>Expiry date <span className="text-muted-foreground">(optional)</span></Label>
-              <Input type="datetime-local" value={newPat.expires_at} onChange={e => setNewPat(p => ({ ...p, expires_at: e.target.value }))} />
+              <label className="iam-label">Expiry date <span className="text-muted-foreground">(optional)</span></label>
+              <input className="iam-input" type="datetime-local" value={newPat.expires_at} onChange={e => setNewPat(p => ({ ...p, expires_at: e.target.value }))} />
             </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setPatOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={patSaving}>{patSaving ? 'Generating…' : 'Generate'}</Button>
-            </DialogFooter>
+            
           </form>
-        </DialogContent>
-      </Dialog>
+    </IamDialog>
 
-      <Dialog open={!!rawToken} onOpenChange={v => !v && closeTokenDialog()}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Token Generated</DialogTitle>
-            <DialogDescription className="text-amber-500 font-medium">This token will not be shown again. Copy it now.</DialogDescription>
-          </DialogHeader>
-          <div className="flex gap-2">
-            <Input readOnly value={rawToken ?? ''} className="font-mono text-xs" />
-            <Button type="button" variant="outline" size="icon" onClick={copyToken}>
+      <IamDialog open={!!rawToken} onClose={() => (v => !v && closeTokenDialog())(false)}
+      title="Token Generated"
+      desc="This token will not be shown again. Copy it now."
+      footer={<><button className="iam-btn iam-btn-primary" onClick={closeTokenDialog}>Done</button></>}
+    >
+<div className="flex gap-2">
+            <input className="iam-input font-mono text-xs" readOnly value={rawToken ?? ''} />
+            <button className="iam-btn iam-btn-secondary iam-btn-icon" type="button" onClick={copyToken}>
               {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
-            </Button>
+            </button>
           </div>
-          <DialogFooter>
-            <Button onClick={closeTokenDialog}>Done</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+    </IamDialog>
 
-      <AlertDialog open={!!revokeTarget} onOpenChange={v => !v && setRevokeTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Revoke "{revokeTarget?.name}"?</AlertDialogTitle>
-            <AlertDialogDescription>Any integration using this token will lose access immediately.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleRevokePat} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Revoke</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <IamDialog open={!!revokeTarget} onClose={() => (v => !v && setRevokeTarget(null))(false)}
+      title={<>Revoke "{revokeTarget?.name}"?</>}
+      desc="Any integration using this token will lose access immediately."
+      footer={<><button className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleRevokePat}>Revoke</button></>}
+    >
 
-      <Dialog open={roleOpen} onOpenChange={setRoleOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Assign Role</DialogTitle>
-            <DialogDescription>Grant a management role to this service account.</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleAssignRole} className="space-y-4">
+    </IamDialog>
+
+      <IamDialog open={roleOpen} onClose={() => setRoleOpen(false)}
+      title="Assign Role"
+      desc="Grant a management role to this service account."
+      footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={() => setRoleOpen(false)}>Cancel</button>
+              <button className="iam-btn iam-btn-primary" type="submit" disabled={roleSubmitDisabled}>{roleSaving ? 'Assigning…' : 'Assign'}</button></>}
+    >
+<form onSubmit={handleAssignRole} className="space-y-4">
             <div className="space-y-2">
-              <Label>Role</Label>
-              <Select value={roleForm.role} onValueChange={handleRoleChange} disabled={roleSaving}>
-                <SelectTrigger><SelectValue placeholder="Select a role" /></SelectTrigger>
-                <SelectContent>
-                  {isSuperAdmin && <SelectItem value="super_admin">super_admin</SelectItem>}
-                  <SelectItem value="org_admin">org_admin</SelectItem>
-                  <SelectItem value="project_admin">project_admin</SelectItem>
-                </SelectContent>
-              </Select>
+              <label className="iam-label">Role</label>
+              <select className="iam-select" value={roleForm.role} onChange={e => handleRoleChange(e.target.value)} disabled={roleSaving}>
+{isSuperAdmin && <option value="super_admin">super_admin</option>}
+                  <option value="org_admin">org_admin</option>
+                  <option value="project_admin">project_admin</option>
+</select>
             </div>
             {isSuperAdmin && (roleForm.role === 'org_admin' || roleForm.role === 'project_admin') && (
               <div className="space-y-2">
-                <Label>Organisation</Label>
-                <Select value={roleForm.org_id} onValueChange={handleOrgChange} disabled={roleSaving}>
-                  <SelectTrigger><SelectValue placeholder="Select an organisation" /></SelectTrigger>
-                  <SelectContent>
-                    {orgs.map(o => <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <label className="iam-label">Organisation</label>
+                <select className="iam-select" value={roleForm.org_id} onChange={e => handleOrgChange(e.target.value)} disabled={roleSaving}>
+{orgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+</select>
               </div>
             )}
             {roleForm.role === 'project_admin' && roleForm.org_id && (
               <div className="space-y-2">
-                <Label>Project</Label>
-                <Select value={roleForm.project_id} onValueChange={v => setRoleForm(f => ({ ...f, project_id: v }))} disabled={roleSaving}>
-                  <SelectTrigger><SelectValue placeholder="Select a project" /></SelectTrigger>
-                  <SelectContent>
-                    {projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <label className="iam-label">Project</label>
+                <select className="iam-select" value={roleForm.project_id} onChange={e => (v => setRoleForm(f => ({ ...f, project_id: v })))(e.target.value)} disabled={roleSaving}>
+{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+</select>
               </div>
             )}
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setRoleOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={roleSubmitDisabled}>{roleSaving ? 'Assigning…' : 'Assign'}</Button>
-            </DialogFooter>
+            
           </form>
-        </DialogContent>
-      </Dialog>
+    </IamDialog>
 
-      <AlertDialog open={!!removeRoleTarget} onOpenChange={v => !v && setRemoveRoleTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove role "{removeRoleTarget?.role}"?</AlertDialogTitle>
-            <AlertDialogDescription>This will revoke this management role from the service account.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleRemoveRole} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Remove</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <IamDialog open={!!removeRoleTarget} onClose={() => (v => !v && setRemoveRoleTarget(null))(false)}
+      title={<>Remove role "{removeRoleTarget?.role}"?</>}
+      desc="This will revoke this management role from the service account."
+      footer={<><button className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleRemoveRole}>Remove</button></>}
+    >
 
-      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete "{sa?.name}"?</AlertDialogTitle>
-            <AlertDialogDescription>All PATs will be revoked. This cannot be undone.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+    </IamDialog>
+
+      <IamDialog open={deleteOpen} onClose={() => setDeleteOpen(false)}
+      title={<>Delete "{sa?.name}"?</>}
+      desc="All PATs will be revoked. This cannot be undone."
+      footer={<><button className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleDelete}>Delete</button></>}
+    >
+
+    </IamDialog>
     </div>
   );
 }

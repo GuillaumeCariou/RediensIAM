@@ -182,7 +182,7 @@ touched by the security audit. Browser-level coverage is the Playwright suite in
 which is not run in CI and is itself unverified in the current tree (`node_modules` absent — see
 [`docs/TESTING.md`](../../docs/TESTING.md)).
 
-See [`.security-hardening/28-frontend-tests.md`](../../.security-hardening/28-frontend-tests.md)
+See `SECURITY-AUDIT-LOG.md` step 28
 for the full rationale, and for two known deviations in `sanitizeCss.ts` that are pinned by tests
 rather than fixed.
 
@@ -194,4 +194,4 @@ rather than fixed.
 among them. The remaining fixes need `npm audit fix --force`, i.e. breaking major bumps, which was
 judged riskier than the advisories as reached by this SPA. That judgement has not been re-tested
 since the SPA was rewritten. Tracked as R-21 / R-03 / T-06 in
-[`.security-hardening/14-finding-ledger.md`](../../.security-hardening/14-finding-ledger.md) §9.
+`SECURITY-AUDIT-LOG.md` step 14 §9.

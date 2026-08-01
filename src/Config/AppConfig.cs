@@ -113,7 +113,7 @@ public class AppConfig(IConfiguration config)
     /// <b>first entry active</b>, same convention as <see cref="EncryptionKeys"/>. When unset,
     /// <see cref="Argon2Pepper"/> is pepper id 1 (or, if empty, there is no pepper at all — id 0).
     /// Unlike ciphertexts, password hashes cannot be re-derived without the plaintext: rotation
-    /// happens one login at a time. See <c>.security-hardening/16-key-rotation.md</c> §5.
+    /// happens one login at a time. See <c>SECURITY-AUDIT-LOG.md</c> step 16 §5.
     /// </summary>
     public string? Argon2Peppers          => config["Security:Argon2Peppers"];
     public string PatPrefix               => config["Security:PatPrefix"] ?? "rediens_pat_";

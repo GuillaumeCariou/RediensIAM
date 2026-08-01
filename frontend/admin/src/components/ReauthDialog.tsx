@@ -1,9 +1,5 @@
 import { useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Alert } from '@/components/ui/alert';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import ReauthDialogView from './ReauthDialogView';
 import { ApiError, reauthMethods } from '@/auth';
 import type { MfaReauth } from '@/auth';
 
@@ -20,7 +16,7 @@ import type { MfaReauth } from '@/auth';
  * So nothing here retries by itself and the input is cleared after every attempt — the next
  * attempt is always a fresh, user-typed proof.
  */
-type Pending = {
+export type Pending = {
   methods: string[];
   run: (proof: MfaReauth) => Promise<unknown>;
   /** Settles the caller's `await guard(...)`. Cancelling is not an error the page should report. */
@@ -86,7 +82,7 @@ export function useReauth() {
   };
 
   const dialog = (
-    <ReauthDialog
+    <ReauthDialogView
       pending={pending}
       error={error}
       busy={busy}
@@ -96,82 +92,4 @@ export function useReauth() {
   );
 
   return { guard, dialog };
-}
-
-function ReauthDialog({ pending, error, busy, onSubmit, onCancel }: Readonly<{
-  pending: Pending | null;
-  error: string;
-  busy: boolean;
-  onSubmit: (proof: MfaReauth) => Promise<void>;
-  onCancel: () => void;
-}>) {
-  const [password, setPassword] = useState('');
-  const [code, setCode] = useState('');
-
-  const canPassword = pending?.methods.includes('current_password') ?? false;
-  const canTotp     = pending?.methods.includes('totp_code') ?? false;
-  /**
-   * Locked out by the rate limiter — a further attempt only extends the block, so the form is
-   * disabled rather than left inviting. Tied by prefix to the 429 message set in `submit`; change
-   * one and you must change the other.
-   */
-  const blocked = error.startsWith('Too many');
-
-  const handleSubmit = async (e: React.SyntheticEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const proof: MfaReauth = code ? { totp_code: code } : { current_password: password };
-    setPassword('');
-    setCode('');
-    await onSubmit(proof);
-  };
-
-  return (
-    <Dialog open={pending !== null} onOpenChange={open => { if (!open) onCancel(); }}>
-      <DialogContent>
-        <form onSubmit={handleSubmit}>
-          <DialogHeader>
-            <DialogTitle>Confirm it&apos;s you</DialogTitle>
-            <DialogDescription>
-              This change affects an existing second factor, so it needs proof you still hold one.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            {error && <Alert variant="destructive" className="text-sm py-2 px-3">{error}</Alert>}
-            {canPassword && (
-              <div className="space-y-2">
-                <Label htmlFor="reauth-password">Current password</Label>
-                <Input
-                  id="reauth-password" type="password" autoComplete="current-password"
-                  value={password} onChange={e => setPassword(e.target.value)}
-                  disabled={busy || blocked || code.length > 0}
-                />
-              </div>
-            )}
-            {canPassword && canTotp && (
-              <p className="text-xs text-muted-foreground">or</p>
-            )}
-            {canTotp && (
-              <div className="space-y-2">
-                <Label htmlFor="reauth-totp">Authenticator code</Label>
-                <Input
-                  id="reauth-totp" inputMode="numeric" autoComplete="one-time-code"
-                  placeholder="000000" maxLength={6}
-                  className="font-mono w-32 text-center text-lg tracking-widest"
-                  value={code}
-                  onChange={e => setCode(e.target.value.replaceAll(/\D/g, '').slice(0, 6))}
-                  disabled={busy || blocked || password.length > 0}
-                />
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onCancel}>Cancel</Button>
-            <Button type="submit" disabled={busy || blocked || (!password && code.length !== 6)}>
-              {busy ? 'Verifying…' : 'Confirm'}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
 }

@@ -125,11 +125,6 @@ builder.Services.AddScoped<PatService>();
 builder.Services.AddSingleton<SocialLoginService>();
 
 // ── Controller service bundles (reduce constructor param counts, S107) ────────
-builder.Services.AddScoped<AuthCoreServices>();
-builder.Services.AddScoped<AuthExtServices>();
-builder.Services.AddScoped<AuthControllerServices>();
-builder.Services.AddScoped<AccountControllerServices>();
-builder.Services.AddScoped<OrgAdminServices>();
 
 // ── WebAuthn / Passkeys ────────────────────────────────────────────────────
 builder.Services.AddFido2(opts =>

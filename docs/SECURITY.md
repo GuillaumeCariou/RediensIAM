@@ -7,10 +7,10 @@ useful to someone deciding whether to deploy it, which means it is not a feature
 below was checked against the code on the `security/hardening-2026-07-30` branch; where an audit
 report and the code disagreed, the code won and the disagreement is named.
 
-The finding-by-finding audit trail lives in `.security-hardening/`. There is no status ledger any
+The finding-by-finding audit trail lives in `SECURITY-AUDIT-LOG.md`. There is no status ledger any
 more: `14-finding-ledger.md` was moved out of the repository because too many of the items it
 listed as open had since been closed, and a ledger that is out of date is worse than none.
-**The current status is what is written here.** `.security-hardening/README.md` records which
+**The current status is what is written here.** `SECURITY-AUDIT-LOG.md` records which
 reports have been retired and why.
 
 ---
@@ -152,7 +152,7 @@ implementation: `KetoService.IsManagementLevelGrantedAsync`.
   `values.yaml:314-315` and `values.prod.yaml` does not override it: on an already-running database
   this is a migration, not an upgrade, and no production cluster has been through it. The
   enablement as performed in dev, including the rollback, is
-  `.security-hardening/29-rls-prod-tls.md`. It has since been turned on once on a from-scratch
+  `SECURITY-AUDIT-LOG.md` step 29. It has since been turned on once on a from-scratch
   install of the *prod profile* in a scratch namespace on the dev cluster — 19 tables, verified by
   `verify-deployment.sh --prod` V-25 — which is what surfaced the fact that it could not have been
   enabled at all before then: `init.sh` granted `iam_backup` its required `BYPASSRLS` only when RLS
@@ -230,7 +230,7 @@ be scoped to, and the SAML ACS, which has one and does not use it yet.**
 
 `iam_db_connection_scope_total{scope="system"|"org"}` (`src/Services/IamMetrics.cs:53-56`) counts
 every connection checkout at the point the scope is decided, so the ratio is measurable rather than
-asserted. `.security-hardening/32-login-tenant-scope.md §4` reports ten complete
+asserted. `SECURITY-AUDIT-LOG.md` step 32 §4 reports ten complete
 authorization-code logins driven against the dev cluster, before and after the change:
 
 | Build | `scope="system"` | `scope="org"` |
@@ -354,11 +354,11 @@ Hashes carry a `$k=<id>` suffix and re-derive on the account's next successful l
 pepper rotation is a policy decision about dormant accounts, not a job that completes. Verification
 is fail-closed on a dropped pepper.
 
-**Hydra system secret rotation is a runbook only** (`.security-hardening/16-key-rotation.md §7.4`).
+**Hydra system secret rotation is a runbook only** (`SECURITY-AUDIT-LOG.md` step 16 §7.4).
 There is no rotation code. Prepend, never replace, and keep the old entry for at least the
 refresh-token TTL.
 
-Read `.security-hardening/16-key-rotation.md §8` before rotating anything cryptographic — it is the
+Read `SECURITY-AUDIT-LOG.md` step 16 §8 before rotating anything cryptographic — it is the
 table of which rollbacks are safe, and two of them are not.
 
 ### Credential generation
@@ -468,7 +468,7 @@ Two of these need their qualifier stated, because a summary table elsewhere read
   a scratch namespace — never on a production cluster.**
   `values.prod.yaml` sets `dragonfly.local.tls.enabled: true`; the chart default in
   `values.yaml:339-340` remains `false`. The prod-profile install described in
-  `.security-hardening/33-prod-profile-proof.md` did exercise it: cleartext `PING` was refused by the
+  `SECURITY-AUDIT-LOG.md` step 33 did exercise it: cleartext `PING` was refused by the
   server, a TLS `PING` against the mounted CA succeeded, the same connection against the OS trust
   store was rejected, and the app read and wrote through the tunnel. That is a real observation and
   it is more than the rendering this document used to claim — but it was one namespace on the
@@ -487,7 +487,7 @@ Two of these need their qualifier stated, because a summary table elsewhere read
 **No production cluster has ever run this.** The production *profile* — `values.yaml` +
 `values.prod.yaml`, installed by `setup.sh --prod` — has now been applied once, to a scratch
 namespace on the single-node dev cluster, and destroyed afterwards
-(`.security-hardening/33-prod-profile-proof.md`). That established only that the chart, the two
+(`SECURITY-AUDIT-LOG.md` step 33). That established only that the chart, the two
 scripts and the values files agree with each other well enough to produce a running system with the
 prod-only controls live. It found **six defects, five of which made a first-ever install fail
 outright or report a control it had not measured**; all six are fixed. Two are worth naming here
@@ -546,7 +546,7 @@ qualifier:
   therefore proves nothing, and it stops a misconfigured endpoint. It is defence in depth. The
   load-bearing controls on that path remain `AllowedAudienceUris`, the pinned signing certificate
   and the single-use `InResponseTo` record. The library-behaviour half of this — what ITfoxtec 4.17.0
-  does and does not validate — is taken from `.security-hardening/36-saml-destination-config.md`,
+  does and does not validate — is taken from `SECURITY-AUDIT-LOG.md` step 36,
   which established it by decompiling the referenced assembly; it was **not independently re-derived
   for this document**. What was verified here is the comparison rule, the call site and the ordering.
 - **This is a behaviour change for existing SAML integrations.** A response whose `Destination` does
@@ -607,13 +607,13 @@ assumed unaddressed.
 
 ### Genuinely unknown
 
-- **SAML XML processing beyond what was assessed.** `.security-hardening/15a-backend-residuals.md
+- **SAML XML processing beyond what was assessed.** `SECURITY-AUDIT-LOG.md` step 15a
   §7` assessed T-26 and reports one real defect found and a clean bill on the two things it was
   feared for. `src/Services/SamlService.cs:39` sets
   `CertificateValidationMode = X509CertificateValidationMode.None`, and ITfoxtec's defaults govern
   `XmlResolver` / `DtdProcessing`. Do not read that assessment as an exhaustive XXE and
   signature-wrapping review. The `Destination` work in
-  `.security-hardening/36-saml-destination-config.md` decompiled the library to establish four
+  `SECURITY-AUDIT-LOG.md` step 36 decompiled the library to establish four
   specific facts about `Saml2Request.Read` and `Saml2Configuration`; that is not the same as an
   audit of its XML processing, and it did not attempt one.
 
@@ -622,7 +622,7 @@ assumed unaddressed.
 ## 9. Reporting a vulnerability
 
 There is no published disclosure process in this repository. Until there is, the audit trail in
-`.security-hardening/` is the record of what has been looked at and by whom. Start with its
+`SECURITY-AUDIT-LOG.md` is the record of what has been looked at and by whom. Start with its
 `README.md`, which says which reports have been retired and why, and then with
 `11-pentest-results.md` — the only one that set out to break the others. The finding ledger this
 section used to point at, `14-finding-ledger.md`, is no longer in the repository; it was moved out

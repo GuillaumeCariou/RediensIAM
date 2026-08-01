@@ -1,14 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { ArrowLeft, Sparkles, Download } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { Skeleton } from '@/components/ui/skeleton';
 import { getUserList, getSystemUserList, cleanupUserList, exportUserList } from '@/api';
 import { useOrgContext } from '@/hooks/useOrgContext';
 import PageHeader from '@/components/layout/PageHeader';
 import UserListMembersPanel from '@/components/UserListMembersPanel';
+import { IamChip, IamDialog } from '@/components/iam';
 
 interface UserList {
   id: string; name: string; org_id?: string | null; org_name?: string | null;
@@ -87,37 +84,39 @@ export default function UserListDetail() {
         action={
           <div className="flex items-center gap-2">
             {list && (list.immovable
-              ? <Badge variant="secondary">Immovable</Badge>
-              : <Badge variant="outline">Movable</Badge>
+              ? <IamChip tone="default">Immovable</IamChip>
+              : <IamChip tone="default">Movable</IamChip>
             )}
-            <Button variant="outline" size="sm" onClick={handleExport} disabled={exporting}>
+            <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={handleExport} disabled={exporting}>
               <Download className="h-4 w-4" />{exporting ? 'Exporting…' : 'Export CSV'}
-            </Button>
-            <Button variant="outline" onClick={() => { setCleanupResult(null); setCleanupOpen(true); }}>
+            </button>
+            <button className="iam-btn iam-btn-secondary" onClick={() => { setCleanupResult(null); setCleanupOpen(true); }}>
               <Sparkles className="h-4 w-4" />Cleanup
-            </Button>
+            </button>
           </div>
         }
       />
 
       <div className="p-6 space-y-4">
-        <Button variant="ghost" size="sm" className="-ml-1" onClick={() => navigate(-1)}>
+        <button className="iam-btn iam-btn-ghost iam-btn-sm -ml-1" onClick={() => navigate(-1)}>
           <ArrowLeft className="h-4 w-4" />Back
-        </Button>
+        </button>
 
         {loading
-          ? <Skeleton className="h-48 w-full" />
+          ? <div className="iam-skeleton h-48 w-full" />
           : resolvedId && <UserListMembersPanel listId={resolvedId} title={list?.name ?? 'Members'} isSystemCtx={isSystemCtx} />
         }
       </div>
 
-      <Dialog open={cleanupOpen} onOpenChange={v => { setCleanupOpen(v); if (!v) setCleanupResult(null); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Cleanup User List</DialogTitle>
-            <DialogDescription>Remove orphaned role assignments and optionally purge inactive users.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
+      <IamDialog open={cleanupOpen} onClose={() => (v => { setCleanupOpen(v); if (!v) setCleanupResult(null); })(false)}
+      title="Cleanup User List"
+      desc="Remove orphaned role assignments and optionally purge inactive users."
+      footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={() => setCleanupOpen(false)}>Close</button>
+            <button className="iam-btn iam-btn-primary" type="button" disabled={cleanupRunning} onClick={handleCleanup}>
+              {cleanupLabel}
+            </button></>}
+    >
+<div className="space-y-4 py-2">
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={cleanupInactive} onChange={e => setCleanupInactive(e.target.checked)} />
               {' '}Remove users inactive for more than{' '}
@@ -136,14 +135,7 @@ export default function UserListDetail() {
               </div>
             )}
           </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setCleanupOpen(false)}>Close</Button>
-            <Button type="button" disabled={cleanupRunning} onClick={handleCleanup}>
-              {cleanupLabel}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+    </IamDialog>
     </div>
   );
 }

@@ -159,7 +159,7 @@ rediensiam:
   # encryptionKeys : S-10 rotation. Empty until you rotate. Format "id:hex,id:hex" with the
   #   ACTIVE key first — everything new is encrypted under it, everything listed can decrypt.
   #   Ids are positive integers and must never be reused. Setting this supersedes encryptionKey.
-  #   Runbook: .security-hardening/16-key-rotation.md §7. Do not drop the old key until
+  #   Runbook: `SECURITY-AUDIT-LOG.md` step 16 §7. Do not drop the old key until
   #   GET /admin/key-rotation reports totalPending: 0.
   secrets:
     encryptionKey: ""
@@ -207,7 +207,7 @@ rediensiam:
       #   iam_keto   → keto          iam_backup → read-only across all of them
       # deploy.sh generates all four. An existing installation does NOT get them from a
       # chart upgrade — init.sh only ever runs against an empty data directory — so see the
-      # migration runbook in .security-hardening/15c-infra-residuals.md.
+      # migration runbook in `SECURITY-AUDIT-LOG.md` step 15c.
       roles:
         appPassword: ""
         hydraPassword: ""
@@ -234,7 +234,7 @@ rediensiam:
         # This only takes effect on a FIRST-EVER start — pg_hba.conf is written by
         # initdb. On a running database do it live (one sed and pg_reload_conf, no
         # restart, reversible) and set this flag so a rebuild reproduces it:
-        #   .security-hardening/18-cnpg-tls-rls.md §2
+        #   `SECURITY-AUDIT-LOG.md` step 18 §2
         requireSsl: false
       resources:
         requests:
@@ -256,7 +256,7 @@ rediensiam:
     #        hydra.hydra.config.dsn          → iam_hydra @ database `hydra`
     #        keto.keto.config.dsn            → iam_keto  @ database `keto`
     #      The T-04 role split is not optional here — see
-    #      .security-hardening/18-cnpg-tls-rls.md for the Cluster manifest that
+    #      `SECURITY-AUDIT-LOG.md` step 18 for the Cluster manifest that
     #      creates the same four roles, databases and CONNECT grants that
     #      postgres.yaml's init.sh creates for the built-in StatefulSet.
     #   2. podSelector below, so the NetworkPolicies that let the app, Hydra and
@@ -296,7 +296,7 @@ rediensiam:
     # unscoped paths are TenantScopeInterceptor.LegitimatelyUnscopedPaths.
     #
     # Off by default for one reason only: on an ALREADY-RUNNING database this is a
-    # migration, not an upgrade — see .security-hardening/29-rls-prod-tls.md for
+    # migration, not an upgrade — see `SECURITY-AUDIT-LOG.md` step 29 for
     # the enablement as performed, and 18-cnpg-tls-rls.md §3 for the runbook.
     #
     # The one superuser prerequisite, `ALTER ROLE iam_backup BYPASSRLS`, is not a

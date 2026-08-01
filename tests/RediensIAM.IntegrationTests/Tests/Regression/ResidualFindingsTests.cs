@@ -283,6 +283,19 @@ public class ResidualFindingsTests(TestFixture fixture)
         finally { fixture.SmsStub.IsConfigured = true; }
     }
 
+    /// <summary>
+    /// The login page applies the same guard client-side (<c>THEME_VALUE_FORBIDDEN</c> and
+    /// <c>THEME_VALUE_MAX_LENGTH</c> in <c>frontend/login/src/lib/sanitizeCss.ts</c>), and the two
+    /// cannot share a literal across languages. Both sides pin it instead: widen this guard alone
+    /// and this test fails; widen the client alone and its own pinning test fails.
+    /// </summary>
+    [Fact]
+    public void TheClientAndServerThemeValueGuardsAgree()
+    {
+        LoginThemeValidator.ForbiddenValueCharacters.Should().Be(";{}()<>\"'`\\");
+        LoginThemeValidator.MaxThemeValueLength.Should().Be(120);
+    }
+
     private async Task<UserList> CreateSystemListAsync()
     {
         var list = new UserList

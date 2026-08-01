@@ -226,18 +226,20 @@ export default function Sidebar() {
   const [orgOpen,     setOrgOpen]     = useState(isSuperAdmin ? urlOrgId !== '' : pathname.startsWith('/org'));
   const [projectOpen, setProjectOpen] = useState(isSuperAdmin ? urlProjectId !== '' : pathname.startsWith('/project'));
 
-  const prevSection = useRef(activeSection);
-  useEffect(() => {
-    const prev = prevSection.current;
-    if (prev === activeSection) return;
-    prevSection.current = activeSection;
-    if (prev === 'system') setSystemOpen(false);
-    if (prev === 'org')    setOrgOpen(false);
-    if (prev === 'project') setProjectOpen(false);
-    if (activeSection === 'system') setSystemOpen(true);
-    if (activeSection === 'org')    setOrgOpen(true);
-    if (activeSection === 'project') setProjectOpen(true);
-  }, [activeSection]);
+  /**
+   * Which section is open follows the route, except while the user has toggled one by hand — so
+   * it is state that resets when the route changes, and React's own answer to that is to adjust
+   * it during render rather than in an effect. Setting state during render re-runs this component
+   * before anything is committed; an effect would paint the stale section first, and the lint rule
+   * (react-hooks/set-state-in-effect) is naming exactly that.
+   */
+  const [renderedSection, setRenderedSection] = useState(activeSection);
+  if (renderedSection !== activeSection) {
+    setRenderedSection(activeSection);
+    setSystemOpen(activeSection === 'system');
+    setOrgOpen(activeSection === 'org');
+    setProjectOpen(activeSection === 'project');
+  }
 
   useEffect(() => {
     if (!userOpen) return;

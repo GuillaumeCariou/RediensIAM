@@ -1,4 +1,4 @@
-import { UserManager, WebStorageStateStore, InMemoryWebStorage } from 'oidc-client-ts';
+import { createRediensIam, type RediensIam } from 'rediensiam-web';
 
 interface AdminConfig {
   hydra_url: string;
@@ -6,28 +6,33 @@ interface AdminConfig {
   redirect_uri: string;
 }
 
-let mgr: UserManager | null = null;
+let client: RediensIam | null = null;
 let accessToken: string | null = null;
 /**
- * One-shot guard so concurrent 401 responses do not each fire signinRedirect — the
+ * One-shot guard so concurrent 401 responses do not each fire a login redirect — the
  * last redirect wins the stored state, racing the others and breaking the PKCE callback.
  */
 let signinRedirectInFlight = false;
 
 /**
- * Builds (once) the UserManager from `/admin/config`.
+ * Builds (once) the SDK client from `/admin/config`.
+ *
+ * This console runs on `rediensiam-web`, the browser SDK this repo ships, rather than a second
+ * OIDC implementation: the login the SDK gives integrators is the login the console itself uses,
+ * so a defect in it fails here first.
  *
  * The origin check below is defence-in-depth: even though Hydra also validates the registered
  * redirect_uri, never trust a server-provided redirect_uri whose origin differs from this SPA's
  * origin. A compromised config endpoint could otherwise hand the authorization code to another
- * origin. Do not relax it to a hostname or suffix comparison.
+ * origin. The SDK constructor enforces the same rule; this one runs first and names the config
+ * endpoint as the source. Do not relax either to a hostname or suffix comparison.
  *
- * Tokens live in `accessToken` and the OIDC state in `InMemoryWebStorage`, never in
- * localStorage or sessionStorage: anything persisted there survives the tab and is readable by
- * any script that lands on this origin.
+ * Tokens live in the SDK's private field and in `accessToken` here, never in localStorage or
+ * sessionStorage: anything persisted there survives the tab and is readable by any script that
+ * lands on this origin.
  */
-async function getManager(): Promise<UserManager> {
-  if (mgr) return mgr;
+async function getClient(): Promise<RediensIam> {
+  if (client) return client;
   const res = await fetch('/admin/config');
   const cfg: AdminConfig = await res.json();
   try {
@@ -38,43 +43,49 @@ async function getManager(): Promise<UserManager> {
   } catch (e) {
     throw new Error(`Invalid OIDC redirect_uri from /admin/config: ${(e as Error).message}`);
   }
-  mgr = new UserManager({
-    authority: cfg.hydra_url,
-    client_id: cfg.client_id,
-    redirect_uri: cfg.redirect_uri,
+  client = createRediensIam({
+    issuer: cfg.hydra_url,
+    clientId: cfg.client_id,
+    redirectUri: cfg.redirect_uri,
     scope: 'openid offline',
-    response_type: 'code',
-    userStore: new WebStorageStateStore({ store: new InMemoryWebStorage() }),
   });
-  return mgr;
+  return client;
 }
 
 export async function restoreSession(): Promise<void> {
-  await getManager();
+  await getClient();
 }
 
 export async function startLogin() {
-  const m = await getManager();
-  await m.signinRedirect();
+  const c = await getClient();
+  await c.login();
 }
 
-export async function handleCallback(_code: string, _state: string): Promise<boolean> {
+/**
+ * Completes the redirect. Takes no arguments on purpose: the SDK reads `code` and `state` off the
+ * current URL, and passing them in only invited a caller to believe they were checked.
+ */
+export async function handleCallback(): Promise<boolean> {
   try {
-    const m = await getManager();
-    const user = await m.signinRedirectCallback();
-    accessToken = user.access_token ?? null;
+    const c = await getClient();
+    if (!await c.handleRedirect()) return false;
+    accessToken = await c.getToken();
     return !!accessToken;
   } catch {
     return false;
   }
 }
 
+/**
+ * The token as of the last call that touched it. Synchronous because the auth context reads it
+ * during render; {@link apiFetch} is what keeps it current.
+ */
 export function getToken() { return accessToken; }
 export function isAuthenticated() { return !!accessToken; }
 export async function logout() {
   accessToken = null;
-  const m = await getManager();
-  m.signoutRedirect();
+  const c = await getClient();
+  await c.logout();
 }
 
 export class ApiError extends Error {
@@ -119,6 +130,10 @@ export function reauthMethods(e: unknown): string[] | null {
 /**
  * Authenticated fetch. Throws {@link ApiError} on any non-2xx.
  *
+ * Goes through the SDK's `fetch`, which attaches the bearer and refuses any target outside this
+ * origin and the configured API origins — so a caller-supplied path can never carry the token
+ * off-origin.
+ *
  * The `!isReauthRequired(body)` half of the 401 branch below is load-bearing. A 401 normally
  * means the token is gone and the only way forward is a fresh login. The MFA mutation endpoints
  * reuse 401 for something else entirely: the session is fine, the caller just has to prove
@@ -126,14 +141,15 @@ export function reauthMethods(e: unknown): string[] | null {
  * the user back on the login page mid-action.
  */
 export async function apiFetch(path: string, opts: RequestInit = {}) {
-  const res = await fetch(path, {
+  const c = await getClient();
+  const res = await c.fetch(path, {
     ...opts,
     headers: {
       'Content-Type': 'application/json',
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       ...opts.headers,
     },
   });
+  accessToken = await c.getToken();
   if (!res.ok) {
     let body: unknown;
     try { body = await res.json(); } catch { body = null; }
@@ -141,8 +157,7 @@ export async function apiFetch(path: string, opts: RequestInit = {}) {
       accessToken = null;
       if (!signinRedirectInFlight) {
         signinRedirectInFlight = true;
-        const m = await getManager();
-        await m.signinRedirect();
+        await c.login();
       }
     }
     throw new ApiError(res.status, body);

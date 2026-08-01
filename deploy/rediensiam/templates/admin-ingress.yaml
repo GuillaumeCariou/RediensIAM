@@ -3,7 +3,7 @@
 # Issuer is configurable (ingress.admin.clusterIssuer names a ClusterIssuer you run). Empty
 # falls back to the chart's own self-signed Issuer, which produces a browser warning on the
 # most privileged UI in the deployment and so trains operators to click through certificate
-# errors — see the R-05 runbook in .security-hardening/09.
+# errors — see the R-05 runbook in `SECURITY-AUDIT-LOG.md`09.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

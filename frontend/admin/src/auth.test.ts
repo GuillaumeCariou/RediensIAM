@@ -9,16 +9,22 @@ import type { ApiError as ApiErrorInstance } from './auth';
  * user back on the login page, losing whatever they were doing.
  */
 
-const { signinRedirect } = vi.hoisted(() => ({ signinRedirect: vi.fn(async () => {}) }));
+const { login, handleRedirect, sdkFetch, getToken } = vi.hoisted(() => ({
+  login: vi.fn(async () => {}),
+  handleRedirect: vi.fn(async () => true),
+  // Delegates to the stubbed global fetch: these tests are about apiFetch's 401 handling, so the
+  // SDK's fetch stands in only for "attaches the bearer and calls the network".
+  sdkFetch: vi.fn((path: string, init?: RequestInit) => globalThis.fetch(path, init)),
+  getToken: vi.fn(async () => 'token'),
+}));
 
-vi.mock('oidc-client-ts', () => ({
-  UserManager: class {
-    signinRedirect = signinRedirect;
-    signinRedirectCallback = vi.fn();
-    signoutRedirect = vi.fn();
-  },
-  WebStorageStateStore: class {},
-  InMemoryWebStorage: class {},
+// The console runs on this repo's own browser SDK; the double stands in for the network, not for
+// the OIDC logic, which has its own tests in sdk/typescript/rediensiam-web.
+vi.mock('rediensiam-web', () => ({
+  createRediensIam: () => ({
+    login, handleRedirect, getToken, logout: vi.fn(async () => {}),
+    fetch: sdkFetch,
+  }),
 }));
 
 const CONFIG = {
@@ -44,7 +50,8 @@ async function freshAuth() {
 }
 
 beforeEach(() => {
-  signinRedirect.mockClear();
+  login.mockClear();
+  sdkFetch.mockClear();
   fetchMock = vi.fn(async (path: string) =>
     path === '/admin/config' ? respond(200, CONFIG) : respond(200, {}));
   vi.stubGlobal('fetch', fetchMock);
@@ -83,17 +90,20 @@ describe('apiFetch', () => {
   });
 
   it('keeps the session when a 401 only asks for re-authentication', async () => {
-    fetchMock.mockImplementation(async () =>
-      respond(401, { error: 'reauthentication_required', methods: ['current_password'] }));
+    fetchMock.mockImplementation(async (path: string) =>
+      path === '/admin/config'
+        ? respond(200, CONFIG)
+        : respond(401, { error: 'reauthentication_required', methods: ['current_password'] }));
     const { apiFetch, ApiError } = await freshAuth();
 
     const err = await apiFetch('/account/mfa/totp/confirm', { method: 'POST' }).catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(ApiError);
     expect((err as InstanceType<typeof ApiError>).status).toBe(401);
-    expect(signinRedirect).not.toHaveBeenCalled();
+    expect(login).not.toHaveBeenCalled();
     // No second call: fetching /admin/config would be the first step of throwing the session away.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Counted on the SDK's fetch, not the global one: the global also serves /admin/config.
+    expect(sdkFetch).toHaveBeenCalledTimes(1);
   });
 
   it('starts a fresh login when a 401 means the session really is gone', async () => {
@@ -103,7 +113,7 @@ describe('apiFetch', () => {
 
     await expect(auth.apiFetch('/admin/organizations')).rejects.toBeInstanceOf(auth.ApiError);
 
-    expect(signinRedirect).toHaveBeenCalledTimes(1);
+    expect(login).toHaveBeenCalledTimes(1);
   });
 
   it('redirects once even when several requests fail at the same time', async () => {
@@ -119,11 +129,12 @@ describe('apiFetch', () => {
       auth.apiFetch('/org/info'),
     ]);
 
-    expect(signinRedirect).toHaveBeenCalledTimes(1);
+    expect(login).toHaveBeenCalledTimes(1);
   });
 
   it('propagates other statuses as an ApiError carrying the body', async () => {
-    fetchMock.mockImplementation(async () => respond(400, { error: 'smtp_port_not_allowed' }));
+    fetchMock.mockImplementation(async (path: string) =>
+      path === '/admin/config' ? respond(200, CONFIG) : respond(400, { error: 'smtp_port_not_allowed' }));
     const { apiFetch, ApiError } = await freshAuth();
 
     const err = await apiFetch('/org/smtp', { method: 'PUT' }).catch((e: unknown) => e) as ApiErrorInstance;
@@ -134,7 +145,7 @@ describe('apiFetch', () => {
   });
 
   it('survives an error response that is not JSON', async () => {
-    fetchMock.mockImplementation(async () => ({
+    fetchMock.mockImplementation(async (path: string) => path === '/admin/config' ? respond(200, CONFIG) : ({
       ok: false, status: 502, json: async () => { throw new SyntaxError('not json'); },
     } as unknown as Response));
     const { apiFetch, ApiError } = await freshAuth();

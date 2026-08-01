@@ -214,7 +214,7 @@ That is the same class of defect this script exists to catch, inside the script.
 override file, and V-04 first requires `/login` on the public host to answer 2xx/3xx; if it does
 not, the four deny probes are reported as inconclusive rather than as passes. On a correctly
 measured run the refusals are 403 from the `ipAllowList` middleware, not 404 from Traefik shrugging.
-Found in `.security-hardening/33-prod-profile-proof.md §2.5`.
+Found in `SECURITY-AUDIT-LOG.md` step 33 §2.5.
 
 ### Pass, fail, skip
 
@@ -357,7 +357,7 @@ April.
 |---|---|
 | **P-04** — the public-host management deny | a chart-level control; its only proof is a live `curl` and `verify-deployment.sh` V-04. A `helm template` assertion would cost about ten lines |
 | **`deploy/*.sh`** | no `bats`, no `shellcheck` gate. `verify-deployment.sh` covers the cluster, not the scripts that build it |
-| **Backup restore** | proven byte-identical once, by hand (`.security-hardening/15c-infra-residuals.md §T-03`). Not automated, not scheduled |
+| **Backup restore** | proven byte-identical once, by hand (`SECURITY-AUDIT-LOG.md` step 15c §T-03). Not automated, not scheduled |
 | **`AuditLogService.VerifyChainAsync`** | tested in `StructuralDebtTests`; **no production caller**. The chain is verified in CI and by nothing in the running system |
 
 ---
@@ -380,4 +380,4 @@ The script prompts for a token on first run and writes `.sonar.env` under `umask
 embed one.
 
 **Neither analyser models cross-tenant authorisation.** A clean quality gate is not evidence of
-tenant isolation, and every finding in `docs/2026-07-28-audit-complet.md` was invisible to both.
+tenant isolation: every cross-tenant finding in the July 2026 audit was invisible to both.

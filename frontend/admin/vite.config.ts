@@ -8,6 +8,9 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      // The console is the SDK's first consumer: it resolves to the source in this repo rather
+      // than a published build, so a change to the SDK is exercised by this app immediately.
+      'rediensiam-web': path.resolve(__dirname, '../../sdk/typescript/rediensiam-web/src/index.ts'),
     },
   },
   build: {

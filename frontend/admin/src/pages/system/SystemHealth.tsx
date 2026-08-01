@@ -79,15 +79,18 @@ export default function SystemHealth() {
   const [loading, setLoading] = useState(true);
   const [lastRun, setLastRun] = useState<Date | null>(null);
 
-  const load = () => {
-    setLoading(true);
+  /** The fetch alone. Sets no state synchronously, so an effect may call it directly. */
+  const fetchHealth = () => {
     getSystemHealth()
       .then((d: HealthResponse) => { setData(d); setLastRun(new Date()); })
       .catch(console.error)
       .finally(() => setLoading(false));
   };
 
-  useEffect(load, []);
+  /** What the Re-run button calls: the spinner comes back, then the fetch. */
+  const load = () => { setLoading(true); fetchHealth(); };
+
+  useEffect(fetchHealth, []);
 
   const categories = data ? [...new Set(data.checks.map(c => c.category))] : [];
 

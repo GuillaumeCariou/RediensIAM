@@ -430,9 +430,8 @@ Notes.
 
 ## Deployment notes that bite integrators
 
-Recorded here because each one looks like an integration bug when you hit it. Detail in
-[`2026-07-28-findings-securite-deploiement.md`](2026-07-28-findings-securite-deploiement.md);
-current posture in [`SECURITY.md`](SECURITY.md).
+Recorded here because each one looks like an integration bug when you hit it. Current posture in
+[`SECURITY.md`](SECURITY.md).
 
 | Symptom | Cause | Status |
 |---|---|---|

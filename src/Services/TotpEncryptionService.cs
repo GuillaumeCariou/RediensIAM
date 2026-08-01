@@ -8,7 +8,7 @@ namespace RediensIAM.Services;
 /// <summary>
 /// The set of per-purpose subkeys a value may be encrypted under: exactly one is active
 /// (everything new is written under it), all of them can decrypt. This is what makes root-key
-/// rotation incremental rather than a cutover — see <c>.security-hardening/16-key-rotation.md</c>.
+/// rotation incremental rather than a cutover — see <c>SECURITY-AUDIT-LOG.md</c> step 16.
 /// Ordering follows Ory Hydra's convention: the first configured key is the active one.
 /// </summary>
 public sealed class KeyRing
