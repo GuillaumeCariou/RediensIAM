@@ -41,6 +41,14 @@ test('issuer must be https, except on loopback', () => {
   );
   assert.doesNotThrow(() => new RediensIam({ ...validConfig, issuer: 'http://localhost:4444' }));
   assert.doesNotThrow(() => new RediensIam({ ...validConfig, issuer: 'http://127.0.0.1:4444' }));
+  // RFC 6761 reserves the whole .localhost TLD for loopback, and a dev deployment that names its
+  // services (iam.localhost) is the normal shape. Refusing it sent people to plain http elsewhere.
+  assert.doesNotThrow(() => new RediensIam({ ...validConfig, issuer: 'http://iam.localhost' }));
+  // The suffix must be a label boundary: a host that merely ends in the word is not loopback.
+  assert.throws(
+    () => new RediensIam({ ...validConfig, issuer: 'http://notlocalhost' }),
+    (e: RediensIamError) => e.code === 'config_invalid',
+  );
 });
 
 test('apiOrigins are held to the same scheme rule', () => {

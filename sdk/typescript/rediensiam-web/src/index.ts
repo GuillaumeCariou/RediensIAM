@@ -452,6 +452,19 @@ export function createRediensIam(config: RediensIamConfig): RediensIam {
  */
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
+/**
+ * Loopback, for the purpose of the http exemption below.
+ *
+ * `.localhost` is reserved for loopback by RFC 6761 §6.3 and browsers treat `http://*.localhost`
+ * as a secure context, so a development deployment that gives each service its own name —
+ * `iam.localhost`, `api.localhost` — is as safe as bare `localhost` and was the one shape this
+ * refused. Names are still exact: a hostname merely *containing* "localhost"
+ * (`localhost.attacker.test`) is not loopback and does not match.
+ */
+function isLoopbackHost(hostname: string): boolean {
+  return LOOPBACK_HOSTS.has(hostname) || hostname.endsWith('.localhost');
+}
+
 function originOf(url: string): string | null {
   try {
     return new URL(url).origin;
@@ -470,7 +483,7 @@ function secureOrigin(value: string, what: string): string {
   }
   const secure =
     url.protocol === 'https:' ||
-    (url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname));
+    (url.protocol === 'http:' && isLoopbackHost(url.hostname));
   if (!secure) {
     throw new RediensIamError(
       `${what} must be https — http is accepted only on localhost: ${value}`,
