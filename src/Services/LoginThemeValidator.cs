@@ -75,11 +75,60 @@ public static class LoginThemeValidator
         foreach (var (key, raw) in theme)
         {
             if (key is CustomCssKey or LogoUrlKey) continue;
-            if (AsString(raw) is { } value && IsUnsafeThemeValue(value))
-                return "theme_value_invalid_character";
+            if (ValidateNested(key, raw) is { } nestedErr) return nestedErr;
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Walks a theme value of any shape.
+    ///
+    /// <para>
+    /// The loop above used to call <c>AsString</c> and move on, and <c>AsString</c> answers null
+    /// for an array — so <c>providers</c>, the one part of the theme that is a list, was never
+    /// examined. Each entry carries a <c>logo_url</c> that the login page renders as an
+    /// <c>&lt;img src&gt;</c> on an unauthenticated page, and it got none of the checks the
+    /// top-level <c>logo_url</c> gets: a tenant admin could point it anywhere and be told who
+    /// signed in, when, and from what address.
+    /// </para>
+    /// </summary>
+    private static string? ValidateNested(string key, object? raw)
+    {
+        if (raw is JsonElement { ValueKind: JsonValueKind.Array } array)
+        {
+            foreach (var item in array.EnumerateArray())
+                if (ValidateNested(key, item) is { } err) return err;
+            return null;
+        }
+
+        if (raw is JsonElement { ValueKind: JsonValueKind.Object } obj)
+        {
+            foreach (var property in obj.EnumerateObject())
+            {
+                // A nested logo_url ends up in the same <img src> as the top-level one, so it is
+                // held to the same rule rather than to the generic character check.
+                if (property.NameEquals(LogoUrlKey))
+                {
+                    if (AsString(property.Value) is { Length: > 0 } url
+                        && (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps))
+                        return "logo_url_must_be_https";
+                    continue;
+                }
+                if (property.NameEquals(CustomCssKey))
+                {
+                    if (AsString(property.Value) is { Length: > 0 } css && ValidateCss(css) is { } cssErr)
+                        return cssErr;
+                    continue;
+                }
+                if (ValidateNested(property.Name, property.Value) is { } err) return err;
+            }
+            return null;
+        }
+
+        return AsString(raw) is { } value && IsUnsafeThemeValue(value)
+            ? "theme_value_invalid_character"
+            : null;
     }
 
     private static bool IsUnsafeThemeValue(string value) =>

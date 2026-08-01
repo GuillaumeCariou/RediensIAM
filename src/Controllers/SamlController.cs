@@ -146,10 +146,29 @@ public class SamlController(
             SamlService.ExtractDisplayName(identity, idp.DisplayNameAttributeName), loginChallenge);
         if (accessError != null) return Unauthorized(new { error = accessError });
 
+        if (string.IsNullOrEmpty(loginChallenge)) return BadRequest(new { error = "invalid_login_challenge" });
+
+        // The tenant's own login controls, which this path used to skip entirely — see
+        // FederatedLoginGuard. A project running an IdP is precisely the kind that turns these on.
+        var clientIp = HttpContext.Connection.RemoteIpAddress?.ToString();
+        if (!FederatedLoginGuard.IsIpAllowed(project, clientIp))
+        {
+            await audit.RecordAsync(project.OrgId, project.Id, user!.Id, "user.login.failure",
+                metadata: new Dictionary<string, object> { ["reason"] = "ip_not_allowed" });
+            var rejected = await hydra.RejectLoginAsync(loginChallenge, "access_denied", "ip_not_allowed");
+            return Redirect(rejected);
+        }
+
         user!.LastLoginAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
 
-        if (string.IsNullOrEmpty(loginChallenge)) return BadRequest(new { error = "invalid_login_challenge" });
+        var (factorRequired, needsEnrolment) = await FederatedLoginGuard.RequiresFactorAsync(db, user, project);
+        if (factorRequired)
+        {
+            FederatedLoginGuard.SetMfaSession(
+                HttpContext.Session, user.Id, loginChallenge, project.Id, project.OrgId, needsEnrolment);
+            return Redirect(FederatedLoginGuard.MfaRedirectPath(loginChallenge, needsEnrolment));
+        }
 
         var subject = $"{project.OrgId}:{user.Id}";
         var context = new Dictionary<string, object>

@@ -7,9 +7,8 @@ rediensiam:
   adminUrl:  "https://auth.ts.rediens.net"    # Tailscale MagicDNS — Tailscale-only
 
   security:
-    # The chart default is off so a first launch can reach the console and configure SMTP/SMS.
-    # A configured production deployment has no such excuse: super_admin is the most privileged
-    # account here, and password-only is not enough for it.
+    # Explicit even though the chart now defaults to it: this is the file an operator reads to see
+    # what production turns on.
     requireAdminMfa: true
 
   # R-05. No NodePort in prod: the admin surface is reached only through the Tailscale-only
@@ -46,6 +45,12 @@ rediensiam:
   # and a chart upgrade will not rewrite it. Follow §2 of
   # SECURITY-AUDIT-LOG.md step 18 before the first upgrade that carries this.
   postgres:
+    rls:
+      # The backstop under every hand-written `&& OrgId == …` conjunct in the codebase.
+      # files/rls.sql is FORCEd, has WITH CHECK on the write side, and aborts the deploy if a table
+      # appears without a policy — none of which ran while the chart shipped it off and prod never
+      # overrode it. Requires the backup role to hold BYPASSRLS, which templates/postgres.yaml grants.
+      enabled: true
     local:
       tls:
         enabled: true

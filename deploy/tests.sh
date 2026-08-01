@@ -92,6 +92,42 @@ else
   pass "reset-dev.sh treats an unreadable issuer as a refusal"
 fi
 
+# ── the shipped defaults are the safe ones ───────────────────────────────────
+# The code default for RequireAdminMfa is false so a first launch can reach the console and
+# configure a delivery channel. The chart is a different question: an operator who installs it
+# without layering values.prod.yaml should not get a password-only super_admin.
+if grep -qE '^\s*requireAdminMfa:\s*true' "${DIR}/rediensiam/values.yaml"; then
+  pass "values.yaml requires admin MFA by default"
+else
+  fail "values.yaml requires admin MFA by default" \
+       "only values.prod.yaml re-enables it, so any other install ships password-only super_admin"
+fi
+
+# The RLS layer is the backstop under ~200 hand-written tenant conjuncts. Shipping prod with it
+# off means the one control that does not depend on remembering a WHERE clause never runs.
+# Checked against the rendered chart rather than the file: the first attempt at this set the key
+# under a second `postgres:` block, and YAML last-wins silently discarded it.
+if [ "$(helm template rel "${DIR}/rediensiam" -f "${DIR}/rediensiam/values.prod.yaml" 2>/dev/null \
+          | grep -c 'rls.sql')" -gt 0 ]; then
+  pass "values.prod.yaml enables row-level security"
+else
+  fail "values.prod.yaml enables row-level security" \
+       "the chart default is off and the rendered prod output contains no RLS job"
+fi
+
+# ── no values file declares the same key twice ───────────────────────────────
+# YAML takes the last one and drops the first without a word. That is how an `rls.enabled: true`
+# added to prod rendered nothing at all.
+for f in "${DIR}"/rediensiam/values*.yaml; do
+  dupes="$(grep -nE '^  [a-zA-Z][a-zA-Z0-9_]*:' "${f}" | sed 's/.*: *//; s/:$//' | awk '{print $1}' \
+             | sort | uniq -d)"
+  if [ -n "${dupes}" ]; then
+    fail "no duplicate top-level key in $(basename "${f}")" "${dupes}"
+  else
+    pass "no duplicate top-level key in $(basename "${f}")"
+  fi
+done
+
 # ── every script parses ──────────────────────────────────────────────────────
 for script in "${DIR}"/*.sh "${DIR}"/monitoring/*.sh "${ROOT}/sonar-scan.sh"; do
   name="$(basename "${script}")"

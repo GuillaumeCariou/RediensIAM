@@ -1508,18 +1508,39 @@ public class AuthController(
         var user = await FindOrCreateSocialUserAsync(profile, stateData.ProviderId, project);
         if (user == null) return SafeRedirect(errorRedirect);
 
+        // The tenant's own login controls apply however the user authenticated. This path used to
+        // accept the login directly, so a project that switched on require_mfa or an IP allowlist
+        // had both enforced for password users and bypassed by everyone who used the identity
+        // provider the tenant had configured — which is the population those controls exist for.
+        if (!FederatedLoginGuard.IsIpAllowed(project, Ip))
+        {
+            await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.failure");
+            IamMetrics.LoginAttempts.WithLabels("ip_blocked").Inc();
+            return SafeRedirect(await hydra.RejectLoginAsync(
+                stateData.LoginChallenge, ErrAccessDenied, "ip_not_allowed"));
+        }
+
         if (project.RequireRoleToLogin)
         {
             var hasRole = await db.UserProjectRoles.AnyAsync(r => r.UserId == user.Id && r.ProjectId == project.Id);
             if (!hasRole)
             {
-                var rejectUrl = await hydra.RejectLoginAsync(stateData.LoginChallenge, ErrAccessDenied, "no_role_assigned");
-                return SafeRedirect(rejectUrl);
+                return SafeRedirect(await hydra.RejectLoginAsync(
+                    stateData.LoginChallenge, ErrAccessDenied, "no_role_assigned"));
             }
         }
 
         user.LastLoginAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
+
+        var (factorRequired, needsEnrolment) = await FederatedLoginGuard.RequiresFactorAsync(db, user, project);
+        if (factorRequired)
+        {
+            FederatedLoginGuard.SetMfaSession(
+                HttpContext.Session, user.Id, stateData.LoginChallenge, project.Id, project.OrgId, needsEnrolment);
+            IamMetrics.LoginAttempts.WithLabels(needsEnrolment ? MfaSetupRequired : "mfa_required").Inc();
+            return SafeRedirect(FederatedLoginGuard.MfaRedirectPath(stateData.LoginChallenge, needsEnrolment));
+        }
 
         var subject = $"{project.OrgId}:{user.Id}";
         var ctx = new Dictionary<string, object>

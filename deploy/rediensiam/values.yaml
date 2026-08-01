@@ -49,12 +49,15 @@ rediensiam:
 
     # Require a second factor to reach the management console.
     #
-    # Off here on purpose: on a first launch the only account that exists is the bootstrap admin,
-    # and gating its first login on enrolment locks the operator out of the console they need in
-    # order to configure SMTP and SMS — the providers that make a factor deliverable. The console
-    # shows a standing reminder instead of blocking. values.prod.yaml turns this on; turn it on
-    # here too once the deployment is configured.
-    requireAdminMfa: false
+    # On here, because an operator who installs this chart without layering another values file
+    # should not end up with a password-only super_admin on a publicly reachable /auth/login.
+    #
+    # The first-launch problem is real — enrolment needs a delivery channel, and configuring one
+    # needs the console — but it belongs to the first boot, not to the chart. `AppConfig` defaults
+    # this to false so a deployment that sets nothing at all can still reach the console, and the
+    # console carries a standing reminder (MfaReminder) for an admin with no factor. Set this to
+    # false deliberately, for as long as it takes to configure SMTP or SMS, and then set it back.
+    requireAdminMfa: true
 
   # ── Networking ────────────────────────────────────────────────────────────────
   service:

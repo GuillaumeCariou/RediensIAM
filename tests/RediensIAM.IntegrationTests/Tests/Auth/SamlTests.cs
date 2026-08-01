@@ -595,6 +595,50 @@ public partial class SamlControllerTests(TestFixture fixture)
         body.GetProperty("error").GetString().Should().Be("saml_no_pending_request");
     }
 
+    // ── ACS: the tenant's own login controls ─────────────────────────────────
+
+    /// <summary>
+    /// A project that demands a second factor demands it of federated users too.
+    ///
+    /// <para>
+    /// The ACS accepted the login through Hydra directly, consulting neither <c>require_mfa</c> nor
+    /// <c>ip_allowlist</c> — both of which the password path enforces. So the tenants most likely
+    /// to enable those controls, the ones running an IdP, were the ones for whom they did nothing.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Acs_ProjectRequiresMfa_DoesNotCompleteTheLogin()
+    {
+        var (idp, cert) = await SeedAcsSamlIdpAsync();
+        var project = await fixture.Db.Projects.FirstAsync(p => p.Id == idp.ProjectId);
+        project.RequireMfa = true;
+        await fixture.Db.SaveChangesAsync();
+
+        var challenge = Guid.NewGuid().ToString("N");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
+        var client   = fixture.NewSessionClient();
+        var identity = new ClaimsIdentity(new[]
+        {
+            new Claim("email", "saml-mfa@tenant.test"),
+            new Claim("displayName", "Saml Mfa"),
+        });
+        var form = await BuildAcsFormAsync(client, challenge, idp, cert, identity);
+
+        var res = await client.PostAsync("/auth/saml/acs", form);
+
+        var location = res.Headers.Location?.ToString() ?? "";
+        location.Should().NotContain("/callback",
+            "the project demands a second factor, so the login must not be accepted yet");
+
+        await fixture.RefreshDbAsync();
+        var user = await fixture.Db.Users.FirstOrDefaultAsync(u => u.Email == "saml-mfa@tenant.test");
+        if (user != null)
+        {
+            (await fixture.Db.AuditLogs.AnyAsync(a => a.ActorId == user.Id && a.Action == "user.login.saml"))
+                .Should().BeFalse("the login was not completed");
+        }
+    }
+
     // ── ACS: response has no email claim ─────────────────────────────────────
 
     [Fact]

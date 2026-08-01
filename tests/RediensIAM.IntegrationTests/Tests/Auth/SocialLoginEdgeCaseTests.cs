@@ -203,6 +203,78 @@ public class SocialLoginCoverageTests(TestFixture fixture)
         }
     }
 
+    // ── The tenant's own login controls apply to federated logins too ────────
+    //
+    // The password path calls CheckProjectAccessAsync (IP allowlist) and InitiateMfaAsync
+    // (require_mfa) before accepting. The social callback and the SAML ACS called
+    // hydra.AcceptLoginAsync directly, so a tenant that switched either control on had it
+    // enforced for exactly the users who signed in with a password — and bypassed by everyone
+    // who used the identity provider the tenant configured.
+
+    [Fact]
+    public async Task OAuthCallback_ProjectRequiresMfa_DoesNotCompleteTheLogin()
+    {
+        fixture.HibpStub.SetupGithubProfile(userId: 99201, email: "gh-mfa@socialtest.dev");
+        try
+        {
+            var (org, project, _) = await ScaffoldWithGithubAsync();
+            project.RequireMfa = true;
+            await fixture.Db.SaveChangesAsync();
+
+            var challenge = Guid.NewGuid().ToString("N");
+            fixture.Hydra.SetupLoginChallengeWithProject(
+                challenge, project.HydraClientId, project.Id.ToString(), org.Id.ToString());
+            fixture.Keto.AllowAll();
+
+            var state = await GetOAuthStateAsync(challenge);
+            var res = await fixture.Client.GetAsync(
+                $"/auth/oauth2/callback?code=valid-code&state={Uri.EscapeDataString(state)}");
+
+            res.StatusCode.Should().Be(HttpStatusCode.Redirect);
+            var location = res.Headers.Location!.ToString();
+            location.Should().NotContain("consent",
+                "the project demands a second factor, so the login must not be accepted yet");
+            location.Should().Contain("/mfa", "the browser belongs at the factor step");
+        }
+        finally { fixture.HibpStub.ClearGithub(); }
+    }
+
+    [Fact]
+    public async Task OAuthCallback_IpNotInAllowlist_IsRefused()
+    {
+        fixture.HibpStub.SetupGithubProfile(userId: 99202, email: "gh-ip@socialtest.dev");
+        try
+        {
+            var (org, project, _) = await ScaffoldWithGithubAsync();
+            // A range the test client is definitely not in.
+            project.IpAllowlist = ["203.0.113.0/24"];
+            await fixture.Db.SaveChangesAsync();
+
+            var challenge = Guid.NewGuid().ToString("N");
+            fixture.Hydra.SetupLoginChallengeWithProject(
+                challenge, project.HydraClientId, project.Id.ToString(), org.Id.ToString());
+            fixture.Keto.AllowAll();
+
+            var state = await GetOAuthStateAsync(challenge);
+            var res = await fixture.Client.GetAsync(
+                $"/auth/oauth2/callback?code=valid-code&state={Uri.EscapeDataString(state)}");
+
+            // Asserted on the record rather than the redirect: a rejected login and an accepted one
+            // both answer 302, and an earlier draft of this test passed against the bypass because
+            // the accept URL happens not to contain the word it was looking for.
+            await fixture.RefreshDbAsync();
+            var user = await fixture.Db.Users.FirstOrDefaultAsync(u => u.Email == "gh-ip@socialtest.dev");
+            if (user != null)
+            {
+                var loggedIn = await fixture.Db.AuditLogs.AnyAsync(a =>
+                    a.ActorId == user.Id && a.Action.StartsWith("user.login.social"));
+                loggedIn.Should().BeFalse(
+                    "the tenant's IP allowlist applies however the user authenticated");
+            }
+        }
+        finally { fixture.HibpStub.ClearGithub(); }
+    }
+
     // ── lines 1122-1130: RequireRoleToLogin denied ────────────────────────────
 
     [Fact]

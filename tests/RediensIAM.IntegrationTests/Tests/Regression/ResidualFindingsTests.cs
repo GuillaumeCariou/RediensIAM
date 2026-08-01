@@ -296,6 +296,49 @@ public class ResidualFindingsTests(TestFixture fixture)
         LoginThemeValidator.MaxThemeValueLength.Should().Be(120);
     }
 
+    /// <summary>
+    /// The theme validator walked the dictionary's top level only.
+    ///
+    /// <para>
+    /// <c>AsString</c> returns null for a JSON array, so the <c>providers</c> list — which the
+    /// login page renders, one <c>&lt;img src&gt;</c> per entry — was skipped entirely. The
+    /// top-level <c>logo_url</c> is required to be HTTPS; the per-provider one got no check at all,
+    /// so a tenant admin could point every user's login page at a URL of their choosing and learn
+    /// who signs in, when, and from which address. The page is unauthenticated, so the tenant does
+    /// not even need the victim to have an account with them.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("http://attacker.test/beacon.png")]
+    [InlineData("javascript:alert(1)")]
+    public void ThemeValidation_ReachesIntoTheProvidersArray(string hostileLogo)
+    {
+        var theme = new Dictionary<string, object>
+        {
+            ["providers"] = JsonSerializer.SerializeToElement(new[]
+            {
+                new { id = "google", type = "google", label = "Google", logo_url = hostileLogo },
+            }),
+        };
+
+        LoginThemeValidator.Validate(theme).Should().NotBeNull(
+            "a logo URL inside providers[] reaches the same <img src> as the top-level one");
+    }
+
+    [Fact]
+    public void ThemeValidation_StillAcceptsAnHttpsProviderLogo()
+    {
+        var theme = new Dictionary<string, object>
+        {
+            ["providers"] = JsonSerializer.SerializeToElement(new[]
+            {
+                new { id = "google", type = "google", label = "Google", logo_url = "https://cdn.example.com/g.png" },
+            }),
+        };
+
+        LoginThemeValidator.Validate(theme).Should().BeNull();
+    }
+
     private async Task<UserList> CreateSystemListAsync()
     {
         var list = new UserList
