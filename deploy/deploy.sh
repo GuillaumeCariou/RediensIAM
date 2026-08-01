@@ -463,7 +463,19 @@ cd "${ROOT_DIR}/frontend/login" && npm ci --silent && npm run build
 echo "  Login SPA: $(du -sh dist | cut -f1)"
 cd "${ROOT_DIR}/frontend/admin" && npm ci --silent && npm run build
 echo "  Admin SPA: $(du -sh dist | cut -f1)"
-cd "${ROOT_DIR}" && docker build -t "${IMAGE}" . && docker push "${IMAGE}"
+# Deliberately not chained with &&: `set -e` does not fire for a non-final command in an
+# && list, so a failed build fell through to the digest step, which then resolved the
+# PREVIOUS local image and deployed it. Three deploys reported success while shipping a
+# stale image that way.
+cd "${ROOT_DIR}"
+if ! docker build -t "${IMAGE}" .; then
+  echo "  ERROR: image build failed — refusing to deploy the previous image"
+  exit 1
+fi
+if ! docker push "${IMAGE}"; then
+  echo "  ERROR: image push failed — refusing to deploy"
+  exit 1
+fi
 # R-16: resolve the digest the registry actually stored and deploy that, not the tag. This is
 # what makes a pod restart replay the exact bytes that were reviewed instead of re-asking the
 # registry what `:prod` means today.

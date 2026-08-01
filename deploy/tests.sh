@@ -43,6 +43,17 @@ else
   pass "the upgrade path does not uninstall the release"
 fi
 
+# ── a failed image build must stop the deploy ────────────────────────────────
+# `set -e` does not fire for a non-final command in an && list, so `cd && docker build && docker
+# push` let a failed build fall through to the digest step — which resolved the previous local
+# image and deployed that. Three deploys reported success while shipping stale code.
+if grep -qE 'docker build[^|]*&&' "${DIR}/deploy.sh"; then
+  fail "a failed image build stops the deploy" \
+       "docker build is chained with && — set -e will not fire for it"
+else
+  pass "a failed image build stops the deploy"
+fi
+
 # ── destructive commands honour ${RELEASE} ───────────────────────────────────
 if grep -nE '^[^#]*(helm +uninstall|kubectl +delete)[^|]*[^{$]rediensiam' "${DIR}/deploy.sh" | grep -q .; then
   fail "no destructive command in deploy.sh names a release literally" \

@@ -29,8 +29,8 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS backend-build
 WORKDIR /src
 COPY src/ ./
 # Copy SPA dist into wwwroot before publish
-COPY --from=login-build /app/dist /src/wwwroot/
-COPY --from=admin-build /app/dist /src/wwwroot/admin/
+COPY --from=login-build /src/frontend/login/dist /src/wwwroot/
+COPY --from=admin-build /src/frontend/admin/dist /src/wwwroot/admin/
 RUN dotnet publish RediensIAM.csproj -c Release -o /publish
 
 # Stage 4 — runtime
