@@ -42,7 +42,8 @@ test('create dialog opens and submits', async ({ adminPage: page }) => {
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify(newOrg) });
   });
 
-  // Reload mock to include new org after create
+  // Re-mocked so the list refetch after create returns the new row too. Playwright runs
+  // route handlers last-registered-first, so this one wins over the GET mock above.
   await mockGet(page, '/admin/organizations', { organizations: [...ORGS, newOrg] });
 
   await page.goto('/admin/system/organisations');
@@ -71,12 +72,10 @@ test('suspend org calls suspend endpoint', async ({ adminPage: page }) => {
   });
 
   await page.goto('/admin/system/organisations');
-  // Find the row for Acme Corp and trigger suspend via dropdown / button
   const row = page.getByRole('row').filter({ hasText: 'Acme Corp' });
   await row.getByRole('button').click();
   await page.getByText(/suspend/i).click();
 
-  // Confirm dialog if present
   const confirmBtn = page.getByRole('button', { name: /confirm|yes|suspend/i }).last();
   if (await confirmBtn.isVisible({ timeout: 500 }).catch(() => false)) {
     await confirmBtn.click();
@@ -121,7 +120,6 @@ test('delete org calls DELETE endpoint', async ({ adminPage: page }) => {
   await row.getByRole('button').click();
   await page.getByText(/delete/i).click();
 
-  // Confirm if there's a confirmation dialog
   const confirmBtn = page.getByRole('button', { name: /confirm|delete|yes/i }).last();
   if (await confirmBtn.isVisible({ timeout: 500 }).catch(() => false)) {
     await confirmBtn.click();

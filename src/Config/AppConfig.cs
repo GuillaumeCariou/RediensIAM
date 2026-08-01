@@ -199,6 +199,7 @@ public class AppConfig(IConfiguration config)
     private Services.KeyRing? _smtpEncKey;
     private Services.KeyRing? _themeEncKey;
     private Services.KeyRing? _dataProtectionKey;
+    private Services.KeyRing? _auditChainKey;
     private byte[]? _deviceFpKey;
 
     public Services.KeyRing TotpEncKey    => _totpEncKey    ??= DeriveRing("rediensiam-totp-secret-v1");
@@ -213,6 +214,21 @@ public class AppConfig(IConfiguration config)
     /// versioned because changing it would orphan every key already stored under the old one.
     /// </summary>
     public Services.KeyRing DataProtectionKey => _dataProtectionKey ??= DeriveRing("rediensiam-dataprotection-v1");
+
+    /// <summary>
+    /// HMAC key for the audit hash chain (<see cref="Data.AuditChain"/>). Its own purpose string,
+    /// like <see cref="DataProtectionKey"/>, so no other derived subkey can forge a chain.
+    ///
+    /// <para>
+    /// This is a <b>ring</b> rather than the active root alone, and that is the whole reason chain
+    /// keying can survive rotation: every row records the key id its MAC was written under, so a
+    /// rotated root re-keys new rows while every historic row stays verifiable under the root it
+    /// was written with. Retiring a root does not corrupt history — it makes the rows under it
+    /// <i>unverifiable</i>, which <see cref="Data.AuditChainStatus"/> reports as such rather than
+    /// as tampering.
+    /// </para>
+    /// </summary>
+    public Services.KeyRing AuditChainKey => _auditChainKey ??= DeriveRing("rediensiam-audit-chain-v1");
 
     /// <summary>
     /// HMAC key for device fingerprints. Not a ciphertext key — fingerprints are one-way and

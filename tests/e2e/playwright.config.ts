@@ -42,5 +42,18 @@ export default defineConfig({
         storageState: { cookies: [], origins: [] },
       },
     },
+
+    /**
+     * Org-scoped admin pages. This project was missing: `tests/org/` existed on disk with nine
+     * SMTP tests — including the one asserting the super-admin endpoint is scoped — and no
+     * `testMatch` selected them, so `--list` collected 150 tests from 14 files while 15 were
+     * present. They had never run. A spec the runner does not collect is worth exactly what a
+     * spec that does not exist is worth, and looks like the opposite.
+     */
+    {
+      name: 'org',
+      testMatch: 'tests/org/**/*.spec.ts',
+      use: { ...devices['Desktop Chrome'] },
+    },
   ],
 });

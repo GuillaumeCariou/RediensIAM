@@ -43,7 +43,6 @@ export const test = baseTest.extend<AuthFixtures>({
     const context = await browser.newContext();
     const page    = await context.newPage();
 
-    // Inject sessionStorage before any page script runs
     await page.addInitScript((state: Record<string, string>) => {
       for (const [k, v] of Object.entries(state)) {
         sessionStorage.setItem(k, v);

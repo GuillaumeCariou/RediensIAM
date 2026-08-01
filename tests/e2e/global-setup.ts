@@ -35,19 +35,18 @@ export default async function globalSetup() {
   const page    = await context.newPage();
 
   try {
-    // 1. Navigate to the admin SPA — triggers OIDC redirect chain
+    // Triggers the OIDC redirect chain that lands us on the Login SPA.
     await page.goto('/admin/');
 
-    // 2. Wait to land on the Login SPA (URL will contain login_challenge)
     await page.waitForURL(/login_challenge/, { timeout: 15_000 });
 
-    // 3. Fill credentials
     await page.locator('#identifier').fill(EMAIL);
     await page.locator('#password').fill(PASSWORD);
     await page.getByRole('button', { name: /sign in/i }).click();
 
-    // 4. Handle optional consent screen (Hydra may show it on first login)
-    //    The consent page typically has an "Allow access" or "Accept" button.
+    // Hydra only shows the consent screen the first time a client is granted, so the run
+    // has to succeed whether or not it appears: race the direct landing against the
+    // click-through, and swallow the click's failure when there is no consent page.
     await Promise.race([
       page.waitForURL(/\/admin\//, { timeout: 10_000 }),
       page.getByRole('button', { name: /allow|accept/i }).click().then(() =>
@@ -55,10 +54,13 @@ export default async function globalSetup() {
       ).catch(() => {}),
     ]);
 
-    // 5. Give React time to finish the OIDC callback and store the token
+    // The token is written by the SPA's callback handler, not by the navigation, so there is
+    // nothing to wait on but the network going quiet. A timeout here is not fatal — the
+    // sessionStorage check below is the real assertion — hence the swallowed rejection.
     await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
 
-    // 6. Capture all sessionStorage entries (oidc-client-ts stores token here)
+    // oidc-client-ts keys the stored user by issuer and client id, so capture every entry
+    // rather than guessing the key.
     const sessionState = await page.evaluate((): Record<string, string> => {
       const out: Record<string, string> = {};
       for (let i = 0; i < sessionStorage.length; i++) {

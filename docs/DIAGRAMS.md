@@ -117,19 +117,19 @@ the same live Keto re-check.
 
 | | chart default `values.yaml` | `values.dev.yaml` | `values.prod.yaml` | Ever executed? |
 |---|---|---|---|---|
-| Public ingress TLS | off | **off** (`iam.localhost` cannot be certified) | **on**, `letsencrypt` | dev yes; prod never deployed from this branch |
-| Admin ingress TLS | — (`ingress.admin.enabled: false`) | not used — NodePort instead | **on**, `selfsigned` | prod never deployed |
-| Postgres server TLS | off | **on** | **on** | **dev only** |
-| Postgres `requireSsl` (`hostssl`) | off | **on** | **on** | **dev only** |
-| Dragonfly TLS | off | **on** | **on** | **dev only** |
+| Public ingress TLS | off | **off** (`iam.localhost` cannot be certified) | **on**, `letsencrypt` | dev yes; in prod-profile scratch only with a self-signed issuer — **ACME has never been executed** |
+| Admin ingress TLS | — (`ingress.admin.enabled: false`) | not used — NodePort instead | **on**, self-signed by the release's own `Issuer` | prod profile in scratch: ingress, cert and ClusterIP-only Service all worked; reachability is a Tailscale property, not a chart one |
+| Postgres server TLS | off | **on** | **on** | dev, and once under the prod profile in a scratch namespace |
+| Postgres `requireSsl` (`hostssl`) | off | **on** | **on** | dev, and once from scratch under the prod profile. **Never against an existing `pg_hba.conf`** |
+| Dragonfly TLS | off | **on** | **on** | dev, and once from scratch under the prod profile. **The cutover on a live cache is still unobserved** |
 | `postgres.rls.enabled` | off | **on** | **not overridden → off** | dev only |
 
 Two things this table exists to keep straight:
 
-1. **Dragonfly TLS is now `true` in *both* values files.** It was dev-only when
-   `.security-hardening/23-cache-hardening.md` was written and when the transport table in
-   `ARCHITECTURE.md` §"Transport and at-rest encryption" was written; `values.prod.yaml` has since
-   set it. It has still only ever *run* in dev. It is a **hard cutover** — `--tls` makes Dragonfly
+1. **Dragonfly TLS is `true` in *both* values files.** It was dev-only when the cache-hardening
+   work was written up; `values.prod.yaml` has since set it. It has now run in dev and once under
+   the prod profile in a scratch namespace — never on a production cluster, and never as a
+   *cutover* on a cache that was already up. It is a **hard cutover** — `--tls` makes Dragonfly
    refuse cleartext, so `cacheUrl` must gain `ssl=true` in the same `helm upgrade`.
    `templates/dragonfly.yaml:31-36` fails the render in **both** directions, so the pair cannot be
    split by accident.
@@ -758,10 +758,10 @@ flowchart TB
 ```mermaid
 flowchart TD
     req["Request"]
-    mw["GatewayAuthMiddleware sets ctx.Items Claims"]
+    mw["GatewayAuthMiddleware sets ctx.Items Claims<br/>OR the login flow calls PinToOrganisationAsync<br/>with the org_id from the challenge's client metadata"]
     open["EF opens a pooled connection"]
     int["TenantScopeInterceptor.ConnectionOpened<br/>SELECT set_config('rediensiam.org_id', @value, false)"]
-    val{"claims org id parses and is not Guid.Empty ?"}
+    val{"CurrentScope: a pinned org,<br/>else a claims org id that parses<br/>and is not Guid.Empty ?"}
     org["value = the org UUID"]
     sys["value = the literal 'system'"]
     pol{"postgres.rls.enabled ?"}
@@ -782,15 +782,23 @@ flowchart TD
     guard-.->int
 ```
 
-Nine code paths run as `'system'` on purpose, and they are enumerated in
-`TenantScopeInterceptor.LegitimatelyUnscopedPaths`: the whole of `AuthController` (login, password
-reset, verification, social, SAML), PAT introspection in `GatewayAuthMiddleware`, EF migrations, the
-super-admin bootstrap, the instance-config provider, the audit retention sweep, the webhook
-dispatcher, and `SystemAdminController`.
+Twelve code paths run as `'system'` on purpose, enumerated in
+`TenantScopeInterceptor.LegitimatelyUnscopedPaths`: `AuthController.AdminLogin`, the consent
+handler's admin-client branch, the four token-keyed endpoints, the fallback `projects` read, PAT
+introspection in `GatewayAuthMiddleware`, `SamlController`, EF migrations, the super-admin
+bootstrap, the instance-config provider, the audit retention sweep, the webhook dispatcher, and
+`SystemAdminController`.
 
-⚠ **RLS on does not make the login path tenant-safe.** Login resolves a user by e-mail before any
-tenant is known, so it must run unscoped by necessity. RLS is a schema-level backstop under the
-hand-written conjuncts, not a replacement for them.
+**The rest of the login path is no longer among them.** It used to be — a login resolved a user by
+e-mail before any tenant was known. It now pins the organisation first, from the `org_id` in the
+login challenge's OAuth2 client metadata, usually with no database read at all. Password login,
+registration, consent, every MFA step and the social flows run under the tenant's own scope. What
+still cannot be scoped is the admin console (its users have `OrgId IS NULL`) and the token-keyed
+endpoints (their subject is a random token) — and `SamlController`, which could be pinned and is
+not. See [`SECURITY.md`](SECURITY.md#what-is-scoped-and-what-still-is-not).
+
+⚠ RLS is still a schema-level backstop under the hand-written conjuncts, not a replacement for
+them.
 
 ---
 

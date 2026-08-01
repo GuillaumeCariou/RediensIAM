@@ -149,6 +149,45 @@ public sealed class KetoStub : IDisposable
                 }));
     }
 
+    // ── Tuple listing (grant reconciliation) ──────────────────────────────────
+
+    /// <summary>
+    /// Makes the list endpoint answer with exactly <paramref name="tuples"/> for
+    /// <paramref name="ns"/>, the way real Keto answers a namespace query. Registered per
+    /// namespace so the reconciler's Organisations and Projects walks can disagree, which is the
+    /// only way to model one store holding a grant the other does not.
+    ///
+    /// No <c>next_page_token</c>: one page, which is what these fixtures need. The paging loop
+    /// itself is the caller's, not the stub's.
+    /// </summary>
+    public void SetTuples(string ns, params RediensIAM.Services.RelationTuple[] tuples)
+    {
+        _readServer
+            .Given(Request.Create().WithPath("/relation-tuples").UsingGet().WithParam("namespace", ns))
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new
+            {
+                relation_tuples = tuples.Select(t => new
+                {
+                    @namespace = t.Namespace,
+                    @object = t.Object,
+                    relation = t.Relation,
+                    subject_id = t.Subject,
+                }),
+                next_page_token = "",
+            }));
+    }
+
+    /// <summary>Write-side requests seen so far, newest last — how a test tells a repair actually acted.</summary>
+    public IReadOnlyList<(string Method, string Url)> WriteRequests =>
+        [.. _writeServer.LogEntries
+            .Select(e => e.RequestMessage)
+            .Where(r => r is not null)
+            .Select(r => (r!.Method, r.Url))];
+
+    /// <summary>Forgets the write-side request log, so a test can assert on its own run alone.</summary>
+    public void ResetWriteRequests() => _writeServer.ResetLogEntries();
+
     /// <summary>Deny ALL checks (simulate Keto returning forbidden for everything).</summary>
     public void DenyAll()
     {

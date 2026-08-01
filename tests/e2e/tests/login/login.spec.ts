@@ -61,17 +61,16 @@ test('shows project name in heading', async ({ page }) => {
 test('requires both fields to submit', async ({ page }) => {
   await page.goto(`/?login_challenge=${CHALLENGE_ID}`);
 
-  // Try submitting with only email filled
   await page.locator('#identifier').fill('user@example.com');
   await page.getByRole('button', { name: /sign in/i }).click();
-  // Browser native validation prevents submit — password field is required
+  // The browser's own required-field validation blocks the submit and focuses the offending
+  // input, so focus is the observable outcome here — there is no app-rendered error to assert.
   await expect(page.locator('#password')).toBeFocused();
 });
 
 // ── Wrong credentials ────────────────────────────────────────────────────────
 
 test('shows error on wrong password', async ({ page }) => {
-  // Let the POST go to the real backend but stub it to return an error
   await page.route('**/auth/login', async (route) => {
     if (route.request().method() !== 'POST') { await route.fallback(); return; }
     await route.fulfill({
@@ -160,7 +159,9 @@ test('follows redirect_to on successful login', async ({ page }) => {
     });
   });
 
-  // Intercept the final navigation so the test doesn't actually follow it
+  // redirect_to points outside the Login SPA at a target this environment does not serve, so
+  // page.url() after the fact proves nothing. Recording the navigation request captures the
+  // target regardless of whether it loads — note this listener observes, it does not block.
   let navigatedTo = '';
   page.on('request', req => {
     if (req.isNavigationRequest()) navigatedTo = req.url();
@@ -171,7 +172,8 @@ test('follows redirect_to on successful login', async ({ page }) => {
   await page.locator('#password').fill('correctpassword');
   await page.getByRole('button', { name: /sign in/i }).click();
 
-  // Give the navigation a moment
+  // A fixed wait, because the navigation never completes: there is no load state or URL
+  // change to await, only the outgoing request the listener above is watching for.
   await page.waitForTimeout(500);
   expect(navigatedTo).toContain('/admin/');
 });

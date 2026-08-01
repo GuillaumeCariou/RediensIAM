@@ -36,9 +36,17 @@ public sealed class InstanceConfigurationProvider(InstanceBootstrapOptions opts)
             .AddInterceptors(new Data.TenantScopeInterceptor(new HttpContextAccessor()))
             .Options;
 
+        // Writing the instances row is itself an audited mutation, and the chain link over it is
+        // keyed — so this pre-DI context needs the same AppConfig the app will build a moment
+        // later. Constructed from the configuration snapshot this provider was handed, which is
+        // where the encryption root already lives.
+        var appConfig = new AppConfig(new ConfigurationBuilder()
+            .AddInMemoryCollection(opts.EnvDefaults)
+            .Build());
+
         try
         {
-            using var db = new RediensIamDbContext(dbOpts);
+            using var db = new RediensIamDbContext(dbOpts, appConfig);
             db.Database.Migrate();
 
             var now = DateTimeOffset.UtcNow;

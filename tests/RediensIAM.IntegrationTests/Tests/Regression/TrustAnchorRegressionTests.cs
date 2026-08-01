@@ -106,6 +106,9 @@ public class TrustAnchorRegressionTests(TestFixture fixture)
             ["Keto:ReadUrl"]       = "http://attacker.invalid",
             ["Keto:WriteUrl"]      = "http://attacker.invalid",
             ["Smtp:FromName"]      = "RegressionR14",
+            // Writing the instance row is an audited mutation and the chain link over it is keyed,
+            // so the provider needs the encryption root the same way the rest of startup does.
+            ["Security:TotpSecretEncryptionKey"] = new string('0', 64),
         };
 
         var provider = new InstanceConfigurationProvider(new InstanceBootstrapOptions(

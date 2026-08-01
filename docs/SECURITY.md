@@ -7,9 +7,11 @@ useful to someone deciding whether to deploy it, which means it is not a feature
 below was checked against the code on the `security/hardening-2026-07-30` branch; where an audit
 report and the code disagreed, the code won and the disagreement is named.
 
-The finding-by-finding audit trail lives in `.security-hardening/`. The status ledger is
-`.security-hardening/14-finding-ledger.md`; it was written mid-audit and several of the items it
-lists as open have since been closed by steps 15–23. The current status is what is written here.
+The finding-by-finding audit trail lives in `.security-hardening/`. There is no status ledger any
+more: `14-finding-ledger.md` was moved out of the repository because too many of the items it
+listed as open had since been closed, and a ledger that is out of date is worse than none.
+**The current status is what is written here.** `.security-hardening/README.md` records which
+reports have been retired and why.
 
 ---
 
@@ -19,9 +21,11 @@ Authorisation on RediensIAM's own management surface is re-verified against Ory 
 request, with a `GrantedLevel` type the compiler will not let you fabricate and a default-deny gate
 that refuses any management route reaching a controller with no authorisation filter. Tenant
 isolation is enforced by ~200 hand-written query conjuncts; the row-level-security backstop under
-them is **on in dev, off in prod**, and does not by itself make the login path tenant-safe. Secrets are versioned and rotatable. The audit trail is written by the persistence
-layer rather than remembered by developers, and is hash-chained — with an **unkeyed** hash, and
-with no scheduled verifier. Four things are known-open and named at the bottom.
+them is **on in dev, off in prod**. The tenant login path now runs under its own organisation's
+scope rather than unscoped — the admin console, the token-keyed endpoints and the SAML ACS still do
+not, and §2 says why. Secrets are versioned and rotatable. The audit trail is written by the persistence
+layer rather than remembered by developers, and is chained under a keyed HMAC that a daily verifier
+actually runs. Four things are known-open and named at the bottom.
 
 ---
 
@@ -100,7 +104,13 @@ implementation: `KetoService.IsManagementLevelGrantedAsync`.
 - **The dual write is real and unreconciled.** Every grant writes a Keto tuple *and* an `org_roles`
   row (tuple-first, row-second, compensating tuple delete in the `catch`). `org_roles` is no longer
   *consulted* for an answer — it holds scope, display name and provenance — but a killed process
-  between the two writes leaves them divergent, and **there is no reconciler and no outbox**.
+  between the two writes leaves them divergent. `GrantReconciler` now detects that divergence
+  daily and repairs it on request, in the only two directions that are safe: a tuple with no
+  backing row is **revoked** (the row is written second, so it is a grant that never completed),
+  and a row with no tuple is **deleted rather than promoted** — minting authority from a database
+  row is exactly the coupling S-8 removed. Mass divergence refuses to auto-repair at 100 items,
+  because at that point both directions are destructive and the failure is store-level. **There is
+  still no outbox**, so the window itself remains.
 - **`AuthController`'s consent path still reads `db.OrgRoles`** to resolve scopes into the minted
   token, after the role list itself came from Keto. "Keto is the only store consulted anywhere"
   would be an overstatement.
@@ -127,7 +137,9 @@ implementation: `KetoService.IsManagementLevelGrantedAsync`.
 - **The tenant-scope interceptor.** `src/Data/TenantScopeInterceptor.cs` issues
   `SELECT set_config('rediensiam.org_id', …, false)` on every connection open. Two connection-string
   shapes that would silently break this — `No Reset On Close=true` and `Multiplexing=true` — are
-  refused at startup (`src/Config/AppConfig.cs:18-52`) rather than tolerated.
+  refused at startup (`AppConfig.RequirePerCheckoutSessionState`) rather than tolerated. Its scope
+  comes from the caller's validated claims, or — for the pre-authentication login flow, which has no
+  token yet — from `PinToOrganisationAsync`. See "What is scoped, and what still is not" below.
 - **Row-level security, live in dev.** `postgres.rls.enabled: true` in `values.dev.yaml`: 19 tables
   `ENABLE` + `FORCE` with one policy each, applied by a post-upgrade hook Job as the table owner and
   verified against two real tenants on the running cluster — cross-tenant read, insert, update and
@@ -136,42 +148,106 @@ implementation: `KetoService.IsManagementLevelGrantedAsync`.
 
 ### What does not exist
 
-- **Row-level security in production.** `postgres.rls.enabled` stays `false` in `values.yaml` and
-  `values.prod.yaml` does not override it: on an already-running database this is a migration, not
-  an upgrade, and no production cluster has been through it. The enablement as performed in dev,
-  including the rollback, is `.security-hardening/29-rls-prod-tls.md`.
+- **Row-level security in production.** `postgres.rls.enabled` stays `false` in
+  `values.yaml:314-315` and `values.prod.yaml` does not override it: on an already-running database
+  this is a migration, not an upgrade, and no production cluster has been through it. The
+  enablement as performed in dev, including the rollback, is
+  `.security-hardening/29-rls-prod-tls.md`. It has since been turned on once on a from-scratch
+  install of the *prod profile* in a scratch namespace on the dev cluster — 19 tables, verified by
+  `verify-deployment.sh --prod` V-25 — which is what surfaced the fact that it could not have been
+  enabled at all before then: `init.sh` granted `iam_backup` its required `BYPASSRLS` only when RLS
+  was already on at initdb, while `setup.sh --prod` forces RLS off on a first install and does not
+  ask. **No production database this repository could have created ever had that grant.** The grant
+  is now unconditional (`templates/postgres.yaml:97-106`); a database initdb'd before 2026-08-01
+  still needs `ALTER ROLE iam_backup BYPASSRLS` applied by hand, and `files/rls.sql` fails the
+  deploy rather than the backup if it is missing.
 - **There is no EF global query filter.** `grep HasQueryFilter src/` returns one comment and no
   code. Nothing catches a forgotten conjunct.
 
-### The limit that matters even when RLS is on
+### What is scoped, and what still is not
 
-The interceptor's fallback is the string `'system'`, not "deny"
-(`TenantScopeInterceptor.cs:82-90`). A request with no org context runs **unscoped**, and
-`LegitimatelyUnscopedPaths` (`:59-75`) lists nine such paths — including the whole of
-`AuthController` and `SystemAdminController`.
+The interceptor's fallback is the string `'system'`, not "deny" (`CurrentScope`,
+`TenantScopeInterceptor.cs:153-165`). A request with no org context runs **unscoped**, and some
+requests genuinely have none.
 
-That is not an oversight; it is unavoidable. **The login path resolves a user before a tenant is
-known.** You cannot scope the query that finds the user by email to an organisation you have not
-identified yet. The same is true of password reset, email verification, social callback, SAML ACS,
-PAT introspection, the bootstrap path, schema creation, the audit retention sweep and the webhook
-dispatcher.
+**The login path is no longer one of them.** This document used to say the opposite — that a login
+resolves a user before a tenant is known, and therefore cannot be scoped to one — and that was true
+of the code when it was written. It is not true now. A Hydra login challenge names an OAuth2 client;
+RediensIAM writes `org_id` and `project_id` into that client's metadata when the project is created;
+`LoginChallengeProject.ResolveOrgOrNull` reads it back and `TenantScopeInterceptor.PinToOrganisationAsync`
+publishes it as `rediensiam.org_id` before the request reads anything. Most of those pins cost **no
+database read at all** — the organisation is already in metadata the server itself wrote.
+`grep PinScope src/Controllers/AuthController.cs` is the complete list of the points at which it
+happens: the login `GET` and `POST` including the skip path, registration and its verification,
+consent, every MFA step, social start and callback, and the password-reset request.
 
-So: **turning RLS on does not make the login path tenant-safe.** It puts a schema-level backstop
-under the ~200 conjuncts on the *authenticated tenant* paths, which is a genuine and worthwhile
-defence in depth, and it leaves the highest-traffic unauthenticated surface exactly as safe as its
-hand-written queries. Anyone who reads "RLS" and hears "tenant isolation is now structural" has been
-misled, and this document would rather say so than let a flag flip imply it.
+Three properties are what make that pin defensible rather than merely present:
 
-That is measurable rather than theoretical. With statement logging on for one minute of ordinary dev
-traffic — an OIDC login, TOTP, consent, a token exchange, SuperAdmin listings and one
-PAT-authenticated introspection — the scopes the application actually set were:
+- **The scope is never derived from caller input.** Every source is server-authored — client
+  metadata the API offers no way to set, a subject RediensIAM minted itself, a server-side session
+  record, or a `projects` row. The e-mail or username typed into the form has no influence on it.
+- **It refuses to move a request its own token already scoped elsewhere**
+  (`PinToOrganisationAsync`, `:128-133`), so it cannot be turned into a way to widen an
+  authenticated caller's reach. The refusal is deliberately narrow — a token naming no organisation,
+  or the same one, is not a conflict — so a stray `Authorization` header on an ordinary login does
+  not become a 500.
+- **It does not change what a failed login reveals.** The queries it now runs under were already
+  filtered on `project.AssignedUserListId`, and both user-list assignment endpoints refuse a list
+  belonging to another organisation, so the RLS predicate adds no restriction those conjuncts did
+  not already impose. A foreign tenant's address takes the same `user == null` path, with the same
+  constant-time dummy verify and the same response body, as an address that was never registered.
 
-```
-  5 94177c59-8d98-4dd1-8a4b-1e6b6add59b8    ← org-bearing, RLS-protected
- 15 system                                   ← unscoped by necessity
-```
+Pinning also forced two latent defects into the open, and both are fixed. MFA failure audit rows
+were written with `OrgId = null`, which the `audit_log` policy's `WITH CHECK` half refuses outright
+under a pinned scope; they now carry the MFA session's org and project, so a tenant can finally see
+its own users' MFA failures. And `FindOrCreateSocialUserAsync` matched a provider subject with **no
+tenant constraint** — one Google account invited by two customers returned the *first* tenant's user
+for the *second* tenant's login. The predicate now carries
+`s.User.UserListId == project.AssignedUserListId`, which is what makes that fix independent of
+whether RLS is switched on.
 
-Enabling RLS is also a real outage risk: the policies deny everything to a connection that has not
+### What still runs unscoped, and why
+
+`TenantScopeInterceptor.LegitimatelyUnscopedPaths` (`:71-92`) is the greppable list. It has twelve
+entries and no longer contains "the whole of `AuthController`":
+
+| Path | Why it is not scoped |
+|---|---|
+| `AuthController.AdminLogin` | the console's users live in the `__system__` list, whose `OrgId IS NULL`. The `users` policy is `EXISTS (… ul."OrgId" = rls_org())` and `NULL = <uuid>` is never true, so **no** organisation scope can see those rows. Structural, not an oversight |
+| `GET /auth/consent`, admin-client branch | its query asks which organisations a console user administers; the cross-organisation scan *is* the question |
+| `verify-email`, `invite/complete`, `password-reset/verify`, `password-reset/confirm` | the subject is named by a random token, and the read that resolves the token is itself the lookup |
+| the fallback read of `projects` | only for a client registered before `org_id` was written into its metadata; that read is what decides the scope, so it cannot run under it |
+| `GatewayAuthMiddleware` → PAT introspection | runs inside the middleware, before any claims exist; a PAT is found by hash |
+| **`SamlController`** | it resolves a project from the challenge exactly as `AuthController` does, so it **can** be pinned. It has not been. Open — listed in §8 |
+| migrations, super-admin bootstrap, `InstanceConfigurationProvider`, `AuditLogRetentionService`, `WebhookDispatcherService`, `SystemAdminController` | deployment-wide or cross-tenant by design |
+
+The honest statement is narrower than it used to be, and it is still not "tenant isolation is now
+structural": **RLS now covers the tenant login path as well as authenticated tenant API traffic.
+What it does not cover is the admin console and the token-keyed endpoints, which have no tenant to
+be scoped to, and the SAML ACS, which has one and does not use it yet.**
+
+### The measurement
+
+`iam_db_connection_scope_total{scope="system"|"org"}` (`src/Services/IamMetrics.cs:53-56`) counts
+every connection checkout at the point the scope is decided, so the ratio is measurable rather than
+asserted. `.security-hardening/32-login-tenant-scope.md §4` reports ten complete
+authorization-code logins driven against the dev cluster, before and after the change:
+
+| Build | `scope="system"` | `scope="org"` |
+|---|---|---|
+| before | **+80** | 0 (series never emitted) |
+| after | 0 | **+80** |
+
+Eighty checkouts either way — the scoping costs no extra round trips. **Those numbers are quoted
+from that report and were not re-measured for this document**; what was verified here is the
+counter, every pin site named above, and the two defect fixes, all read in the source.
+
+The `5 org-scoped / 15 system` sample this section used to print has been dropped rather than
+updated: it was a mixed minute of traffic including SuperAdmin listings and PAT introspection, which
+remain unscoped by design, so it never shared a denominator with the login figure it was being read
+as.
+
+Enabling RLS remains a real outage risk: the policies deny everything to a connection that has not
 set the variable, which for an identity provider is total. The runbook is in
 [`DEPLOYMENT.md`](DEPLOYMENT.md#turning-rls-on).
 
@@ -252,7 +328,7 @@ These do not change the security properties, but a document that says "always" s
 ### One root, derived per purpose
 
 `Security:EncryptionKey` is a 32-byte root that is never used directly. Every purpose gets its own
-HKDF-SHA256 subkey (`src/Config/AppConfig.cs:255-260`): TOTP secrets, webhook signing secrets,
+HKDF-SHA256 subkey (`AppConfig.DeriveKey`, `src/Config/AppConfig.cs:263-266`): TOTP secrets, webhook signing secrets,
 per-org SMTP passwords, login themes, the DataProtection key ring, and the device-fingerprint key.
 
 ### Rotation is maintenance, not a disaster procedure
@@ -333,22 +409,31 @@ interleave. `AuditChain.Compute` (`src/Data/AuditChain.cs:45-63`) hashes the pre
 every field of the row plus canonicalised metadata. `AuditChain.FirstBreak` returns the id of the
 first row whose link fails; `AuditLogService.VerifyChainAsync` is its entry point.
 
-**Three caveats, none of which this document will bury:**
+The first two of the three caveats this section used to carry are now closed. How they were closed
+matters as much as that they were:
 
-1. **The hash is plain unkeyed SHA-256, not an HMAC.** It detects accidental corruption and a
-   careless edit. It does **not** stop anyone who can write to the table from recomputing the chain
-   forward from the row they altered. Tamper-*evidence* against a careless adversary, not against a
-   capable one.
-2. **`VerifyChainAsync` has no production caller.** No endpoint, no hosted service, no schedule. It
-   exists and it is tested; nothing runs it for you. Until something does, the chain detects nothing
-   on its own.
-3. **There is no database-level append-only enforcement.** The guard is application-layer, and the
-   application role must retain `DELETE` on `audit_log` because the retention sweep uses
+1. **The link is `HMAC-SHA256(K, prevHash ‖ row)`** under a purpose derived from the HKDF root, so
+   database write access alone no longer produces a table that verifies. Rows written before the
+   keying are stored bare and are counted **`Unverifiable`, never `Verified`** — re-chaining them
+   was rejected deliberately, because recomputing an old row under the new key launders something
+   unattestable into something attested. The boundary is *positional*: an unkeyed hash is accepted
+   only before the first keyed row, or the boundary itself becomes the downgrade attack. Each row
+   names its key id, so retiring a root makes its rows unverifiable rather than broken.
+2. **`VerifyChainAsync` has a caller.** `IntegrityMonitorService` runs it at startup and every 24
+   hours, and `GET /admin/audit-chain` exposes it. `iam_audit_chain_broken_orgs` and
+   `iam_audit_chain_unverifiable_rows` are the gauges to alert on — a *rise* in the second matters
+   as much as any value of the first.
+3. **There is still no database-level append-only enforcement.** The guard is application-layer, and
+   the application role must retain `DELETE` on `audit_log` because the retention sweep uses
    `ExecuteDeleteAsync`, which bypasses the change tracker and therefore the guard.
 
+Two limits remain, and are not softened here: **tail truncation** — deleting the newest rows and
+stopping — is still invisible without an external anchor, and there is **no outbox**, so a process
+killed between the row write and the chain update leaves a gap the verifier reports as a break.
+
 Retention has a hard floor of 90 days that a tenant cannot set below
-(`src/Config/AppConfig.cs:113-119`), re-clamped on the delete path so a stale value cannot slip
-through.
+(`AppConfig.MinAuditRetentionDays`, `src/Config/AppConfig.cs:275-281`), re-clamped on the delete
+path so a stale value cannot slip through.
 
 ### Detection
 
@@ -367,10 +452,10 @@ Neither runs on a schedule by default. See [`TESTING.md`](TESTING.md#detection-r
 | Control | State |
 |---|---|
 | Public ingress TLS | on in prod (`letsencrypt`); **off in dev** by design — `iam.localhost` cannot be certified |
-| Admin ingress TLS | on in prod, but `selfsigned` — a known defect, see below |
+| Admin ingress TLS | on in prod, but self-signed by the release's own `Issuer` — a known defect, see below |
 | Postgres server TLS + `hostssl` | **on in both shipped environments** |
 | Postgres roles | four least-privilege login roles, `scram-sha-256`, no shared superuser in any DSN |
-| Dragonfly TLS | set in **both** values files; **only ever executed in dev** — see below |
+| Dragonfly TLS | set in **both** values files; executed in dev, and once under the prod profile in a scratch namespace — see below |
 | NetworkPolicy | namespace-wide default-deny plus five lockdown policies; CGNAT (`100.64.0.0/10`) egress blocked |
 | Pod hardening | non-root, drop `ALL` caps, no priv-esc, read-only root, `seccompProfile: RuntimeDefault`, `automountServiceAccountToken: false` |
 | Image | pinned by `@sha256:` digest, `pullPolicy: IfNotPresent` |
@@ -379,11 +464,17 @@ Neither runs on a schedule by default. See [`TESTING.md`](TESTING.md#detection-r
 
 Two of these need their qualifier stated, because a summary table elsewhere reads as unconditional:
 
-- **Dragonfly TLS is set in both values files and has only ever run in dev.**
-  `values.prod.yaml` now sets `dragonfly.local.tls.enabled: true`; the chart default in
-  `values.yaml:333` remains `false`. Prod has never been deployed from this branch, so the prod half
-  is `helm template`-verified and reasoned from the dev cutover, **not observed** — see the risk
-  register below. The application side is complete and *pinned*
+- **Dragonfly TLS is set in both values files. It has run in dev, and once under the prod profile in
+  a scratch namespace — never on a production cluster.**
+  `values.prod.yaml` sets `dragonfly.local.tls.enabled: true`; the chart default in
+  `values.yaml:339-340` remains `false`. The prod-profile install described in
+  `.security-hardening/33-prod-profile-proof.md` did exercise it: cleartext `PING` was refused by the
+  server, a TLS `PING` against the mounted CA succeeded, the same connection against the OS trust
+  store was rejected, and the app read and wrote through the tunnel. That is a real observation and
+  it is more than the rendering this document used to claim — but it was one namespace on the
+  single-node dev cluster, for about an hour, from scratch. The upgrade path this control actually
+  has to survive in production — a cutover against a cache that already holds an unprotected key
+  ring — remains reasoned about, not observed. The application side is complete and *pinned*
   — `src/Config/CacheTls.cs` builds an `X509Chain` with `CustomRootTrust` over only the mounted CA,
   keeps name mismatch fatal, and requires the serverAuth EKU; it is not a `return true`. The chart
   mount exists. It is a **hard cutover** — `--tls` makes Dragonfly stop
@@ -393,8 +484,29 @@ Two of these need their qualifier stated, because a summary table elsewhere read
   in this table; the two-minute check is in
   [`DEPLOYMENT.md`](DEPLOYMENT.md#before-the-first-install-on-a-new-cluster--two-minutes).
 
-**Production has never been deployed from this branch.** Every prod path is template-verified and
-preflight-verified; none has been run against a real production cluster.
+**No production cluster has ever run this.** The production *profile* — `values.yaml` +
+`values.prod.yaml`, installed by `setup.sh --prod` — has now been applied once, to a scratch
+namespace on the single-node dev cluster, and destroyed afterwards
+(`.security-hardening/33-prod-profile-proof.md`). That established only that the chart, the two
+scripts and the values files agree with each other well enough to produce a running system with the
+prod-only controls live. It found **six defects, five of which made a first-ever install fail
+outright or report a control it had not measured**; all six are fixed. Two are worth naming here
+because they change what earlier claims in this document were worth:
+
+- **`verify-deployment.sh --prod` was measuring the wrong hostname.** It did not layer the operator
+  answers from `values.prod.override.yaml`, so it probed the committed default host. Traefik answers
+  404 on a Host it has no router for, V-04 counted 404 as a refusal, and **the P-04 management-API
+  assertion therefore read green while measuring nothing at all.** V-04 now runs a positive control
+  first — `/login` on the public host must answer 2xx/3xx, or the four deny probes are reported as
+  inconclusive rather than as passes. On the fixed run the refusals are 403 from the `ipAllowList`
+  middleware, not 404 from Traefik shrugging.
+- **RLS could never have been enabled on any production database** this repository could create; see
+  §2.
+
+What a real production cluster still has to establish on its own — a publicly trusted certificate
+(ACME HTTP-01 has never been executed), that the admin surface is actually private, that the data
+survives anything, that an upgrade across a schema migration works — is listed in full in §8 of that
+report. A scratch namespace is not production.
 
 ---
 
@@ -407,17 +519,44 @@ preflight-verified; none has been run against a real production cluster.
 | Breached-password check, **on by default** for new projects | `Project.CheckBreachedPasswords = true` |
 | Rate limiting per IP **and** per user account | `RateLimitService.IsBlockedAsync(ip, userId)` |
 | Open-redirect allowlist | `RedirectValidator.cs` + `AuthController.SafeRedirect` |
-| SSRF re-validation on every webhook delivery, with `ConnectCallback` address pinning | `WebhookUrlValidator`, `Program.cs:85,109,111` |
+| SSRF re-validation on every webhook delivery, with `ConnectCallback` address pinning | `WebhookUrlValidator.CreateSsrfSafeHandler`, `Program.cs:92,117,119` |
 | HMAC-signed webhook deliveries | `WebhookService.ComputeSignature` |
-| Per-org SMTP host validated against the mesh/loopback blocklist; submission port and STARTTLS required | `SmtpEndpointValidator.cs:39` |
+| Per-org SMTP host validated against the mesh/loopback blocklist; submission port and STARTTLS required | `SmtpEndpointValidator.cs:21,38` |
 | Tenant `custom_css` and every other theme value validated server-side | `LoginThemeValidator.cs` |
 | Re-authentication on every MFA factor mutation | `AccountController.RequireReauthAsync` |
 | Session revocation on role change, org suspension, deactivation, password change | `LiveAuthorizationService.InvalidateAsync`, `SystemAdminController.SuspendOrg`, `UserHelpers.ApplyUpdate` |
 | Trusted-proxy fail-closed in production (the app **refuses to start** on an empty value) | `Program.cs:ConfigureForwardedHeaders` |
-| `AllowedHosts` wildcard replaced with the derived host list | `Program.cs:28-42` |
-| CSP with `script-src`, `base-uri`, `form-action`, `object-src`, `frame-ancestors` on both branches | `Program.cs:448-476` |
-| Security parameters clamped so a hostile config row cannot weaken them | `AppConfig.cs:25,47,48,57,64,118-119` |
-| Trust anchors (`Hydra:*Url`, `Keto:*Url`, `App:TrustedProxies`) excluded from the DB config layer | `InstanceConfiguration.cs:84,114-125` |
+| `AllowedHosts` wildcard replaced with the derived host list | `Program.ReplaceWildcardAllowedHosts`, `Program.cs:33-34,437-446` |
+| CSP with `script-src`, `base-uri`, `form-action`, `object-src`, `frame-ancestors` on both branches | `Program.cs:492-502` |
+| Security parameters clamped so a hostile config row cannot weaken them | `AppConfig.cs:73,95,96,103-105,122,281` |
+| SAML response `Destination` validated against this deployment's ACS URL | `SamlService.DestinationMatches`, called from `SamlController.cs:178` — read the limit below |
+| Trust anchors (`Hydra:*Url`, `Keto:*Url`, `App:TrustedProxies`) excluded from the DB config layer | `InstanceConfiguration.cs:92,122` |
+
+Two of these do less than their one-line summary suggests, and neither should be read without its
+qualifier:
+
+- **The SAML `Destination` check is solid only against IdPs that sign the response.** SAML 2.0 core
+  §3.2.2 makes the attribute optional, so an absent `Destination` is accepted and logged at Warning
+  rather than refused — requiring it would break working IdPs that omit it, and would not close the
+  gap anyway. An IdP that signs the *response* puts `Destination` inside the signature, where it
+  cannot be altered without invalidating it; an IdP that signs only the *assertion* leaves the
+  `<Response>` element and its `Destination` unprotected, and this SP accepts that shape. Against an
+  attacker holding such a response the check is bypassable by rewriting the attribute. It stops
+  naive relaying between two endpoints of *this same SP*, where the audience is identical and
+  therefore proves nothing, and it stops a misconfigured endpoint. It is defence in depth. The
+  load-bearing controls on that path remain `AllowedAudienceUris`, the pinned signing certificate
+  and the single-use `InResponseTo` record. The library-behaviour half of this — what ITfoxtec 4.17.0
+  does and does not validate — is taken from `.security-hardening/36-saml-destination-config.md`,
+  which established it by decompiling the referenced assembly; it was **not independently re-derived
+  for this document**. What was verified here is the comparison rule, the call site and the ordering.
+- **This is a behaviour change for existing SAML integrations.** A response whose `Destination` does
+  not resolve to `{App:PublicUrl}/auth/saml/acs` is now `400 saml_response_invalid`. Host case,
+  scheme case, an explicitly written `:443`/`:80` and a trailing slash are all tolerated; a different
+  host, a different path, a scheme downgrade or a genuinely different port are not. Before upgrading,
+  check `GET /auth/saml/metadata` — `AssertionConsumerService/@Location` prints the exact value the
+  app will compare against — against the ACS URL registered at each IdP. The usual way this bites is
+  an `App:PublicUrl` pointing at a cluster-internal address while the IdP holds the public ingress
+  hostname.
 
 ---
 
@@ -432,16 +571,19 @@ assumed unaddressed.
 | Item | Severity | State | Why it is open |
 |---|---|---|---|
 | **npm advisories in both SPAs** | High | **7 high per SPA**, down from 8 high + 1 low. `react-router` and `brace-expansion` among them; remaining fixes need `npm audit fix --force`, i.e. breaking major bumps | The forced upgrades were judged riskier than the advisories as reached by these SPAs. That judgement has not been re-tested since the SPAs were rewritten |
-| **Dragonfly TLS in prod is untested live** | Medium | `values.prod.yaml` now sets `dragonfly.local.tls.enabled: true`; `helm lint`/`helm template` pass, no prod cluster exists to run it against | A hard cutover proven only on the dev cluster. It also costs every session at the moment it happens, and a prod Dragonfly whose key ring survives the upgrade needs `DEL rediensiam:dataprotection:keys` first — see `DEPLOYMENT.md` |
+| **The Dragonfly TLS *cutover* in prod is untested** | Medium | the control itself has now been observed live under the prod profile in a scratch namespace (§6). What has never been run is the upgrade path: a cache that already holds an unprotected DataProtection key ring | A hard cutover. It costs every session at the moment it happens, and a prod Dragonfly whose key ring survives the upgrade needs `DEL rediensiam:dataprotection:keys` first — see `DEPLOYMENT.md` |
 | **Registry unauthenticated, no TLS, no signature verification** | Medium | bound to loopback and digest-pinned, so the reachable attack is narrow | ~2 h; **required** if k3s is not on the deploy host — bind and auth move together |
-| **Prod admin certificate is self-signed** | Medium | `values.prod.yaml:29` `clusterIssuer: selfsigned` | It trains operators to click through a warning on the most privileged UI. Ways out: an internal CA, or ACME DNS-01 |
-| **No reconciler for the Keto/`org_roles` dual write** | Medium, structural | compensating delete in the `catch` covers a thrown exception, not a killed process | S-8's second half was never scoped |
-| **RLS off in prod** | Medium, structural | live and verified in dev since `29-rls-prod-tls.md`; chart default and `values.prod.yaml` still `false` | On an existing prod database it is a migration, not an upgrade, and there is no prod cluster to rehearse on. And see §2 — even on, it does not make the login path tenant-safe |
-| **Audit chain hash is unkeyed; no scheduled verifier; no DB-level append-only** | Medium | see §5 | An HMAC needs a key with its own rotation story; the verifier needs an owner and an alert destination |
+| **Prod admin certificate is self-signed** | Medium | `values.prod.yaml:30` `clusterIssuer: ""` — meaning the release's own namespaced `Issuer`. Nothing can certify a headscale-issued name | It trains operators to click through a warning on the most privileged UI. Ways out: an internal CA, or ACME DNS-01 |
+| **ACME / Let's Encrypt has never been executed** | Medium | the `letsencrypt` ClusterIssuer in `cert-manager-issuer.yaml` has never been applied to any cluster; the prod-profile install used a self-signed ClusterIssuer instead | HTTP-01 needs public DNS and port 80 reachable from the internet. Neither existed for the test. Whether a publicly trusted certificate can be issued is unknown |
+| **No outbox for the Keto/`org_roles` dual write** | Low, structural | `GrantReconciler` now detects and repairs divergence daily; the write window itself is still not atomic, so a killed process still creates a gap that lives until the next run | an outbox is the real fix and was not attempted |
+| **RLS off in prod** | Medium, structural | live in dev since `29-rls-prod-tls.md`, and turned on once on a from-scratch prod-profile install in a scratch namespace (19 tables, V-25). Chart default and `values.prod.yaml` are still `false` | On an existing prod database it is a migration, not an upgrade, and there is no prod cluster to rehearse on. It also could not have been enabled *at all* on a prod database before 2026-08-01 — see §2 |
+| **The SAML ACS is not tenant-scoped** | Low–Medium | `SamlController` resolves a project from the login challenge exactly as `AuthController` does, so it can call `PinToOrganisationAsync`; it does not. It is named in `LegitimatelyUnscopedPaths` | ~3 lines, and the only reason it is open is that the file belonged to a different work stream when the login path was scoped. Its lookups are already filtered on `project.AssignedUserListId`, so this is a missing backstop, not a missing conjunct |
+| **SAML `Destination` is bypassable against assertion-only signers** | Low | see §7 — the check is inside the signature only when the IdP signs the `<Response>` element | Closing it means refusing responses that sign the assertion alone, which is a shape this SP accepts today and some IdPs only emit |
+| **No DB-level append-only on `audit_log`; tail truncation still invisible** | Low–Medium | see §5. The chain is keyed and verified daily now; what remains is that the application role must keep `DELETE` for the retention sweep, and that deleting the newest rows and stopping leaves nothing to detect | append-only needs a Postgres rule or trigger the retention sweep can bypass explicitly; truncation needs an off-box anchor |
 | **`/api/authorize` object check skips ownership when both scopes are absent** | Low–Medium | `IsObjectInScopeAsync` checks only that the namespace is known when the caller is deployment-level *and* the subject token has no `org_id`. The `System` namespace is refused to every caller before this point, so what remains is an unowned check against `Organisations` / `Projects` / `UserLists` | Not named by any report; found while writing this document. The `System` half was closed in `75e9576`; the rest needs a decision about what a deployment-level caller with an org-less token may legitimately ask |
 | **`GET /admin/system/health` returns raw `ex.Message`** | Low | the SMTP username is redacted; two branches still return exception text (`SystemHealthController` `:222`, `:245`) | Treat this route as equivalent to a stack trace |
 | **Breach check fails open** | Low | `BreachCheckService.cs:35` — `return 0` on an outage | Deliberate availability trade |
-| **SAML pending state consumed before signature validation** | Low | `ReadSamlResponse` → `GetAndDeletePendingAsync` → `Unbind` | Unauthenticated in-flight login DoS, requiring an unguessable request id |
+| **SAML pending state consumed before signature validation** | Low | `ReadSamlResponse` → status check → **`Destination` check** → `GetAndDeletePendingAsync` → `Unbind`. Unchanged: the new check was deliberately placed *before* the consume so a misdirected response cannot burn the `InResponseTo` of a legitimate login still in flight | Unauthenticated in-flight login DoS, requiring an unguessable request id |
 | **Rust SDK ignores the OS trust store** | Low | `rustls-tls`, compiled-in webpki roots | A private-CA deployment will not validate |
 | **No ingress base-path support** | Low, functional | serve RediensIAM on a dedicated host | Documented around rather than fixed |
 | **Off-node backup copy** | Operational | the nightly dump lands on a PVC on the same node and disk as the database | Covers a bad migration or a dropped table; does not cover losing the node |
@@ -467,16 +609,21 @@ assumed unaddressed.
 
 - **SAML XML processing beyond what was assessed.** `.security-hardening/15a-backend-residuals.md
   §7` assessed T-26 and reports one real defect found and a clean bill on the two things it was
-  feared for. `src/Services/SamlService.cs:29` sets
+  feared for. `src/Services/SamlService.cs:39` sets
   `CertificateValidationMode = X509CertificateValidationMode.None`, and ITfoxtec's defaults govern
   `XmlResolver` / `DtdProcessing`. Do not read that assessment as an exhaustive XXE and
-  signature-wrapping review.
+  signature-wrapping review. The `Destination` work in
+  `.security-hardening/36-saml-destination-config.md` decompiled the library to establish four
+  specific facts about `Saml2Request.Read` and `Saml2Configuration`; that is not the same as an
+  audit of its XML processing, and it did not attempt one.
 
 ---
 
 ## 9. Reporting a vulnerability
 
 There is no published disclosure process in this repository. Until there is, the audit trail in
-`.security-hardening/` and the finding ledger are the record of what has been looked at and by
-whom. `.security-hardening/14-finding-ledger.md` §10, "findings no step ever owned", is the most
-useful page in that directory for anyone deciding where to look next.
+`.security-hardening/` is the record of what has been looked at and by whom. Start with its
+`README.md`, which says which reports have been retired and why, and then with
+`11-pentest-results.md` — the only one that set out to break the others. The finding ledger this
+section used to point at, `14-finding-ledger.md`, is no longer in the repository; it was moved out
+because it went stale.

@@ -112,7 +112,6 @@ test('advances to new-password step after valid OTP', async ({ page }) => {
 // ── Step 3: new password ──────────────────────────────────────────────────────
 
 test('shows error when new passwords do not match', async ({ page }) => {
-  // Drive to the password step
   await page.route('**/auth/password-reset/request', async (route) => {
     if (route.request().method() !== 'POST') { await route.fallback(); return; }
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ session_id: 'reset-sess-001' }) });

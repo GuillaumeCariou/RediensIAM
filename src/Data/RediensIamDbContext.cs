@@ -1,10 +1,20 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
+using RediensIAM.Config;
 using RediensIAM.Data.Entities;
+using RediensIAM.Services;
 
 namespace RediensIAM.Data;
 
-public class RediensIamDbContext(DbContextOptions<RediensIamDbContext> options) : DbContext(options)
+/// <param name="options">Provider and interceptor configuration, as for any EF Core context.</param>
+/// <param name="appConfig">
+/// Source of the audit-chain HMAC key. Optional so the design-time factory and the tests that new
+/// a context up for model inspection keep compiling; a context without it may not write an audit
+/// row — see <see cref="ChainKey"/>. Resolved from DI on every context the application itself
+/// builds.
+/// </param>
+public class RediensIamDbContext(DbContextOptions<RediensIamDbContext> options, AppConfig? appConfig = null)
+    : DbContext(options)
 {
     public DbSet<Organisation> Organisations => Set<Organisation>();
     public DbSet<UserList> UserLists => Set<UserList>();
@@ -134,11 +144,27 @@ public class RediensIamDbContext(DbContextOptions<RediensIamDbContext> options) 
             foreach (var row in group)
             {
                 row.PrevHash = string.IsNullOrEmpty(prev) ? null : prev;
-                row.Hash = AuditChain.Compute(row, row.PrevHash);
+                row.Hash = AuditChain.Compute(ChainKey, row, row.PrevHash);
                 prev = row.Hash;
             }
         }
     }
+
+    /// <summary>
+    /// The key the chain links are computed under.
+    ///
+    /// <para>
+    /// Throwing beats writing an unkeyed row. An audit row whose hash cannot be forged is the
+    /// entire point; a context that quietly fell back to a bare digest would produce rows that
+    /// verify against nothing and look exactly like the pre-migration ones. The only contexts
+    /// without an <see cref="AppConfig"/> are the design-time migration factory and model-only
+    /// tests, and neither writes audit rows.
+    /// </para>
+    /// </summary>
+    private KeyRing ChainKey => (appConfig ?? throw new InvalidOperationException(
+        "This DbContext was constructed without an AppConfig, so the audit hash chain has no key " +
+        "and the row cannot be written. Resolve the context from DI, or pass an AppConfig."))
+        .AuditChainKey;
 
     private static long ChainLockKey(Guid? orgId)
         => orgId is { } id ? BitConverter.ToInt64(id.ToByteArray(), 0) : 0L;

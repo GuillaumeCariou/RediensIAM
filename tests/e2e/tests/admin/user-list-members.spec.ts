@@ -170,6 +170,5 @@ test('revoke-all sessions clears the list in dialog', async ({ adminPage: page }
   }
 
   expect(revokeAllCalled).toBe(true);
-  // After revoke-all the dialog should show empty state
   await expect(dialog.getByText(/no active sessions|no sessions/i)).toBeVisible();
 });

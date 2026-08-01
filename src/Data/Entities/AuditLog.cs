@@ -19,9 +19,11 @@ public class AuditLog
     public string? PrevHash { get; set; }
 
     /// <summary>
-    /// SHA-256 over this row's contents and <see cref="PrevHash"/>. Written by
-    /// <see cref="RediensIamDbContext.SaveChangesAsync"/>, never by a caller. See
-    /// <see cref="AuditChain"/>.
+    /// <c>k{keyId}:{hex}</c> — HMAC-SHA256 over this row's contents and <see cref="PrevHash"/>,
+    /// under the deployment's audit-chain key. Written by
+    /// <see cref="RediensIamDbContext.SaveChangesAsync"/>, never by a caller. A bare 64-hex value
+    /// with no <c>k…:</c> prefix is a row from before the chain was keyed, and an empty value one
+    /// from before the chain existed; see <see cref="AuditChain"/> for what each is worth.
     /// </summary>
     public string Hash { get; set; } = "";
 }

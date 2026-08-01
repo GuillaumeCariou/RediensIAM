@@ -87,8 +87,15 @@ The interview asks for the things nothing can default — public and admin hostn
 CloudNativePG or the built-in StatefulSet, where the off-node backup copy goes — and fails rather
 than guessing. [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) covers what each answer costs you.
 
-**Production has never been deployed from this branch.** Every prod path is template-verified and
-preflight-verified; none has been run against a real production cluster.
+**No production cluster has ever run this.** The production *profile* has been installed once —
+`setup.sh --prod`, driven through a real interview, into a scratch namespace on the single-node dev
+cluster, then destroyed. It found six defects, five of which made a first-ever install fail outright
+or report a control it had not measured; all six are fixed
+(`.security-hardening/33-prod-profile-proof.md`). That establishes that the chart, the scripts and
+the values files agree with each other. It does not establish that production works: ACME has never
+been executed, no publicly trusted certificate has ever been issued, no backup has been restored, no
+upgrade has been run across a schema migration, and nothing has been up for longer than an hour. A
+scratch namespace is not production.
 
 #### Encrypt Kubernetes secrets at rest
 

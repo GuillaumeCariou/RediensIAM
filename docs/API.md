@@ -141,8 +141,8 @@ credential-stuffing gap.
 | Method | Path | Action | Note |
 |---|---|---|---|
 | GET | `/auth/saml/start` | `Start` | the `idp_id` must belong to the login challenge's project |
-| POST | `/auth/saml/acs` | `AssertionConsumerService` | `[IgnoreAntiforgeryToken]` — the POST arrives from an external IdP and is authenticated by its XML signature instead |
-| GET | `/auth/saml/metadata` | `Metadata` | SP metadata |
+| POST | `/auth/saml/acs` | `AssertionConsumerService` | `[IgnoreAntiforgeryToken]` — the POST arrives from an external IdP and is authenticated by its XML signature instead. A response whose `Destination` attribute names an endpoint other than this deployment's ACS is refused with `400 saml_response_invalid`; an absent `Destination` is accepted and logged at Warning, per SAML 2.0 core §3.2.2. See [`SECURITY.md`](SECURITY.md#7-application-layer-controls-briefly) for the limit |
+| GET | `/auth/saml/metadata` | `Metadata` | SP metadata. `AssertionConsumerService/@Location` is the exact value the ACS compares `Destination` against — check it against each IdP's registered ACS URL before upgrading |
 
 ---
 

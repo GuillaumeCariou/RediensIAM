@@ -181,7 +181,6 @@ test('revoke all sessions calls DELETE /account/sessions', async ({ adminPage: p
 
   await page.getByRole('button', { name: /revoke all/i }).click();
 
-  // Confirm if there's an alert dialog
   const confirmBtn = page.getByRole('button', { name: /confirm|revoke|yes/i }).last();
   if (await confirmBtn.isVisible({ timeout: 500 }).catch(() => false)) {
     await confirmBtn.click();
@@ -221,7 +220,6 @@ test('connect provider button navigates to oauth2 link start', async ({ adminPag
   await page.goto('/admin/account');
   await page.getByRole('tab', { name: /security/i }).click();
 
-  // Click "Connect" (or "Link") for any provider
   await page.getByRole('button', { name: /connect|link.*provider/i }).first().click();
 
   await page.waitForTimeout(500);
@@ -272,7 +270,6 @@ test('unlink social account calls DELETE', async ({ adminPage: page }) => {
 
   await page.getByRole('button', { name: /unlink/i }).click();
 
-  // Confirm if needed
   const confirmBtn = page.getByRole('button', { name: /confirm|unlink|yes/i }).last();
   if (await confirmBtn.isVisible({ timeout: 500 }).catch(() => false)) {
     await confirmBtn.click();

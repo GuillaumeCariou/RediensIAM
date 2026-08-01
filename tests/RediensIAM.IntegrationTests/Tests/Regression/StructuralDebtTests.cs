@@ -184,7 +184,7 @@ public class StructuralDebtTests(TestFixture fixture)
         await audit.RecordAsync(org.Id, null, null, "test.chain.two");
         await audit.RecordAsync(org.Id, null, null, "test.chain.three");
 
-        (await audit.VerifyChainAsync(org.Id)).Should().BeNull("nothing has been touched yet");
+        (await audit.VerifyChainAsync(org.Id)).FirstBreak.Should().BeNull("nothing has been touched yet");
 
         var middle = await fixture.Db.AuditLogs.AsNoTracking()
             .Where(a => a.OrgId == org.Id && a.Action == "test.chain.two")
@@ -193,7 +193,7 @@ public class StructuralDebtTests(TestFixture fixture)
         await fixture.Db.Database.ExecuteSqlRawAsync(
             "UPDATE audit_log SET \"Action\" = 'test.chain.rewritten' WHERE \"Id\" = {0}", middle);
 
-        (await audit.VerifyChainAsync(org.Id)).Should().Be(middle);
+        (await audit.VerifyChainAsync(org.Id)).FirstBreak.Should().Be(middle);
     }
 
     /// <summary>A row removed from the middle leaves its successor pointing at nothing.</summary>
@@ -213,7 +213,7 @@ public class StructuralDebtTests(TestFixture fixture)
         await fixture.Db.Database.ExecuteSqlRawAsync(
             "DELETE FROM audit_log WHERE \"Id\" = {0}", ids[1]);
 
-        (await audit.VerifyChainAsync(org.Id)).Should().Be(ids[2],
+        (await audit.VerifyChainAsync(org.Id)).FirstBreak.Should().Be(ids[2],
             "the row after the deleted one names a predecessor that no longer exists");
     }
 

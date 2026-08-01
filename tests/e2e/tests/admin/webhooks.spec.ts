@@ -76,7 +76,7 @@ test('create dialog requires at least one event', async ({ adminPage: page }) =>
   await page.getByRole('button', { name: /add webhook|new webhook/i }).click();
 
   await page.getByPlaceholder(/https:\/\//i).fill('https://example.com/new');
-  // Don't select any events
+  // No event is selected on purpose — that omission is the condition under test.
   await page.getByRole('button', { name: /^create$/i }).click();
 
   await expect(page.getByText(/select at least one event/i)).toBeVisible();
@@ -124,7 +124,6 @@ test('delete webhook calls DELETE endpoint', async ({ adminPage: page }) => {
   await row.getByRole('button').click();
   await page.getByText(/delete/i).click();
 
-  // Confirm if needed
   const confirmBtn = page.getByRole('button', { name: /confirm|delete|yes/i }).last();
   if (await confirmBtn.isVisible({ timeout: 500 }).catch(() => false)) {
     await confirmBtn.click();
@@ -197,7 +196,6 @@ test('expandable delivery shows payload', async ({ adminPage: page }) => {
   await row.getByRole('button').click();
   await page.getByText(/deliveries|delivery log/i).click();
 
-  // Click on the first delivery row to expand payload
   await page.getByRole('row').filter({ hasText: 'user.created' }).click();
 
   await expect(page.getByText('{"event":"user.created"}')).toBeVisible();

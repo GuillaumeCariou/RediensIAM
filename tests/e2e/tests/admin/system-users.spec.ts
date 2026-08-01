@@ -198,7 +198,6 @@ test('opens sessions dialog from dropdown menu', async ({ adminPage: page }) => 
   await page.getByPlaceholder(/search by email/i).fill('alice');
   await page.getByRole('button', { name: /search/i }).click();
 
-  // Open dropdown on Alice's row (last cell)
   await page.getByRole('row').filter({ hasText: 'alice@acme.com' }).getByRole('button').click();
   await page.getByText(/view sessions/i).click();
 
@@ -261,6 +260,5 @@ test('unlock action calls unlock endpoint and removes Locked badge', async ({ ad
   await page.getByText(/unlock account/i).click();
 
   expect(unlockCalled).toBe(true);
-  // Flash message
   await expect(page.getByText(/account unlocked/i)).toBeVisible();
 });

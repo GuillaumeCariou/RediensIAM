@@ -13,7 +13,14 @@ public record KeyRotationColumn(string Column, int Pending);
 /// <param name="Columns">Per-column pending counts.</param>
 /// <param name="TotalPending">
 /// Sum of <see cref="Columns"/>. <b>Zero is the signal that a retired key can be dropped from
-/// Security:EncryptionKeys.</b> Nothing else is.
+/// Security:EncryptionKeys</b> as far as <i>ciphertexts</i> go — nothing else is.
+///
+/// It says nothing about the audit hash chain, which has no sweep and can have none: its links
+/// were computed when the rows were written, and recomputing them under a new key would mean the
+/// application rewriting every row of an append-only table. Dropping a root therefore leaves every
+/// audit row written under it permanently unverifiable — not broken, but nothing the deployment
+/// can vouch for. Keep retired roots configured, or accept that boundary knowingly; see
+/// <see cref="Data.AuditChain"/>.
 /// </param>
 public record KeyRotationStatus(
     int ActiveKeyId,

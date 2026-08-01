@@ -278,7 +278,9 @@ test.describe('WebAuthn mode', () => {
   });
 
   test('renders passkey UI', async ({ page }) => {
-    // Mock the options fetch and stub credentials.get to prevent a real prompt
+    // Answering the options fetch with an error stops the page before it calls
+    // navigator.credentials.get, which would otherwise raise a real authenticator prompt
+    // that no headless browser can dismiss.
     await page.route('**/auth/mfa/webauthn/options', async (route) => {
       await route.fulfill({
         contentType: 'application/json',
@@ -300,14 +302,14 @@ test.describe('WebAuthn mode', () => {
   });
 
   test('shows error when credentials.get is cancelled (NotAllowedError)', async ({ page }) => {
-    // Mock the WebAuthn browser API to throw NotAllowedError
     await page.addInitScript(() => {
       const origGet = navigator.credentials.get.bind(navigator.credentials);
       navigator.credentials.get = async () => {
         const err = new DOMException('User cancelled', 'NotAllowedError');
         throw err;
       };
-      // Restore after we've set it
+      // The original is never restored — the init script is scoped to this page, which is
+      // discarded at the end of the test. `void` only silences the unused-binding warning.
       void origGet;
     });
 

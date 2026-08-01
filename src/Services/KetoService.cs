@@ -7,6 +7,9 @@ using RediensIAM.Exceptions;
 
 namespace RediensIAM.Services;
 
+/// <summary>One Ory Keto relation tuple, in the four fields this deployment ever writes.</summary>
+public sealed record RelationTuple(string Namespace, string Object, string Relation, string Subject);
+
 public class KetoService(IHttpClientFactory http, AppConfig appConfig, RediensIamDbContext db, AuditLogService audit)
 {
     private readonly string _readUrl = appConfig.KetoReadUrl;
@@ -63,6 +66,58 @@ public class KetoService(IHttpClientFactory http, AppConfig appConfig, RediensIa
         var url = $"{_writeUrl}/admin/relation-tuples?namespace={Uri.EscapeDataString(Roles.KetoOrgsNamespace)}&object={Uri.EscapeDataString(orgId)}";
         await WriteClient.DeleteAsync(url);
     }
+
+    /// <summary>
+    /// Every tuple in <paramref name="namespaceName"/>, optionally narrowed to one relation.
+    ///
+    /// <para>
+    /// Paged: Keto answers with at most <c>page_size</c> tuples and a <c>next_page_token</c>, and a
+    /// reconciler that read only the first page would report every tuple beyond it as missing from
+    /// Keto — i.e. would propose deleting live grants. The page cap is a hard stop rather than an
+    /// endless loop, so a Keto that keeps handing back tokens cannot hang a background pass; the
+    /// caller sees a short list, which <see cref="GrantReconciler"/> treats as a refusal to repair
+    /// rather than as divergence.
+    /// </para>
+    /// </summary>
+    public async Task<IReadOnlyList<RelationTuple>> ListRelationTuplesAsync(
+        string namespaceName, string? relation = null, CancellationToken ct = default)
+    {
+        const int pageSize = 500;
+        const int maxPages = 200;
+
+        var tuples = new List<RelationTuple>();
+        var token = "";
+        for (var page = 0; page < maxPages; page++)
+        {
+            var url = $"{_readUrl}/relation-tuples?namespace={Uri.EscapeDataString(namespaceName)}&page_size={pageSize}";
+            if (!string.IsNullOrEmpty(relation)) url += $"&relation={Uri.EscapeDataString(relation)}";
+            if (!string.IsNullOrEmpty(token)) url += $"&page_token={Uri.EscapeDataString(token)}";
+
+            var resp = await ReadClient.GetAsync(url, ct);
+            // Throws rather than returning what arrived: a partial list read as the state of the
+            // store turns every unread grant into "missing from Keto", and the repair for that
+            // class deletes rows. Every other read in this class fails soft because a failed check
+            // is a denial; this one has to fail loud.
+            resp.EnsureSuccessStatusCode();
+
+            var result = await resp.Content.ReadFromJsonAsync<JsonElement>(_json, ct);
+            if (result.TryGetProperty("relation_tuples", out var arr) && arr.ValueKind == JsonValueKind.Array)
+                tuples.AddRange(arr.EnumerateArray().Select(ToTuple).OfType<RelationTuple>());
+
+            token = result.TryGetProperty("next_page_token", out var next) ? next.GetString() ?? "" : "";
+            if (string.IsNullOrEmpty(token)) break;
+        }
+        return tuples;
+    }
+
+    private static RelationTuple? ToTuple(JsonElement t) =>
+        t.ValueKind == JsonValueKind.Object
+        && t.TryGetProperty("namespace", out var ns) && ns.GetString() is { } nsv
+        && t.TryGetProperty("object", out var obj) && obj.GetString() is { } objv
+        && t.TryGetProperty("relation", out var rel) && rel.GetString() is { } relv
+        && t.TryGetProperty("subject_id", out var sub) && sub.GetString() is { } subv
+            ? new RelationTuple(nsv, objv, relv, subv)
+            : null;
 
     public async Task<bool> HasAnyRelationAsync(string namespaceName, string relation, string subjectId)
     {

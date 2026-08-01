@@ -199,14 +199,12 @@ test('enabling Google provider shows client_id and secret fields', async ({ admi
   await page.goto(BASE_URL);
   await page.getByRole('tab', { name: /social|oauth|providers/i }).click();
 
-  // Enable Google
   const googleSwitch = page.locator('[data-provider="google"] [role="switch"], ')
     .or(page.getByRole('region').filter({ hasText: /google/i }).getByRole('switch'));
   if (await googleSwitch.count() > 0) {
     await googleSwitch.first().click();
   }
 
-  // After enabling, client_id and secret fields should be visible
   await expect(page.getByLabel(/client.?id/i).first()).toBeVisible();
 });
 
@@ -224,7 +222,8 @@ test('saved secret shows placeholder instead of value', async ({ adminPage: page
   await page.goto(BASE_URL);
   await page.getByRole('tab', { name: /social|oauth|providers/i }).click();
 
-  // Secret field should show a "saved" placeholder, not expose the value
+  // A stored secret must never be sent back to the browser: the placeholder is the only
+  // signal that one exists, so both assertions below are load-bearing, not redundant.
   const secretInput = page.getByLabel(/client.*secret|secret/i).first();
   const placeholder = await secretInput.getAttribute('placeholder');
   expect(placeholder).toMatch(/saved|enter new to replace/i);
@@ -250,11 +249,10 @@ test('PATCH body omits secret when secret field is not changed', async ({ adminP
   await page.goto(BASE_URL);
   await page.getByRole('tab', { name: /social|oauth|providers/i }).click();
 
-  // Only update client_id, leave secret untouched
+  // The secret field is left untouched on purpose — filling it in would defeat the test.
   await page.getByLabel(/client.?id/i).first().fill('new-client-id');
   await page.getByRole('button', { name: /save/i }).click();
 
-  // The PATCH body should not include the secret field
   const providers = (patchBody.providers ?? patchBody.theme) as unknown[];
   expect(JSON.stringify(providers)).not.toMatch(/"secret"/);
 });

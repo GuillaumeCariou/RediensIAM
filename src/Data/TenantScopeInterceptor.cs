@@ -84,6 +84,7 @@ public sealed class TenantScopeInterceptor(IHttpContextAccessor httpContextAcces
         "Program.BootstrapSuperAdminAsync — the __system__ user list and the bootstrap super admin",
         "InstanceConfigurationProvider — the instances table (deployment-global, no RLS policy)",
         "AuditLogRetentionService — sweeps every organisation's expired rows, plus the OrgId IS NULL rows",
+        "IntegrityMonitorService — verifies every organisation's audit chain and compares every grant against Keto; a per-tenant scope would hide exactly the rows it is looking for",
         "WebhookDispatcherService — drains one queue for all tenants",
 
         // Cross-tenant by design, and gated by authorisation rather than by scope.

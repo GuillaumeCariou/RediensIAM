@@ -14,9 +14,14 @@ import type { Page } from '@playwright/test';
 
 type RoutePattern = string | RegExp;
 
+/**
+ * Prefixes a plain path with `**` so the route matches whatever origin the SPA
+ * is served from. Specs would otherwise have to hard-code TEST_BASE_URL, and a
+ * bare path matches nothing — page.route() globs are compared against the full URL.
+ * RegExp patterns are passed through untouched, since they already match anywhere.
+ */
 function toGlob(pattern: RoutePattern): string | RegExp {
   if (typeof pattern !== 'string') return pattern;
-  // Turn plain path like '/admin/organizations' into a glob that ignores origin
   return `**${pattern}`;
 }
 

@@ -258,9 +258,18 @@ containers — about four hours, described in the same section.
 already-running database this is a migration, not an upgrade.
 
 Two of the five steps below are now enforced rather than remembered — `init.sh` grants `BYPASSRLS`
-at initdb when the flag is set, and `files/rls.sql` refuses to create a single policy on a database
-where `iam_backup` cannot bypass. So step 2 can no longer be skipped silently; it can only fail the
-deploy. Do it anyway, in the right order, so the deploy does not fail at all.
+at initdb, and `files/rls.sql` refuses to create a single policy on a database where `iam_backup`
+cannot bypass. So step 2 can no longer be skipped silently; it can only fail the deploy. Do it
+anyway, in the right order, so the deploy does not fail at all.
+
+**On a database created before 2026-08-01, step 2 is not optional.** That grant used to be
+conditional on `postgres.rls.enabled` being true *at initdb*, and `init.sh` only ever runs at
+initdb — while `setup.sh --prod` forces RLS off on a first install and does not ask. So **no
+database `setup.sh --prod` could produce ever had the grant**, and enabling RLS on one could only
+ever fail. Observed on the first prod-profile install, `33-prod-profile-proof.md §2.6`: the
+post-upgrade Job aborting with `iam_backup cannot bypass RLS`. The fail-closed abort did its job —
+the deploy stopped instead of the backup — but the trap was unconditional. The grant is
+unconditional now; existing databases still need it applied by hand.
 
 1. Verify the app really sets the variable, on a connection it is using. From the database, with
    `log_statement='all'` for one minute:
@@ -283,8 +292,12 @@ Full runbook, both verification queries and the rollback SQL:
 ### Turning cache TLS on in production
 
 `values.prod.yaml` sets `dragonfly.local.tls.enabled: true`. **This has never been run against a
-production cluster** — it is `helm template`-verified and reasoned from the dev cutover in
-`.security-hardening/23-cache-hardening.md`.
+production cluster.** It has been observed working under the prod profile on a from-scratch install
+in a scratch namespace (`.security-hardening/33-prod-profile-proof.md §3`): cleartext refused by the
+server, TLS accepted against the mounted CA, the same connection rejected against the OS trust
+store, and the app reading and writing through the tunnel. What follows — the *cutover* on a cache
+that is already running and already holds a key ring — is still reasoned from the dev cutover, not
+observed anywhere.
 
 It is a hard cutover, and the cost is not avoidable by ordering:
 
@@ -353,17 +366,43 @@ Carried forward deliberately; each has a runbook and a cost.
 |---|---|---|
 | Admin console served with a self-signed certificate | `09 §6.3` | internal CA, or ACME DNS-01 |
 | Local registry has no authentication and no TLS | `09 §6.2` | 2h; **required** if k3s is not on this host — bind and auth move together, never one without the other |
-| Dragonfly TLS in prod is **untested live** | `09 §6.5` / `18 §2` / `23` / `29` | `values.prod.yaml` now sets `dragonfly.local.tls.enabled: true`, and both `helm lint` and `helm template` pass for `values.yaml + values.prod.yaml`. No production cluster exists to run it against, so it is verified by rendering and by reasoning from the dev cutover — **not proven**. The cutover is atomic and user-visible either way, and it costs every session; see [Turning cache TLS on in production](#turning-cache-tls-on-in-production) for the key-ring pre-step |
-| RLS off **in prod only** | `18 §3` / `29` | Live and verified in dev: 19 tables `ENABLE` + `FORCE`, cross-tenant read/insert/update/delete refused at the database, backup still succeeding. `values.prod.yaml` does not override the `false` default, because on an existing prod database this is a migration, not an upgrade, and there is no prod cluster to rehearse on. Note also that RLS does **not** make the login path tenant-safe: it resolves users before a tenant is known and runs as `'system'` by necessity — [`SECURITY.md`](SECURITY.md#2-tenant-isolation-and-its-honest-limit) |
+| The Dragonfly TLS **cutover** in prod is untested | `09 §6.5` / `18 §2` / `29` / `33 §3` | The control itself has been observed live under the prod profile in a scratch namespace. What has never been run is the cutover on a cache that is already up and already holds a key ring. It is atomic and user-visible either way, and it costs every session; see [Turning cache TLS on in production](#turning-cache-tls-on-in-production) for the key-ring pre-step |
+| ACME / Let's Encrypt has **never been executed** | `33 §4` | The `letsencrypt` ClusterIssuer has never been applied to any cluster; HTTP-01 needs public DNS and port 80 reachable from the internet, and the prod-profile install used a self-signed ClusterIssuer instead. Whether a publicly trusted certificate can be issued here is unknown |
+| RLS off **in prod only** | `18 §3` / `29` / `33 §2.6` | Live and verified in dev: 19 tables `ENABLE` + `FORCE`, cross-tenant read/insert/update/delete refused at the database, backup still succeeding. Also turned on once on a from-scratch prod-profile install (V-25, 19 tables). `values.prod.yaml` does not override the `false` default, because on an existing prod database this is a migration, not an upgrade. **A database initdb'd before 2026-08-01 still needs `ALTER ROLE iam_backup BYPASSRLS` applied by hand** — the grant used to be conditional on RLS already being on, which no `setup.sh --prod` install ever was. RLS *does* now cover the tenant login path; the admin console, the token-keyed endpoints and the SAML ACS remain unscoped — [`SECURITY.md`](SECURITY.md#what-is-scoped-and-what-still-is-not) |
 | No WAF | `09 §6.6` | load the Traefik plugin **before** attaching the middleware, or Traefik answers 503 for the whole router |
 | No IDS/IPS | `09 §6.7` | Falco; needs an alert destination *and* a named owner |
 | k3s secrets not encrypted at rest | `10 §7.3` | 15 min, root on the server node |
 | Backup lands in the same failure domain as the data | `15c §T-03` | off-node copy, or CNPG WAL archiving |
 | Secrets live in a mode-600 file | `10 §8.4` | adopt SOPS + age the day a second operator or a second machine appears |
 
-**Production has never been deployed from this branch.** Every prod path in this guide is
-template-verified and preflight-verified; none of it has been run against a real production
-cluster.
+**No production cluster has ever run this.** The prod profile has been installed once, into a
+scratch namespace on the single-node dev cluster, and destroyed — see
+`.security-hardening/33-prod-profile-proof.md`, whose §8 lists in full what that does *not* prove.
+The paths it could not touch are precisely the ones this guide warns about in prose: Postgres
+`requireSsl` against an existing `pg_hba.conf`, and the Dragonfly TLS cutover against a cache that
+already holds a key ring. Both remain reasoned about, not observed.
+
+Three things that install changed and that affect an existing installation, including dev:
+
+- **The PGDATA move is a migration.** A fresh volume root is owned by uid 0, `fsGroup` sets the
+  group and never the owner, and `initdb` cannot chmod a directory it does not own — so a
+  first-ever install crash-looped forever. `PGDATA` is now
+  `/var/lib/postgresql/data/pgdata`, a subdirectory the entrypoint creates as uid 70. An
+  installation created before that keeps its data directory at the mount root, and the
+  `pgdata-location-guard` init container **will stop the next deploy on purpose** rather than let
+  Postgres `initdb` an empty cluster beside the real data and report success. It prints the
+  commands; it is one `mv` with the StatefulSet scaled to zero. Doing nothing is safe — a running
+  pod is unaffected.
+- **The self-signed issuer is renamed.** It was a cluster-scoped `ClusterIssuer` with the fixed name
+  `selfsigned`, which meant two releases could not coexist in one cluster and `helm uninstall` of
+  either deleted the issuer the other renewed against. It is now a namespaced
+  `Issuer/{{ .Release.Name }}-selfsigned`. `helm upgrade` re-issues the Postgres and Dragonfly
+  certificates, which restarts Dragonfly, which empties the DataProtection key ring — every session
+  is invalidated once. Same price the cache TLS cutover already documented.
+- **`helm --wait` is gone.** It waited for the backup PVC to reach `Bound`, and on a
+  `WaitForFirstConsumer` StorageClass — k3s local-path's default — that does not happen until the
+  nightly CronJob fires. A first prod install burned 30 minutes across three retries and then
+  failed. `deploy.sh` now runs `kubectl rollout status` on the workloads that actually render.
 
 ---
 

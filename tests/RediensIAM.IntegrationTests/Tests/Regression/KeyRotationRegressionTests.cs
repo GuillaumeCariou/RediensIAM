@@ -424,7 +424,11 @@ public class KeyRotationSweepTests(TestFixture fixture) : IAsyncLifetime
         }
 
         var cs = new NpgsqlConnectionStringBuilder(fixture.PostgresConnectionString) { Database = _dbName }.ToString();
-        _db = new RediensIamDbContext(new DbContextOptionsBuilder<RediensIamDbContext>().UseNpgsql(cs).Options);
+        // Seeding a TOTP secret is a credential change, which the save path audits — and an audit
+        // row's chain link is keyed, so this context needs a root of its own. Key 1: the sweep
+        // tests rotate the *encryption* ring around it and never touch the chain.
+        _db = new RediensIamDbContext(
+            new DbContextOptionsBuilder<RediensIamDbContext>().UseNpgsql(cs).Options, Config($"1:{Key1}"));
         await _db.Database.MigrateAsync();
         _seed = new SeedData(_db, fixture.Hydra, fixture.GetService<PasswordService>());
     }

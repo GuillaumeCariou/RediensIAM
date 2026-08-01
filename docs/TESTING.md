@@ -205,6 +205,17 @@ TLS (V-05), OIDC discovery (V-06), pod hardening (V-09…V-14), NetworkPolicies 
 type (V-16), the live CSP header (V-17, V-18), Postgres privilege separation (V-20, V-21), the
 backup (V-22), Postgres TLS (V-23), the cache password and TLS (V-24, V-26), and the RLS job (V-25).
 
+**V-04 carries a positive control, and the reason is worth reading.** The script did not layer
+`values.<env>.override.yaml`, the file `setup.sh --prod` writes with the operator's answers, so on
+`--prod` it probed the committed default hostname instead of the real one. Traefik answers 404 to
+every path on a Host it has no router for, and V-04 counted 404 as a refusal — so the P-04
+management-API assertion **passed while measuring nothing at all**, on a host that did not exist.
+That is the same class of defect this script exists to catch, inside the script. It now reads the
+override file, and V-04 first requires `/login` on the public host to answer 2xx/3xx; if it does
+not, the four deny probes are reported as inconclusive rather than as passes. On a correctly
+measured run the refusals are 403 from the `ipAllowList` middleware, not 404 from Traefik shrugging.
+Found in `.security-hardening/33-prod-profile-proof.md §2.5`.
+
 ### Pass, fail, skip
 
 | Result | Meaning |

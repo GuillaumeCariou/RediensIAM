@@ -108,8 +108,12 @@ builder.Services.AddSingleton<IWebhookQueue, RedisWebhookQueue>();
 builder.Services.AddSingleton<IWebhookSsrfValidator, WebhookSsrfValidator>();
 builder.Services.AddScoped<WebhookService>();
 builder.Services.AddScoped<KeyRotationService>();
+builder.Services.AddScoped<GrantReconciler>();
 builder.Services.AddHostedService<WebhookDispatcherService>();
 builder.Services.AddHostedService<AuditLogRetentionService>();
+// The audit chain verifier and the grant reconciler both existed with no caller, which makes them
+// functions that would have noticed rather than controls. This is what runs them.
+builder.Services.AddHostedService<IntegrityMonitorService>();
 // Every client that dials a URL chosen by a tenant or by a remote provider gets the SSRF-safe
 // handler: no redirects, and the reserved-range check runs on the address actually connected to
 // rather than on a separate DNS lookup. See WebhookUrlValidator.CreateSsrfSafeHandler.

@@ -222,19 +222,29 @@ SELECT set_config('rediensiam.org_id', @value, false)
 ```
 
 `@value` is the caller's org UUID when the request has one, and the literal string `'system'`
-otherwise (`:82-90`). `false` means session scope rather than `SET LOCAL`, so it survives the
-individual command.
+otherwise (`CurrentScope`, `:153-165`). `false` means session scope rather than `SET LOCAL`, so it
+survives the individual command.
+
+The login flow has no token and therefore no claims, so it supplies its own value:
+`PinToOrganisationAsync` parks an organisation on `HttpContext.Items`, which `CurrentScope` reads
+ahead of the claims, and issues the setting on the connection the context is already holding.
+The organisation comes from the `org_id` RediensIAM wrote into the login challenge's OAuth2 client
+metadata at project creation — a value the API offers no way for a caller to set — so most pins cost
+no database read. `grep PinScope src/Controllers/AuthController.cs` is the complete list of sites.
 
 Two connection-string shapes would silently break the invariant, and both are refused at startup by
 `AppConfig.ConnectionString` (`src/Config/AppConfig.cs:18-52`) rather than tolerated:
 `No Reset On Close=true` (Npgsql's `DISCARD ALL` on pool return is what clears the setting) and
 `Multiplexing=true` (one physical session shared by several logical connections).
 
-`LegitimatelyUnscopedPaths` (`TenantScopeInterceptor.cs:59-75`) is the auditable list of nine code
-paths that run as `'system'` on purpose: the whole of `AuthController` (login, password reset,
-verification, social, SAML), PAT introspection in `GatewayAuthMiddleware`, schema creation,
-super-admin bootstrap, the instance-config provider, the audit retention sweep, the webhook
-dispatcher, and `SystemAdminController`.
+`LegitimatelyUnscopedPaths` (`TenantScopeInterceptor.cs:71-92`) is the auditable list of the code
+paths that run as `'system'` on purpose. It has twelve entries and it no longer names the whole of
+`AuthController`: `AdminLogin` (the `__system__` user list has `OrgId IS NULL`, so no tenant scope
+can see it), the consent handler's admin-client branch, the token-keyed endpoints, the fallback
+`projects` read, PAT introspection in `GatewayAuthMiddleware`, `SamlController` (which *can* be
+pinned and is not — see [`SECURITY.md`](SECURITY.md#what-still-runs-unscoped-and-why)), plus schema
+creation, super-admin bootstrap, the instance-config provider, the audit retention sweep, the
+webhook dispatcher and `SystemAdminController`.
 
 ### RLS itself — shipped, not enabled
 
@@ -243,7 +253,7 @@ plus a `rediensiam_tenant` policy per tenant table (`rls.sql:159-166`), and it *
 table is neither policied nor declared deployment-global (`:181`). It is applied by a
 post-install/post-upgrade Job.
 
-`postgres.rls.enabled` is **`false`** in `values.yaml:308`. `values.dev.yaml` overrides it to
+`postgres.rls.enabled` is **`false`** in `values.yaml:314-315`. `values.dev.yaml` overrides it to
 **`true`** — 19 tables carry a policy on the dev cluster — and `values.prod.yaml` does not override
 it, so **RLS is on in dev and off in prod**. The policies are fail-closed —
 a connection that has not set the variable sees zero rows in every tenant table, which for an
@@ -537,7 +547,7 @@ handled explicitly rather than falling through.
 | Backend → Hydra admin `:4445` | In-cluster only; NetworkPolicy-locked. **Verify your CNI enforces NetworkPolicy** — if it does not, Hydra's admin API is open to the whole cluster |
 | Backend → Keto write `:4467` | Same |
 | Backend → Postgres `:5432` | Role `iam_app`, own database only; TLS on in both shipped environments; NetworkPolicy locked to {app, hydra, keto} |
-| Backend → Dragonfly `:6379` | Password-protected; TLS set in both values files but **only ever executed in dev** (see below); NetworkPolicy locked to the app pod |
+| Backend → Dragonfly `:6379` | Password-protected; TLS set in both values files, executed in dev and once under the prod profile in a scratch namespace, **never on a production cluster** (see below); NetworkPolicy locked to the app pod |
 | Hydra → public listener (consent) | Browser-mediated redirect; allowlist via `RedirectValidator` |
 | External IdP → `/auth/saml/acs` | SAML assertion verified against the pinned IdP certificate |
 | Operator / machine → management API | Bearer PAT or `client_credentials` token; audience gate, then live Keto re-check per request |
@@ -549,10 +559,10 @@ handled explicitly rather than falling through.
 | | Chart default | dev | prod |
 |---|---|---|---|
 | Public ingress TLS | off | **off** — `iam.localhost` cannot be certified | on (`letsencrypt`) |
-| Admin ingress TLS | — | NodePort, no ingress | on, but `selfsigned` |
+| Admin ingress TLS | — | NodePort, no ingress | on, but self-signed by the release's own namespaced `Issuer` |
 | Postgres server TLS (`postgres.local.tls.enabled`) | off | **on** | **on** |
 | Postgres `requireSsl` (`hostssl` in `pg_hba.conf`) | off | **on** | **on** |
-| Dragonfly TLS (`dragonfly.local.tls.enabled`) | off | **on** | **on**, but never executed — see below |
+| Dragonfly TLS (`dragonfly.local.tls.enabled`) | off | **on** | **on**; executed in dev and once under the prod profile in a scratch namespace — see below |
 | `postgres.rls.enabled` | off | **on** | off |
 
 Dev being cleartext on the ingress is the one place finding R-02 is not fixed, and it is gated to
@@ -561,9 +571,12 @@ dev so prod cannot inherit it.
 Dragonfly TLS is a **hard cutover**: `--tls` makes Dragonfly stop answering cleartext, so
 `cacheUrl` must gain `ssl=true` in the same change. `deploy.sh` derives it from the flag and
 `templates/dragonfly.yaml` fails the render if the two ever disagree, so the pair cannot be split
-by accident. It is now set in **both** `values.dev.yaml` and `values.prod.yaml`, but it has only
-ever been *executed* in dev: prod has never been deployed from this branch, so the prod half is
-`helm template`-verified and reasoned from the dev cutover, **not observed**. Treat it as untested.
+by accident. It is set in **both** `values.dev.yaml` and `values.prod.yaml`. It has been executed in
+dev, and once under the prod profile in a scratch namespace on the dev cluster, where the server was
+confirmed to refuse cleartext and the app to read and write through the pinned tunnel
+(`.security-hardening/33-prod-profile-proof.md §3`). No production cluster has run it, and the
+*cutover* — flipping this on a cache that is already up and already holds a key ring — remains
+reasoned from the dev experience rather than observed.
 
 The app's cache TLS is **pinned, not trusting** (`src/Config/CacheTls.cs`, wired at
 `src/Program.cs:53-59`). The callback builds an `X509Chain` with `TrustMode = CustomRootTrust` over
@@ -608,4 +621,4 @@ which is the correct trade.
 | How to integrate an app or a resource server | [`INTEGRATION.md`](INTEGRATION.md) |
 | How to install, upgrade and rotate | [`DEPLOYMENT.md`](DEPLOYMENT.md) |
 | How to run the tests | [`TESTING.md`](TESTING.md) |
-| The audit trail itself, finding by finding | `.security-hardening/14-finding-ledger.md` |
+| The audit trail itself, step by step | `.security-hardening/` — start with its `README.md`, which records which reports have been retired |

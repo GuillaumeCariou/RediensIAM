@@ -231,8 +231,9 @@ public class AuditLogConfiguration : IEntityTypeConfiguration<AuditLog>
                    v => JsonSerializer.Deserialize<Dictionary<string, object>>(v, JsonOptions) ?? new Dictionary<string, object>(),
                    DictComparer);
 
-        builder.Property(x => x.Hash).IsRequired().HasMaxLength(64).HasDefaultValue("");
-        builder.Property(x => x.PrevHash).HasMaxLength(64);
+        // 80, not 64: a keyed hash carries a "k{keyId}:" envelope in front of the 64 hex digits.
+        builder.Property(x => x.Hash).IsRequired().HasMaxLength(AuditChain.MaxHashLength).HasDefaultValue("");
+        builder.Property(x => x.PrevHash).HasMaxLength(AuditChain.MaxHashLength);
 
         builder.HasIndex(x => new { x.OrgId, x.CreatedAt });
         builder.HasIndex(x => new { x.ProjectId, x.CreatedAt });

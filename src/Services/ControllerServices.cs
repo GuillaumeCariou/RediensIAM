@@ -94,7 +94,8 @@ public sealed class OrgAdminServices(
     IEmailService email,
     IDistributedCache cache,
     LiveAuthorizationService live,
-    KeyRotationService keyRotation)
+    KeyRotationService keyRotation,
+    GrantReconciler grantReconciler)
 {
     public HydraService Hydra      => hydra;
     public KetoService Keto        => keto;
@@ -104,6 +105,7 @@ public sealed class OrgAdminServices(
     public IDistributedCache Cache => cache;
     public LiveAuthorizationService Live => live;
     public KeyRotationService KeyRotation => keyRotation;
+    public GrantReconciler GrantReconciler => grantReconciler;
 }
 #pragma warning restore S107
 

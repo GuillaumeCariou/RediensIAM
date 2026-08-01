@@ -8,6 +8,122 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.2.2] — unreleased
+
+No wire-contract change. **But one behaviour change for existing SAML integrations, and an upgrade
+of an existing deployment now needs manual steps for the first time in this series — read "Before
+you upgrade" below.**
+
+### Fixed
+
+- **One tenant's user could be signed in for another tenant's social login.**
+  `FindOrCreateSocialUserAsync` matched a provider subject on `Provider` and `ProviderUserId` alone,
+  with no tenant constraint. A single Google account invited by two customers resolves to the same
+  `ProviderUserId`, so the *first* tenant's user was returned for the *second* tenant's login and
+  the session was minted against it. The lookup is now constrained to
+  `project.AssignedUserListId`. This is a real cross-tenant authentication path and it was open.
+- **MFA failure audit rows were written with no tenant.** `VerifySmsOtp` and `VerifyTotp` recorded
+  `user.mfa.*.failed` with `OrgId = null`, so the affected tenant could not see its own users' MFA
+  failures in its audit view. They now record against the pending MFA session's org and project.
+- **`Database:MigrateOnStartup` was decorative.** The key shipped in `appsettings.json` and nothing
+  read it: `Program.cs` migrated unconditionally, so an operator who set it to `false` still got
+  migrations applied, with no signal that the instruction had been ignored. It is honoured now.
+  Default is still `true`, so nothing changes until someone sets it. When false, the app starts and
+  logs at Warning how many migrations it is behind — refusing to boot would make the switch useless,
+  and staying quiet would surface an un-migrated schema as unexplained 500s a long way from the
+  cause.
+- **`verify-deployment.sh --prod` measured the wrong host, and V-04 passed because of it.** The
+  script did not layer the operator answers from `values.prod.override.yaml`, so it probed the
+  committed default hostname. Traefik answers 404 on a Host it has no router for, V-04 counted 404
+  as a refusal, and the P-04 management-API assertion **read green while measuring nothing**. The
+  override file is now layered, and V-04 requires `/login` on the public host to answer first or the
+  deny probes are reported inconclusive rather than passing.
+- **Row-level security could never have been enabled on any production database.** `init.sh` granted
+  `iam_backup` its required `BYPASSRLS` only when `postgres.rls.enabled` was already true at initdb
+  — and `setup.sh --prod` forces RLS off on a first install without asking. The grant is
+  unconditional now. **Databases created before this release still need
+  `ALTER ROLE iam_backup BYPASSRLS` applied by hand**; `files/rls.sql` fails the deploy rather than
+  the backup if it is missing.
+- **A first-ever production install could not complete**, in four further ways, all in `deploy/`:
+  a fixed-name cluster-scoped `ClusterIssuer/selfsigned` that made `helm install` fail on any
+  cluster already holding one and let `helm uninstall` of either release delete the other's issuer;
+  PostgreSQL crash-looping on a fresh volume because a freshly provisioned root is owned by uid 0
+  and `initdb` cannot chmod a directory it does not own; `helm --wait` deadlocking on a backup PVC
+  that a `WaitForFirstConsumer` StorageClass will not bind until the nightly CronJob fires; and a
+  smoke probe whose failed `curl` killed the whole script under `set -e`, telling the operator a
+  healthy install might be half-changed.
+
+### Added
+
+- **The tenant login path now runs under its own organisation's RLS scope.** A Hydra login challenge
+  names an OAuth2 client, and RediensIAM writes `org_id` into that client's metadata at project
+  creation — so the tenant is knowable before any user lookup, usually with **no database read at
+  all**. `TenantScopeInterceptor.PinToOrganisationAsync` publishes it as `rediensiam.org_id` before
+  the request reads anything. Password login, registration and its verification, consent, every MFA
+  step, the social flows and the password-reset request are all pinned. Measured on the dev cluster
+  over ten complete authorization-code logins: 80 connection checkouts, **0 scoped before, 80 scoped
+  after**, with no extra round trips. The scope is never derived from caller input, and the pin
+  refuses to move a request its own token already scoped to a different organisation.
+- **SAML responses are validated against this deployment's ACS URL.** A response whose `Destination`
+  names a different endpoint is refused. See the behaviour change below, and
+  [`docs/SECURITY.md`](docs/SECURITY.md) §7 for the limit — this is solid against IdPs that sign the
+  `<Response>` element and bypassable against IdPs that sign only the assertion, which this SP
+  accepts.
+- `iam_db_connection_scope_total{scope}` — a Prometheus counter incremented at the point the
+  database scope is decided, so the scoped/unscoped ratio is measurable instead of asserted.
+
+### Changed
+
+- The chart's self-signed issuer is a namespaced `Issuer/<release>-selfsigned` rather than a
+  cluster-scoped `ClusterIssuer/selfsigned`. `ingress.admin.clusterIssuer` now defaults to `""`,
+  meaning "the chart's own Issuer"; a non-empty value still names a real ClusterIssuer you run.
+- `PGDATA` moved to `/var/lib/postgresql/data/pgdata`.
+- `deploy.sh` no longer passes `helm --wait`; it runs `kubectl rollout status` on the workloads that
+  actually render. The RLS post-upgrade Job now polls for `__EFMigrationsHistory` and fails loudly
+  rather than assuming Helm ordered it after the app.
+- Four dead configuration keys removed from `appsettings.json`: `Cache:ProjectTtlMinutes`,
+  `Cache:JwksTtlMinutes`, `App:FrontendUrl`, `App:LoginPath`. None had a reader anywhere in the
+  repository. No chart or environment-variable spelling referenced them either.
+
+### Before you upgrade
+
+1. **SAML operators, before anything else.** For each configured IdP, confirm that
+   `{App:PublicUrl}/auth/saml/acs` is the ACS URL registered at that IdP. `GET /auth/saml/metadata`
+   prints the exact value the app will compare against, in `AssertionConsumerService/@Location`.
+   Host case, scheme case, an explicitly written `:443`/`:80` and a trailing slash are tolerated; a
+   different host, a different path, a scheme downgrade or a genuinely different port are not. The
+   usual way this bites is an `App:PublicUrl` pointing at a cluster-internal address while the IdP
+   holds the public ingress hostname. Miss it and every SAML login fails with
+   `400 saml_response_invalid`. IdPs that send no `Destination` are unaffected — absence is accepted
+   and logged at Warning.
+2. **The PGDATA move is a migration.** An installation created before this release keeps its data
+   directory at the volume mount root. A `pgdata-location-guard` init container **will stop the next
+   deploy on purpose** rather than let Postgres `initdb` an empty cluster beside the real data and
+   report success. It prints the commands; it is one `mv` with the StatefulSet scaled to zero. Doing
+   nothing is safe — a running pod is unaffected.
+3. **The issuer rename re-issues the Postgres and Dragonfly certificates**, which restarts
+   Dragonfly, which empties the DataProtection key ring. Every session is invalidated once.
+4. **If you intend to enable RLS on an existing database**, apply
+   `ALTER ROLE iam_backup BYPASSRLS` as superuser first. See above.
+
+### Known limits
+
+- The production profile has now been installed once — into a scratch namespace on the single-node
+  dev cluster, then destroyed. That establishes that the chart, the two scripts and the values files
+  agree with each other. **It does not establish that production works.** ACME has never been
+  executed and no publicly trusted certificate has ever been issued; no backup has been restored; no
+  upgrade has been run across a schema migration on a populated database; the Postgres `requireSsl`
+  and Dragonfly TLS *cutovers* against pre-existing state remain reasoned about, not observed;
+  nothing has been up longer than an hour. A scratch namespace is not production.
+- Scoping the login path does not make tenant isolation structural. The admin console cannot be
+  scoped (its users live in a list with `OrgId IS NULL`, invisible under every tenant scope by
+  construction), the token-keyed endpoints identify their subject by a random token, and
+  **`SamlController` can be pinned and has not been.** See
+  [`docs/SECURITY.md`](docs/SECURITY.md#what-is-scoped-and-what-still-is-not).
+- RLS remains off by default and in `values.prod.yaml`.
+
+---
+
 ## [0.2.1]
 
 No wire-contract change. Upgrading from 0.2.0 needs nothing beyond a redeploy.
@@ -48,6 +164,9 @@ No wire-contract change. Upgrading from 0.2.0 needs nothing beyond a redeploy.
 Enabling RLS does **not** make the login path tenant-safe: users are resolved by e-mail before a
 tenant is known, so that path runs unscoped by necessity. Measured over one minute of
 tenant-exercising traffic: 5 org-scoped connections, 15 as `'system'`. See `docs/SECURITY.md`.
+
+*(This was true of 0.2.1 and is left as the record of it. **Superseded in 0.2.2**, which pins the
+tenant from the login challenge before any user lookup.)*
 
 ---
 
@@ -386,9 +505,10 @@ first half of closing it.
 
 This release does not close everything. The ranked list of what is still open — including the
 `iam` SUPERUSER on existing clusters, the absence of a rotation story for the HKDF root and the
-Argon2 pepper, an untested backup restore, and 7 high npm advisories in each SPA — is
-[`.security-hardening/14-finding-ledger.md`](.security-hardening/14-finding-ledger.md) §9 and §10.
-[`docs/SECURITY.md`](docs/SECURITY.md) §8 states what is deliberately left open and why.
+Argon2 pepper, an untested backup restore, and 7 high npm advisories in each SPA — was
+`.security-hardening/14-finding-ledger.md` §9 and §10. That ledger has since been moved out of the
+repository for going stale; **[`docs/SECURITY.md`](docs/SECURITY.md) §8 is now the only current
+statement of what is open and why.**
 
 ---
 

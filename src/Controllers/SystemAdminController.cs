@@ -76,6 +76,58 @@ public class SystemAdminController(
         return Ok(status);
     }
 
+    // ── Integrity: audit chain (S-3) and the grant dual write (S-8) ───────────
+
+    /// <summary>
+    /// Verifies every organisation's audit hash chain, plus the deployment-wide one.
+    ///
+    /// <para>
+    /// <c>intact</c> means no broken link. <c>fullyVerified</c> is the stronger claim and the one
+    /// worth reading: every surviving row recomputed under a key this deployment holds.
+    /// <c>unverifiable</c> counts the rows that predate the chain or its keying, or that were
+    /// written under a retired key — rows nothing can vouch for, reported rather than passed off
+    /// as valid.
+    /// </para>
+    ///
+    /// <para>Also runs unattended once a day; see <c>IntegrityMonitorService</c>.</para>
+    /// </summary>
+    [HttpGet("audit-chain")]
+    public async Task<IActionResult> AuditChainStatus(CancellationToken ct)
+    {
+        var statuses = await audit.VerifyAllChainsAsync(ct);
+        return Ok(new
+        {
+            chains = statuses.Select(s => new
+            {
+                org_id = s.OrgId,
+                first_break = s.Status.FirstBreak,
+                verified = s.Status.Verified,
+                unverifiable = s.Status.Unverifiable,
+                intact = s.Status.Intact,
+                fully_verified = s.Status.FullyVerified,
+            }),
+            broken = statuses.Count(s => !s.Status.Intact),
+        });
+    }
+
+    /// <summary>
+    /// Reports grants the Keto tuple store and <c>org_roles</c>/<c>user_project_roles</c> disagree
+    /// about. Read-only. <c>orphanTuples</c> is the class that matters: live privilege with no
+    /// record of who granted it.
+    /// </summary>
+    [HttpGet("grant-reconcile")]
+    public async Task<IActionResult> GrantReconcileScan(CancellationToken ct)
+        => Ok(await svc.GrantReconciler.ScanAsync(ct));
+
+    /// <summary>
+    /// Repairs the divergence: revokes tuples with no backing row, deletes rows with no tuple.
+    /// Never creates a tuple from a row — that would make the database a source of authority
+    /// again. Refuses when divergence is large enough to mean a store-level failure.
+    /// </summary>
+    [HttpPost("grant-reconcile/repair")]
+    public async Task<IActionResult> GrantReconcileRepair(CancellationToken ct)
+        => Ok(await svc.GrantReconciler.RepairAsync(GetActorId(), ct));
+
     // ── Organisations ─────────────────────────────────────────────────────────
 
     [HttpGet("organizations")]

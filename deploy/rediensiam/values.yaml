@@ -3,7 +3,7 @@ rediensiam:
   # ── App image ─────────────────────────────────────────────────────────────────
   image:
     repository: rediensiam
-    tag: "0.2.1"
+    tag: "0.2.2"
     # Digest pin (R-16). When set it replaces `tag`, so a pod restart re-runs the exact
     # bytes that were deployed instead of whatever the registry currently answers with.
     # deploy.sh resolves this from `docker push` output and passes it with --set.
