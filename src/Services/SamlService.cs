@@ -15,6 +15,13 @@ public class SamlService(
     /// Builds a Saml2Configuration for the given IdP config.
     /// Loads SSO URL + signing cert either from metadata URL or from explicit fields.
     /// </summary>
+    /// <remarks>
+    /// <c>acsUrl</c> is deliberately not written into the returned configuration: Saml2Configuration
+    /// has no expected-destination slot and ITfoxtec never validates a response's Destination
+    /// attribute, so the endpoint-binding check cannot live in the config object. It happens on the
+    /// receiving path instead — see <see cref="DestinationMatches"/>, called from SamlController's
+    /// ACS. The parameter stays so both call sites keep naming the endpoint being configured for.
+    /// </remarks>
     public async Task<Saml2Configuration> BuildConfigAsync(
         SamlIdpConfig idp, string spEntityId, Uri acsUrl)
     {
@@ -112,6 +119,35 @@ public class SamlService(
 
         config.SignatureValidationCertificates.Add(cert);
     }
+
+    /// <summary>
+    /// True when a SAML response's <c>Destination</c> names this SP's ACS endpoint.
+    ///
+    /// SAML 2.0 core §3.2.2: <c>Destination</c> is optional, but "if it is present, the actual
+    /// recipient MUST check that the URI reference identifies the location at which the message
+    /// was received. If it does not, the request MUST be discarded." ITfoxtec parses the attribute
+    /// into <c>Saml2Request.Destination</c> but never checks it, so this is ours to do.
+    ///
+    /// Comparison is deliberately normalising rather than an ordinal string equality, because the
+    /// value is whatever the IdP echoed and the three differences below are cosmetic — treating
+    /// them as mismatches would lock out working IdPs without denying an attacker anything:
+    /// <list type="bullet">
+    /// <item>host and scheme case (<c>Uri.Compare</c> folds both);</item>
+    /// <item>an explicitly-written default port — <c>:443</c> on https, <c>:80</c> on http —
+    /// which <c>UriComponents.SchemeAndServer</c> elides, while a genuinely different port such
+    /// as <c>:8443</c> still mismatches;</item>
+    /// <item>a trailing slash on the path.</item>
+    /// </list>
+    /// Everything that distinguishes one endpoint from another stays significant: scheme, host,
+    /// non-default port, and the path — compared ordinally, so <c>/auth/saml/ACS</c> does not
+    /// satisfy <c>/auth/saml/acs</c>. A query string on the Destination is ignored, as our ACS
+    /// location carries none and the endpoint is already pinned by scheme, host and path.
+    /// </summary>
+    public static bool DestinationMatches(Uri destination, Uri acsUrl) =>
+        Uri.Compare(destination, acsUrl, UriComponents.SchemeAndServer,
+            UriFormat.UriEscaped, StringComparison.OrdinalIgnoreCase) == 0
+        && string.Equals(destination.AbsolutePath.TrimEnd('/'),
+            acsUrl.AbsolutePath.TrimEnd('/'), StringComparison.Ordinal);
 
     /// <summary>Extracts the user's email from a claims identity using the configured attribute name.</summary>
     public static string? ExtractEmail(

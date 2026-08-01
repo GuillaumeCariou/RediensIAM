@@ -20,6 +20,14 @@ public class AppConfig(IConfiguration config)
         ?? throw new InvalidOperationException("ConnectionStrings:Default is required — set via env var ConnectionStrings__Default"));
 
     /// <summary>
+    /// Whether startup applies EF migrations. Default true — that is the behaviour every existing
+    /// deployment already has, so honouring the key changes nothing until someone sets it false.
+    /// False is for deployments that migrate as a deliberate, separate step; the app still starts,
+    /// but says loudly that the schema is whatever was already there.
+    /// </summary>
+    public bool MigrateOnStartup => config.GetValue("Database:MigrateOnStartup", true);
+
+    /// <summary>
     /// Refuses a DSN whose pooling settings would make a per-request session variable meaningless
     /// (step 18 item A-2). <see cref="Data.TenantScopeInterceptor"/> writes
     /// <c>rediensiam.org_id</c> once per connection checkout and relies on Npgsql clearing it on

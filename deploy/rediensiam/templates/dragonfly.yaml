@@ -46,8 +46,8 @@ metadata:
 spec:
   secretName: {{ .Release.Name }}-dragonfly-tls
   issuerRef:
-    name: selfsigned
-    kind: ClusterIssuer
+    name: {{ include "rediensiam.selfSignedIssuer" . }}
+    kind: Issuer
   commonName: {{ .Release.Name }}-dragonfly
   dnsNames:
     - {{ .Release.Name }}-dragonfly

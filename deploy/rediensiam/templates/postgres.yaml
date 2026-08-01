@@ -27,7 +27,7 @@
 {{- end }}
 {{- end }}
 {{- if $tls.enabled }}
-# R-15. Server-side TLS for the bundled Postgres. Signed by the `selfsigned` ClusterIssuer,
+# R-15. Server-side TLS for the bundled Postgres. Signed by the chart's built-in Issuer,
 # so `sslmode=require` (encryption, no server authentication) is the honest ceiling here;
 # `verify-full` needs a real CA whose root is distributed to app, Hydra and Keto — see the
 # R-15 runbook. Postgres with ssl=on still ACCEPTS cleartext clients: it is the sslmode in
@@ -41,8 +41,8 @@ metadata:
 spec:
   secretName: {{ .Release.Name }}-postgres-tls
   issuerRef:
-    name: selfsigned
-    kind: ClusterIssuer
+    name: {{ include "rediensiam.selfSignedIssuer" . }}
+    kind: Issuer
   commonName: {{ .Release.Name }}-postgres
   dnsNames:
     - {{ .Release.Name }}-postgres
@@ -89,18 +89,21 @@ data:
       -- SELECT on all tables plus USAGE on all schemas, which is what pg_dumpall needs when
       -- it is run with --no-role-passwords (the only part that requires superuser).
       CREATE ROLE iam_backup LOGIN PASSWORD :'backup_pw' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
-      GRANT pg_read_all_data TO iam_backup;
-{{- if .Values.rediensiam.postgres.rls.enabled }}
       -- S-5 phase 2. pg_dump sets `row_security = off`, which ERRORS for a role that cannot
-      -- bypass RLS, so the nightly pg_dumpall ABORTS on the first policied table. Granting it
-      -- here is what stops a fresh install with rls.enabled from coming up with a backup that
-      -- has never once succeeded. It hands iam_backup nothing it did not already have:
-      -- pg_read_all_data above already reads every row, RLS or no RLS.
-      -- On an ALREADY-RUNNING database this line never executes — init.sh only runs at initdb.
-      -- files/rls.sql refuses to apply a policy without it, so that case fails the deploy
-      -- instead of the backup.
+      -- bypass RLS, so the nightly pg_dumpall ABORTS on the first policied table. It hands
+      -- iam_backup nothing it did not already have: pg_read_all_data above already reads
+      -- every row, RLS or no RLS.
+      --
+      -- UNCONDITIONAL, and that is the point. This used to be gated on postgres.rls.enabled,
+      -- and init.sh only ever runs at initdb — while `setup.sh --prod` FORCES rls off on a
+      -- first install and does not even ask. Every prod database therefore came out without
+      -- the grant, and enabling RLS later could only ever fail: observed 2026-08-01, the
+      -- post-upgrade Job aborting with `iam_backup cannot bypass RLS`. The values.yaml claim
+      -- that the grant "is no longer a thing to remember" was true of no prod install that
+      -- setup.sh could produce. Granting it always costs nothing and removes the ordering
+      -- trap; files/rls.sql still refuses to apply a policy without it, so a database created
+      -- before this line fails the deploy rather than the backup.
       ALTER ROLE iam_backup BYPASSRLS;
-{{- end }}
 
       -- `rediensiam` used to be created by the app itself, which is why `iam` needed
       -- CREATEDB. Pre-creating it here is what lets iam_app drop that attribute.
@@ -177,6 +180,38 @@ spec:
         fsGroup: 70
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        # Data-loss guard for the PGDATA move below. An installation created before that
+        # change keeps its data directory at the mount ROOT; the new PGDATA points one level
+        # down, so postgres would find an empty directory, run initdb, and come up as a
+        # brand-new empty cluster — reporting success the whole way. Stop the rollout instead.
+        # Migration: move the contents down one level, as uid 70, with the database stopped.
+        - name: pgdata-location-guard
+          image: {{ .Values.rediensiam.postgres.local.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              if [ -f /var/lib/postgresql/data/PG_VERSION ]; then
+                echo "FATAL: this volume holds a PostgreSQL data directory at the mount root," >&2
+                echo "       but PGDATA is now /var/lib/postgresql/data/pgdata. Starting would" >&2
+                echo "       initdb an EMPTY cluster beside your data. Move it down one level:" >&2
+                echo "         kubectl scale sts {{ .Release.Name }}-postgres --replicas=0 -n {{ .Release.Namespace }}" >&2
+                echo "         # then, in a pod as uid 70 with the PVC mounted at /data:" >&2
+                echo "         mkdir -p /data/pgdata && find /data -mindepth 1 -maxdepth 1 \\" >&2
+                echo "           ! -name pgdata -exec mv -t /data/pgdata {} +" >&2
+                exit 1
+              fi
+              echo "pgdata guard: no data directory at the mount root — ok"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
       containers:
         - name: postgres
           image: {{ .Values.rediensiam.postgres.local.image }}
@@ -195,6 +230,17 @@ spec:
                   key: postgres-password
             - name: POSTGRES_DB
               value: postgres
+            # A SUBDIRECTORY of the mount, not the mount itself. local-path (and most dynamic
+            # provisioners) hand out a volume root owned by uid 0; `fsGroup: 70` sets the GROUP
+            # but never the owner, and initdb chmods PGDATA to 0700 — which uid 70 may not do
+            # to a directory it does not own. A first-ever start therefore died with
+            #   initdb: error: could not change permissions of directory "…/data": Operation not permitted
+            # and CrashLoopBackOff'd forever. Observed on a fresh install 2026-08-01; every
+            # existing installation predates the non-root securityContext, so its data
+            # directory is already uid-70-owned and none of them ever hit it.
+            # The subdirectory is created by the entrypoint AS uid 70, so it is owned by 70.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
             # T-04. initdb writes `local all all trust` and `host all all 127.0.0.1/32 trust`
             # by default, which is why `kubectl exec … psql -U iam` needed no password. These
             # two flags are the only way to change that at initdb time; on an already-created

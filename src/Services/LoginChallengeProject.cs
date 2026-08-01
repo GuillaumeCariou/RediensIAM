@@ -17,6 +17,26 @@ public static class LoginChallengeProject
     public enum Resolution { Ok, Missing, Mismatch }
 
     private const string ProjectIdKey = "project_id";
+    private const string OrgIdKey = "org_id";
+
+    /// <summary>
+    /// The organisation the challenge's OAuth2 client is registered to, from the same
+    /// server-authored <c>client.metadata</c> as <see cref="Resolve"/>. Written beside
+    /// <c>project_id</c> at project creation; there is no caller-supplied counterpart to
+    /// cross-check, and none is accepted.
+    ///
+    /// <para>
+    /// This is what lets a login publish its RLS tenant scope before it reads anything at all —
+    /// see <c>AuthController.PinScopeToChallengeAsync</c>. Null for the admin console client, for
+    /// a non-project client, and for any project client registered before <c>org_id</c> was
+    /// recorded; callers must fall back to the organisation on the project row.
+    /// </para>
+    /// </summary>
+    public static Guid? ResolveOrgOrNull(HydraLoginRequest req) =>
+        Guid.TryParse(req.Client?.Metadata?.GetValueOrDefault(OrgIdKey)?.ToString(), out var orgId)
+        && orgId != Guid.Empty
+            ? orgId
+            : null;
 
     /// <summary>
     /// Returns <see cref="Resolution.Ok"/> and the registered project id, or the reason the

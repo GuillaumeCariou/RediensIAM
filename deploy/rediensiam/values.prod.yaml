@@ -23,10 +23,11 @@ rediensiam:
     admin:
       enabled: true
       host: "auth.ts.rediens.net"
-      # Still self-signed: nothing here can certify a headscale-issued name. The runbook in
-      # .security-hardening/09-infra-security.md gives the two ways to fix that; until one is
-      # done, this is a known click-through warning on the most privileged UI.
-      clusterIssuer: selfsigned
+      # Still self-signed: nothing here can certify a headscale-issued name. Empty means the
+      # chart's own Issuer. The runbook in .security-hardening/09-infra-security.md gives the
+      # two ways to fix that; until one is done, this is a known click-through warning on the
+      # most privileged UI.
+      clusterIssuer: ""
 
   # R-15. Prod already requires cert-manager for the two ingress certs above, so the
   # database certificate costs no new dependency. requireSsl makes pg_hba.conf admit

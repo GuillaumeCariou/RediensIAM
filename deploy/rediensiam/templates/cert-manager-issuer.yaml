@@ -1,13 +1,15 @@
 {{/*
 cert-manager issuers. cert-manager itself is NOT installed by this chart — see the runbook.
-The `selfsigned` issuer is also what signs the optional Postgres / Dragonfly server certs, so
-it is rendered whenever anything needs it, not only for the admin ingress.
+The built-in self-signed issuer also signs the optional Postgres / Dragonfly server certs, so
+it is rendered whenever anything needs it, not only for the admin ingress. It is namespaced
+and release-named — see rediensiam.selfSignedIssuer in _helpers.tpl for why.
 */}}
-{{- if or .Values.rediensiam.ingress.admin.enabled .Values.rediensiam.postgres.local.tls.enabled .Values.rediensiam.dragonfly.local.tls.enabled }}
+{{- if or (and .Values.rediensiam.ingress.admin.enabled (not .Values.rediensiam.ingress.admin.clusterIssuer)) .Values.rediensiam.postgres.local.tls.enabled .Values.rediensiam.dragonfly.local.tls.enabled }}
 apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
+kind: Issuer
 metadata:
-  name: selfsigned
+  name: {{ include "rediensiam.selfSignedIssuer" . }}
+  namespace: {{ .Release.Namespace }}
 spec:
   selfSigned: {}
 {{- end }}

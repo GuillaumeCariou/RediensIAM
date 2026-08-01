@@ -1,8 +1,9 @@
 {{- if .Values.rediensiam.ingress.admin.enabled }}
 # Private admin ingress — Tailscale only (auth.ts.rediens.net).
-# Issuer is configurable (ingress.admin.clusterIssuer). The `selfsigned` default produces a
-# browser warning on the most privileged UI in the deployment, which trains operators to
-# click through certificate errors — see the R-05 runbook in .security-hardening/09.
+# Issuer is configurable (ingress.admin.clusterIssuer names a ClusterIssuer you run). Empty
+# falls back to the chart's own self-signed Issuer, which produces a browser warning on the
+# most privileged UI in the deployment and so trains operators to click through certificate
+# errors — see the R-05 runbook in .security-hardening/09.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -10,7 +11,11 @@ metadata:
   namespace: {{ .Release.Namespace }}
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    {{- if .Values.rediensiam.ingress.admin.clusterIssuer }}
     cert-manager.io/cluster-issuer: {{ .Values.rediensiam.ingress.admin.clusterIssuer }}
+    {{- else }}
+    cert-manager.io/issuer: {{ include "rediensiam.selfSignedIssuer" . }}
+    {{- end }}
 spec:
   ingressClassName: {{ .Values.rediensiam.ingress.className }}
   tls:

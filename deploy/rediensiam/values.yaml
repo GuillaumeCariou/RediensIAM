@@ -95,13 +95,16 @@ rediensiam:
     admin:
       enabled: false    # prod enables this; dev uses the NodePort
       host: ""
-      # Issuer for the admin ingress cert. `selfsigned` trains operators to click through a
-      # warning on the most privileged UI here — see the runbook in 09-infra-security.md for
-      # the two ways out (internal CA, or ACME DNS-01 on the Tailscale domain).
-      clusterIssuer: selfsigned
+      # Issuer for the admin ingress cert: the name of a ClusterIssuer you already run.
+      # Empty falls back to the chart's own self-signed Issuer (<release>-selfsigned, in this
+      # namespace), which trains operators to click through a warning on the most privileged
+      # UI here — see the runbook in 09-infra-security.md for the two ways out (internal CA,
+      # or ACME DNS-01 on the Tailscale domain).
+      clusterIssuer: ""
 
   # ── cert-manager ──────────────────────────────────────────────────────────────
-  # The chart renders the `selfsigned` ClusterIssuer whenever the admin ingress is on.
+  # The chart renders its own self-signed Issuer whenever the admin ingress, Postgres TLS or
+  # cache TLS needs one.
   # A publicly trusted issuer needs an ACME account, so it is opt-in: set acme.enabled and
   # acme.email, and make sure port 80 reaches Traefik for the HTTP-01 challenge.
   # cert-manager itself is NOT installed by this chart.
@@ -296,11 +299,15 @@ rediensiam:
     # migration, not an upgrade — see .security-hardening/29-rls-prod-tls.md for
     # the enablement as performed, and 18-cnpg-tls-rls.md §3 for the runbook.
     #
-    # The one superuser prerequisite, `ALTER ROLE iam_backup BYPASSRLS`, is no
-    # longer a thing to remember: init.sh grants it at initdb when this flag is
-    # set, and files/rls.sql aborts the deploy if the running database does not
-    # have it. Without it pg_dumpall errors on the first policied table and the
-    # nightly backup stops.
+    # The one superuser prerequisite, `ALTER ROLE iam_backup BYPASSRLS`, is not a
+    # thing to remember on a database initdb'd by this chart: init.sh grants it
+    # unconditionally, so it is there whether or not this flag was on at install
+    # time. It was conditional until 2026-08-01, which made it absent from every
+    # database `setup.sh --prod` had ever created — that script forces this flag
+    # off on a first install — so an existing installation may still lack it. Run
+    # it by hand once, as superuser, if so; files/rls.sql aborts the deploy rather
+    # than letting the policies land, because without the grant pg_dumpall errors
+    # on the first policied table and the nightly backup stops.
     #
     # Enabling this renders a post-install/post-upgrade Job that applies
     # files/rls.sql as the table owner. The SQL is idempotent and re-runnable.

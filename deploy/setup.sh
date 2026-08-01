@@ -139,7 +139,8 @@ EOF
   echo " ── TLS for ${ADMIN_HOST} ────────────────────────────────────"
   echo "  existing   A ClusterIssuer you already run — an internal CA whose root"
   echo "             is distributed to operator devices, or an ACME DNS-01 issuer."
-  echo "  selfsigned The chart's built-in issuer. Known defect: it trains operators"
+  echo "  selfsigned The chart's built-in Issuer, in this namespace. Known defect: it"
+  echo "             trains operators"
   echo "             to click through a certificate warning on the single most"
   echo "             privileged UI in the system. .security-hardening/09 §6.3."
   echo "  NOTE: ACME HTTP-01 cannot certify a name that only resolves inside a"
@@ -150,7 +151,8 @@ EOF
     issuer_exists "${ADM_ISSUER}" || die "ClusterIssuer '${ADM_ISSUER}' does not exist in this cluster" \
       "create it first, or accept 'selfsigned' and its known warning"
   else
-    ADM_ISSUER=selfsigned
+    # Empty means "the chart's own Issuer" — see rediensiam.ingress.admin.clusterIssuer.
+    ADM_ISSUER=""
     confirm_typed "i accept the browser warning" \
       "Operators will get a certificate warning on ${ADMIN_HOST} every time. Treat it as a known defect, not as normal."
   fi
@@ -250,7 +252,7 @@ EOF
     echo "    admin:"
     echo "      enabled: true"
     echo "      host: \"${ADMIN_HOST}\""
-    echo "      clusterIssuer: ${ADM_ISSUER}"
+    echo "      clusterIssuer: \"${ADM_ISSUER}\""
     echo ""
     echo "  certManager:"
     echo "    acme:"

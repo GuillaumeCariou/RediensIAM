@@ -38,8 +38,12 @@ public sealed class AuthExtServices(
 }
 
 /// <summary>Service bundle for AuthController — composes AuthCoreServices + AuthExtServices (S107).</summary>
-public sealed class AuthControllerServices(AuthCoreServices core, AuthExtServices ext)
+public sealed class AuthControllerServices(
+    AuthCoreServices core, AuthExtServices ext, RediensIAM.Data.TenantScopeInterceptor tenantScope)
 {
+    /// <summary>The RLS session scope. AuthController is the one place that pins it pre-token.</summary>
+    public RediensIAM.Data.TenantScopeInterceptor TenantScope => tenantScope;
+
     public HydraService Hydra             => core.Hydra;
     public PasswordService Passwords      => core.Passwords;
     public OtpCacheService Otp            => core.Otp;

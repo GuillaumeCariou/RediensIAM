@@ -113,6 +113,22 @@ spec:
               done
               pg_isready || { echo "FATAL: ${PGHOST} unreachable after 60s" >&2; exit 1; }
 
+              # The application creates its tables with EF migrations at startup, and a policy
+              # applied to a table that does not exist yet is a policy that is not applied —
+              # silently, because rls.sql's coverage gate can only check the tables it finds.
+              # This hook used to be ordered after the app came up only because deploy.sh
+              # passed `helm --wait`; that flag had to go (a backup PVC that cannot bind until
+              # 03:00 made a first install time out — see deploy.sh), so the ordering is
+              # asserted here instead of assumed.
+              for i in $(seq 1 60); do
+                psql -tAc "SELECT to_regclass('public.\"__EFMigrationsHistory\"') IS NOT NULL" \
+                  2>/dev/null | grep -q '^t$' && break
+                echo "waiting for the application's migrations (${i}/60)"; sleep 5
+              done
+              psql -tAc "SELECT to_regclass('public.\"__EFMigrationsHistory\"') IS NOT NULL" \
+                | grep -q '^t$' \
+                || { echo "FATAL: ${PGDATABASE} has no __EFMigrationsHistory after 5m — the app has not migrated, so there is nothing to police" >&2; exit 1; }
+
               psql -v ON_ERROR_STOP=1 -f /sql/rls.sql
           volumeMounts:
             - name: sql

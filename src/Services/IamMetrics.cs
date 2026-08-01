@@ -43,4 +43,15 @@ public static class IamMetrics
     public static readonly Gauge ActiveWebhooks = Metrics.CreateGauge(
         "iam_active_webhooks",
         "Number of active registered webhooks");
+
+    /// <summary>
+    /// Database connection checkouts by the RLS scope they were opened under. <c>scope</c> is
+    /// <c>org</c> (a real tenant) or <c>system</c> (unscoped — RLS enforces nothing on it).
+    /// The ratio is the measurable form of the honest limit documented in
+    /// <c>TenantScopeInterceptor.LegitimatelyUnscopedPaths</c>: it should fall, never rise.
+    /// </summary>
+    public static readonly Counter DbConnectionScope = Metrics.CreateCounter(
+        "iam_db_connection_scope_total",
+        "Database connections opened, by RLS tenant scope",
+        new CounterConfiguration { LabelNames = ["scope"] });
 }

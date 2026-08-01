@@ -38,7 +38,18 @@ CHART="${SCRIPT_DIR}/rediensiam"
 ENV_FILE="${CHART}/values.${ENVIRONMENT}.yaml"
 [ "${ENVIRONMENT}" = dev ] && ENV_FILE="${CHART}/values.dev.yaml"
 
-PUBLIC_URL=$(grep '^\s*publicUrl:' "${ENV_FILE}" | head -1 | sed 's/.*publicUrl:[[:space:]]*//' | tr -d '"' | cut -d'#' -f1 | tr -d ' ')
+# The operator's answers from `setup.sh --prod` live in values.<env>.override.yaml and layer
+# LAST — preflight.sh and deploy.sh both read it, and this script did not. Every real prod
+# install has a different public hostname from the committed default, so V-04, V-05 and V-17
+# were all measuring auth.rediens.net against a cluster that serves something else: V-05 and
+# V-17 failed for a host that does not exist here, and V-04 PASSED on four 404s that Traefik
+# returns for any unknown Host — the P-04 assertion reading green while proving nothing.
+OVERRIDE_FILE="${ENV_FILE%.yaml}.override.yaml"
+read_url() { grep "^\s*$2:" "$1" 2>/dev/null | head -1 | sed "s/.*$2:[[:space:]]*//" | tr -d '"' | cut -d'#' -f1 | tr -d ' '; }
+PUBLIC_URL=$(read_url "${ENV_FILE}" publicUrl)
+if [ -f "${OVERRIDE_FILE}" ]; then
+  O=$(read_url "${OVERRIDE_FILE}" publicUrl); [ -n "${O}" ] && PUBLIC_URL="${O}"
+fi
 PUBLIC_HOST=$(echo "${PUBLIC_URL}" | sed 's|https\?://||' | cut -d: -f1)
 
 PASS=0; FAIL=0; SKIP=0
@@ -107,6 +118,15 @@ LB=$(kubectl get svc -n kube-system traefik -o jsonpath='{.status.loadBalancer.i
 [ -z "${LB}" ] && LB=$(kubectl get svc -A -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.status.loadBalancer.ingress[0].ip}{"\n"}{end}' 2>/dev/null | head -1)
 SCHEME=http; [ "${ENVIRONMENT}" = prod ] && SCHEME=https
 if [ -n "${LB}" ]; then
+  # Positive control first. 404 counts as a refusal below, and Traefik answers 404 to every
+  # path on a Host it has no router for — so against the wrong hostname all four probes pass
+  # while measuring nothing. If /login is not served here, the deny probes are inconclusive.
+  LOGIN_CODE=$(curl -sk -o /dev/null -w '%{http_code}' -H "Host: ${PUBLIC_HOST}" \
+                 --max-time 5 "${SCHEME}://${LB}/login" 2>/dev/null)
+  case "${LOGIN_CODE}" in
+    2*|3*) pass V-04/host "public host ${PUBLIC_HOST} is served here (/login ${LOGIN_CODE})" ;;
+    *)     fail V-04/host "${PUBLIC_HOST} does not serve /login (${LOGIN_CODE}) — the deny probes below cannot distinguish a refusal from an unknown Host" ;;
+  esac
   for p in /admin/ /org /project /service-accounts; do
     CODE=$(curl -sk -o /dev/null -w '%{http_code}' -H "Host: ${PUBLIC_HOST}" \
              --max-time 5 "${SCHEME}://${LB}${p}" 2>/dev/null)
@@ -241,11 +261,19 @@ fi
 # ── V-20 · T-04 — Postgres least privilege ──────────────────────────────────
 # Two halves, both checkable without a database credential.
 PGPOD="${RELEASE}-postgres-0"
+# PGDATA moved from the mount root to a `pgdata/` subdirectory (postgres.yaml explains why),
+# so read whichever one this installation actually has rather than assuming. An empty result
+# is what a WRONG path and a genuinely unreadable file look like alike, and both of the
+# assertions below treat empty as a failure — so a stale path here would read as a breach.
+read_hba() {
+  kubectl exec -n "${NS}" "${PGPOD}" -- sh -c \
+    'cat "${PGDATA:-/var/lib/postgresql/data}/pg_hba.conf" 2>/dev/null || cat /var/lib/postgresql/data/pg_hba.conf 2>/dev/null' \
+    2>/dev/null | grep -Ev '^[[:space:]]*#|^[[:space:]]*$'
+}
 if kubectl get pod -n "${NS}" "${PGPOD}" >/dev/null 2>&1; then
   # (a) pg_hba.conf must not grant `trust` anywhere. `local all all trust` made anyone
   # with `kubectl exec` on this pod a superuser with no credential at all.
-  HBA=$(kubectl exec -n "${NS}" "${PGPOD}" -- \
-          grep -Ev '^[[:space:]]*#|^[[:space:]]*$' /var/lib/postgresql/data/pg_hba.conf 2>/dev/null)
+  HBA=$(read_hba)
   if [ -z "${HBA}" ]; then
     fail V-20 "could not read pg_hba.conf — assertion not evaluated"
   elif printf '%s\n' "${HBA}" | grep -qE '[[:space:]]trust[[:space:]]*$'; then
@@ -298,8 +326,7 @@ fi
 # read and never printed.
 if kubectl get pod -n "${NS}" "${PGPOD}" >/dev/null 2>&1; then
   PGARGS=$(kubectl get statefulset -n "${NS}" "${RELEASE}-postgres" -o jsonpath='{.spec.template.spec.containers[0].args}' 2>/dev/null)
-  HBA23=$(kubectl exec -n "${NS}" "${PGPOD}" -- \
-            grep -Ev '^[[:space:]]*#|^[[:space:]]*$' /var/lib/postgresql/data/pg_hba.conf 2>/dev/null)
+  HBA23=$(read_hba)
   case "${PGARGS}" in
     *ssl=on*) pass V-23/server "Postgres runs with ssl=on" ;;
     *)        fail V-23/server "Postgres has no ssl=on — every DSN below is cleartext on the wire" ;;

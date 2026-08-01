@@ -207,13 +207,41 @@ if (app.Environment.IsProduction())
     WarnOnNonHttpsProductionUrls(logger, appConfig);
 
 // ── Ensure DB schema exists ─────────────────────────────────────────────────
-await EnsureDbSchemaAsync(app);
+await EnsureDbSchemaAsync(app, appConfig);
 
-static async Task EnsureDbSchemaAsync(WebApplication webApp)
+static async Task EnsureDbSchemaAsync(WebApplication webApp, AppConfig cfg)
 {
     using var scope = webApp.Services.CreateScope();
     var db     = scope.ServiceProvider.GetRequiredService<RediensIamDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+
+    // Database:MigrateOnStartup=false means the operator migrates deliberately, so starting is
+    // the correct behaviour — refusing to boot would just make the switch useless. What is not
+    // acceptable is doing it quietly: an un-migrated schema surfaces as unexplained 500s on
+    // whichever endpoint first touches a missing column, a long way from the cause. The pending
+    // count turns "did not migrate" into "did not migrate, and you are N behind".
+    if (!cfg.MigrateOnStartup)
+    {
+        string pending;
+        try
+        {
+            pending = (await db.Database.GetPendingMigrationsAsync()).Count().ToString();
+        }
+        catch (Exception ex)
+        {
+            // Only the diagnostic is unavailable; the operator's instruction not to migrate still
+            // holds, so this must not abort startup the way the enabled path does.
+            logger.LogWarning(ex, "Could not read pending migrations while MigrateOnStartup is false");
+            pending = "unknown — could not reach the database";
+        }
+
+        logger.LogWarning(
+            "Database:MigrateOnStartup is false — NO migrations were applied at startup. Pending "
+            + "migrations: {PendingMigrations}. The schema is whatever already exists; apply "
+            + "migrations deliberately before treating this instance as healthy.", pending);
+        return;
+    }
+
     for (var attempt = 1; attempt <= 12; attempt++)
     {
         try

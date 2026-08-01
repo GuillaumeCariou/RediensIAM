@@ -37,12 +37,16 @@ public class AuthController(
     private const string MfaSetupRequired    = "mfa_setup_required";
     private const string MfaPendingUser      = "mfa_pending_user";
     private const string MfaPendingProject   = "mfa_pending_project";
+    private const string MfaPendingOrg       = "mfa_pending_org";
     private const string MfaPendingChallenge = "mfa_pending_challenge";
     private const string ErrRateLimited      = "rate_limited";
     private const string ErrMissingProjectId = "missing_project_id";
     private const string ErrInvalidChallenge = "invalid_challenge";
     private const string ErrAccessDenied     = "access_denied";
     private const string ErrProjectNotReady  = "project_not_ready";
+    // The challenge's client names one organisation and the project row another. Only reachable
+    // by editing Hydra's client store directly; refused rather than reconciled.
+    private const string ErrScopeMismatch    = "project_org_mismatch";
     private const string ErrInvalidCreds     = "invalid_credentials";
     private const string ErrNoMfaSession     = "no_mfa_session";
     private const string ErrInvalidCode      = "invalid_code";
@@ -54,6 +58,67 @@ public class AuthController(
     private const string MfaSetupTotpPrefix  = "mfa_setup_totp";
 
     private string Ip => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+    // ── RLS scope ─────────────────────────────────────────────────────────────
+    //
+    // A login has no token, so the interceptor would otherwise run every query on this
+    // controller as 'system' — unscoped, with row-level security enforcing nothing. But the
+    // flow does know its tenant well before it knows its user: the login challenge names an
+    // OAuth2 client, the client's registered metadata names a project, and the project names an
+    // organisation. `grep PinScope` lists every point at which that becomes true.
+    //
+    // The argument is always a value the server read back (project.OrgId, the org half of a
+    // Hydra subject we minted, the org recorded in a server-side session) — never request
+    // input. PinToOrganisationAsync additionally refuses to run for a request that already
+    // carries claims.
+
+    /// <summary>Runs the rest of this request under <paramref name="orgId"/>'s RLS scope.</summary>
+    private Task PinScopeAsync(Guid orgId) =>
+        svc.TenantScope.PinToOrganisationAsync(db, orgId, HttpContext.RequestAborted);
+
+    /// <summary>
+    /// Pins to the organisation the challenge's OAuth2 client is registered to, before anything
+    /// has been read — so even the <c>projects</c> row is fetched under the tenant's own scope.
+    /// A client with no registered organisation (the admin console, or a project client created
+    /// before <c>org_id</c> was recorded) leaves the request unscoped;
+    /// <see cref="EnsureScopedToProjectAsync"/> supplies the scope from the project row instead.
+    /// </summary>
+    private Task PinScopeToChallengeAsync(HydraLoginRequest req) =>
+        LoginChallengeProject.ResolveOrgOrNull(req) is { } orgId ? PinScopeAsync(orgId) : Task.CompletedTask;
+
+    /// <summary>
+    /// Confirms the request is running under <paramref name="project"/>'s organisation, pinning
+    /// it if the challenge could not. False means the client's registered organisation and the
+    /// project's disagree — impossible for a client this application minted, and refused rather
+    /// than reconciled.
+    ///
+    /// <para>
+    /// With RLS on, that disagreement already makes the project invisible and this never sees a
+    /// project to check. The check exists so the guarantee does not depend on a chart flag.
+    /// </para>
+    /// </summary>
+    private async Task<bool> EnsureScopedToProjectAsync(Project project)
+    {
+        var scope = svc.TenantScope.CurrentScope();
+        if (scope != TenantScopeInterceptor.SystemScope) return scope == project.OrgId.ToString();
+        await PinScopeAsync(project.OrgId);
+        return true;
+    }
+
+    /// <summary>
+    /// Pins to the organisation recorded when the pending-MFA session was opened. Deliberately a
+    /// no-op for the admin console, whose users live in the <c>OrgId IS NULL</c> system list and
+    /// are invisible under any tenant scope.
+    /// </summary>
+    private Task PinScopeToMfaSessionAsync() =>
+        MfaSessionTenant() is ({ } orgId, _) ? PinScopeAsync(orgId) : Task.CompletedTask;
+
+    /// <summary>The tenant the pending-MFA session belongs to; both null for the admin console.</summary>
+    private (Guid? OrgId, Guid? ProjectId) MfaSessionTenant() =>
+        (Guid.TryParse(HttpContext.Session.GetString(MfaPendingOrg), out var orgId) && orgId != Guid.Empty
+            ? orgId : null,
+         Guid.TryParse(HttpContext.Session.GetString(MfaPendingProject), out var projectId) && projectId != Guid.Empty
+            ? projectId : null);
 
     /// <summary>
     /// Defence-in-depth wrapper around <see cref="ControllerBase.Redirect"/>: only forwards to
@@ -112,6 +177,10 @@ public class AuthController(
         var skipUserId = ParseSubjectUserId(req.Subject);
         if (skipUserId.HasValue)
         {
+            // The subject is "<org>:<user>", minted by CompleteLoginAsync — so this
+            // re-validation needs no unscoped read at all. An admin subject is a bare user id
+            // and yields no organisation, which is correct: it has none.
+            if (ParseSubjectOrgId(req.Subject) is { } skipOrgId) await PinScopeAsync(skipOrgId);
             var skipUser = await db.Users
                 .Include(u => u.UserList)
                     .ThenInclude(ul => ul!.Organisation)
@@ -121,6 +190,15 @@ public class AuthController(
         }
         var redirect = await hydra.AcceptLoginAsync(login_challenge, req.Subject ?? "", []);
         return SafeRedirect(redirect);
+    }
+
+    /// <summary>The organisation half of a "&lt;org&gt;:&lt;user&gt;" subject; null for a bare admin subject.</summary>
+    private static Guid? ParseSubjectOrgId(string? subject)
+    {
+        var parts = (subject ?? "").Split(':', 2);
+        return parts.Length == 2 && Guid.TryParse(parts[0], out var orgId) && orgId != Guid.Empty
+            ? orgId
+            : null;
     }
 
     private static Guid? ParseSubjectUserId(string? subject)
@@ -146,6 +224,7 @@ public class AuthController(
     {
         var projectId = ExtractProjectId(req);
         if (projectId == null) return BadRequest(new { error = ErrMissingProjectId });
+        await PinScopeToChallengeAsync(req);
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId) && p.Active);
         if (project == null) return BadRequest(new { error = "invalid_project" });
         return Ok(new
@@ -174,6 +253,7 @@ public class AuthController(
             var req = await hydra.GetLoginRequestAsync(login_challenge);
             var projectId = ExtractProjectId(req);
             if (projectId == null) return BadRequest();
+            await PinScopeToChallengeAsync(req);
 
             var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId));
             if (project == null) return NotFound();
@@ -218,6 +298,10 @@ public class AuthController(
         if (resolution != LoginChallengeProject.Resolution.Ok || projectId == null)
             return BadRequest(new { error = ErrMissingProjectId });
 
+        // The organisation registered on the challenge's client scopes this request before it
+        // reads anything — including the project row below.
+        await PinScopeToChallengeAsync(req);
+
         var project = await db.Projects
             .Include(p => p.AssignedUserList)
             .Include(p => p.Organisation)
@@ -225,6 +309,9 @@ public class AuthController(
 
         if (project?.AssignedUserListId == null)
             return BadRequest(new { error = ErrProjectNotReady });
+
+        if (!await EnsureScopedToProjectAsync(project))
+            return BadRequest(new { error = ErrScopeMismatch });
 
         if (project.Organisation == null || !project.Organisation.Active)
             return Unauthorized(new { error = "organisation_suspended" });
@@ -348,7 +435,7 @@ public class AuthController(
             if (!hasMfa)
             {
                 HttpContext.Session.SetString(MfaSetupRequired, "true");
-                SetMfaSession(user.Id.ToString(), loginChallenge, projectId);
+                SetMfaSession(user.Id.ToString(), loginChallenge, projectId, project.OrgId);
                 IamMetrics.LoginAttempts.WithLabels(MfaSetupRequired).Inc();
                 return Ok(new { requires_mfa_setup = true });
             }
@@ -356,14 +443,14 @@ public class AuthController(
 
         if (user.TotpEnabled)
         {
-            SetMfaSession(user.Id.ToString(), loginChallenge, projectId);
+            SetMfaSession(user.Id.ToString(), loginChallenge, projectId, project.OrgId);
             return Ok(new { requires_mfa = true, mfa_type = "totp" });
         }
 
         // Only offer SMS when a real provider can actually deliver it (see ISmsService.IsConfigured).
         if (user.PhoneVerified && !string.IsNullOrEmpty(user.Phone) && smsService.IsConfigured)
         {
-            SetMfaSession(user.Id.ToString(), loginChallenge, projectId);
+            SetMfaSession(user.Id.ToString(), loginChallenge, projectId, project.OrgId);
             var smsCode = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
             await otp.StoreSessionOtpAsync("sms_mfa", user.Id.ToString(), smsCode);
             await smsService.SendOtpAsync(user.Phone, smsCode, "login");
@@ -375,18 +462,24 @@ public class AuthController(
 
         if (user.WebAuthnEnabled)
         {
-            SetMfaSession(user.Id.ToString(), loginChallenge, projectId);
+            SetMfaSession(user.Id.ToString(), loginChallenge, projectId, project.OrgId);
             return Ok(new { requires_mfa = true, mfa_type = "webauthn" });
         }
 
         return null;
     }
 
-    private void SetMfaSession(string userId, string loginChallenge, string? projectId)
+    /// <summary>
+    /// <paramref name="orgId"/> is carried so the MFA steps that follow can pin their RLS scope
+    /// without re-reading the project. It is server-side session state; null means the admin
+    /// console, which has no organisation.
+    /// </summary>
+    private void SetMfaSession(string userId, string loginChallenge, string? projectId, Guid? orgId)
     {
         HttpContext.Session.SetString(MfaPendingUser, userId);
         HttpContext.Session.SetString(MfaPendingChallenge, loginChallenge);
         HttpContext.Session.SetString(MfaPendingProject, projectId ?? "");
+        HttpContext.Session.SetString(MfaPendingOrg, orgId?.ToString() ?? "");
     }
 
     private async Task<IActionResult> CompleteLoginAsync(User user, Project project, string loginChallenge)
@@ -426,6 +519,8 @@ public class AuthController(
         if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
             return StatusCode(429, new { error = ErrRateLimited });
 
+        await PinScopeToMfaSessionAsync();
+
         var submitted = body.Code.ToUpperInvariant();
         // Fast path: SHA256 codes are looked up by exact hash match — O(1) in DB, no per-row Argon2.
         var fastHash = passwords.HashBackupCode(submitted);
@@ -459,6 +554,7 @@ public class AuthController(
         var userGuid = Guid.Parse(userId);
         if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
             return StatusCode(429, new { error = ErrRateLimited });
+        await PinScopeToMfaSessionAsync();
         var user = await db.Users.FindAsync(userGuid);
         if (!smsService.IsConfigured)
             return BadRequest(new { error = "sms_provider_not_configured" });
@@ -485,10 +581,16 @@ public class AuthController(
         if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
             return StatusCode(429, new { error = ErrRateLimited });
 
+        await PinScopeToMfaSessionAsync();
+
         if (!await otp.VerifySessionOtpAsync("sms_mfa", userId, body.Code))
         {
             await rateLimiter.RecordFailureAsync(Ip, userGuid);
-            await audit.RecordAsync(null, null, userGuid, "user.mfa.sms.failed");
+            // Recorded against the tenant the MFA session belongs to. It used to be written with
+            // no org at all, which both hid the failure from the tenant's own audit view and —
+            // now that this request runs scoped — would be refused by the audit_log RLS policy.
+            var (smsOrgId, smsProjectId) = MfaSessionTenant();
+            await audit.RecordAsync(smsOrgId, smsProjectId, userGuid, "user.mfa.sms.failed");
             return Unauthorized(new { error = ErrInvalidCode });
         }
 
@@ -512,6 +614,8 @@ public class AuthController(
         if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
             return StatusCode(429, new { error = ErrRateLimited });
 
+        await PinScopeToMfaSessionAsync();
+
         var user = await db.Users.FindAsync(userGuid);
         if (user?.TotpSecret == null) return BadRequest(new { error = "totp_not_configured" });
 
@@ -526,7 +630,8 @@ public class AuthController(
         if (!totp.VerifyTotp(body.Code, out _, new VerificationWindow(1, 1)))
         {
             await rateLimiter.RecordFailureAsync(Ip, userGuid);
-            await audit.RecordAsync(null, null, userGuid, "user.mfa.totp.failed");
+            var (totpOrgId, totpProjectId) = MfaSessionTenant();
+            await audit.RecordAsync(totpOrgId, totpProjectId, userGuid, "user.mfa.totp.failed");
             return Unauthorized(new { error = "invalid_totp" });
         }
 
@@ -548,6 +653,8 @@ public class AuthController(
         var userId = HttpContext.Session.GetString(MfaPendingUser);
         if (userId == null || !Guid.TryParse(userId, out var userGuid))
             return BadRequest(new { error = ErrNoMfaSession });
+
+        await PinScopeToMfaSessionAsync();
 
         var user = await db.Users.FindAsync(userGuid);
         if (user == null) return NotFound();
@@ -583,6 +690,8 @@ public class AuthController(
 
         if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
             return StatusCode(429, new { error = ErrRateLimited });
+
+        await PinScopeToMfaSessionAsync();
 
         var encrypted = await otp.PeekPendingAsync(MfaSetupTotpPrefix, userId);
         if (encrypted == null) return BadRequest(new { error = "no_setup_session" });
@@ -679,6 +788,12 @@ public class AuthController(
 
         if (projectIdStr == null) return BadRequest(new { error = "missing_context" });
 
+        // The context is what CompleteLoginAsync handed Hydra at accept-login, so the tenant is
+        // known here without reading anything. (The admin branch above returns before this: its
+        // OrgRoles lookup is deliberately cross-organisation and must stay unscoped.)
+        if (Guid.TryParse(orgIdStr, out var consentOrgId) && consentOrgId != Guid.Empty)
+            await PinScopeAsync(consentOrgId);
+
         var projectId = Guid.Parse(projectIdStr);
 
         // ext.roles is a published contract read by resource servers RediensIAM cannot inventory.
@@ -753,11 +868,14 @@ public class AuthController(
         var projectId = ExtractProjectId(req);
         if (projectId == null) return BadRequest(new { error = ErrMissingProjectId });
 
+        await PinScopeToChallengeAsync(req);
+
         var project = await db.Projects
             .Include(p => p.AssignedUserList)
             .FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId) && p.Active);
 
         if (project == null) return NotFound(new { error = "project_not_found" });
+        if (!await EnsureScopedToProjectAsync(project)) return BadRequest(new { error = ErrScopeMismatch });
         if (!project.AllowSelfRegistration) return StatusCode(403, new { error = "registration_not_allowed" });
         if (project.AssignedUserListId == null) return BadRequest(new { error = ErrProjectNotReady });
 
@@ -886,6 +1004,10 @@ public class AuthController(
         var projId = Guid.Parse(root.GetProperty(CtxProjectId).GetString()!);
         var loginChallenge = root.GetProperty("login_challenge").GetString()!;
 
+        // orgId came out of the server-side pending-registration record written by Register,
+        // which had already resolved it from the challenge. No read is needed to scope this.
+        await PinScopeAsync(orgId);
+
         var regProject = await db.Projects.FindAsync(projId);
         if (regProject == null || !regProject.Active || regProject.AssignedUserListId == null)
             return BadRequest(new { error = "project_inactive" });
@@ -974,6 +1096,12 @@ public class AuthController(
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == body.ProjectId && p.Active);
         if (project?.AssignedUserListId == null || (!project.EmailVerificationEnabled && !project.SmsVerificationEnabled))
             return BadRequest(new { error = "verification_not_configured" });
+
+        // body.ProjectId is caller-supplied, but the organisation is read off the project row it
+        // names, so the scope is still server-decided. See the enumeration note in
+        // .security-hardening/32-login-tenant-scope.md: the user lookup below is already keyed
+        // by this project's user list, so scoping it reveals nothing a caller could not observe.
+        await PinScopeAsync(project.OrgId);
 
         var emailLower = body.Email.ToLowerInvariant();
         var user = await db.Users.FirstOrDefaultAsync(u =>
@@ -1117,7 +1245,7 @@ public class AuthController(
                      await db.WebAuthnCredentials.AnyAsync(w => w.UserId == user.Id);
         if (hasMfa)
         {
-            SetMfaSession(user.Id.ToString(), body.LoginChallenge, null);
+            SetMfaSession(user.Id.ToString(), body.LoginChallenge, null, null);
             return Ok(new { requires_mfa = true });
         }
 
@@ -1127,7 +1255,7 @@ public class AuthController(
         if (appConfig.RequireAdminMfa)
         {
             HttpContext.Session.SetString(MfaSetupRequired, "true");
-            SetMfaSession(user.Id.ToString(), body.LoginChallenge, null);
+            SetMfaSession(user.Id.ToString(), body.LoginChallenge, null, null);
             IamMetrics.LoginAttempts.WithLabels(MfaSetupRequired).Inc();
             return Ok(new { requires_mfa_setup = true });
         }
@@ -1253,9 +1381,11 @@ public class AuthController(
 
         var projectId = ExtractProjectId(req);
         if (projectId == null) return BadRequest(new { error = ErrMissingProjectId });
+        await PinScopeToChallengeAsync(req);
 
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId) && p.Active);
         if (project?.AssignedUserListId == null) return BadRequest(new { error = ErrProjectNotReady });
+        if (!await EnsureScopedToProjectAsync(project)) return BadRequest(new { error = ErrScopeMismatch });
 
         var providerCfg = GetProviderConfig(project.LoginTheme, provider_id);
         if (providerCfg == null) return BadRequest(new { error = "provider_not_found" });
@@ -1314,11 +1444,14 @@ public class AuthController(
             return SafeRedirect(errorRedirect);
         }
 
+        // No challenge is in hand here — the caller came back from the provider — so the
+        // organisation comes from the project row and everything after it runs scoped.
         var project = await db.Projects
             .Include(p => p.AssignedUserList)
             .FirstOrDefaultAsync(p => p.Id == Guid.Parse(stateData.ProjectId) && p.Active);
 
         if (project?.AssignedUserListId == null) return SafeRedirect(errorRedirect);
+        await PinScopeAsync(project.OrgId);
 
         var providerCfg = GetProviderConfig(project.LoginTheme, stateData.ProviderId);
         if (providerCfg == null) return SafeRedirect(errorRedirect);
@@ -1396,9 +1529,17 @@ public class AuthController(
                 return null;
         }
 
+        // Constrained to this project's user list. The same provider subject can legitimately
+        // exist in two tenants — one person with one Google account, invited by two customers —
+        // and an unconstrained match returned the FIRST tenant's user, which this method's
+        // caller then signed in against THIS project. That is one tenant authenticating another
+        // tenant's account. The tenant scope pinned above already denies it; the predicate is
+        // here so the guarantee does not depend on row-level security being switched on.
         var social = await db.UserSocialAccounts
             .Include(s => s.User)
-            .FirstOrDefaultAsync(s => s.Provider == provider && s.ProviderUserId == profile.ProviderUserId);
+            .FirstOrDefaultAsync(s => s.Provider == provider
+                && s.ProviderUserId == profile.ProviderUserId
+                && s.User.UserListId == project.AssignedUserListId);
 
         if (social != null) return social.User;
 
@@ -1549,6 +1690,8 @@ public class AuthController(
         if (!Guid.TryParse(userId, out var uid))
             return BadRequest(new { error = ErrNoMfaSession });
 
+        await PinScopeToMfaSessionAsync();
+
         var allowedCreds = await db.WebAuthnCredentials
             .Where(c => c.UserId == uid)
             .Select(c => new PublicKeyCredentialDescriptor(c.CredentialId))
@@ -1632,6 +1775,7 @@ public class AuthController(
         HttpContext.Session.Remove(MfaPendingUser);
         HttpContext.Session.Remove(MfaPendingChallenge);
         HttpContext.Session.Remove(MfaPendingProject);
+        HttpContext.Session.Remove(MfaPendingOrg);
         // Rotate session ID to prevent fixation: clear + delete the cookie so the next response
         // issues a fresh session identifier rather than reusing the pre-MFA one.
         HttpContext.Session.Clear();

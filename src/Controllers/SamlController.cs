@@ -156,6 +156,29 @@ public class SamlController(
             if (saml2AuthnResponse.Status != Saml2StatusCodes.Success)
                 throw new AuthenticationException($"SAML status: {saml2AuthnResponse.Status}");
 
+            // Endpoint binding. AllowedAudienceUris already refuses an assertion addressed to a
+            // different service provider and remains the primary control; this is the secondary
+            // one the spec asks for, refusing a response that was legitimately issued for some
+            // *other endpoint of this same SP* and then relayed here.
+            //
+            // Ordered before the pending record is consumed on purpose: GetAndDeletePendingAsync
+            // is single-use, so validating afterwards would let a misdirected response burn the
+            // InResponseTo of a legitimate login still in flight. Nothing is lost by checking
+            // pre-signature — Unbind below re-parses the identical document and still rejects any
+            // tampering, so an attacker who rewrites Destination to match only reaches a failed
+            // signature check.
+            var destination = saml2AuthnResponse.Destination;
+            if (destination == null)
+                // Optional per §3.2.2, so absence is not a failure — but it does mean this IdP's
+                // responses carry nothing to bind them to an endpoint, which is worth saying once
+                // per login rather than discovering during an incident.
+                logger.LogWarning(
+                    "SAML response from IdP {IdpId} has no Destination attribute; the endpoint-binding check does not apply to it",
+                    idp.Id);
+            else if (!SamlService.DestinationMatches(destination, AcsUrl))
+                throw new AuthenticationException(
+                    $"Destination '{destination}' does not name this ACS endpoint");
+
             // Consume the pending request: single use, so a captured response cannot be replayed.
             var inResponseTo = saml2AuthnResponse.InResponseTo?.Value;
             if (string.IsNullOrEmpty(inResponseTo)) return (null, "saml_no_pending_request");

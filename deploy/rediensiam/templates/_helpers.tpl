@@ -49,6 +49,24 @@ http://{{ .Release.Name }}-keto-write:4467
 {{- end -}}
 
 {{/*
+rediensiam.selfSignedIssuer
+The chart's built-in self-signed issuer: a NAMESPACED Issuer, named after the release.
+
+It used to be a ClusterIssuer called `selfsigned` — a fixed name on a cluster-scoped object,
+created unconditionally. Three ways that bites, all found by installing this chart a second
+time in one cluster:
+  · a cluster that already has an issuer called `selfsigned` (cert-manager's own doc example)
+    fails `helm install` outright with an ownership error, before anything is applied;
+  · two releases cannot coexist, in any namespaces;
+  · `helm uninstall` of either release deletes the issuer the other one still renews against.
+Nothing needed it to be cluster-scoped: the only Certificates it signs — Postgres, Dragonfly
+and the admin ingress — are all in the release's own namespace.
+*/}}
+{{- define "rediensiam.selfSignedIssuer" -}}
+{{ .Release.Name }}-selfsigned
+{{- end -}}
+
+{{/*
 rediensiam.dnsEgress
 The one egress rule every pod in this release needs. Narrowed from "0.0.0.0/0 on :53" to the
 kube-dns pods, because :53 to anywhere is the standard exfiltration channel.

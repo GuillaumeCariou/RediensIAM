@@ -30,6 +30,7 @@ fi
 # as an upgrade (no cross-namespace PVC move, and helm cannot change a release's namespace).
 # Overridable so that decision is available without editing this file:  NAMESPACE=rediensiam ./deploy/setup.sh --prod
 NAMESPACE="${NAMESPACE:-default}"
+RELEASE="${RELEASE:-rediensiam}"
 REGISTRY="localhost:5000"
 # R-16: the registry listens on loopback only. Anyone who could reach TCP/5000 on this host
 # could previously push a replacement rediensiam:prod and own the next pod restart.
@@ -90,13 +91,38 @@ wait_api() {
   echo "  ERROR: cluster API not ready after 10m"; exit 1
 }
 
+# `helm --wait` is deliberately NOT used. It waits for every PVC in the release to reach
+# Bound, and `<release>-backup` has no consumer until the nightly CronJob fires. On a
+# StorageClass with volumeBindingMode: WaitForFirstConsumer — k3s local-path's default, and
+# most cloud defaults — that PVC stays Pending until 03:00, so a FIRST-EVER install burned the
+# whole timeout and died with `Error: context deadline exceeded` while all five pods were
+# already 1/1 Running. Observed 2026-08-01 on the first prod install ever attempted; existing
+# installs never saw it because their backup PVC bound the first night and stayed bound.
+# Wait on the workloads instead — that is what "is it up" actually means.
+wait_workloads() {
+  local rc=0 kind
+  for kind in "statefulset/${RELEASE}-postgres" \
+              "deployment/${RELEASE}" \
+              "deployment/${RELEASE}-dragonfly" \
+              "deployment/${RELEASE}-hydra" \
+              "deployment/${RELEASE}-keto"
+  do
+    # Not every workload renders in every configuration: postgres and dragonfly stand down in
+    # external mode, and hydra/keto are subchart-conditional. A missing one is not a failure.
+    kubectl get "${kind}" -n "${NAMESPACE}" >/dev/null 2>&1 || continue
+    kubectl rollout status "${kind}" -n "${NAMESPACE}" --timeout=5m || rc=1
+  done
+  return "${rc}"
+}
+
 helm_deploy() {
   local release="$1"; local chart="$2"; shift 2
   for attempt in $(seq 1 3); do
     helm rollback "${release}" 0 -n "${NAMESPACE}" 2>/dev/null \
       || helm uninstall "${release}" -n "${NAMESPACE}" --no-hooks 2>/dev/null \
       || true
-    helm upgrade --install "${release}" "${chart}" --namespace "${NAMESPACE}" "$@" && return 0
+    helm upgrade --install "${release}" "${chart}" --namespace "${NAMESPACE}" "$@" \
+      && wait_workloads && return 0
     echo "  helm failed (attempt $attempt/3)"; wait_api
   done
   echo "  ERROR: helm failed after 3 attempts"; return 1
@@ -464,7 +490,7 @@ wait_api
 kubectl delete job -n "${NAMESPACE}" -l "app.kubernetes.io/instance=rediensiam" 2>/dev/null || true
 
 if [ "${PROD}" = "true" ]; then
-  helm_deploy rediensiam "${CHART}" \
+  helm_deploy "${RELEASE}" "${CHART}" \
     -f "${CHART}/values.yaml" \
     -f "${CHART}/values.prod.yaml" \
     ${OVERRIDE_ARGS[@]+"${OVERRIDE_ARGS[@]}"} \
@@ -472,10 +498,9 @@ if [ "${PROD}" = "true" ]; then
     --set rediensiam.image.repository="${REGISTRY}/rediensiam" \
     --set rediensiam.image.tag=prod \
     --set rediensiam.image.digest="${IMAGE_DIGEST}" \
-    --set rediensiam.image.pullPolicy=IfNotPresent \
-    --wait --timeout 10m
+    --set rediensiam.image.pullPolicy=IfNotPresent
 else
-  helm_deploy rediensiam "${CHART}" \
+  helm_deploy "${RELEASE}" "${CHART}" \
     -f "${CHART}/values.yaml" \
     -f "${CHART}/values.dev.yaml" \
     ${OVERRIDE_ARGS[@]+"${OVERRIDE_ARGS[@]}"} \
@@ -483,8 +508,7 @@ else
     --set rediensiam.image.repository="${REGISTRY}/rediensiam" \
     --set rediensiam.image.tag=dev \
     --set rediensiam.image.digest="${IMAGE_DIGEST}" \
-    --set rediensiam.image.pullPolicy=IfNotPresent \
-    --wait --timeout 10m
+    --set rediensiam.image.pullPolicy=IfNotPresent
 fi
 
 # client_admin_system is registered by the app on startup (EnsureAdminSpaClientAsync)
@@ -510,7 +534,12 @@ echo " Smoke tests:"
 check() {
   local label="$1"; local url="$2"; local expected="$3"; local host="${4:-${PUBLIC_HOST}}"
   local code
-  code=$(curl -sk -o /dev/null -w "%{http_code}" -H "Host: ${host}" --max-time 5 "${url}" 2>/dev/null)
+  # `|| true` is load-bearing under `set -e`. curl exits 7 on a refused connection and 28 on a
+  # timeout, and a failed command substitution in an assignment kills the whole script — so a
+  # probe that could not connect aborted deploy.sh and printed "the cluster may be half-changed"
+  # over a healthy install. Observed 2026-08-01: the app Service had just gained its endpoint.
+  # curl still writes 000 to stdout first, so the ✗ branch below reports it as intended.
+  code=$(curl -sk -o /dev/null -w "%{http_code}" -H "Host: ${host}" --max-time 5 "${url}" 2>/dev/null || true)
   if [ "${code}" = "${expected}" ]; then
     echo "   ✓  ${label} (${code})"
   else
