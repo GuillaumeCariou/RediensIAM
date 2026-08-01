@@ -304,8 +304,8 @@ public class ManagedApiTests(TestFixture fixture)
     [Fact]
     public async Task AddUser_WithoutPassword_SendsInviteEmailAndReturns201()
     {
-        // Omitting password → isInvite = true → emailService.SendInviteAsync called
-        // Covers ControllerServices.cs:99 (ManagedApiServices.Email property)
+        // Omitting the password is what turns this into an invite, and the invite send is the only
+        // caller of ManagedApiServices.Email.
         var (_, client) = await SuperAdminClientAsync();
         var (org, _)    = await fixture.Seed.CreateOrgAsync();
         var list        = await fixture.Seed.CreateUserListAsync(org.Id);

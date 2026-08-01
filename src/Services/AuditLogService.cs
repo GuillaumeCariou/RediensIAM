@@ -34,10 +34,8 @@ public class AuditLogService(IServiceScopeFactory scopeFactory, IHttpContextAcce
         });
         await db.SaveChangesAsync();
 
-        // Prometheus
         IamMetrics.AuditEvents.WithLabels(action).Inc();
 
-        // Fire-and-forget webhook dispatch for supported event types
         if (WebhookEvents.All.Contains(action))
         {
             _ = webhookService.DispatchAsync(action, new

@@ -55,9 +55,9 @@ public class GatewayAuthMiddleware(RequestDelegate next, AppConfig appConfig)
         ctx.Items["Claims"] = claims;
         // Records that this TokenClaims instance is the *caller's* identity for this request, so
         // that reading an unverified management level off it can be refused (see
-        // ClaimsExtensions.GetManagementLevel). Every request deserialises its own instance
-        // (HydraService.ValidateJwtAsync from cache, PatService above), so the mark never outlives
-        // the request that made it.
+        // ClaimsExtensions.GetGrantedLevel, which answers null until a live check has run). Every
+        // request deserialises its own instance (HydraService.ValidateJwtAsync from cache,
+        // PatService above), so the mark never outlives the request that made it.
         ClaimsExtensions.MarkCallerClaims(claims);
 
         // Default deny (S-1a). The management prefixes are opt-in today: an action is privileged

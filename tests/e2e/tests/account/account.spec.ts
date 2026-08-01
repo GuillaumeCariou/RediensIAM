@@ -159,7 +159,6 @@ test('revoke single session calls DELETE with client_id', async ({ adminPage: pa
   await page.goto('/admin/account');
   await page.getByRole('tab', { name: /sessions/i }).click();
 
-  // Click revoke on the first session
   await page.getByRole('row').filter({ hasText: 'My App' }).getByRole('button').click();
 
   expect(deletedClientId).toBe('client-001');

@@ -29,7 +29,7 @@ while [ $# -gt 0 ]; do
     --plan) PLAN_ONLY=true; shift ;;
     --upgrade) UPGRADE_ARG="--upgrade"; shift ;;
     --skip-preflight) SKIP_PREFLIGHT=true; shift ;;
-    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -367,6 +367,9 @@ fi
 SECRETS_EXISTED=true
 [ -f "${SECRETS_FILE}" ] || SECRETS_EXISTED=false
 
+# SC2086: UPGRADE_ARG is deliberately unquoted. It is either empty or the single flag --upgrade,
+# and quoting it would pass an empty positional argument to deploy.sh on every non-upgrade run.
+# Keep it unquoted, or make it an array before it ever carries a second word.
 # shellcheck disable=SC2086
 "${SCRIPT_DIR}/deploy.sh" "--${ENVIRONMENT}" ${UPGRADE_ARG} || die "deploy.sh failed" \
   "the cluster may be half-changed. 'helm history ${RELEASE} -n ${NAMESPACE}' shows what happened; 'helm rollback' reverts."

@@ -22,7 +22,7 @@ public class AccountController(
     AppConfig appConfig,
     ILogger<AccountController> logger) : ControllerBase
 {
-    // Unwrap bundle (S107)
+    // Bundle forwarders — the constructor takes one aggregate to satisfy S107; see ControllerServices.
     private PasswordService passwords    => svc.Passwords;
     private HydraService hydra           => svc.Hydra;
     private ISmsService smsService       => svc.Sms;
@@ -35,7 +35,11 @@ public class AccountController(
     private const string TotpSetupPrefix     = "totp_setup";
     private const string PhoneSetupPrefix    = "phone_setup_number";
     private const string WebAuthnSetupPrefix = "webauthn_setup";
-    // /account/* routes are protected by GatewayAuthMiddleware — Claims is always non-null here.
+
+    /// <summary>
+    /// Every /account/* route sits behind <see cref="Middleware.GatewayAuthMiddleware"/>, which 401s
+    /// before the action runs — which is what makes the null-forgiving operator safe here.
+    /// </summary>
     private TokenClaims Claims => HttpContext.GetClaims()!;
     private Guid? OrgId => Guid.TryParse(Claims.OrgId, out var oid) ? oid : null;
 
@@ -531,7 +535,6 @@ public class AccountController(
         var user = await db.Users.FindAsync(userId);
         if (user == null) return NotFound();
 
-        // Guard: must not remove the last auth method
         var otherSocial = await db.UserSocialAccounts.CountAsync(s => s.UserId == userId && s.Id != id);
         if (user.PasswordHash == null && otherSocial == 0)
             return BadRequest(new { error = "cannot_remove_last_auth_method" });

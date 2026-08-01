@@ -76,19 +76,21 @@ public sealed class TestFixture : IAsyncLifetime
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Brings up the containers and the host. The config keys below go in as process environment
+    /// variables rather than through <c>WithWebHostBuilder</c>'s InMemoryCollection because
+    /// Program.cs's top-level statements read AppConfig (DB connection, cache multiplexer) before
+    /// <c>builder.Build()</c> runs, at which point the in-memory source has not been applied yet.
+    /// <c>WebApplication.CreateBuilder</c> auto-loads environment variables and maps the double
+    /// underscore onto the colon-separated key, so the two spellings mean the same setting.
+    /// </summary>
     public async Task InitializeAsync()
     {
-        // Start containers in parallel (MailHog for real SMTP coverage tests)
+        // MailHog is here for the tests that exercise real SMTP.
         await Task.WhenAll(_postgres.StartAsync(), _redis.StartAsync(), _mailhog.StartAsync());
 
         _mux = await ConnectionMultiplexer.ConnectAsync(_redis.GetConnectionString());
 
-        // Program.cs top-level statements read AppConfig values (DB connection, cache
-        // multiplexer) BEFORE builder.Build() runs, which means the InMemoryCollection
-        // added via WithWebHostBuilder is not yet applied. Set the critical keys as
-        // process env vars so they are visible to builder.Configuration at startup.
-        // WebApplication.CreateBuilder auto-loads env vars and double-underscore maps
-        // to the colon-separated config key.
         SetTestEnvVar("ConnectionStrings__Default",        _postgres.GetConnectionString());
         SetTestEnvVar("Cache__ConnectionString",           _redis.GetConnectionString());
         SetTestEnvVar("Hydra__AdminUrl",                   Hydra.Url);
@@ -201,7 +203,6 @@ public sealed class TestFixture : IAsyncLifetime
             AllowAutoRedirect = false,
         });
 
-        // Get a direct DB context for seeding
         var scope = _factory.Services.CreateScope();
         Db   = scope.ServiceProvider.GetRequiredService<RediensIamDbContext>();
         var pwd = scope.ServiceProvider.GetRequiredService<PasswordService>();
@@ -489,10 +490,13 @@ public sealed class TestFixture : IAsyncLifetime
         await Task.CompletedTask;
     }
 
-    // Polly's standard resilience handler includes a circuit breaker. Tests that simulate
-    // Hydra/Keto failures generate many 500s with retries, which can trip the circuit
-    // and cause all subsequent Hydra introspect calls to fail with BrokenCircuitException.
-    // Raise MinimumThroughput to int.MaxValue so the circuit never opens in tests.
+    /// <summary>
+    /// Polly's standard resilience handler includes a circuit breaker. Tests that simulate
+    /// Hydra/Keto failures generate many 500s with retries, which can trip the circuit and make
+    /// every later Hydra introspect call fail with <c>BrokenCircuitException</c> — failures that
+    /// look like bugs in whichever test happened to run next. Raising MinimumThroughput to
+    /// <c>int.MaxValue</c> keeps the circuit shut for the whole run.
+    /// </summary>
     private static void DisableCircuitBreakers(IServiceCollection services) =>
         services.PostConfigureAll<HttpStandardResilienceOptions>(opts =>
             opts.CircuitBreaker.MinimumThroughput = int.MaxValue);

@@ -25,9 +25,11 @@ test('config is validated up front', () => {
   assert.doesNotThrow(() => new RediensIam(validConfig));
 });
 
-// R-30: the PKCE verifier, the refresh token and the bearer all ride on the issuer origin, so
-// cleartext there hands an on-path attacker the whole session. Loopback is the one exemption —
-// a check that has to be disabled for local development gets disabled in production too.
+/**
+ * R-30: the PKCE verifier, the refresh token and the bearer all ride on the issuer origin, so
+ * cleartext there hands an on-path attacker the whole session. Loopback is the one exemption —
+ * a check that has to be disabled for local development gets disabled in production too.
+ */
 test('issuer must be https, except on loopback', () => {
   assert.throws(
     () => new RediensIam({ ...validConfig, issuer: 'http://auth.example.com' }),
@@ -51,8 +53,10 @@ test('apiOrigins are held to the same scheme rule', () => {
   );
 });
 
-// R-31: without this, one user-influenced URL through iam.fetch() ships the access token
-// off-origin.
+/**
+ * R-31: without this, one user-influenced URL through iam.fetch() ships the access token
+ * off-origin.
+ */
 test('the bearer only goes to the app origin or a declared api origin', () => {
   const app = 'https://app.example.com';
   const allowed = new Set(['https://api.example.com']);
@@ -71,8 +75,10 @@ test('the bearer only goes to the app origin or a declared api origin', () => {
   assert.equal(isTrustedTarget('/api/me', undefined, allowed), false);
 });
 
-// R-30, second half: an unvalidated discovery document redirects the whole flow. Whoever answers
-// for the issuer names the token endpoint, and the PKCE verifier goes there.
+/**
+ * R-30, second half: an unvalidated discovery document redirects the whole flow. Whoever answers
+ * for the issuer names the token endpoint, and the PKCE verifier goes there.
+ */
 test('discovery endpoints must sit on the issuer origin', async () => {
   const realFetch = globalThis.fetch;
   const assigned: string[] = [];

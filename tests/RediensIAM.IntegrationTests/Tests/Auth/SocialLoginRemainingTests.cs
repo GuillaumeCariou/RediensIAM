@@ -102,7 +102,7 @@ public class SocialLoginRemainingTests(TestFixture fixture)
                 ProjectId:      project.Id.ToString(),
                 ProviderId:     "github",
                 LinkMode:       true,
-                LinkUserId:     "not-a-guid",   // invalid → Guid.TryParse fails → line 1151
+                LinkUserId:     "not-a-guid",   // must not parse: an unusable link target has to be refused
                 LinkProjectId:  project.Id.ToString());
             var stateKey = $"bad-link-{Guid.NewGuid():N}";
             await cache.SetStringAsync($"oauth2:state:{stateKey}",

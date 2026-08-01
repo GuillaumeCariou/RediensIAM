@@ -187,7 +187,6 @@ public class AdminLoginTests(TestFixture fixture)
         var challenge = NewAdminChallenge();
         fixture.Keto.AllowAll();
 
-        // Lock the account
         user.LockedUntil = DateTimeOffset.UtcNow.AddHours(1);
         await fixture.Db.SaveChangesAsync();
 

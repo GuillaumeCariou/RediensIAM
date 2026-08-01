@@ -25,7 +25,10 @@ public class AccountExtendedTests(TestFixture fixture)
         return (user, token, client);
     }
 
-    // Removing a live MFA factor re-authenticates (R-24).
+    /// <summary>
+    /// Removing a live MFA factor re-authenticates (R-24), so every delete in this file has to
+    /// carry the current password in the request body.
+    /// </summary>
     private static Task<HttpResponseMessage> DeleteWithReauthAsync(HttpClient client, string url) =>
         client.SendAsync(new HttpRequestMessage(HttpMethod.Delete, url)
         {
@@ -54,13 +57,11 @@ public class AccountExtendedTests(TestFixture fixture)
     {
         var (_, _, client) = await ScaffoldAsync();
 
-        // Setup: get secret from server (stored in session cookie on this client)
         var setupRes  = await client.PostAsync("/account/mfa/totp/setup", null);
         setupRes.StatusCode.Should().Be(HttpStatusCode.OK);
         var setupBody = await setupRes.Content.ReadFromJsonAsync<JsonElement>();
         var base32    = setupBody.GetProperty("secret").GetString()!;
 
-        // Generate a valid current TOTP code from the returned secret
         var secretBytes = Base32Encoding.ToBytes(base32);
         var validCode   = new Totp(secretBytes).ComputeTotp();
 
@@ -80,7 +81,6 @@ public class AccountExtendedTests(TestFixture fixture)
         var (_, _, client) = await ScaffoldAsync();
         var phone = $"+336{Random.Shared.Next(10000000, 99999999)}";
 
-        // Setup phone — sends OTP via stub SMS and stores phone in session
         var setupRes = await client.PostAsJsonAsync("/account/mfa/phone/setup", new { phone });
         setupRes.StatusCode.Should().Be(HttpStatusCode.OK);
 
@@ -113,7 +113,6 @@ public class AccountExtendedTests(TestFixture fixture)
     {
         var (_, _, client) = await ScaffoldAsync();
 
-        // Verify without calling setup first → no session
         var res = await client.PostAsJsonAsync("/account/mfa/phone/verify", new { code = "123456" });
 
         res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -135,7 +134,6 @@ public class AccountExtendedTests(TestFixture fixture)
     {
         var (user, _, client) = await ScaffoldAsync();
 
-        // Seed phone on user
         user.Phone         = "+33600000000";
         user.PhoneVerified = true;
         await fixture.Db.SaveChangesAsync();
@@ -182,7 +180,6 @@ public class AccountExtendedTests(TestFixture fixture)
     [Fact]
     public async Task WebAuthnRegisterComplete_NoSession_Returns400()
     {
-        // Call complete without calling begin first → session key absent → 400
         var (_, _, client) = await ScaffoldAsync();
 
         var res = await client.PostAsJsonAsync("/account/mfa/webauthn/register/complete", new
@@ -246,7 +243,6 @@ public class AccountExtendedTests(TestFixture fixture)
     {
         var (user, _, client) = await ScaffoldAsync();
 
-        // Seed a WebAuthn credential
         var cred = new WebAuthnCredential
         {
             Id           = Guid.NewGuid(),
@@ -317,7 +313,6 @@ public class AccountExtendedTests(TestFixture fixture)
         project.AssignedUserListId = list.Id;
         await fixture.Db.SaveChangesAsync();
 
-        // User with no password (social-only account)
         var user = await fixture.Seed.CreateUserAsync(list.Id);
         user.PasswordHash = null;
         var social = new UserSocialAccount
@@ -347,7 +342,6 @@ public class AccountExtendedTests(TestFixture fixture)
     {
         var (user, _, client) = await ScaffoldAsync();
 
-        // User already has a password (from ScaffoldAsync) — add a social account
         var social = new UserSocialAccount
         {
             Id             = Guid.NewGuid(),
@@ -379,11 +373,9 @@ public class AccountExtendedTests(TestFixture fixture)
     {
         var (_, _, client) = await ScaffoldAsync();
 
-        // Step 1: call begin to set fido2.attestationOptions in session
         var beginRes = await client.PostAsync("/account/mfa/webauthn/register/begin", null);
         beginRes.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        // Step 2: call complete with invalid attestation data — fido2 throws → attestation_failed
         var res = await client.PostAsJsonAsync("/account/mfa/webauthn/register/complete", new
         {
             response    = new { clientDataJSON = "INVALID_BASE64", attestationObject = "INVALID_BASE64" },

@@ -9,8 +9,12 @@ public class LoginRateLimiter(IConnectionMultiplexer redis, AppConfig appConfig)
     private readonly int _maxAttempts = appConfig.MaxLoginAttempts;
     private readonly int _lockoutMinutes = appConfig.LockoutMinutes;
 
-    // Atomically increments counter and returns true if the new count >= max.
-    // Sets expiry on first increment. Single round-trip — no TOCTOU.
+    /// <summary>
+    /// Increment-and-expire in a single round trip, because the check and the increment must not be
+    /// separable: a read-then-write pair lets concurrent attempts each observe the pre-increment
+    /// count and share one slot of the budget. The expiry is set inside the same script for the
+    /// same reason — a counter that failed to acquire a TTL would lock the principal out for ever.
+    /// </summary>
     private static readonly LuaScript _incrScript = LuaScript.Prepare("""
         local count = redis.call('INCR', @key)
         if count == 1 then redis.call('EXPIRE', @key, @window) end

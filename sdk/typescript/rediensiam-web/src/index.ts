@@ -74,8 +74,11 @@ export type RediensIamErrorCode =
 export type FetchTarget = string | URL | Request;
 
 export class RediensIamError extends Error {
-  // Plain field rather than a constructor parameter property: Node's type-stripping runs
-  // strip-only, and parameter properties would need a transform.
+  /**
+   * A plain field, assigned in the constructor, rather than a constructor parameter property:
+   * Node's type-stripping runs strip-only, and a parameter property would need a transform. Do
+   * not collapse it back into the constructor signature.
+   */
   readonly code: RediensIamErrorCode;
 
   constructor(message: string, code: RediensIamErrorCode) {
@@ -119,6 +122,17 @@ export class RediensIam {
   readonly #issuerOrigin: string;
   readonly #apiOrigins: ReadonlySet<string>;
 
+  /**
+   * Validates the whole configuration up front, so a misconfigured client fails at construction
+   * rather than mid-flow. Two of the checks are security controls, not tidiness:
+   *
+   * - `secureOrigin` on the issuer and every apiOrigin. Everything the SDK carries — the PKCE
+   *   verifier, the refresh token, the bearer — rides on these origins, so cleartext means
+   *   anyone on the path collects the lot. Loopback is the only http exemption.
+   * - The redirectUri origin must equal the app origin. A redirect_uri pointing elsewhere hands
+   *   the authorization code to another origin. Hydra also enforces its registered list; this is
+   *   the second lock, and it is the one that still holds if that list is ever loosened.
+   */
   constructor(config: RediensIamConfig) {
     this.#config = config;
 
@@ -126,16 +140,11 @@ export class RediensIam {
     if (!config.clientId) throw new RediensIamError('clientId is required', 'config_invalid');
     if (!config.redirectUri) throw new RediensIamError('redirectUri is required', 'config_invalid');
 
-    // Everything the SDK carries — the PKCE verifier, the refresh token, the bearer — rides on
-    // these origins. Cleartext means anyone on the path collects the lot.
     this.#issuerOrigin = secureOrigin(config.issuer, 'issuer');
     this.#apiOrigins = new Set(
       (config.apiOrigins ?? []).map((origin) => secureOrigin(origin, 'apiOrigins entry')),
     );
 
-    // The redirect target must be this origin. A redirect_uri pointing elsewhere would hand the
-    // authorization code to another origin — Hydra also enforces its registered list, this is
-    // the second lock.
     if (globalThis.location) {
       const redirectOrigin = new URL(config.redirectUri, globalThis.location.origin).origin;
       if (redirectOrigin !== globalThis.location.origin) {
@@ -181,6 +190,11 @@ export class RediensIam {
   /**
    * Call this on page load. If the URL carries `?code=…&state=…` it completes the login,
    * strips those parameters from the address bar, and returns true.
+   *
+   * The state comparison below is the CSRF control for the authorization-code flow: rejecting a
+   * mismatched state is what stops an attacker feeding you their own authorization code and
+   * logging your user into the attacker's account. The stored state is removed before the
+   * comparison, so a replayed callback finds nothing and throws. Never make it a warning.
    */
   async handleRedirect(): Promise<boolean> {
     const url = new URL(globalThis.location.href);
@@ -193,8 +207,6 @@ export class RediensIam {
     if (!stored) throw new RediensIamError('No PKCE state for this callback', 'state_mismatch');
 
     const { verifier, state: expected } = JSON.parse(stored) as { verifier: string; state: string };
-    // Rejecting a mismatched state is what stops an attacker feeding you their authorization
-    // code and logging your user into the attacker's account.
     if (state !== expected) {
       throw new RediensIamError('state does not match the value we issued', 'state_mismatch');
     }
@@ -233,7 +245,13 @@ export class RediensIam {
     return this.#refresh();
   }
 
-  /** Clears local state and redirects to the IdP so the SSO session ends too. */
+  /**
+   * Clears local state and redirects to the IdP so the SSO session ends too.
+   *
+   * When the issuer advertises no `end_session_endpoint` this degrades to a local sign-out and
+   * says so, rather than redirecting somewhere that looks like it ended the SSO session. The
+   * user is still signed in at the IdP in that case.
+   */
   async logout(): Promise<void> {
     const idToken = this.#accessToken;
     this.#accessToken = null;
@@ -242,7 +260,6 @@ export class RediensIam {
 
     const discovery = await this.#discover().catch(() => null);
     if (!discovery?.end_session_endpoint) {
-      // Local sign-out only. Say so rather than pretending the SSO session is gone.
       globalThis.location.assign(this.#config.postLogoutRedirectUri ?? globalThis.location.origin);
       return;
     }
@@ -337,6 +354,15 @@ export class RediensIam {
 
   // ── Internals ────────────────────────────────────────────────────────────
 
+  /**
+   * Fetches and caches the OIDC discovery document, refusing any endpoint that is not on the
+   * issuer's own origin.
+   *
+   * An unvalidated discovery document is a redirect of the whole flow: whoever answers for the
+   * issuer names the token endpoint, and the PKCE verifier and the refresh token go there. The
+   * origin loop below is what makes that impossible, so it must run before the document is
+   * cached, and `end_session_endpoint` is the only optional one.
+   */
   async #discover(): Promise<Discovery> {
     if (this.#discovery) return this.#discovery;
 
@@ -346,9 +372,6 @@ export class RediensIam {
       throw new RediensIamError(`OIDC discovery failed (${response.status})`, 'discovery_failed');
     }
 
-    // An unvalidated discovery document is a redirect of the whole flow: whoever answers for the
-    // issuer names the token endpoint, and the PKCE verifier and refresh token go there. Every
-    // endpoint we use has to live on the issuer's own origin.
     const discovered = (await response.json()) as Discovery;
     for (const name of ['authorization_endpoint', 'token_endpoint', 'end_session_endpoint'] as const) {
       const endpoint = discovered[name];
@@ -399,11 +422,17 @@ export class RediensIam {
     }
   }
 
+  /**
+   * Hydra rotates refresh tokens, so a response carrying a new one replaces the old — the
+   * conditional below must not become an unconditional assignment, or a response without one
+   * would wipe a still-valid token.
+   *
+   * The 30-second haircut on the lifetime makes the SDK renew early, so a request already in
+   * flight cannot land on a token that expired between the check and the server reading it.
+   */
   #store(tokens: TokenResponse): void {
     this.#accessToken = tokens.access_token;
-    // Hydra rotates refresh tokens; keep the new one when present.
     if (tokens.refresh_token) this.#refreshToken = tokens.refresh_token;
-    // Renew 30s early so a request in flight cannot land on an expired token.
     const lifetime = (tokens.expires_in ?? 3600) - 30;
     this.#expiresAt = Date.now() + Math.max(lifetime, 0) * 1000;
   }
@@ -476,9 +505,15 @@ export function isTrustedTarget(
   return origin === appOrigin || apiOrigins.has(origin);
 }
 
+/**
+ * base64url without padding, per RFC 7636 — the `+`/`/`/`=` rewrites at the end are what make the
+ * output safe to put in a URL, and dropping them breaks the PKCE challenge.
+ *
+ * `fromCodePoint` is byte-for-byte identical to `fromCharCode` here because every element of a
+ * Uint8Array is 0-255; it is used only because the linter prefers it.
+ */
 export function base64UrlEncode(bytes: Uint8Array): string {
   let binary = '';
-  // Every element is 0-255, so fromCodePoint is byte-for-byte identical to fromCharCode here.
   for (const byte of bytes) binary += String.fromCodePoint(byte);
   return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 }

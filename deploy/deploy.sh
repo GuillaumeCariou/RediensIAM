@@ -113,15 +113,14 @@ start_registry() {
   sleep 3
 }
 
-# If an existing container is bound to anything but loopback, replace it. The images live in
-# the named volume, so this is not destructive — the container is recreated with the same
-# storage and a narrower bind.
 registry_bind_of() {
   docker inspect -f '{{ range $p, $c := .HostConfig.PortBindings }}{{ range $c }}{{ .HostIp }}{{ end }}{{ end }}' registry 2>/dev/null
 }
 
 if docker ps -a --format '{{.Names}}' | grep -qx "registry"; then
   CURRENT_BIND="$(registry_bind_of)"
+  # Replacing the container is not destructive: the images live in the named volume, so it
+  # comes back with the same storage and a narrower bind.
   if [ "${CURRENT_BIND}" != "${REGISTRY_BIND}" ]; then
     echo "  Registry is bound to '${CURRENT_BIND:-0.0.0.0}' — rebinding to ${REGISTRY_BIND} (R-16)"
     docker rm -f registry >/dev/null
@@ -519,7 +518,6 @@ check() {
   fi
 }
 
-# Resolve internal cluster IP for the public service
 PUBLIC_IP=$(kubectl get svc -n "${NAMESPACE}" rediensiam-public -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
 ADMIN_IP=$(kubectl get svc -n "${NAMESPACE}" rediensiam-admin -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
 ADMIN_HOST=$(echo "${ADMIN_URL}" | sed 's|https\?://||' | cut -d: -f1)

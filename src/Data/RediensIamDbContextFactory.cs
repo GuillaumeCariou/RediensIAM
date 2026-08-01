@@ -8,7 +8,10 @@ public class RediensIamDbContextFactory : IDesignTimeDbContextFactory<RediensIam
     public RediensIamDbContext CreateDbContext(string[] args)
     {
         var connStr = Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection")
-            ?? "Host=localhost;Database=rediensiam;Username=postgres;Password=postgres"; // design-time fallback
+            ?? "Host=localhost;Database=rediensiam;Username=postgres;Password=postgres";
+        // S2068: the literal above is a local-only fallback for `dotnet ef migrations`, which needs
+        // a connection string to build the model and never connects with it in a deployment. The
+        // running app resolves its credentials through AppConfig — nothing here reaches production.
 #pragma warning disable S2068
         var opts = new DbContextOptionsBuilder<RediensIamDbContext>()
             .UseNpgsql(connStr)

@@ -141,7 +141,8 @@ public class WebAuthnLoginTests(TestFixture fixture)
         var user             = await fixture.Seed.CreateUserAsync(list.Id);
         user.WebAuthnEnabled = true;
 
-        // Seed a WebAuthn credential so credential lookup (L1348) succeeds
+        // The credential must exist, otherwise verify fails at lookup and never reaches the
+        // assertion check this test is about.
         var credId = new byte[] { 0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04 };
         fixture.Db.WebAuthnCredentials.Add(new WebAuthnCredential
         {
@@ -168,8 +169,8 @@ public class WebAuthnLoginTests(TestFixture fixture)
         });
         await client.GetAsync("/auth/mfa/webauthn/options");
 
-        // Known credentialId (passes L1349) + invalid assertion bytes →
-        // MakeAssertionAsync throws → catch L1367-1369
+        // A known credentialId with deliberately invalid assertion bytes: lookup succeeds, then
+        // MakeAssertionAsync throws and the failure must be caught rather than escaping as a 500.
         static string B64Url(byte[] b) =>
             Convert.ToBase64String(b).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
@@ -217,11 +218,11 @@ public class WebAuthnLoginTests(TestFixture fixture)
             password        = "P@ssw0rd!Test"
         });
 
-        // Call options to set fido2.assertionOptions in session
+        // Populates fido2.assertionOptions in the session; verify cannot run without it.
         await client.GetAsync("/auth/mfa/webauthn/options");
 
-        // Send verify with rawId that doesn't match any credential in DB
-        // Must use Base64URL encoding (no +, /, or = chars) — Fido2 library rejects standard Base64
+        // Base64URL, not standard Base64: the Fido2 library rejects '+', '/' and '=' outright,
+        // which would fail the request before the unknown-credential path is reached.
         static string B64Url(byte[] b) =>
             Convert.ToBase64String(b).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 

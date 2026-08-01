@@ -23,8 +23,12 @@ public class SamlService(
             Issuer                    = spEntityId,
             SingleSignOnDestination   = null!,   // set below
             AllowedIssuer             = idp.EntityId,
-            // We explicitly provide SignatureValidationCertificates, so skip chain validation.
-            // Self-signed IdP certs are common in enterprise SAML deployments.
+            // Deliberately not ChainTrust. The signing certificate is pinned explicitly through
+            // SignatureValidationCertificates, and enterprise IdPs routinely present self-signed
+            // certificates that no chain would validate — raising this locks those deployments out
+            // without adding a control the pin does not already give. The one thing None also
+            // switches off is the validity window, which is why both branches below re-check it by
+            // hand (IsValidLocalTime / the NotBefore-NotAfter guard).
             CertificateValidationMode = X509CertificateValidationMode.None,
         };
         config.AllowedAudienceUris.Add(spEntityId);

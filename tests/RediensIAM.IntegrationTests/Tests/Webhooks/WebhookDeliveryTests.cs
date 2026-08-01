@@ -242,8 +242,8 @@ public class WebhookDeliveryTests(TestFixture fixture)
     [Fact]
     public async Task Delivery_CorruptSecretEnc_StillDeliversPayload()
     {
-        // Invalid base64 in SecretEnc → DecryptString throws → catch at WebhookService.cs:75
-        // → secret falls back to "" → job still dispatched and delivered
+        // A stored secret that will not decrypt must degrade to an unsigned delivery, not silently
+        // drop the event: the payload still has to reach the endpoint.
         using var target = WireMockServer.Start(new WireMockServerSettings { Port = 0 });
         target.Given(Request.Create().WithPath("/hook").UsingPost())
               .RespondWith(Response.Create().WithStatusCode(200));
@@ -261,8 +261,8 @@ public class WebhookDeliveryTests(TestFixture fixture)
     [Fact]
     public async Task Delivery_EndpointReturns500_RecordsHttpError()
     {
-        // Non-2xx response → sets lastError = "HTTP 500", covers lines 143-144;
-        // retry check covers lines 151-152 (background — completes after test ends)
+        // A non-2xx reply records an HTTP error and schedules a retry. The retry itself outlives the
+        // test, which is why the assertion is "at least one request", not an exact count.
         using var target = WireMockServer.Start(new WireMockServerSettings { Port = 0 });
         target.Given(Request.Create().WithPath("/hook").UsingPost())
               .RespondWith(Response.Create().WithStatusCode(500));
@@ -273,7 +273,6 @@ public class WebhookDeliveryTests(TestFixture fixture)
         await client.PostAsJsonAsync($"/org/webhooks/{wh.Id}/test", new { });
         await Task.Delay(500); // first attempt completes synchronously before retry delay starts
 
-        // At least one request received (first attempt)
         target.LogEntries.Where(e => e.RequestMessage!.Path == "/hook")
             .Should().NotBeEmpty();
     }
@@ -291,6 +290,8 @@ public class WebhookDeliveryTests(TestFixture fixture)
         var wh = await SeedWebhookAsync(orgId, targetUrl, ["webhook.test"]);
 
         await client.PostAsJsonAsync($"/org/webhooks/{wh.Id}/test", new { });
-        await Task.Delay(500); // connection refused is immediate → catch block (lines 145-149) executed
+        // Connection refused comes back immediately; the delay only gives the background dispatcher
+        // time to reach and swallow it. Nothing to assert — the point is that nothing throws.
+        await Task.Delay(500);
     }
 }

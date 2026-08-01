@@ -68,7 +68,8 @@ public class AuthRateLimiterCoverageTests(TestFixture fixture)
             project.Id.ToString(), org.Id.ToString());
 
         var client = fixture.NewSessionClient();
-        // Login → establishes MFA session (does NOT consume rate-limiter on success)
+        // A successful login establishes the MFA session without charging the rate limiter, so the
+        // block below is the only thing the MFA call can be refused for.
         await client.PostAsJsonAsync("/auth/login", new
         {
             login_challenge = challenge,
@@ -76,7 +77,6 @@ public class AuthRateLimiterCoverageTests(TestFixture fixture)
             password        = "P@ssw0rd!Test"
         });
 
-        // Block the IP — next MFA call hits line 433
         await BlockIpAsync();
         try
         {
@@ -172,7 +172,6 @@ public class AuthRateLimiterCoverageTests(TestFixture fixture)
         await BlockIpAsync();
         try
         {
-            // POST /auth/mfa/phone/send with active MFA session but blocked IP → line 370
             var res = await client.PostAsync("/auth/mfa/phone/send", null);
 
             res.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
@@ -212,7 +211,8 @@ public class AuthRateLimiterCoverageTests(TestFixture fixture)
             password        = "P@ssw0rd!Test"
         });
 
-        // Rate limiter is NOT blocked — we reach line 372 check (user has no phone)
+        // Unlike the sibling tests the IP is deliberately not blocked, so a 429 here would mean
+        // leakage from another test rather than the missing-phone refusal being asserted.
         var res = await client.PostAsync("/auth/mfa/phone/send", null);
 
         res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -252,7 +252,6 @@ public class AuthRateLimiterCoverageTests(TestFixture fixture)
         await BlockIpAsync();
         try
         {
-            // POST /auth/mfa/phone/verify with active MFA session and blocked IP → line 392
             var res = await client.PostAsJsonAsync("/auth/mfa/phone/verify",
                 new { code = "123456" });
 
@@ -269,8 +268,6 @@ public class AuthRateLimiterCoverageTests(TestFixture fixture)
     [Fact]
     public async Task InviteComplete_CheckBreachEnabled_CleanPassword_Completes()
     {
-        // HibpStub is clear (count=0 for all passwords) — line 777 executes (count=0),
-        // line 778 condition is false, execution falls through to line 779 (closing brace).
         var (org, orgList) = await fixture.Seed.CreateOrgAsync();
         var list  = await fixture.Seed.CreateUserListAsync(org.Id);
         var admin = await fixture.Seed.CreateUserAsync(orgList.Id);
@@ -292,7 +289,8 @@ public class AuthRateLimiterCoverageTests(TestFixture fixture)
         var inviteToken = Microsoft.AspNetCore.WebUtilities.QueryHelpers
             .ParseQuery(new Uri(invite.InviteUrl).Query)["token"].ToString();
 
-        // HIBP stub returns count=0 → not breached → line 779 (closing brace of breach block)
+        // The HIBP stub reports 0 for anything not explicitly seeded, so with the breach check on
+        // this password must still be accepted.
         var res = await fixture.Client.PostAsJsonAsync("/auth/invite/complete",
             new { token = inviteToken, password = "CleanP@ss_NoBreach!999" });
 
@@ -306,7 +304,6 @@ public class AuthRateLimiterCoverageTests(TestFixture fixture)
     {
         const string breachedPassword = "BreachTest_P@ss_ForCoverage!";
 
-        // Configure HIBP stub to report this password as breached
         fixture.HibpStub.Setup(breachedPassword, count: 50);
         try
         {
@@ -314,7 +311,7 @@ public class AuthRateLimiterCoverageTests(TestFixture fixture)
             var list  = await fixture.Seed.CreateUserListAsync(org.Id);
             var admin = await fixture.Seed.CreateUserAsync(orgList.Id);
 
-            // Project must have CheckBreachedPasswords = true to hit lines 775-779
+            // The breach check is per-project and off by default; without it the invite completes.
             var project = await fixture.Seed.CreateProjectAsync(org.Id);
             project.AssignedUserListId    = list.Id;
             project.CheckBreachedPasswords = true;
@@ -333,7 +330,6 @@ public class AuthRateLimiterCoverageTests(TestFixture fixture)
             var inviteToken = Microsoft.AspNetCore.WebUtilities.QueryHelpers
                 .ParseQuery(new Uri(invite.InviteUrl).Query)["token"].ToString();
 
-            // Accept with the breached password — hits lines 776-779
             var res = await fixture.Client.PostAsJsonAsync("/auth/invite/complete",
                 new { token = inviteToken, password = breachedPassword });
 

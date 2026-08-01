@@ -63,7 +63,6 @@ test('create dialog requires HTTPS URL', async ({ adminPage: page }) => {
 
   await expect(page.getByRole('dialog')).toBeVisible();
 
-  // Enter HTTP URL
   await page.getByPlaceholder(/https:\/\//i).fill('http://not-secure.com/hook');
   await page.getByRole('button', { name: /^create$/i }).click();
 
@@ -93,18 +92,16 @@ test('successful create shows secret reveal dialog', async ({ adminPage: page })
       body: JSON.stringify({ id: 'wh-003', url: 'https://example.com/new', events: ['user.created'], active: true, secret: 'whsec_abc123def456', created_at: new Date().toISOString() }),
     });
   });
-  // Reload list after create
+  // Re-mocked so the list refetch after create returns the new row too.
   await mockGet(page, '/org/webhooks', [...WEBHOOKS, { id: 'wh-003', url: 'https://example.com/new', events: ['user.created'], active: true, last_delivery_status: null, created_at: new Date().toISOString() }]);
 
   await page.goto('/admin/org/webhooks');
   await page.getByRole('button', { name: /add webhook|new webhook/i }).click();
 
   await page.getByPlaceholder(/https:\/\//i).fill('https://example.com/new');
-  // Select an event
   await page.getByText('user.created').click();
   await page.getByRole('button', { name: /^create$/i }).click();
 
-  // Secret reveal dialog should appear
   await expect(page.getByText(/whsec_/)).toBeVisible();
 });
 

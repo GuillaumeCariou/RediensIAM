@@ -93,7 +93,6 @@ public class IpAllowlistTests(TestFixture fixture) : IAsyncLifetime
     [Fact]
     public async Task Login_AllowlistCidrCoversLoopback_Succeeds()
     {
-        // 127.0.0.0/8 covers 127.0.0.1
         var (org, project, user) = await ScaffoldAsync(allowlist: ["127.0.0.0/8"]);
         var challenge = NewChallenge();
         fixture.Hydra.SetupLoginChallengeWithProject(challenge, project.HydraClientId,
@@ -112,7 +111,6 @@ public class IpAllowlistTests(TestFixture fixture) : IAsyncLifetime
     [Fact]
     public async Task Login_AllowlistCidrDoesNotCoverClientIp_Returns401()
     {
-        // 192.168.0.0/16 does not cover 127.0.0.1
         var (org, project, user) = await ScaffoldAsync(allowlist: ["192.168.0.0/16"]);
         var challenge = NewChallenge();
         fixture.Hydra.SetupLoginChallengeWithProject(challenge, project.HydraClientId,

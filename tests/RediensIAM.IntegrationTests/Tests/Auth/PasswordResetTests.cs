@@ -54,6 +54,13 @@ public class PasswordResetTests(TestFixture fixture)
             e.To == user.Email && e.Purpose == "password_reset");
     }
 
+    /// <summary>
+    /// Read the assertions, not the name: an unknown address gets a session_id, it is not withheld.
+    /// The response has to be indistinguishable from the known-address case — same status, same
+    /// shape, same fields — because omitting session_id was itself the enumeration oracle. The
+    /// session is stored under the "reset:void" prefix so verification can never resolve it, and
+    /// no mail is sent.
+    /// </summary>
     [Fact]
     public async Task RequestReset_UnknownEmail_Returns200WithoutSessionId_PreventEnumeration()
     {
@@ -68,10 +75,6 @@ public class PasswordResetTests(TestFixture fixture)
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
-        // The response must be indistinguishable from the known-address case: same status,
-        // same shape, same fields. Omitting session_id here was itself the enumeration oracle.
-        // The session is stored under the "reset:void" prefix, so verification can never
-        // resolve it — and no mail is sent.
         body.TryGetProperty("session_id", out var sessionId).Should().BeTrue();
         sessionId.GetString().Should().NotBeNullOrEmpty();
         fixture.EmailStub.SentEmails.Should().BeEmpty();
@@ -84,7 +87,7 @@ public class PasswordResetTests(TestFixture fixture)
         var project  = await fixture.Seed.CreateProjectAsync(org.Id);
         var list     = await fixture.Seed.CreateUserListAsync(org.Id);
         project.AssignedUserListId       = list.Id;
-        project.EmailVerificationEnabled = false; // disabled
+        project.EmailVerificationEnabled = false;
         await fixture.Db.SaveChangesAsync();
 
         var res = await fixture.Client.PostAsJsonAsync("/auth/password-reset/request", new
@@ -101,7 +104,6 @@ public class PasswordResetTests(TestFixture fixture)
     [Fact]
     public async Task RequestReset_NonExistentProject_Returns400()
     {
-        // Covers AuthController line 815: project?.AssignedUserListId == null (project not found → project is null)
         var res = await fixture.Client.PostAsJsonAsync("/auth/password-reset/request", new
         {
             project_id = Guid.NewGuid(),
@@ -166,6 +168,12 @@ public class PasswordResetTests(TestFixture fixture)
         body.GetProperty("error").GetString().Should().Be("invalid_code");
     }
 
+    /// <summary>
+    /// Accepts 400 or 401: an unknown session is indistinguishable from a wrong code by design, so
+    /// it falls out of OTP verification as <c>invalid_code</c> (401) rather than a dedicated
+    /// "no such session" (400). Do not narrow this to one status without checking that the two
+    /// cases still answer identically.
+    /// </summary>
     [Fact]
     public async Task VerifyReset_InvalidSession_Returns400()
     {
@@ -175,7 +183,6 @@ public class PasswordResetTests(TestFixture fixture)
             code       = "123456"
         });
 
-        // Non-existent session → OTP verification fails → controller returns 401 (invalid_code)
         ((int)res.StatusCode).Should().BeOneOf(400, 401);
     }
 
@@ -187,7 +194,6 @@ public class PasswordResetTests(TestFixture fixture)
         var (_, project, user) = await ScaffoldAsync();
         fixture.EmailStub.SentEmails.Clear();
 
-        // Full reset flow
         var reqRes = await fixture.Client.PostAsJsonAsync("/auth/password-reset/request", new
         {
             project_id = project.Id,
@@ -240,7 +246,6 @@ public class PasswordResetTests(TestFixture fixture)
             token = resetToken, new_password = "NewP@ssw0rd!2"
         });
 
-        // Now try to login with the new password
         var challenge = Guid.NewGuid().ToString("N");
         fixture.Hydra.SetupLoginChallengeWithProject(challenge, project.HydraClientId,
             project.Id.ToString(), org.Id.ToString());

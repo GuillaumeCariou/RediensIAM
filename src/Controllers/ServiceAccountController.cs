@@ -43,7 +43,6 @@ public class ServiceAccountController(
     // Guid.Empty, which matches no real row.
     private Guid CallerOrgId       => Guid.TryParse(Claims.OrgId, out var g) ? g : Guid.Empty;
 
-    // Returns true if the caller has management access to the given SA.
     private async Task<bool> CanAccessAsync(ServiceAccount sa)
     {
         return Level switch
@@ -107,7 +106,6 @@ public class ServiceAccountController(
         var list = await db.UserLists.FindAsync(body.UserListId);
         if (list == null) return BadRequest(new { error = "user_list_not_found" });
 
-        // Validate caller has rights over the target list
         if (Level == ManagementLevel.OrgAdmin && list.OrgId != CallerOrgId)
             return StatusCode(403, new { error = "list_not_in_your_org" });
 
@@ -120,7 +118,8 @@ public class ServiceAccountController(
                 return StatusCode(403, new { error = "can_only_create_sa_in_your_project_list" });
         }
 
-        // SuperAdmin may use any list, including the root list (system SA)
+        // SuperAdmin falls through both branches deliberately: it may use any list, including the
+        // __system__ root list, which is what creating a system service account means.
 
         var sa = new ServiceAccount
         {

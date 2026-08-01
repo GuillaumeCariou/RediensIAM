@@ -1,6 +1,10 @@
 namespace RediensIAM.Config;
 
-// Lower value = more privileged. Used by RequireManagementLevelAttribute and KetoService.
+/// <summary>
+/// Lower value = more privileged. <see cref="Filters.RequireManagementLevelAttribute"/> and
+/// <see cref="Services.KetoService"/> compare these numerically, so the ordering is the check —
+/// renumbering a member, or inserting one out of rank, silently changes who is allowed through.
+/// </summary>
 public enum ManagementLevel { SuperAdmin = 1, OrgAdmin = 2, ProjectAdmin = 3, None = 99 }
 
 public static class Roles

@@ -56,6 +56,12 @@ export function useReauth() {
     }
   };
 
+  /**
+   * Sends one user-typed proof. The three catch branches are not interchangeable: only a fresh
+   * reauth demand means the proof itself was wrong. The final `else` is the case where the proof
+   * worked and the mutation failed for its own reasons — close the prompt and let the page report
+   * it, rather than telling the user their password was wrong.
+   */
   const submit = async (proof: MfaReauth) => {
     if (!pending) return;
     setBusy(true);
@@ -71,7 +77,6 @@ export function useReauth() {
       } else if (e instanceof ApiError && e.status === 429) {
         setError('Too many failed attempts. Wait a few minutes before trying again.');
       } else {
-        // The proof worked; the mutation itself failed. Close and let the page report it.
         setPending(null);
         pending.settle(e);
       }
@@ -105,7 +110,11 @@ function ReauthDialog({ pending, error, busy, onSubmit, onCancel }: Readonly<{
 
   const canPassword = pending?.methods.includes('current_password') ?? false;
   const canTotp     = pending?.methods.includes('totp_code') ?? false;
-  // Locked out by the rate limiter — a further attempt only extends the block.
+  /**
+   * Locked out by the rate limiter — a further attempt only extends the block, so the form is
+   * disabled rather than left inviting. Tied by prefix to the 429 message set in `submit`; change
+   * one and you must change the other.
+   */
   const blocked = error.startsWith('Too many');
 
   const handleSubmit = async (e: React.SyntheticEvent<HTMLFormElement>) => {

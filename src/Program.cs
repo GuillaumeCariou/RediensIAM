@@ -229,8 +229,6 @@ static async Task EnsureDbSchemaAsync(WebApplication webApp)
         }
         catch (Exception ex)
         {
-            // Fail fast. Continuing to serve traffic against a database whose schema could not
-            // be created produces confusing 500s and, worse, a half-migrated schema.
             // Wrapped rather than rethrown bare: the bare throw left the retry count in the log
             // line only, so a crash report read without the logs lost the one fact that
             // distinguishes a slow database from a broken migration.
@@ -395,7 +393,6 @@ app.MapControllers();
 app.MapMetrics("/metrics")
    .RequireHost($"*:{appConfig.AdminPort}");
 
-// Admin SPA fallback (client-side routing)
 app.MapFallback("/admin/{**path}", async (string path, HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
@@ -403,7 +400,6 @@ app.MapFallback("/admin/{**path}", async (string path, HttpContext ctx) =>
         Path.Combine(app.Environment.WebRootPath ?? "wwwroot", "admin", "index.html"));
 });
 
-// Login SPA fallback
 app.MapFallbackToFile("index.html");
 
 await app.RunAsync();
@@ -557,7 +553,10 @@ static void AddDefaultTrustedNetworks(ForwardedHeadersOptions o)
         o.KnownIPNetworks.Add(new System.Net.IPNetwork(System.Net.IPAddress.Parse(address), prefix));
 }
 
-// Expose Program to integration test project
+/// <summary>
+/// Declared partial and public solely so <c>WebApplicationFactory&lt;Program&gt;</c> in the
+/// integration test project can name it. Nothing references it at runtime.
+/// </summary>
 public partial class Program
 {
     protected Program() { }

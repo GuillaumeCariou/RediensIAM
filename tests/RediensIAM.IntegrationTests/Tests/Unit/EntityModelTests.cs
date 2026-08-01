@@ -669,9 +669,9 @@ public class EntityModelTests
 
         using var cts = new CancellationTokenSource();
 
-        // PurgeExpiredLogsAsync throws immediately (no DB provider).
-        // The catch block runs (lines 22-23), then Task.Delay(24h) starts.
-        // We cancel after 50ms — Task.Delay throws OperationCanceledException.
+        // The purge throws immediately (no DB provider), which the loop must swallow before
+        // sleeping for its 24-hour interval. Cancelling after 50 ms is the only way out of that
+        // sleep — without the cancel this test would hang for a day.
         _ = Task.Delay(50).ContinueWith(_ => cts.Cancel());
 
         var method = typeof(AuditLogRetentionService)
@@ -728,7 +728,6 @@ public class EntityModelTests
             new NoOpWebhookQueue(),
             new NoOpSsrfValidator());
 
-        // Write a job and complete the channel
         await ch.Writer.WriteAsync(new WebhookJob(
             Guid.NewGuid(), "user.created", "{}", "secret", "http://localhost/hook"));
         ch.Writer.Complete();
@@ -741,7 +740,7 @@ public class EntityModelTests
         // ExecuteAsync completes (channel done); wait a bit for fire-and-forget ProcessJobAsync
         var act = async () => await task;
         await act.Should().NotThrowAsync();
-        await Task.Delay(200); // let the background Task.Run complete (covers lines 174-177)
+        await Task.Delay(200); // let the fire-and-forget job finish before the test tears down
     }
 
     private static AppConfig BuildNoOpAppConfig() =>

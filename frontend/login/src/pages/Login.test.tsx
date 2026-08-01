@@ -7,8 +7,12 @@ import Login from './Login';
 const api = vi.hoisted(() => ({ getLoginChallenge: vi.fn(), submitLogin: vi.fn() }));
 vi.mock('../api', () => api);
 
-// safeNavigate is deliberately NOT mocked: refusing a hostile redirect_to is part of what the
-// login form has to do, and mocking it out would hide exactly that.
+/**
+ * Only `../api` is mocked above. safeNavigate is deliberately NOT mocked: refusing a hostile
+ * redirect_to is part of what the login form has to do, and mocking it out would hide exactly
+ * that. Adding a `vi.mock('../safeNavigate')` here would leave the redirect tests below passing
+ * against nothing.
+ */
 const origin = globalThis.location.origin;
 let visited: string[];
 

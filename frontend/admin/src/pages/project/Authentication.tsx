@@ -92,10 +92,12 @@ function LogoUpload({ value, onChange, label = 'Logo' }: Readonly<{ value?: stri
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputId = `logo-file-input-${label.replaceAll(/\s+/g, '-')}`;
+  /**
+   * Raster formats only, as an allowlist. `image/svg+xml` is absent on purpose and must stay
+   * absent: an SVG can carry <script>/<onload> and executes when rendered via <img>/<object>/CSS
+   * background-image on the downstream login page, which is where this logo ends up.
+   */
   const isSafeImageMime = (mime: string) => {
-    // Reject SVG outright — SVG files can contain <script>/<onload> and execute
-    // when rendered via <img>/<object>/CSS background-image on the downstream
-    // login page. Allow only raster formats.
     const allowed = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/avif']);
     return allowed.has(mime.toLowerCase());
   };
@@ -107,17 +109,27 @@ function LogoUpload({ value, onChange, label = 'Logo' }: Readonly<{ value?: stri
     reader.onload = e => onChange(e.target?.result as string);
     reader.readAsDataURL(file);
   };
+  /**
+   * The `data:` branch repeats both checks the file-picker path applies — MIME allowlist and size
+   * cap. Without them the URL field is a straight bypass of the upload limits: paste an
+   * `data:image/svg+xml,…` and the SVG reaches the login page, or paste a huge blob and the size
+   * cap never runs. Neither check may be dropped from this branch.
+   *
+   * The size test uses raw URL length as an upper bound on the decoded bytes (base64 expands 4/3),
+   * so it over-estimates and never under-estimates.
+   *
+   * Non-data URLs must be https: an http logo on the login page is mixed content and an
+   * on-path rewrite point.
+   */
   const handleUrlInput = (v: string) => {
     setError(null);
     if (v === '') { onChange(v); return; }
     if (v.startsWith('data:')) {
-      // Pasted data: URL — verify MIME prefix AND size cap (file upload limit cannot be bypassed via URL field).
       const match = /^data:([^;,]+)[;,]/.exec(v);
       if (!match || !isSafeImageMime(match[1])) {
         setError('data: URL must reference a raster image (PNG, JPEG, GIF, WebP, AVIF).');
         return;
       }
-      // Approximate decoded size: base64 ratio 4/3. Treat raw URL length as upper bound.
       if (v.length > MAX_LOGO_BYTES * 1.5) {
         setError(`Embedded image must be under ${Math.floor(MAX_LOGO_BYTES / 1024)} KB.`);
         return;
@@ -289,6 +301,13 @@ export default function Authentication() {
 
   const set = <K extends keyof Theme>(k: K, v: Theme[K]) => setTheme(t => ({ ...t, [k]: v }));
 
+  /**
+   * `safeProviders` below strips the server-only `client_secret_saved` flag, and drops
+   * `client_secret` entirely when the server already holds one and the admin did not retype it —
+   * otherwise saving any unrelated setting would overwrite the stored secret with an empty string.
+   * The `no-unused-vars` suppression is there because the discarded bindings exist only to be
+   * omitted by rest-destructuring; it is not hiding a real unused variable.
+   */
   const handleSave = async () => {
     const ipLines = ipAllowlist.split('\n').map(s => s.trim()).filter(Boolean);
     const badIp = ipLines.find(s => !/^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$|^[0-9a-fA-F:]+\/\d{1,3}$/.test(s));
@@ -331,10 +350,15 @@ export default function Authentication() {
     } finally { setSaving(false); }
   };
 
+  /**
+   * Per-provider secrets are stripped before the theme is base64'd into the preview URL. That URL
+   * ends up in browser history, web-server logs and Referer headers, so an OAuth `client_secret`
+   * must never travel in it. Adding a field back to `cfg` without filtering it here leaks it.
+   *
+   * The `no-unused-vars` suppression is there because the discarded bindings exist only to be
+   * omitted by rest-destructuring; it is not hiding a real unused variable.
+   */
   const previewUrl = useMemo(() => {
-    // Strip per-provider secrets before embedding the theme in the URL — the preview iframe URL
-    // ends up in browser history, web-server logs, and Referer headers; OAuth client_secret values
-    // must never travel via URL.
     const safeProviders = (theme.providers ?? []).map(p => {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { client_secret, client_secret_saved, ...rest } = p as unknown as Record<string, unknown>;
@@ -387,6 +411,11 @@ export default function Authentication() {
 
   const spMetadataUrl = `${globalThis.location.origin}/admin/projects/${projectId}/saml/metadata`;
 
+  /**
+   * `samlForm.active` is deliberately not sent below: the create endpoint does not accept it and
+   * always creates providers enabled. Adding it here looks like it works and silently does
+   * nothing — disable a provider with the PATCH endpoint afterwards instead.
+   */
   const handleAddSaml = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSamlSaving(true); setSamlError('');
@@ -397,8 +426,6 @@ export default function Authentication() {
         email_attribute_name: samlForm.email_attribute_name || 'email',
         display_name_attribute_name: samlForm.display_name_attribute_name || undefined,
         jit_provisioning: samlForm.jit_provisioning,
-        // `active` is not accepted on create — the API always creates providers enabled.
-        // Use the PATCH endpoint to disable one afterwards.
       });
       if (res.error) { setSamlError(res.error_description ?? 'Failed to add provider.'); return; }
       setSamlProviders(prev => [...prev, res]);
@@ -441,9 +468,7 @@ export default function Authentication() {
 
       <div className="iam-page" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 24 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 460px', gap: 24, alignItems: 'start' }}>
-          {/* Left: config tabs */}
           <div>
-            {/* Tab bar */}
             <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 20, gap: 0, flexWrap: 'wrap' }}>
               {TABS.map(t => (
                 <button key={t.id} onClick={() => setTab(t.id)} style={{
@@ -506,7 +531,6 @@ export default function Authentication() {
             {/* ── Providers ── */}
             {tab === 'providers' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                {/* Password login */}
                 <div className="iam-card iam-card-pad">
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div>
@@ -517,7 +541,6 @@ export default function Authentication() {
                   </div>
                 </div>
 
-                {/* Built-in social providers */}
                 {BUILTIN_PROVIDERS.map(({ type, label, defaultLabel }) => {
                   const p = getBuiltin(type);
                   const enabled = p?.enabled ?? false;
@@ -554,7 +577,6 @@ export default function Authentication() {
                   );
                 })}
 
-                {/* Custom OIDC */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 4 }}>
                   <p style={{ fontSize: 13, fontWeight: 500 }}>Custom OIDC Providers</p>
                   <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={addOidc}>
@@ -608,7 +630,6 @@ export default function Authentication() {
                   </div>
                 ))}
 
-                {/* SAML 2.0 */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 4 }}>
                   <p style={{ fontSize: 13, fontWeight: 500 }}>SAML 2.0 Identity Providers</p>
                   <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={() => setAddSamlOpen(true)}>
@@ -646,7 +667,6 @@ export default function Authentication() {
                   </div>
                 )}
 
-                {/* Custom OAuth2 Scopes */}
                 <p style={{ fontSize: 13, fontWeight: 500, paddingTop: 4 }}>OAuth2 Scopes</p>
                 <div className="iam-card iam-card-pad">
                   <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Custom Scopes</div>
@@ -849,7 +869,6 @@ export default function Authentication() {
             )}
           </div>
 
-          {/* Right: always-visible preview */}
           <div style={{ position: 'sticky', top: 24, display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', fontSize: 12, fontWeight: 500 }}>
@@ -876,7 +895,6 @@ export default function Authentication() {
         </div>
       </div>
 
-      {/* Add SAML dialog */}
       <IamDialog
         open={addSamlOpen}
         onClose={() => { setAddSamlOpen(false); setSamlError(''); }}

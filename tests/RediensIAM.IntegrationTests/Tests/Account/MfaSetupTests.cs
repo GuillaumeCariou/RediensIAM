@@ -47,10 +47,8 @@ public class MfaSetupTests(TestFixture fixture)
     {
         var (_, client) = await ScaffoldAsync();
 
-        // First call setup to generate secret
         await client.PostAsync("/account/mfa/totp/setup", null);
 
-        // Confirm with wrong code
         var res = await client.PostAsJsonAsync("/account/mfa/totp/confirm", new { code = "000000" });
 
         ((int)res.StatusCode).Should().BeGreaterThanOrEqualTo(400);
@@ -68,7 +66,10 @@ public class MfaSetupTests(TestFixture fixture)
 
     // ── Backup codes ──────────────────────────────────────────────────────────
 
-    // Regeneration invalidates every existing code, so it re-authenticates (R-24).
+    /// <summary>
+    /// Regeneration invalidates every existing code, so it re-authenticates (R-24) — the current
+    /// password has to travel with the request.
+    /// </summary>
     private static Task<HttpResponseMessage> RegenerateAsync(HttpClient client) =>
         client.PostAsJsonAsync("/account/mfa/backup-codes",
             new { current_password = SeedData.DefaultPassword });
@@ -95,33 +96,39 @@ public class MfaSetupTests(TestFixture fixture)
         res.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
+    /// <summary>
+    /// Codes are stored hashed, so the first batch cannot be looked up directly. The row count
+    /// is the proof instead: exactly one batch of 8 must remain, which fails if regeneration ever
+    /// appends rather than replaces.
+    /// </summary>
     [Fact]
     public async Task RegenerateBackupCodes_PreviousCodesInvalidated()
     {
         var (user, client) = await ScaffoldAsync();
 
-        // Generate first batch
         var res1   = await RegenerateAsync(client);
         var body1  = await res1.Content.ReadFromJsonAsync<JsonElement>();
         var codes1 = body1.GetProperty("backup_codes").EnumerateArray()
             .Select(c => c.GetString()).ToArray();
 
-        // Generate second batch
         await RegenerateAsync(client);
 
-        // First-batch codes should no longer exist in the DB
         await fixture.RefreshDbAsync();
         var dbCodes = fixture.Db.BackupCodes
             .Where(c => c.UserId == user.Id)
             .Select(c => c.CodeHash)
             .ToList();
 
-        // We can't compare plaintext to hashes, but DB should have exactly one batch
-        dbCodes.Should().HaveCount(8); // controller generates 8 backup codes per batch
+        dbCodes.Should().HaveCount(8);
     }
 
     // ── Phone setup ───────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Deliberately asserts only "not a server error": setup may answer 200 or demand a
+    /// verification step first, and this test is about the endpoint being reachable and not
+    /// throwing, not about which of the two it picks.
+    /// </summary>
     [Fact]
     public async Task SetupPhone_Authenticated_Returns200()
     {
@@ -132,7 +139,6 @@ public class MfaSetupTests(TestFixture fixture)
             phone = "+33600000001"
         });
 
-        // Should be OK or require verification step
         ((int)res.StatusCode).Should().BeLessThan(500);
     }
 

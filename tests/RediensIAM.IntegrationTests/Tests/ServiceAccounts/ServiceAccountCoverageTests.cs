@@ -184,7 +184,6 @@ public class ServiceAccountCoverageTests(TestFixture fixture)
         var assignBody = await assignRes.Content.ReadFromJsonAsync<JsonElement>();
         var roleId     = assignBody.GetProperty("id").GetString();
 
-        // Hits line 276 (OrgAdmin arm of switch expression)
         var res = await client.DeleteAsync($"/service-accounts/{sa.Id}/roles/{roleId}");
 
         res.StatusCode.Should().Be(HttpStatusCode.NoContent);
@@ -202,7 +201,6 @@ public class ServiceAccountCoverageTests(TestFixture fixture)
         var assignBody = await assignRes.Content.ReadFromJsonAsync<JsonElement>();
         var roleId     = assignBody.GetProperty("id").GetString();
 
-        // Hits line 275 (SuperAdmin arm of switch expression)
         var res = await client.DeleteAsync($"/service-accounts/{sa.Id}/roles/{roleId}");
 
         res.StatusCode.Should().Be(HttpStatusCode.NoContent);
@@ -215,7 +213,8 @@ public class ServiceAccountCoverageTests(TestFixture fixture)
     {
         var (_, _, sa, client) = await SuperAdminAsync();
 
-        // Seed a custom role that hits the _ => ManagementLevel.None switch arm (line 278)
+        // An unrecognised role name must map to the lowest management level, not to a privileged
+        // one. Seeded directly because the API refuses to grant a role it does not know.
         var customRole = new RediensIAM.Data.Entities.ServiceAccountRole
         {
             Id               = Guid.NewGuid(),

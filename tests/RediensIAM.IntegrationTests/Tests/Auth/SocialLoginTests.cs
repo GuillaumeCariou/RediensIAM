@@ -174,7 +174,6 @@ public class SocialLoginTests(TestFixture fixture)
     [Fact]
     public async Task OAuthCallback_OAuthErrorParam_RedirectsToErrorPage()
     {
-        // First store a valid state via OAuthStart, then pass it to callback with error param
         var (org, _)  = await fixture.Seed.CreateOrgAsync();
         var project   = await fixture.Seed.CreateProjectAsync(org.Id);
         var list      = await fixture.Seed.CreateUserListAsync(org.Id);
@@ -243,7 +242,6 @@ public class SocialLoginTests(TestFixture fixture)
 
         var user = await fixture.Seed.CreateUserAsync(list.Id);
 
-        // Seed an existing GitHub social account for this user
         fixture.Db.UserSocialAccounts.Add(new UserSocialAccount
         {
             Id             = Guid.NewGuid(),

@@ -197,7 +197,8 @@ public class KetoServiceCoverageTests(TestFixture fixture)
         var list           = await fixture.Seed.CreateUserListAsync(org.Id);
         var targetUser     = await fixture.Seed.CreateUserAsync(list.Id);
 
-        // Seed ProjectAdmin OrgRole for manager (covers DB branch lines 80-81)
+        // The project_admin grant lives only in the database — Keto is denied below, so this row is
+        // the sole source of the actor's management level.
         await fixture.Seed.CreateOrgRoleAsync(org.Id, manager.Id, "project_admin");
 
         // Token: OrgAdmin so the filter passes; Keto checks will be denied below

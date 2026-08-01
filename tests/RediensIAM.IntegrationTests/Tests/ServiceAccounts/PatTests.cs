@@ -169,13 +169,13 @@ public class PatTests(TestFixture fixture)
 
         var patClient = fixture.ClientWithToken(patToken);
 
-        // First call: DB lookup + caches the result in Redis
+        // First call populates the introspection cache; the second must be served from it.
         await patClient.GetAsync($"/service-accounts/{sa.Id}");
 
-        // Second call: same token → should hit Redis cache (line 56 in PatService)
         var res = await patClient.GetAsync($"/service-accounts/{sa.Id}");
 
-        // Result is same regardless of cache; just confirm no 500 error
+        // The cached and uncached answers have to be indistinguishable, so all this can assert is
+        // that the cached path does not blow up.
         ((int)res.StatusCode).Should().BeLessThan(500);
     }
 }

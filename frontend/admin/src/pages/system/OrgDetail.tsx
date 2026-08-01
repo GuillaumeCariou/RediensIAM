@@ -49,30 +49,24 @@ export default function OrgDetail() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // rename
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameVal, setRenameVal] = useState('');
 
-  // add user to org list
   const [addUserOpen, setAddUserOpen] = useState(false);
   const [addUserForm, setAddUserForm] = useState({ email: '', username: '', password: '' });
   const [addUserSaving, setAddUserSaving] = useState(false);
   const [addUserError, setAddUserError] = useState('');
 
-  // assign role
   const [assignRoleTarget, setAssignRoleTarget] = useState<Member | null>(null);
   const [assignRoleForm, setAssignRoleForm] = useState({ role: 'org_admin', scope_id: '' });
   const [assignRoleSaving, setAssignRoleSaving] = useState(false);
 
-  // remove user
   const [removeUserTarget, setRemoveUserTarget] = useState<Member | null>(null);
 
-  // create user list
   const [createListOpen, setCreateListOpen] = useState(false);
   const [newListName, setNewListName] = useState('');
   const [createListSaving, setCreateListSaving] = useState(false);
 
-  // create project
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [newProject, setNewProject] = useState({ name: '', slug: '', redirect_uri: '' });
   const [createProjectSaving, setCreateProjectSaving] = useState(false);
@@ -219,7 +213,6 @@ export default function OrgDetail() {
       {/* ── Org Section ───────────────────────────────────────────────── */}
       <div className="rounded-xl border bg-card p-6 space-y-6">
 
-        {/* Header */}
         <div className="flex items-start justify-between gap-4">
           {loading
             ? <div className="space-y-2"><Skeleton className="h-6 w-48" /><Skeleton className="h-4 w-72" /></div>
@@ -257,7 +250,6 @@ export default function OrgDetail() {
 
         <Separator />
 
-        {/* Org User List */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Org User List</h2>
@@ -326,7 +318,6 @@ export default function OrgDetail() {
 
         <Separator />
 
-        {/* Service Accounts */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Service Accounts</h2>
@@ -374,7 +365,6 @@ export default function OrgDetail() {
       {/* ── User Lists + Projects ──────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-4">
 
-        {/* User Lists (movable) */}
         <div className="rounded-xl border bg-card overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b">
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
@@ -412,7 +402,6 @@ export default function OrgDetail() {
           </Table>
         </div>
 
-        {/* Projects */}
         <div className="rounded-xl border bg-card overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b">
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
@@ -466,7 +455,6 @@ export default function OrgDetail() {
 
       {/* ── Dialogs ───────────────────────────────────────────────────── */}
 
-      {/* Rename */}
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Rename Organisation</DialogTitle></DialogHeader>
@@ -483,7 +471,6 @@ export default function OrgDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* Add User to org list */}
       <Dialog open={addUserOpen} onOpenChange={setAddUserOpen}>
         <DialogContent>
           <DialogHeader>
@@ -503,7 +490,6 @@ export default function OrgDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* Assign Role */}
       <Dialog open={!!assignRoleTarget} onOpenChange={v => !v && setAssignRoleTarget(null)}>
         <DialogContent>
           <DialogHeader>
@@ -542,7 +528,6 @@ export default function OrgDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* Remove User */}
       <AlertDialog open={!!removeUserTarget} onOpenChange={v => !v && setRemoveUserTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -560,7 +545,6 @@ export default function OrgDetail() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Create User List */}
       <Dialog open={createListOpen} onOpenChange={setCreateListOpen}>
         <DialogContent>
           <DialogHeader>
@@ -580,7 +564,6 @@ export default function OrgDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* Create Project */}
       <Dialog open={createProjectOpen} onOpenChange={setCreateProjectOpen}>
         <DialogContent>
           <DialogHeader>

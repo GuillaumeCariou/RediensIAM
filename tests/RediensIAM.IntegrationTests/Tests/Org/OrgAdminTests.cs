@@ -55,7 +55,6 @@ public class OrgAdminTests(TestFixture fixture)
     [Fact]
     public async Task ListOrgAdmins_WithProjectAdmin_ReturnsScopeName()
     {
-        // Covers OrgController line 615: ScopeId.HasValue && TryGetValue finds project → returns scope_name
         var (org, _, client) = await OrgAdminClientAsync();
         var list             = await fixture.Seed.CreateUserListAsync(org.Id);
         var targetUser       = await fixture.Seed.CreateUserAsync(list.Id);
@@ -275,10 +274,13 @@ public class OrgAdminTests(TestFixture fixture)
 
     // ── GET /org/userlists/{id}/export — covers OrgAdminServices.Cache ─────────
 
+    /// <summary>
+    /// Thinner than it looks: the export path is the only caller of
+    /// <c>OrgAdminServices.Cache</c>, so deleting this test leaves that property untouched.
+    /// </summary>
     [Fact]
     public async Task ExportUserList_OrgAdmin_Returns200Csv()
     {
-        // Accessing cache (svc.Cache) covers ControllerServices.cs:84 (OrgAdminServices.Cache)
         var (org, orgList, client) = await OrgAdminClientAsync();
         var list = await fixture.Seed.CreateUserListAsync(org.Id);
 
@@ -289,10 +291,13 @@ public class OrgAdminTests(TestFixture fixture)
 
     // ── GET /org/projects/{id}/saml-providers — covers SamlIdpConfigs ─────────
 
+    /// <summary>
+    /// Thinner than it looks: this is the only exercise of the
+    /// <c>RediensIamDbContext.SamlIdpConfigs</c> set.
+    /// </summary>
     [Fact]
     public async Task ListSamlProviders_OrgAdmin_Returns200()
     {
-        // Accessing db.SamlIdpConfigs covers RediensIamDbContext.cs:26
         var (org, _, client) = await OrgAdminClientAsync();
         var project          = await fixture.Seed.CreateProjectAsync(org.Id);
 

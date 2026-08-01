@@ -43,13 +43,16 @@ public class AccountTests(TestFixture fixture)
 
     // ── PATCH /account/me ─────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Despite the name, no username is sent: <c>UpdateMeRequest</c> exposes only
+    /// <c>display_name</c>. A user cannot rename themselves through this endpoint.
+    /// </summary>
     [Fact]
     public async Task UpdateMe_ValidUsername_UpdatesUser()
     {
         var (user, _, client) = await ScaffoldAsync();
         var newDisplayName    = $"newname_{Guid.NewGuid().ToString("N")[..6]}";
 
-        // UpdateMeRequest only supports display_name (not username)
         var res = await client.PatchAsJsonAsync("/account/me", new { display_name = newDisplayName });
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);

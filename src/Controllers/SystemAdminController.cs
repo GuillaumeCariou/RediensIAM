@@ -32,7 +32,7 @@ public class SystemAdminController(
     AppConfig appConfig,
     ILogger<SystemAdminController> logger) : ControllerBase
 {
-    // Unwrap bundle (S107)
+    // Bundle forwarders — the constructor takes one aggregate to satisfy S107; see ControllerServices.
     private HydraService hydra         => svc.Hydra;
     private KetoService keto           => svc.Keto;
     private PasswordService passwords   => svc.Passwords;
@@ -219,8 +219,8 @@ var org = await db.Organisations.FindAsync(id);
         var orgRoles = await db.OrgRoles.Where(r => r.OrgId == id).ToListAsync();
         db.OrgRoles.RemoveRange(orgRoles);
 
-        // Query only list IDs — avoid loading UserList entities into EF's change tracker,
-        // which would trigger EF's own cascade and create a circular-dependency error.
+        // Projecting to ids keeps UserList out of EF's change tracker. Materialising the entities
+        // instead triggers EF's own cascade, which fails on the org ↔ list circular dependency.
         var listIds = await db.UserLists.Where(ul => ul.OrgId == id).Select(ul => ul.Id).ToListAsync();
         foreach (var listId in listIds)
         {

@@ -104,7 +104,6 @@ public class SystemAdminBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task GetUser_SystemUser_IsSystemAdminTrue_Returns200()
     {
-        // Covers lines 191 (OrgId == null && Immovable) and 192 (Organisation?.Name null)
         var (systemUser, client) = await SystemUserAsync();
 
         var res = await client.GetAsync($"/admin/users/{systemUser.Id}");
@@ -118,7 +117,6 @@ public class SystemAdminBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task ListSessions_SystemUser_OrgIdNull_Returns200()
     {
-        // Covers line 263: user.UserList.OrgId?.ToString() ?? "" → "" (null path)
         var (systemUser, client) = await SystemUserAsync();
 
         var res = await client.GetAsync($"/admin/users/{systemUser.Id}/sessions");
@@ -129,7 +127,6 @@ public class SystemAdminBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task ForceLogout_SystemUser_OrgIdNull_Returns200()
     {
-        // Covers line 280: user.UserList.OrgId?.ToString() ?? "" → "" (null path)
         var (systemUser, client) = await SystemUserAsync();
 
         var res = await client.DeleteAsync($"/admin/users/{systemUser.Id}/sessions");
@@ -184,8 +181,6 @@ public class SystemAdminBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task AddUserToList_SystemListInvite_WritesSystemKeto()
     {
-        // Covers line 349 (ul.OrgId == null && ul.Immovable → write system keto tuple)
-        // and line 370 (orgName = ul.Organisation?.Name ?? "the organization" when null)
         var (_, _, client) = await SuperAdminAsync();
 
         var systemList = new UserList
@@ -199,7 +194,6 @@ public class SystemAdminBranchCoverageTests(TestFixture fixture)
         fixture.Db.UserLists.Add(systemList);
         await fixture.Db.SaveChangesAsync();
 
-        // Send invite (no password) → isInvite = true → hits line 370
         var res = await client.PostAsJsonAsync($"/admin/userlists/{systemList.Id}/users", new
         {
             email = SeedData.UniqueEmail()
@@ -216,7 +210,6 @@ public class SystemAdminBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task RemoveUserFromList_SystemList_RemovesSystemKetoTuple()
     {
-        // Covers line 388: ul?.OrgId == null && ul?.Immovable == true → delete system keto
         var (_, _, client) = await SuperAdminAsync();
 
         var systemList = new UserList
@@ -241,7 +234,6 @@ public class SystemAdminBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task ListOrgAdmins_ScopeWithMissingProject_ReturnsScopeNameNull()
     {
-        // Covers line 412: TryGetValue returns false when project doesn't exist in dict
         var (org, admin, client) = await SuperAdminAsync();
 
         fixture.Db.OrgRoles.Add(new OrgRole
@@ -271,7 +263,6 @@ public class SystemAdminBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task AssignOrgAdmin_AlreadyExists_Returns200WithExistingId()
     {
-        // Covers line 426: if (existing != null) return Ok(new { existing.Id })
         var (org, _, client) = await SuperAdminAsync();
         var list = await fixture.Seed.CreateUserListAsync(org.Id);
         var user = await fixture.Seed.CreateUserAsync(list.Id);
@@ -298,7 +289,6 @@ public class SystemAdminBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task AssignOrgAdmin_WithScope_BuildsScopedKetoSubject()
     {
-        // Covers line 434: body.ScopeId.HasValue → ketoSubject = "user:{id}|project:{scope}"
         var (org, _, client) = await SuperAdminAsync();
         var list    = await fixture.Seed.CreateUserListAsync(org.Id);
         var user    = await fixture.Seed.CreateUserAsync(list.Id);
@@ -319,7 +309,6 @@ public class SystemAdminBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task RemoveOrgAdmin_ScopedRole_BuildsScopedKetoSubject()
     {
-        // Covers line 446: role.ScopeId.HasValue → ketoSubject = "user:{id}|project:{scope}"
         var (org, _, client) = await SuperAdminAsync();
         var list    = await fixture.Seed.CreateUserListAsync(org.Id);
         var user    = await fixture.Seed.CreateUserAsync(list.Id);
@@ -378,7 +367,6 @@ public class SystemAdminBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task CreateHydraClient_WithoutClientCredentials_UsesNoneAuthMethod()
     {
-        // Covers line 857: GrantTypes.Contains("client_credentials") → false → "none"
         var (_, _, client) = await SuperAdminAsync();
 
         var res = await client.PostAsJsonAsync("/admin/hydra/clients", new
@@ -461,10 +449,10 @@ public class SystemAdminBranchCoverageTests(TestFixture fixture)
         {
             email          = SeedData.UniqueEmail(),
             username       = "adminupdated",
-            display_name   = "",      // "" → null (line 223 inner TRUE branch)
-            phone          = "",      // "" → null (line 224 inner TRUE branch)
-            active         = false,   // false → DisabledAt = DateTimeOffset.UtcNow (line 235)
-            email_verified = false,   // false → EmailVerifiedAt = null (line 242)
+            display_name   = "",      // "" clears the field rather than leaving it unchanged
+            phone          = "",      // "" clears the field rather than leaving it unchanged
+            active         = false,   // stamps DisabledAt
+            email_verified = false,   // clears EmailVerifiedAt
             clear_lock     = true,
             new_password   = "NewAdmin@P@ss!2"
         });
@@ -477,7 +465,6 @@ public class SystemAdminBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task AddUserToList_WithEmailVerified_SetsEmailVerifiedAt()
     {
-        // Covers line 343: emailVerified ? DateTimeOffset.UtcNow : null — TRUE path (emailVerified=true)
         var (org, _, client) = await SuperAdminAsync();
         var list = await fixture.Seed.CreateUserListAsync(org.Id);
 
@@ -496,7 +483,6 @@ public class SystemAdminBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task RemoveUserFromList_UserNotFound_Returns404()
     {
-        // Covers line 386: if (user == null) return NotFound();
         var (_, _, client) = await SuperAdminAsync();
 
         var res = await client.DeleteAsync($"/admin/userlists/{Guid.NewGuid()}/users/{Guid.NewGuid()}");
@@ -509,7 +495,6 @@ public class SystemAdminBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task RemoveOrgAdmin_NonExistent_Returns404()
     {
-        // Covers line 443: if (role == null) return NotFound();
         var (org, _, client) = await SuperAdminAsync();
 
         var res = await client.DeleteAsync($"/admin/organizations/{org.Id}/admins/{Guid.NewGuid()}");
@@ -684,7 +669,7 @@ public class SystemAdminBranchCoverageTests(TestFixture fixture)
                 email_attribute_name        = "mail",
                 display_name_attribute_name = "cn",
                 jit_provisioning            = true,
-                default_role_id             = Guid.Empty,  // Guid.Empty → sets to null (line 1030 HasValue=true branch)
+                default_role_id             = Guid.Empty,  // Guid.Empty means "clear", not "unchanged"
                 active                      = false
             });
 

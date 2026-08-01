@@ -49,7 +49,6 @@ test('renders authentication tabs', async ({ adminPage: page }) => {
 
   await page.goto(BASE_URL);
 
-  // Expect tabs for different auth config sections
   await expect(page.getByRole('tab', { name: /general|settings/i })).toBeVisible();
   await expect(page.getByRole('tab', { name: /social|oauth|providers/i })).toBeVisible();
   await expect(page.getByRole('tab', { name: /saml/i })).toBeVisible();
@@ -73,7 +72,6 @@ test('toggles self-registration and saves', async ({ adminPage: page }) => {
   await page.goto(BASE_URL);
   await page.getByRole('tab', { name: /general|settings/i }).click();
 
-  // Toggle self-registration off
   const selfRegSwitch = page.getByRole('switch', { name: /self.registration/i });
   if (await selfRegSwitch.isChecked()) {
     await selfRegSwitch.click();

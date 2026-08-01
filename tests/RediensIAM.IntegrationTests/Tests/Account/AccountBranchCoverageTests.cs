@@ -46,7 +46,6 @@ public class AccountBranchCoverageTests(TestFixture fixture)
         var list     = await fixture.Seed.CreateUserListAsync(org.Id);
         var user     = await fixture.Seed.CreateUserAsync(list.Id);
         var token    = $"noorg-{user.Id:N}";
-        // OrgId = null → Claims.OrgId will be null/empty
         fixture.Hydra.RegisterToken(token, user.Id.ToString(), null, null, []);
         fixture.Keto.AllowAll();
         return (user, fixture.ClientWithToken(token));
@@ -94,10 +93,15 @@ public class AccountBranchCoverageTests(TestFixture fixture)
 
     // ── PATCH /account/password — null PasswordHash (line 67 TRUE short-circuit) ─
 
+    /// <summary>
+    /// A passwordless account must be told to set a password rather than be told its
+    /// current password is wrong: the distinct <c>set_password_required</c> error asserted
+    /// below keeps the rate-limiter from charging users who can never satisfy the
+    /// <c>current_password</c> check.
+    /// </summary>
     [Fact]
     public async Task ChangePassword_NullPasswordHash_ReturnsBadRequest()
     {
-        // Covers line 67: user.PasswordHash == null → true → BadRequest (short-circuits the Verify call)
         var (org, _) = await fixture.Seed.CreateOrgAsync();
         var project  = await fixture.Seed.CreateProjectAsync(org.Id);
         var list     = await fixture.Seed.CreateUserListAsync(org.Id);
@@ -112,7 +116,7 @@ public class AccountBranchCoverageTests(TestFixture fixture)
             Email         = SeedData.UniqueEmail(),
             Username      = "samluser",
             Discriminator = "9999",
-            PasswordHash  = null,   // no password
+            PasswordHash  = null,
             EmailVerified = true,
             Active        = true,
             CreatedAt     = DateTimeOffset.UtcNow,
@@ -133,33 +137,30 @@ public class AccountBranchCoverageTests(TestFixture fixture)
 
         res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
-        // Distinguish passwordless accounts (e.g. SAML/WebAuthn-only) from wrong-password.
-        // Returning a distinct error avoids charging the rate-limiter for users who can
-        // never satisfy the current_password check.
         body.GetProperty("error").GetString().Should().Be("set_password_required");
     }
 
     // ── PATCH /account/password — null OrgId (line 72 false branch) ──────────
 
+    /// <summary>
+    /// A claim set with no <c>org_id</c> must not break the audit write: the org id passed to
+    /// the audit record is null and the password change still succeeds.
+    /// </summary>
     [Fact]
     public async Task ChangePassword_NullOrgId_StillChangesPassword()
     {
-        // Covers line 72: Guid.TryParse(Claims.OrgId, ...) fails → oid = default → null passed to audit
-        // ScaffoldNoOrgIdAsync creates a user via CreateUserAsync with password "P@ssw0rd!Test"
         var (user, _) = await ScaffoldNoOrgIdAsync();
 
-        // Register a fresh token for this user (no orgId) using the same user ID
         var token = $"noorg2-{user.Id:N}";
         fixture.Hydra.RegisterToken(token, user.Id.ToString(), null, null, []);
         var client = fixture.ClientWithToken(token);
 
         var res = await client.PatchAsJsonAsync("/account/password", new
         {
-            current_password = "P@ssw0rd!Test",
+            current_password = SeedData.DefaultPassword,
             new_password     = "NewP@ssw0rd!2"
         });
 
-        // With no org_id in claims, the audit call gets null — should still succeed
         res.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
@@ -177,13 +178,14 @@ public class AccountBranchCoverageTests(TestFixture fixture)
 
     // ── POST /account/mfa/totp/confirm — user not found (line 101) ──────────
 
+    /// <summary>
+    /// Order matters: the setup call has to run while the user still exists, because the only way
+    /// to hold a valid TOTP setup session is to have obtained it legitimately. The row is deleted
+    /// afterwards, so confirm sees a good session and a missing user.
+    /// </summary>
     [Fact]
     public async Task ConfirmTotp_UserNotFound_Returns404()
     {
-        // The user needs a valid TOTP setup session but user must not exist in DB
-        // We'll use a client that has a valid session cookie but deleted user
-        // This is tricky because we need the session cookie from setup to match
-        // Use a workaround: call setup first with a real user, then delete the user
         var (org, _) = await fixture.Seed.CreateOrgAsync();
         var project  = await fixture.Seed.CreateProjectAsync(org.Id);
         var list     = await fixture.Seed.CreateUserListAsync(org.Id);
@@ -194,16 +196,13 @@ public class AccountBranchCoverageTests(TestFixture fixture)
         fixture.Keto.AllowAll();
         var client = fixture.ClientWithToken(token);
 
-        // Get TOTP setup (stores session)
         var setupRes  = await client.PostAsync("/account/mfa/totp/setup", null);
         setupRes.StatusCode.Should().Be(HttpStatusCode.OK);
         var base32 = (await setupRes.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("secret").GetString()!;
 
-        // Delete the user from DB
         fixture.Db.Users.Remove(user);
         await fixture.Db.SaveChangesAsync();
 
-        // Now confirm TOTP with valid code — user is gone → 404
         var validCode = new OtpNet.Totp(OtpNet.Base32Encoding.ToBytes(base32)).ComputeTotp();
         var res = await client.PostAsJsonAsync("/account/mfa/totp/confirm", new { code = validCode });
 
@@ -215,7 +214,6 @@ public class AccountBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task GetSessions_NullOrgId_UsesUserIdAsSubject()
     {
-        // Covers line 144: string.IsNullOrEmpty(Claims.OrgId) == true → subject = Claims.UserId
         var (_, client) = await ScaffoldNoOrgIdAsync();
 
         var res = await client.GetAsync("/account/sessions");
@@ -249,10 +247,16 @@ public class AccountBranchCoverageTests(TestFixture fixture)
 
     // ── POST /account/mfa/phone/verify — user not found (line 191) ───────────
 
+    /// <summary>
+    /// Do not read this as a 404 test despite its name: it asserts nothing. Reaching the
+    /// user-not-found branch needs the OTP that was sent, and the OTP only lives in the cache,
+    /// so verify fails earlier with <c>invalid_code</c>. What is exercised is the phone-setup
+    /// path against a user that is subsequently deleted; give it real assertions if a way to
+    /// read back the issued OTP is ever added.
+    /// </summary>
     [Fact]
     public async Task VerifyPhone_UserNotFound_Returns404()
     {
-        // Need a session with phone_setup_number, but user deleted
         var (org, _) = await fixture.Seed.CreateOrgAsync();
         var project  = await fixture.Seed.CreateProjectAsync(org.Id);
         var list     = await fixture.Seed.CreateUserListAsync(org.Id);
@@ -263,22 +267,10 @@ public class AccountBranchCoverageTests(TestFixture fixture)
         fixture.Keto.AllowAll();
         var client = fixture.ClientWithToken(token);
 
-        // Setup phone (stores session)
         await client.PostAsJsonAsync("/account/mfa/phone/setup", new { phone = "+15555551234" });
 
-        // Delete user
         fixture.Db.Users.Remove(user);
         await fixture.Db.SaveChangesAsync();
-
-        // Verify with dummy code — OTP will fail first (invalid_code), not user not found
-        // So we need a valid OTP. Since we can't easily get the stored OTP, test that the
-        // session check happens before user check: use wrong code first to confirm session exists
-        // Then... this won't reach line 191 with wrong code.
-        // Instead, we need to cheat: verify OTP step by storing it ourselves isn't possible here.
-        // Use a workaround: set up phone, capture OTP from the SMS stub, then delete user
-        // The OTP is stored in Redis/cache — we skip this test for now (can't easily extract OTP)
-        // This test documents the intent but may reach 400 invalid_code instead of 404
-        // The test is still valuable as it exercises the setup flow
     }
 
     // ── DELETE /account/mfa/phone — user not found (line 204) ────────────────

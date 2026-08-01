@@ -9,10 +9,13 @@ import {
 import PageHeader from '@/components/layout/PageHeader';
 import { ApiError } from '@/auth';
 
-// The write endpoints validate the relay before storing it (SmtpEndpointValidator), and
-// /org/smtp/test deliberately no longer echoes the SMTP server's message — it distinguished
-// "host unreachable" from "connection refused", which turns the endpoint into a port scanner.
-// So every failure has to be explained from its code alone.
+/**
+ * Every SMTP failure has to be explained from its error code alone. The write endpoints validate
+ * the relay before storing it (SmtpEndpointValidator), and /org/smtp/test deliberately no longer
+ * echoes the SMTP server's own message — that message distinguished "host unreachable" from
+ * "connection refused", which turns the endpoint into a port scanner for anyone with an org admin
+ * account. Do not surface the server text here even if the API starts returning it again.
+ */
 const SMTP_ERRORS: Record<string, string> = {
   smtp_host_required:   'Host is required.',
   smtp_host_too_long:   'Host is too long (255 characters maximum).',

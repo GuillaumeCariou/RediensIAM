@@ -48,7 +48,6 @@ test('advances to OTP step after requesting reset', async ({ page }) => {
   await page.locator('input[type="email"]').fill('user@example.com');
   await page.getByRole('button', { name: /send|reset/i }).click();
 
-  // Should show OTP input now
   await expect(page.locator('input')).toBeVisible();
   await expect(page.getByRole('button', { name: /verify|confirm/i })).toBeVisible();
 });
@@ -107,7 +106,6 @@ test('advances to new-password step after valid OTP', async ({ page }) => {
   await page.locator('input').first().fill('123456');
   await page.getByRole('button', { name: /verify|confirm/i }).click();
 
-  // Should now show password fields
   await expect(page.locator('input[type="password"]').first()).toBeVisible();
 });
 
@@ -130,7 +128,6 @@ test('shows error when new passwords do not match', async ({ page }) => {
   await page.locator('input').first().fill('123456');
   await page.getByRole('button', { name: /verify|confirm/i }).click();
 
-  // Fill mismatched passwords
   const pwds = page.locator('input[type="password"]');
   await pwds.nth(0).fill('NewPassword1!');
   await pwds.nth(1).fill('DifferentPassword1!');

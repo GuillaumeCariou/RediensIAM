@@ -49,8 +49,8 @@ public class AuthMoreCoverageTests(TestFixture fixture)
     [Fact]
     public async Task Register_InvalidChallenge_Returns400()
     {
-        // Hydra stub returns 404 for unknown challenges → GetLoginRequestAsync throws →
-        // catch block (lines 590-593) runs → BadRequest with "invalid_challenge"
+        // The Hydra stub 404s unknown challenges, so GetLoginRequestAsync throws; the controller
+        // has to turn that into invalid_challenge rather than let it surface as a 500.
         var res = await fixture.Client.PostAsJsonAsync("/auth/register", new
         {
             login_challenge = "completely-nonexistent-challenge-xyz",
@@ -68,7 +68,6 @@ public class AuthMoreCoverageTests(TestFixture fixture)
     [Fact]
     public async Task PasswordResetRequest_SmsOnlyProject_SendsSmsCode()
     {
-        // Arrange: project with SmsVerificationEnabled=true, EmailVerificationEnabled=false
         var (org, _) = await fixture.Seed.CreateOrgAsync();
         var project  = await fixture.Seed.CreateProjectAsync(org.Id);
         var list     = await fixture.Seed.CreateUserListAsync(org.Id);
@@ -124,7 +123,7 @@ public class AuthControllerIpRangeTests
     [Fact]
     public void Ipv6InRange_DifferentNetwork_ReturnsFalse()
     {
-        // 2001:db9::1 is NOT in 2001:db8::/32 (byte[2] differs → inner return false, line 1005)
+        // 2001:db9::1 is NOT in 2001:db8::/32 — byte[2] differs
         Invoke("2001:db9::1", "2001:db8::/32").Should().BeFalse();
     }
 
@@ -141,7 +140,7 @@ public class AuthControllerIpRangeTests
     [Fact]
     public void Ipv6InRange_PartialByteMismatch_ReturnsFalse()
     {
-        // 2001:db8:8000:: byte[4]=0x80 & 0x80 == 0x80, net byte[4]=0x00 & 0x80 == 0x00 → mismatch → false (line 1009)
+        // 2001:db8:8000:: byte[4]=0x80 & 0x80 == 0x80, net byte[4]=0x00 & 0x80 == 0x00 → mismatch
         Invoke("2001:db8:8000::", "2001:db8::/33").Should().BeFalse();
     }
 }

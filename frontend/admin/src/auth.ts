@@ -8,17 +8,28 @@ interface AdminConfig {
 
 let mgr: UserManager | null = null;
 let accessToken: string | null = null;
-// One-shot guard so concurrent 401 responses do not each fire signinRedirect — the
-// last redirect wins the stored state, racing the others and breaking PKCE callback.
+/**
+ * One-shot guard so concurrent 401 responses do not each fire signinRedirect — the
+ * last redirect wins the stored state, racing the others and breaking the PKCE callback.
+ */
 let signinRedirectInFlight = false;
 
+/**
+ * Builds (once) the UserManager from `/admin/config`.
+ *
+ * The origin check below is defence-in-depth: even though Hydra also validates the registered
+ * redirect_uri, never trust a server-provided redirect_uri whose origin differs from this SPA's
+ * origin. A compromised config endpoint could otherwise hand the authorization code to another
+ * origin. Do not relax it to a hostname or suffix comparison.
+ *
+ * Tokens live in `accessToken` and the OIDC state in `InMemoryWebStorage`, never in
+ * localStorage or sessionStorage: anything persisted there survives the tab and is readable by
+ * any script that lands on this origin.
+ */
 async function getManager(): Promise<UserManager> {
   if (mgr) return mgr;
   const res = await fetch('/admin/config');
   const cfg: AdminConfig = await res.json();
-  // Defence-in-depth: even though Hydra also validates the registered redirect_uri,
-  // never trust a server-provided redirect_uri whose origin differs from this SPA's origin.
-  // A compromised config endpoint could otherwise hand the auth code to another origin.
   try {
     const cfgOrigin = new URL(cfg.redirect_uri).origin;
     if (cfgOrigin !== globalThis.location.origin) {
@@ -105,6 +116,15 @@ export function reauthMethods(e: unknown): string[] | null {
   return isReauthRequired(e.body) ? (e.body.methods ?? []) : null;
 }
 
+/**
+ * Authenticated fetch. Throws {@link ApiError} on any non-2xx.
+ *
+ * The `!isReauthRequired(body)` half of the 401 branch below is load-bearing. A 401 normally
+ * means the token is gone and the only way forward is a fresh login. The MFA mutation endpoints
+ * reuse 401 for something else entirely: the session is fine, the caller just has to prove
+ * possession of a factor first. Redirecting on those would throw away a working session and drop
+ * the user back on the login page mid-action.
+ */
 export async function apiFetch(path: string, opts: RequestInit = {}) {
   const res = await fetch(path, {
     ...opts,
@@ -117,10 +137,6 @@ export async function apiFetch(path: string, opts: RequestInit = {}) {
   if (!res.ok) {
     let body: unknown;
     try { body = await res.json(); } catch { body = null; }
-    // A 401 normally means the token is gone and the only way forward is a fresh login.
-    // The MFA mutation endpoints reuse 401 for something else entirely: the session is fine,
-    // the caller just has to prove possession of a factor first. Redirecting there would throw
-    // away a working session and drop the user back on the login page mid-action.
     if (res.status === 401 && !isReauthRequired(body)) {
       accessToken = null;
       if (!signinRedirectInFlight) {

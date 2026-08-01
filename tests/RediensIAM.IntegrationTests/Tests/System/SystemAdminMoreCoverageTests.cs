@@ -68,7 +68,7 @@ public class SystemAdminMoreCoverageTests(TestFixture fixture)
         var res = await client.PostAsJsonAsync($"/admin/userlists/{list.Id}/users", new
         {
             email    = SeedData.UniqueEmail(),
-            password = "P@ssw0rd!Admin"   // non-empty → covers passwords.Hash branch
+            password = "P@ssw0rd!Admin"   // a password here means "create", not "invite"
         });
 
         res.StatusCode.Should().Be(HttpStatusCode.Created);

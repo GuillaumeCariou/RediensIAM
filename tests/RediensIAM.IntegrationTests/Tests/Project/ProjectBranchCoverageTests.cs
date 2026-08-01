@@ -69,7 +69,8 @@ public class ProjectBranchCoverageTests(TestFixture fixture)
         var role    = await fixture.Seed.CreateRoleAsync(project.Id, "TempRole");
         fixture.Keto.AllowAll();
 
-        // Delete project so GetProjectAsync() returns null
+        // The token is minted before the project is removed, so the caller holds a claim naming a
+        // project that no longer exists.
         fixture.Db.Projects.Remove(project);
         await fixture.Db.SaveChangesAsync();
 

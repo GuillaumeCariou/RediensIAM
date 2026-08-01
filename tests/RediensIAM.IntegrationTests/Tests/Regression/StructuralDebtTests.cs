@@ -25,10 +25,11 @@ public class StructuralDebtTests(TestFixture fixture)
     /// correctly, and it was R-22.
     ///
     /// This started life asserting a runtime throw. It asserts reachability instead because the
-    /// guard moved to the compiler: <c>GetManagementLevel</c> is private, so the mistake is no
-    /// longer expressible and there is no call left to throw from. A test cannot assert "this does
-    /// not compile", so it asserts the property that makes it so — and it fails the moment someone
-    /// widens the method back to public, which is the regression worth catching.
+    /// guard moved to the compiler: <c>GetManagementLevel</c> was first made private and has since
+    /// been deleted outright, so the mistake is no longer expressible and there is no call left to
+    /// throw from. A test cannot assert "this does not compile", so it asserts the property that
+    /// makes it so — the absence of a public reader — and it fails the moment anyone reintroduces
+    /// one, which is the regression worth catching.
     /// </summary>
     [Fact]
     public void TheCallersClaimedManagementLevel_IsNotPubliclyReadable()

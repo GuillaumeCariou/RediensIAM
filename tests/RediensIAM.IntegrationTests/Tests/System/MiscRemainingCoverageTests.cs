@@ -47,8 +47,8 @@ public class MiscRemainingCoverageTests(TestFixture fixture)
         fixture.Db.OrgRoles.Add(orgRole);
         await fixture.Db.SaveChangesAsync();
 
-        // PATCH the role with a DIFFERENT ScopeId that IS a valid project in the org
-        // body.ScopeId != null && body.ScopeId != role.ScopeId → projectExists = true → line 648
+        // A genuinely different scope, and one that exists in the org: the scope-change path runs
+        // its project-existence check and passes.
         var res = await client.PatchAsJsonAsync($"/org/admins/{orgRole.Id}", new
         {
             scope_id = project2.Id
@@ -70,8 +70,8 @@ public class MiscRemainingCoverageTests(TestFixture fixture)
         var actor  = await fixture.Seed.CreateUserAsync(orgList.Id);
         var target = await fixture.Seed.CreateUserAsync(orgList.Id);
 
-        // AllowAll → GetActorManagementLevelForOrgAsync returns SuperAdmin
-        // → switch on Roles.SuperAdmin hits line 168
+        // With every Keto check allowed the actor resolves as super_admin, which is the only level
+        // permitted to grant super_admin below.
         fixture.Keto.AllowAll();
 
         var ketoService = fixture.GetService<KetoService>();
@@ -90,8 +90,9 @@ public class MiscRemainingCoverageTests(TestFixture fixture)
     {
         var patService = fixture.GetService<PatService>();
 
-        // Calling with a hash that doesn't exist in cache is a no-op (KeyDelete is idempotent)
-        // but it DOES execute lines 117-119.
+        // Invalidating a hash that was never cached must be a silent no-op: revocation code calls
+        // this without knowing whether the token was ever introspected, and a throw here would
+        // abort the revocation.
         const string fakeHash = "aabbccddee112233aabbccddee112233aabbccddee112233aabbccddee112233";
         var act = async () => await patService.InvalidateAsync(fakeHash);
         await act.Should().NotThrowAsync();

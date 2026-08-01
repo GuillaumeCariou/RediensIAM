@@ -80,7 +80,10 @@ export default function CommandPalette({ onClose }: Readonly<CommandPaletteProps
     return items.filter(c => c.label.toLowerCase().includes(lq) || c.sub?.toLowerCase().includes(lq));
   }, [q, items]);
 
-  // Flat index travels with each item so the keyboard cursor and the rendered rows agree.
+  /**
+   * The flat index travels with each item so the keyboard cursor and the rendered rows agree.
+   * Re-deriving it per group would make aria-activedescendant point at the wrong row.
+   */
   const groups = useMemo(() => {
     const map = new Map<string, { item: CmdItem; index: number }[]>();
     filtered.forEach((item, index) => {
@@ -96,9 +99,13 @@ export default function CommandPalette({ onClose }: Readonly<CommandPaletteProps
     onClose();
   }
 
-  // showModal() gives focus containment, an inert background and Escape-to-close for free;
-  // closedby="any" restores the click-outside-to-close the old scrim div provided. Set here
-  // rather than in JSX because the linters do not know the attribute yet.
+  /**
+   * Must be `showModal()`, never `show()`: only the modal form gives focus containment, an inert
+   * background and Escape-to-close. The defect this replaced was a non-modal <dialog> behind a
+   * scrim div, which still let Tab walk into the page behind it. `closedby="any"` restores the
+   * click-outside-to-close the scrim provided; it is set imperatively rather than in JSX because
+   * the linters and React's type definitions do not know the attribute yet.
+   */
   useEffect(() => {
     ref.current?.setAttribute('closedby', 'any');
     ref.current?.showModal();

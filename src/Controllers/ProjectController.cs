@@ -47,8 +47,11 @@ public class ProjectController(
         }
     }
 
-    // H1: every project load goes through this — returns null (→ 404) if the project
-    // belongs to a different org, preventing cross-tenant access.
+    /// <summary>
+    /// H1: every project load goes through this — returns null (→ 404) if the project belongs to a
+    /// different org, preventing cross-tenant access. A handler that queries <c>db.Projects</c>
+    /// directly bypasses the only tenant check on this controller.
+    /// </summary>
     private async Task<Project?> GetProjectAsync()
     {
         var isSuperAdmin = IsSuperAdmin;
@@ -205,10 +208,14 @@ public class ProjectController(
         return Ok(users);
     }
 
+    /// <summary>
+    /// H2: the user id is caller-supplied, so it is matched against this project's own user list
+    /// rather than looked up globally — otherwise any project admin could read any user in the
+    /// deployment by guessing an id.
+    /// </summary>
     [HttpGet("users/{id}")]
     public async Task<IActionResult> GetUser(Guid id)
     {
-        // H2: verify the user belongs to this project's user list
         var project = await GetProjectAsync();
         if (project?.AssignedUserListId == null) return NotFound();
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id && u.UserListId == project.AssignedUserListId);
@@ -219,11 +226,14 @@ public class ProjectController(
         return Ok(new { user.Id, user.Username, user.Discriminator, user.Email, user.DisplayName, user.Active, roles });
     }
 
+    /// <summary>
+    /// KetoService re-validates the caller's authority, so the <see cref="GetProjectAsync"/> call
+    /// here is not the authorisation check — it is what stops the response distinguishing "not
+    /// allowed" from "no such project" across tenants.
+    /// </summary>
     [HttpPost("users/{id}/roles")]
     public async Task<IActionResult> AssignRole(Guid id, [FromBody] AssignRoleRequest body)
     {
-        // KetoService re-validates authority; the org check here prevents
-        // leaking project existence across tenants.
         var project = await GetProjectAsync();
         if (project == null) return NotFound();
         try
@@ -306,7 +316,8 @@ public class ProjectController(
     {
         var project = await GetProjectAsync();
         if (project?.AssignedUserListId == null) return NotFound();
-        // Verify the target user belongs to this project before revoking (L2 fix)
+        // L2: the Hydra subject is built from the caller's project, so without this membership
+        // check a project admin could revoke the sessions of any user id in the deployment.
         if (!await db.Users.AnyAsync(u => u.Id == id && u.UserListId == project.AssignedUserListId))
             return NotFound();
         await hydra.RevokeAllConsentSessionsAsync($"{project.OrgId}:{id}");

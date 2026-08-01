@@ -127,7 +127,6 @@ public class SystemUserTests(TestFixture fixture)
     [Fact]
     public async Task UpdateUser_ClearDisplayName_SetsNull()
     {
-        // Covers SystemAdminController line 223: DisplayName == "" → null branch
         var (user, client) = await ScaffoldAsync();
         user.DisplayName = "Old Name";
         await fixture.Db.SaveChangesAsync();
@@ -144,7 +143,6 @@ public class SystemUserTests(TestFixture fixture)
     [Fact]
     public async Task UpdateUser_SetPhone_PersistsValue()
     {
-        // Covers SystemAdminController line 224: Phone != null, non-empty → sets value
         var (user, client) = await ScaffoldAsync();
 
         var res = await client.PatchAsJsonAsync($"/admin/users/{user.Id}", new { phone = "+1-555-0100" });
@@ -159,7 +157,6 @@ public class SystemUserTests(TestFixture fixture)
     [Fact]
     public async Task UpdateUser_ClearPhone_SetsNull()
     {
-        // Covers SystemAdminController line 224: Phone == "" → null branch
         var (user, client) = await ScaffoldAsync();
         user.Phone = "+1-555-0100";
         await fixture.Db.SaveChangesAsync();

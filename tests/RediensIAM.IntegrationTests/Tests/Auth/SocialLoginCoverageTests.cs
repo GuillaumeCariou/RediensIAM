@@ -104,11 +104,10 @@ public class SocialLoginCoverageTests(TestFixture fixture)
         fixture.Hydra.SetupLoginChallengeWithProject(
             challenge, project.HydraClientId, project.Id.ToString(), org.Id.ToString());
 
-        // Get state for "github"
         var state = await GetOAuthStateAsync(challenge);
 
-        // Remove all providers from project's LoginTheme so GetProviderConfig returns null
-        // (the state still references "github", but the project now has no providers → null loop exit at 1265-1266)
+        // Providers are stripped after the state is minted: the state still names "github" but the
+        // project no longer offers it, which is the mismatch this test is about.
         project.LoginTheme = new Dictionary<string, object>
         {
             ["providers"] = Array.Empty<Dictionary<string, object>>()
@@ -127,8 +126,9 @@ public class SocialLoginCoverageTests(TestFixture fixture)
     [Fact]
     public async Task OAuthCallback_ExchangeFails_ProfileNull_RedirectsToError()
     {
-        // HibpStub returns empty body for github.com → JsonDocument.Parse("") throws
-        // → ExchangeAndGetProfileAsync catches → returns null → line 1114 redirect
+        // No GitHub profile is configured on the stub, so the token exchange gets an empty body,
+        // JSON parsing throws, and ExchangeAndGetProfileAsync must swallow it and return null
+        // rather than let the exception reach the client.
         var (org, project, _) = await ScaffoldWithGithubAsync();
 
         var challenge = Guid.NewGuid().ToString("N");
@@ -149,9 +149,9 @@ public class SocialLoginCoverageTests(TestFixture fixture)
     [Fact]
     public async Task OAuthStart_CorruptEncryptedSecret_FallsBackToEmptySecret()
     {
-        // Providing a non-decodable client_secret_enc causes ResolveProviderSecret to
-        // catch the decryption exception and fall through (lines 1283-1286).
-        // The client_id is still set, so OAuthStart still redirects.
+        // A non-decodable client_secret_enc makes ResolveProviderSecret swallow the decryption
+        // failure and fall back to an empty secret. The client_id is still set, so the redirect
+        // still happens — a corrupt stored secret degrades the flow instead of 500-ing it.
         var (org, project, _) = await ScaffoldWithGithubAsync(
             clientId: "gh-id", clientSecretEnc: "not-valid-base64!!!");
 
@@ -162,7 +162,6 @@ public class SocialLoginCoverageTests(TestFixture fixture)
         var res = await fixture.Client.GetAsync(
             $"/auth/oauth2/start?login_challenge={challenge}&provider_id=github");
 
-        // Redirect still happens — secret falls back to empty string
         res.StatusCode.Should().Be(HttpStatusCode.Redirect);
         res.Headers.Location!.ToString().Should().Contain("github.com/login/oauth/authorize");
     }
@@ -191,7 +190,6 @@ public class SocialLoginCoverageTests(TestFixture fixture)
             res.StatusCode.Should().Be(HttpStatusCode.Redirect);
             res.Headers.Location!.ToString().Should().NotContain("oauth2/error");
 
-            // Verify the social user was created in the DB
             await fixture.RefreshDbAsync();
             var social = await fixture.Db.UserSocialAccounts
                 .FirstOrDefaultAsync(s => s.Provider == "github" && s.ProviderUserId == "99001");
@@ -274,7 +272,6 @@ public class SocialLoginCoverageTests(TestFixture fixture)
             res.StatusCode.Should().Be(HttpStatusCode.Redirect);
             res.Headers.Location!.ToString().Should().Contain("link_success=1");
 
-            // Verify the social account was created
             await fixture.RefreshDbAsync();
             var social = await fixture.Db.UserSocialAccounts
                 .FirstOrDefaultAsync(s => s.UserId == user.Id && s.Provider == "github");
@@ -297,7 +294,6 @@ public class SocialLoginCoverageTests(TestFixture fixture)
             var (org, project, list) = await ScaffoldWithGithubAsync();
             var user = await fixture.Seed.CreateUserAsync(list.Id);
 
-            // Seed an existing social account with the same provider+providerUserId
             fixture.Db.UserSocialAccounts.Add(new UserSocialAccount
             {
                 Id             = Guid.NewGuid(),
@@ -359,7 +355,6 @@ public class SocialLoginCoverageTests(TestFixture fixture)
             res.StatusCode.Should().Be(HttpStatusCode.Redirect);
             res.Headers.Location!.ToString().Should().NotContain("oauth2/error");
 
-            // Verify the existing user now has a social account linked
             await fixture.RefreshDbAsync();
             var social = await fixture.Db.UserSocialAccounts
                 .FirstOrDefaultAsync(s => s.UserId == user.Id && s.Provider == "github");

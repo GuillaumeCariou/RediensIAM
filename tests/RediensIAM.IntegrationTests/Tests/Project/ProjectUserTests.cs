@@ -135,7 +135,6 @@ public class ProjectUserTests(TestFixture fixture)
         var user = await fixture.Seed.CreateUserAsync(list.Id);
         var role = await fixture.Seed.CreateRoleAsync(project.Id, "Tester");
 
-        // Assign first
         await client.PostAsJsonAsync($"/project/users/{user.Id}/roles", new { role_id = role.Id });
 
         var res = await client.DeleteAsync($"/project/users/{user.Id}/roles/{role.Id}");

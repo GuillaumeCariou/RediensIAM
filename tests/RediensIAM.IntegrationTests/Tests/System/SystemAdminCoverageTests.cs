@@ -104,8 +104,8 @@ public class SystemAdminCoverageTests(TestFixture fixture)
         var user = await fixture.Seed.CreateUserAsync(systemList.Id);
 
         var (_, adminClient) = await SuperAdminAsync();
-        // AllowAll already set; keto.DeleteRelationTupleAsync will be called for "member"
-        // AND for super_admin tuple (line 389 branch)
+        // Removing someone from the system list must drop both their "member" tuple and their
+        // super_admin tuple — leaving the latter behind would keep the grant alive.
 
         var res = await adminClient.DeleteAsync($"/admin/userlists/{systemList.Id}/users/{user.Id}");
 

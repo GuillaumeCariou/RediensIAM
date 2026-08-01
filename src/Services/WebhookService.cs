@@ -183,7 +183,6 @@ public class WebhookDispatcherService(
     IWebhookQueue webhookQueue,
     IWebhookSsrfValidator ssrfValidator) : BackgroundService
 {
-    // Retry delays: 2s, 8s, 32s
     private static readonly int[] RetryDelaysMs = [2_000, 8_000, 32_000];
     private readonly SemaphoreSlim _sem = new(20, 20);
 
@@ -228,7 +227,6 @@ public class WebhookDispatcherService(
                 finally { _sem.Release(); }
             }, drainCts.Token);
         }
-        // Wait for in-flight tasks to finish
         for (var i = 0; i < 20; i++)
         {
             if (_sem.CurrentCount == 20) break;
@@ -328,7 +326,6 @@ public class WebhookDispatcherService(
             logger.LogError(ex, "Failed to persist webhook delivery record for {Id}", job.WebhookId);
         }
 
-        // Remove from Redis persistent queue — job is done (delivered or exhausted)
         try { await webhookQueue.RemoveAsync(jobJson); }
         catch (Exception ex) { logger.LogWarning(ex, "Failed to remove webhook job from Redis queue"); }
     }

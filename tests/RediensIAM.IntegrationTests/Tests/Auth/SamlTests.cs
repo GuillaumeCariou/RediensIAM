@@ -178,12 +178,15 @@ public partial class SamlControllerTests(TestFixture fixture)
 
     // ── Helpers for full ACS flow tests ──────────────────────────────────────
 
-    // Seeds a project + list (optionally) + SamlIdpConfig backed by a test RSA cert.
+    /// <summary>
+    /// Seeds a project + list (optionally) + SamlIdpConfig backed by a test RSA cert.
+    /// The cert is exported as PFX and re-imported so it holds its own self-contained key: the
+    /// <c>RSA</c> instance it was created from is disposed long before <c>Bind()</c> runs, and
+    /// without the round-trip signing fails at that point with an opaque key error.
+    /// </summary>
     private async Task<(SamlIdpConfig idp, X509Certificate2 cert)> SeedAcsSamlIdpAsync(
         bool assignList = true, bool jit = true)
     {
-        // Export as PFX and re-import so the cert holds its own self-contained key,
-        // independent of the RSA object that may be disposed by the time Bind() is called.
         X509Certificate2 cert;
         {
             using var rsa = RSA.Create(2048);
@@ -222,8 +225,10 @@ public partial class SamlControllerTests(TestFixture fixture)
         return (idp, cert);
     }
 
-    // Calls Start (to populate session), decodes the redirect to extract the authn-
-    // request ID, then builds and returns a valid signed SAMLResponse POST form.
+    /// <summary>
+    /// Calls Start (to populate session), decodes the redirect to extract the authn-request ID,
+    /// then builds and returns a valid signed SAMLResponse POST form.
+    /// </summary>
     private static async Task<FormUrlEncodedContent> BuildAcsFormAsync(
         HttpClient client, string challenge, SamlIdpConfig idp, X509Certificate2 cert,
         ClaimsIdentity? identity = null,
@@ -245,7 +250,6 @@ public partial class SamlControllerTests(TestFixture fixture)
                            .ToDictionary(p => Uri.UnescapeDataString(p[0]),
                                          p => Uri.UnescapeDataString(p[1]));
 
-        // SP-generated relay state
         var spRelayState = qp.TryGetValue("RelayState", out var rs) ? rs : string.Empty;
         spRelayState.Should().NotBeNullOrEmpty("relay state must be present in the Start redirect URL");
 
@@ -265,8 +269,10 @@ public partial class SamlControllerTests(TestFixture fixture)
             identity, responseStatus);
     }
 
-    // Builds the ACS POST form directly without calling Start (no session populated).
-    // Use this to test IdP-initiated flows, missing-session branches, etc.
+    /// <summary>
+    /// Builds the ACS POST form directly without calling Start, so no session is populated.
+    /// Use this for IdP-initiated flows and missing-session branches.
+    /// </summary>
     private static FormUrlEncodedContent BuildAcsFormNoSession(
         string challenge, SamlIdpConfig idp, X509Certificate2 cert,
         ClaimsIdentity? identity = null)
@@ -430,7 +436,6 @@ public partial class SamlControllerTests(TestFixture fixture)
     [Fact]
     public async Task Acs_ValidResponse_JitProvisioning_ReturnsRedirect()
     {
-        // User does not exist → JIT-provisioned → login accepted → redirect
         var (idp, cert) = await SeedAcsSamlIdpAsync();
         var challenge   = Guid.NewGuid().ToString("N");
         fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
@@ -440,7 +445,6 @@ public partial class SamlControllerTests(TestFixture fixture)
         var res = await client.PostAsync("/auth/saml/acs", form);
         res.StatusCode.Should().Be(HttpStatusCode.Redirect);
 
-        // Verify the user was JIT-provisioned in the DB
         var provisioned = await fixture.Db.Users
             .FirstOrDefaultAsync(u => u.Email == "saml-user@test.com");
         provisioned.Should().NotBeNull();

@@ -1,6 +1,9 @@
 import { useTheme, PRESETS, isDarkPreset, isLightPreset } from '@/context/ThemeContext';
 
-// Decorative skeleton bars in the preset thumbnail. Fixed lists, so each row carries its own key.
+/**
+ * Decorative skeleton bars in the preset thumbnail. Each row carries its own `id` so React never
+ * keys on the array index — that is what the otherwise-unused `id` fields are for.
+ */
 const MINI_NAV_BARS = [
   { id: 'nav-1', width: 0.7, opacity: 0.9 },
   { id: 'nav-2', width: 0.5, opacity: 0.4 },
@@ -28,29 +31,23 @@ function PresetCard({ label, bg, accent, sidebar, active, onClick }: Readonly<{
       transition: 'border-color 120ms, box-shadow 120ms',
       display: 'flex', flexDirection: 'column', padding: 0,
     }}>
-      {/* Mini shell: sidebar + content */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* Sidebar strip */}
         <div style={{ width: '28%', background: sidebar, display: 'flex', flexDirection: 'column', padding: '5px 4px', gap: 3 }}>
           {MINI_NAV_BARS.map(bar => (
             <div key={bar.id} style={{ height: 3, borderRadius: 2, width: `${bar.width * 100}%`, background: accent, opacity: bar.opacity }} />
           ))}
         </div>
-        {/* Content area */}
         <div style={{ flex: 1, padding: '5px 5px', display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {/* Stat row */}
           <div style={{ display: 'flex', gap: 2, marginBottom: 2 }}>
             {MINI_STAT_TILES.map(id => (
               <div key={id} style={{ flex: 1, height: 8, borderRadius: 3, background: accent, opacity: 0.15 }} />
             ))}
           </div>
-          {/* Table rows */}
           {MINI_TABLE_ROWS.map(row => (
             <div key={row.id} style={{ height: 3, borderRadius: 2, width: `${row.width * 100}%`, background: accent, opacity: 0.2 }} />
           ))}
         </div>
       </div>
-      {/* Label strip */}
       <div style={{ fontSize: 9, fontWeight: 600, textAlign: 'center', padding: '3px 0',
         color: bg.includes('0.08') || bg.includes('0.085') || bg.includes('0.11') || bg.includes('0.125') || bg.includes('0.108') || bg.includes('0.115') || bg.includes('0.112') ? '#fff' : accent,
         background: bg, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
@@ -66,10 +63,8 @@ export default function TweaksPanel({ onClose }: Readonly<{ onClose: () => void 
 
   return (
     <>
-      {/* Scrim */}
       <div role="none" style={{ position: 'fixed', inset: 0, zIndex: 199 }} onClick={onClose} onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }} />
 
-      {/* Panel */}
       <div style={{
         position: 'fixed', right: 0, top: 0, bottom: 0, zIndex: 200,
         width: 280, background: 'var(--surface)', borderLeft: '1px solid var(--border)',
@@ -78,7 +73,6 @@ export default function TweaksPanel({ onClose }: Readonly<{ onClose: () => void 
       }}>
         <style>{`@keyframes tweaks-slide-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }`}</style>
 
-        {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
           <div style={{ fontSize: 13, fontWeight: 600 }}>Appearance</div>
           <button className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm" onClick={onClose}>
@@ -86,10 +80,8 @@ export default function TweaksPanel({ onClose }: Readonly<{ onClose: () => void 
           </button>
         </div>
 
-        {/* Body */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-          {/* Dark mode toggle */}
           <div>
             <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--fg-subtle)', marginBottom: 10 }}>Mode</div>
             <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
@@ -124,7 +116,6 @@ export default function TweaksPanel({ onClose }: Readonly<{ onClose: () => void 
             )}
           </div>
 
-          {/* Preset grid */}
           <div>
             <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--fg-subtle)', marginBottom: 10 }}>Colour Preset</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
@@ -143,7 +134,6 @@ export default function TweaksPanel({ onClose }: Readonly<{ onClose: () => void 
           </div>
         </div>
 
-        {/* Footer */}
         <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border)', fontSize: 11, color: 'var(--fg-subtle)', textAlign: 'center' }}>
           Preferences saved locally
         </div>

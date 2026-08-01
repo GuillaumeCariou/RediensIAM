@@ -4,6 +4,11 @@ import Topbar from './Topbar';
 import CommandPalette from './CommandPalette';
 import TweaksButton from './TweaksButton';
 
+/**
+ * CommandPalette is mounted conditionally rather than kept mounted and hidden: unmounting is what
+ * resets its query and keyboard cursor, so every open starts fresh. Hoisting it out of the
+ * `cmdOpen &&` guard reintroduces a palette that reopens showing the last search.
+ */
 export default function Shell({ children }: Readonly<{ children: React.ReactNode }>) {
   const [cmdOpen, setCmdOpen] = useState(false);
 
@@ -27,7 +32,6 @@ export default function Shell({ children }: Readonly<{ children: React.ReactNode
           {children}
         </div>
       </div>
-      {/* Mounted only while open, so the query and cursor start fresh every time. */}
       {cmdOpen && <CommandPalette onClose={() => setCmdOpen(false)} />}
       <TweaksButton />
     </div>

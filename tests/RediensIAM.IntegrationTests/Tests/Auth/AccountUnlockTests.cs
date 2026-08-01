@@ -158,7 +158,6 @@ public class AccountUnlockTests(TestFixture fixture)
         await fixture.Db.SaveChangesAsync();
 
         var user = await fixture.Seed.CreateUserAsync(list.Id);
-        // Give the user a TOTP method
         var encKey        = new RediensIAM.Services.KeyRing(1, Convert.FromHexString(new string('0', 64)));
         user.TotpEnabled  = true;
         user.TotpSecret   = RediensIAM.Services.TotpEncryption.Encrypt(encKey, new byte[20]);

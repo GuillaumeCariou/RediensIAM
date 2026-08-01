@@ -29,7 +29,7 @@ while [ $# -gt 0 ]; do
     --dry-run|-n)  DRY_RUN=true; shift ;;
     --registry)    DROP_REGISTRY=true; shift ;;
     --keep-secrets) KEEP_SECRETS=true; shift ;;
-    -h|--help)     sed -n '2,18p' "$0"; exit 0 ;;
+    -h|--help)     sed -n '2,16p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done

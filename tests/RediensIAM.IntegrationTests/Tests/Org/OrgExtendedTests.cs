@@ -63,7 +63,6 @@ public class OrgExtendedTests(TestFixture fixture)
     {
         var (_, _, client) = await OrgAdminClientAsync();
 
-        // Create
         await client.PutAsJsonAsync("/org/smtp", new
         {
             host = "smtp.v1.com", port = 587, start_tls = true,
@@ -71,7 +70,6 @@ public class OrgExtendedTests(TestFixture fixture)
             from_address = "no@v1.com", from_name = "V1"
         });
 
-        // Update (triggers else branch at line 719)
         var res = await client.PutAsJsonAsync("/org/smtp", new
         {
             host = "smtp.v2.com", port = 465, start_tls = false,
@@ -185,7 +183,6 @@ public class OrgExtendedTests(TestFixture fixture)
     [Fact]
     public async Task UpdateOrgUser_SetPhone_PersistsValue()
     {
-        // Covers OrgController line 529: Phone != null, non-empty → sets value
         var (org, _, client) = await OrgAdminClientAsync();
         var list             = await fixture.Seed.CreateUserListAsync(org.Id);
         var user             = await fixture.Seed.CreateUserAsync(list.Id);
@@ -202,7 +199,6 @@ public class OrgExtendedTests(TestFixture fixture)
     [Fact]
     public async Task UpdateOrgUser_ClearPhone_SetsNull()
     {
-        // Covers OrgController line 529: Phone == "" → null branch
         var (org, _, client) = await OrgAdminClientAsync();
         var list             = await fixture.Seed.CreateUserListAsync(org.Id);
         var user             = await fixture.Seed.CreateUserAsync(list.Id);
@@ -328,9 +324,8 @@ public class OrgExtendedTests(TestFixture fixture)
         var (_, _, client) = await OrgAdminClientAsync();
         await fixture.FlushCacheAsync();
 
-        // First request consumes the rate limit slot
+        // The export limit is one request per window, so the first call consumes the whole budget.
         await client.GetAsync("/org/audit-log/export?format=csv");
-        // Second request should be rate-limited
         var res = await client.GetAsync("/org/audit-log/export?format=csv");
 
         res.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
@@ -339,7 +334,6 @@ public class OrgExtendedTests(TestFixture fixture)
     [Fact]
     public async Task ExportAuditLog_WithDateRange_Returns200()
     {
-        // Covers OrgController line 900: from?.ToString("O") and to?.ToString("O") non-null branches
         var (_, _, client) = await OrgAdminClientAsync();
         await fixture.FlushCacheAsync();
 
@@ -430,7 +424,6 @@ public class OrgExtendedTests(TestFixture fixture)
         var (org, _, client) = await OrgAdminClientAsync();
         var project          = await fixture.Seed.CreateProjectAsync(org.Id);
 
-        // Create
         var createRes = await client.PostAsJsonAsync($"/org/projects/{project.Id}/saml-providers", new
         {
             entity_id = "https://idp.update.com",
@@ -440,7 +433,6 @@ public class OrgExtendedTests(TestFixture fixture)
         var providerId = (await createRes.Content.ReadFromJsonAsync<JsonElement>())
             .GetProperty("id").GetString()!;
 
-        // Update
         var res = await client.PatchAsJsonAsync(
             $"/org/projects/{project.Id}/saml-providers/{providerId}",
             new { sso_url = "https://idp.update.com/sso/v2", active = false });

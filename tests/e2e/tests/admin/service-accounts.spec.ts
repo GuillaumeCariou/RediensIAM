@@ -91,12 +91,11 @@ test('generate PAT shows token value once', async ({ adminPage: page }) => {
 
   await page.getByRole('button', { name: /generate.*token|new.*pat|add.*token/i }).click();
 
-  // Fill name in dialog
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel(/name/i).fill('New Token');
   await dialog.getByRole('button', { name: /generate|create/i }).click();
 
-  // Token must be displayed
+  // The plaintext token is shown exactly once, at creation — this is the only chance to read it.
   await expect(page.getByText(newToken)).toBeVisible();
 });
 
@@ -113,7 +112,6 @@ test('revoke PAT calls DELETE endpoint', async ({ adminPage: page }) => {
 
   await page.goto('/admin/system/service-accounts/sa-001');
 
-  // Find Deploy token row and click revoke
   const row = page.getByRole('row').filter({ hasText: 'Deploy token' });
   await row.getByRole('button').click();
   await page.getByText(/revoke/i).click();

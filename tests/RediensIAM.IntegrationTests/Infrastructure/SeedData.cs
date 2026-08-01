@@ -32,7 +32,9 @@ public class SeedData
     {
         var slug = UniqueSlug();
 
-        // Step 1: create the org list first (no OrgId yet — circular FK)
+        // Organisation and UserList reference each other, so the list has to be written first with
+        // no OrgId, the org second, and the OrgId back-filled last. Collapsing this into one save
+        // trips the foreign key.
         var list = new UserList
         {
             Id        = Guid.NewGuid(),
@@ -43,7 +45,6 @@ public class SeedData
         _db.UserLists.Add(list);
         await _db.SaveChangesAsync();
 
-        // Step 2: create the org pointing at the list
         var org = new Organisation
         {
             Id        = Guid.NewGuid(),
@@ -57,7 +58,6 @@ public class SeedData
         _db.Organisations.Add(org);
         await _db.SaveChangesAsync();
 
-        // Step 3: back-fill OrgId on the list
         list.OrgId = org.Id;
         await _db.SaveChangesAsync();
 

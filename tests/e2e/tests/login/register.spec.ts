@@ -38,9 +38,7 @@ test('renders registration form fields', async ({ page }) => {
 test('shows error when passwords do not match', async ({ page }) => {
   await page.goto(`/register?login_challenge=${CHALLENGE_ID}`);
 
-  // Fill email
   await page.locator('input[type="email"]').fill('new@example.com');
-  // Fill mismatched passwords
   const pwdFields = page.locator('input[type="password"]');
   await pwdFields.nth(0).fill('MyPassword1!');
   await pwdFields.nth(1).fill('DifferentPassword1!');
@@ -88,7 +86,6 @@ test('shows OTP verification step after successful registration', async ({ page 
   await pwdFields.nth(1).fill('StrongP@ss1!');
   await page.getByRole('button', { name: /create account|register/i }).click();
 
-  // Should show OTP input
   await expect(page.getByText(/verification|code/i)).toBeVisible();
   await expect(page.locator('input[inputmode="numeric"], input[type="text"]')).toBeVisible();
 });
@@ -117,7 +114,6 @@ test('shows error on wrong OTP code', async ({ page }) => {
   await pwdFields.nth(1).fill('StrongP@ss1!');
   await page.getByRole('button', { name: /create account|register/i }).click();
 
-  // Enter wrong OTP
   const codeInput = page.locator('input[inputmode="numeric"], input[type="text"]').first();
   await codeInput.fill('000000');
   await page.getByRole('button', { name: /verify|confirm|submit/i }).click();

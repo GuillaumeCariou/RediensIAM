@@ -283,11 +283,17 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
 
     // ── Token validation ──────────────────────────────────────────────────────
 
-    // Validates tokens via Hydra's admin introspection endpoint (port 4445).
-    // Avoids fetching JWKS from the public port (4444) which may not be reachable pod-to-pod.
+    /// <summary>
+    /// Validates tokens through Hydra's admin introspection endpoint (port 4445) rather than by
+    /// fetching JWKS from the public port (4444), which may not be reachable pod-to-pod.
+    ///
+    /// <para>
+    /// Answers are cached so that validation does not cost one Hydra admin call per request. The
+    /// TTL is capped by the token's own remaining lifetime — see the note at the write site.
+    /// </para>
+    /// </summary>
     public async Task<TokenClaims?> ValidateJwtAsync(string token)
     {
-        // Cache introspection results to avoid O(RPS) calls to Hydra admin API
         var tokenHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
         var cacheKey  = $"introspect:{tokenHash}";
 

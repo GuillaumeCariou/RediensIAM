@@ -105,8 +105,15 @@ function JwtProfileSection({ saId }: Readonly<{ saId: string }>) {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
+/**
+ * Reached from two route shapes: `:id` under /system/service-accounts and `:saId` under
+ * /org/…/service-accounts — hence the two params read below. Dropping either breaks one of them.
+ *
+ * The organisation picker in the assign-role dialog renders only for a super_admin. For an
+ * org_admin the org is pre-filled from `prefilledOrg` and no picker is shown at all, so the
+ * absence of the field is not the absence of an org_id.
+ */
 export default function ServiceAccountDetail() {
-  // Support both :id (system routes) and :saId (org routes)
   const { id, saId: saIdParam } = useParams<{ id?: string; saId?: string }>();
   const saId = saIdParam ?? id ?? '';
   const navigate = useNavigate();
@@ -117,7 +124,6 @@ export default function ServiceAccountDetail() {
   const [sa, setSa] = useState<Sa | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // PAT
   const [patOpen, setPatOpen] = useState(false);
   const [newPat, setNewPat] = useState({ name: '', expires_at: '' });
   const [patSaving, setPatSaving] = useState(false);
@@ -125,7 +131,6 @@ export default function ServiceAccountDetail() {
   const [copied, setCopied] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<Pat | null>(null);
 
-  // Roles
   const [roleOpen, setRoleOpen] = useState(false);
   const [roleSaving, setRoleSaving] = useState(false);
   const [roleForm, setRoleForm] = useState({ role: '', org_id: '', project_id: '' });
@@ -133,7 +138,6 @@ export default function ServiceAccountDetail() {
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const [removeRoleTarget, setRemoveRoleTarget] = useState<SaRole | null>(null);
 
-  // Delete
   const [deleteOpen, setDeleteOpen] = useState(false);
 
   const load = useCallback(() => {
@@ -185,9 +189,9 @@ export default function ServiceAccountDetail() {
     setRoleOpen(true);
   };
 
+  /** No project fetch here on purpose: openRoleDialog already loaded them for a pre-filled org. */
   const handleRoleChange = (role: string) => {
     setRoleForm(f => ({ ...f, role, project_id: '' }));
-    // If org already pre-filled and role requires project, projects already loaded
   };
 
   const handleOrgChange = (org_id: string) => {
@@ -237,7 +241,6 @@ export default function ServiceAccountDetail() {
         <ArrowLeft className="h-4 w-4" />Back to Service Accounts
       </Button>
 
-      {/* SA Card */}
       <div className="rounded-xl border bg-card p-6">
         {loading
           ? <div className="space-y-2"><Skeleton className="h-6 w-48" /><Skeleton className="h-4 w-72" /></div>
@@ -259,7 +262,6 @@ export default function ServiceAccountDetail() {
         }
       </div>
 
-      {/* Roles */}
       <div className="rounded-xl border bg-card overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Assigned Roles</h2>
@@ -316,7 +318,6 @@ export default function ServiceAccountDetail() {
         </Table>
       </div>
 
-      {/* PATs */}
       <div className="rounded-xl border bg-card overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Personal Access Tokens</h2>
@@ -369,10 +370,8 @@ export default function ServiceAccountDetail() {
         </Table>
       </div>
 
-      {/* JWT Profile */}
       {saId && <JwtProfileSection saId={saId} />}
 
-      {/* Generate PAT dialog */}
       <Dialog open={patOpen} onOpenChange={setPatOpen}>
         <DialogContent>
           <DialogHeader>
@@ -396,7 +395,6 @@ export default function ServiceAccountDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* Raw token reveal */}
       <Dialog open={!!rawToken} onOpenChange={v => !v && closeTokenDialog()}>
         <DialogContent>
           <DialogHeader>
@@ -415,7 +413,6 @@ export default function ServiceAccountDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* Revoke PAT */}
       <AlertDialog open={!!revokeTarget} onOpenChange={v => !v && setRevokeTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -429,7 +426,6 @@ export default function ServiceAccountDetail() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Assign Role dialog */}
       <Dialog open={roleOpen} onOpenChange={setRoleOpen}>
         <DialogContent>
           <DialogHeader>
@@ -448,7 +444,6 @@ export default function ServiceAccountDetail() {
                 </SelectContent>
               </Select>
             </div>
-            {/* Org picker: SuperAdmin sees a picker; OrgAdmin org is pre-filled (hidden) */}
             {isSuperAdmin && (roleForm.role === 'org_admin' || roleForm.role === 'project_admin') && (
               <div className="space-y-2">
                 <Label>Organisation</Label>
@@ -479,7 +474,6 @@ export default function ServiceAccountDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* Remove Role */}
       <AlertDialog open={!!removeRoleTarget} onOpenChange={v => !v && setRemoveRoleTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -493,7 +487,6 @@ export default function ServiceAccountDetail() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Delete SA */}
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>

@@ -195,7 +195,6 @@ export default function OrgAdminsPage() {
         </div>
       </div>
 
-      {/* Assign role */}
       <Dialog open={assignOpen} onOpenChange={setAssignOpen}>
         <DialogContent>
           <DialogHeader>
@@ -243,7 +242,6 @@ export default function OrgAdminsPage() {
         onClose={() => setEditTarget(null)}
       />
 
-      {/* Remove confirmation */}
       <AlertDialog open={!!removeTarget} onOpenChange={v => !v && setRemoveTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>

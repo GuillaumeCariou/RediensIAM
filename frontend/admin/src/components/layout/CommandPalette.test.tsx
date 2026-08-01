@@ -5,8 +5,11 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import CommandPalette from './CommandPalette';
 import { isModal } from '@/test/setup';
 
-// The palette's contents are a function of the signed-in admin's roles, which normally come from
-// a decoded access token. Only the roles matter here.
+/**
+ * The palette's contents are a function of the signed-in admin's roles, which normally come from
+ * a decoded access token. Only the roles matter here, so the whole AuthContext is replaced by
+ * this mutable object — `open()` reassigns it per test.
+ */
 const roles = { isSuperAdmin: false, isOrgAdmin: false, isProjectManager: false };
 vi.mock('@/context/AuthContext', () => ({ useAuth: () => roles }));
 

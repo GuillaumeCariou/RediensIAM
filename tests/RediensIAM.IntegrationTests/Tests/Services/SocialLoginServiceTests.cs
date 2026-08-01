@@ -429,8 +429,8 @@ public sealed class SocialLoginServiceTests : IDisposable
             .RespondWith(Response.Create().WithStatusCode(200)
                 .WithBodyAsJson(new { sub = "kc-sub-1", email = "kc@example.com", name = "Keycloak User" }));
 
-        // "keycloak" is not in BuiltinEndpoints and not a special-cased type →
-        // GetUserProfileAsync hits _ => GetStandardProfileAsync → GetUserInfoEndpointAsync (L318-319)
+        // "keycloak" is neither a built-in endpoint nor a special-cased type, so the profile has to
+        // be fetched via generic OIDC discovery of the userinfo endpoint.
         var provider = new ProviderConfig("kc1", "keycloak", "cid", "sec", _server.Url);
         var svc      = BuildSvc(_server);   // fresh instance — no shared discovery cache
         var profile  = await svc.ExchangeAndGetProfileAsync(provider, "code");

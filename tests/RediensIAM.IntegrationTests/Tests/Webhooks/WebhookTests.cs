@@ -82,7 +82,6 @@ public class WebhookTests(TestFixture fixture)
         var (org, orgList) = await fixture.Seed.CreateOrgAsync();
         var (org2, orgList2) = await fixture.Seed.CreateOrgAsync();
 
-        // Create webhook for org1
         var admin1 = await fixture.Seed.CreateUserAsync(orgList.Id);
         var token1 = fixture.Seed.OrgAdminToken(admin1.Id, org.Id);
         fixture.Keto.AllowAll();
@@ -91,7 +90,6 @@ public class WebhookTests(TestFixture fixture)
             url = "https://org1.example.com/hook", events = new[] { "user.created" }
         });
 
-        // Create webhook for org2
         var admin2 = await fixture.Seed.CreateUserAsync(orgList2.Id);
         var token2 = fixture.Seed.OrgAdminToken(admin2.Id, org2.Id);
         await fixture.ClientWithToken(token2).PostAsJsonAsync("/org/webhooks", new

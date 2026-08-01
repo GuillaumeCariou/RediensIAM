@@ -42,7 +42,6 @@ public class SocialLoginService(
     IWebHostEnvironment env,
     ILogger<SocialLoginService> logger)
 {
-    // Provider-specific hardcoded endpoints (builtin)
     private static readonly Dictionary<string, (string Auth, string Token, string UserInfo)> BuiltinEndpoints = new()
     {
         ["google"]   = ("https://accounts.google.com/o/oauth2/v2/auth",
@@ -73,7 +72,6 @@ public class SocialLoginService(
     private const string Email = "email";
     private const string UserInfoEndpoint = "userinfo_endpoint";
 
-    // In-process cache for OIDC discovery documents
     // ConcurrentDictionary: SocialLoginService is registered as Singleton and the cache
     // is read/written from every OIDC discovery call. A plain Dictionary races under
     // concurrent OIDC starts (bucket-array corruption + InvalidOperationException +
@@ -203,7 +201,6 @@ public class SocialLoginService(
         if (BuiltinEndpoints.TryGetValue(provider.Type, out var ep))
             return (ep.Auth, DefaultScopes.GetValueOrDefault(provider.Type, "openid email"));
 
-        // Generic OIDC — discover
         var disco = await GetDiscoveryAsync(provider.IssuerUrl!);
         var authEndpoint = await EnsureSafeEndpointAsync(disco.RootElement.GetProperty("authorization_endpoint").GetString()!, "authorization_endpoint");
         return (authEndpoint, "openid email profile");

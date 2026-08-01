@@ -10,14 +10,18 @@ interface IamDialogProps {
   wide?: boolean;
 }
 
+/**
+ * The effect below must call `showModal()`, never `show()`: only the modal form gives focus
+ * containment, an inert background and Escape-to-close, and a non-modal dialog behind a scrim
+ * still lets Tab walk into the page behind it. `closedby="any"` restores the
+ * click-outside-to-close that the old scrim div provided; it is set imperatively rather than in
+ * JSX because the linters and React's type definitions do not know the attribute yet.
+ */
 export default function IamDialog({ open, onClose, title, desc, children, footer, wide }: Readonly<IamDialogProps>) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const descId = useId();
 
-  // showModal() gives focus containment, an inert background and Escape-to-close for free;
-  // closedby="any" restores the click-outside-to-close the old scrim div provided. Set here
-  // rather than in JSX because the linters do not know the attribute yet.
   useEffect(() => {
     const dialog = ref.current;
     if (!open || !dialog || dialog.open) return;

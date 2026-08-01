@@ -162,7 +162,6 @@ test('saves changes from edit dialog', async ({ adminPage: page }) => {
   await page.getByLabel(/display name/i).fill('Alice Updated');
   await page.getByRole('button', { name: /save changes/i }).click();
 
-  // Dialog should close
   await expect(page.getByRole('dialog')).not.toBeVisible();
   expect((savedBody as Record<string, unknown>).display_name).toBe('Alice Updated');
 });

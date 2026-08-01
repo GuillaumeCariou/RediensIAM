@@ -4,10 +4,8 @@ import { ThemeProvider } from './context/ThemeContext';
 import { ScopeProvider } from './context/ScopeContext';
 import Shell from './components/layout/Shell';
 
-// Account page
 import AccountPage from './pages/account/AccountPage';
 
-// System pages
 import SystemDashboard from './pages/system/Dashboard';
 import Organisations from './pages/system/Organisations';
 import SystemUsers from './pages/system/Users';
@@ -24,7 +22,6 @@ import ServiceAccountDetail from './pages/ServiceAccountDetail';
 import OrgAdminsPage from './pages/OrgAdminsPage';
 import UserListDetail from './pages/UserListDetail';
 
-// Org pages
 import OrgDashboard from './pages/org/OrgDashboard';
 import UserLists from './pages/org/UserLists';
 import Projects from './pages/org/Projects';
@@ -34,7 +31,6 @@ import OrgEmail from './pages/org/OrgEmail';
 import OrgWebhooks from './pages/org/OrgWebhooks';
 import OrgSettings from './pages/org/OrgSettings';
 
-// Project pages
 import ProjectDashboard from './pages/project/ProjectDashboard';
 import ProjectUsers from './pages/project/ProjectUsers';
 import ProjectRoles from './pages/project/ProjectRoles';
@@ -69,15 +65,21 @@ function NoRolesError({ onLogout }: Readonly<{ onLogout: () => void }>) {
   );
 }
 
+/**
+ * The `account` route below sits outside every role guard on purpose: any authenticated user
+ * must be able to reach their own profile, MFA and sessions, including one whose only role was
+ * just revoked. Do not fold it into one of the guarded blocks.
+ *
+ * The `roles.length === 0` branch exists to break an infinite Navigate loop: defaultPath returns
+ * /project for a token with no roles, and the project guard would Navigate straight back to home
+ * (also /project). It renders an error page with a logout button instead.
+ */
 function AppRoutes() {
   const { ready, authenticated, isSuperAdmin, isOrgAdmin, isProjectManager, roles, logout } = useAuth();
 
   if (!ready) return <Loading />;
   if (!authenticated) return <Loading />;
 
-  // Prevent infinite Navigate loop for tokens with empty roles: defaultPath returns /project,
-  // but the project guard would Navigate back to home (also /project) — render an error
-  // page with a logout button instead.
   if (roles.length === 0 || (!isSuperAdmin && !isOrgAdmin && !isProjectManager)) {
     return <NoRolesError onLogout={logout} />;
   }
@@ -89,10 +91,8 @@ function AppRoutes() {
       <Routes>
         <Route index element={<Navigate to={home} replace />} />
 
-        {/* Account — all authenticated users */}
         <Route path="account" element={<AccountPage />} />
 
-        {/* System — super_admin only */}
         <Route element={isSuperAdmin ? <Outlet /> : <Navigate to={home} replace />}>
           <Route path="system" element={<SystemDashboard />} />
           <Route path="system/admins" element={<SystemAdmins />} />
@@ -126,7 +126,6 @@ function AppRoutes() {
           <Route path="system/health" element={<SystemHealth />} />
         </Route>
 
-        {/* Org — org_admin (and super_admin) */}
         <Route element={isOrgAdmin ? <Outlet /> : <Navigate to={home} replace />}>
           <Route path="org" element={<OrgDashboard />} />
           <Route path="org/userlists" element={<UserLists />} />
@@ -141,7 +140,6 @@ function AppRoutes() {
           <Route path="org/settings" element={<OrgSettings />} />
         </Route>
 
-        {/* Project — project_manager (and above) */}
         <Route element={isProjectManager ? <Outlet /> : <Navigate to={home} replace />}>
           <Route path="project" element={<ProjectDashboard />} />
           <Route path="project/users" element={<ProjectUsers />} />

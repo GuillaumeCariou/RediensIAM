@@ -28,7 +28,12 @@ public sealed class KetoStub : IDisposable
 
     // ── Default mode: allow all ───────────────────────────────────────────────
 
-    /// <summary>Resets to "allow all" mode (default).</summary>
+    /// <summary>
+    /// Resets to "allow all" mode (default). The list endpoint below must return a tuple, not an
+    /// empty set: live authorisation resolves org_admin and project_admin through the list
+    /// endpoint while everything else goes through check, so a stub that allows every check but
+    /// lists nothing silently denies every non-super-admin request.
+    /// </summary>
     public void AllowAll()
     {
         _readServer.Reset();
@@ -54,9 +59,6 @@ public sealed class KetoStub : IDisposable
             .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { allowed = true }));
 
         // List: returns a tuple, so HasAnyRelationAsync agrees with CheckAsync.
-        // These two must not disagree: the live authorisation check uses the list endpoint for
-        // org_admin / project_admin, so an "allow all" stub that listed nothing meant every
-        // non-super-admin request was denied.
         _readServer
             .Given(Request.Create().WithPath("/relation-tuples").UsingGet())
             .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new

@@ -26,7 +26,6 @@ public class HydraServiceCoverageTests(TestFixture fixture)
         var user  = await fixture.Seed.CreateUserAsync(orgList.Id);
         var token = $"str-roles-{Guid.NewGuid():N}";
 
-        // Register with roles as a comma-separated string — hits line 277 (comma split)
         fixture.Hydra.RegisterTokenWithStringRoles(token, user.Id.ToString(), org.Id.ToString(), "org_admin");
         fixture.Keto.AllowAll();
 
@@ -48,7 +47,6 @@ public class HydraServiceCoverageTests(TestFixture fixture)
         var user  = await fixture.Seed.CreateUserAsync(orgList.Id);
         var token = $"str-roles2-{Guid.NewGuid():N}";
 
-        // Register with roles as a JSON array string — hits lines 274-275 (starts with '[')
         fixture.Hydra.RegisterTokenWithStringRoles(token, user.Id.ToString(), org.Id.ToString(), "[\"org_admin\"]");
         fixture.Keto.AllowAll();
 
@@ -69,7 +67,8 @@ public class HydraServiceCoverageTests(TestFixture fixture)
         var user  = await fixture.Seed.CreateUserAsync(orgList.Id);
         var token = $"str-roles3-{Guid.NewGuid():N}";
 
-        // "[org_admin" starts with '[' but is not valid JSON → hits line 276 catch
+        // Starts with '[' so it is taken for JSON, but does not parse — the failure must be
+        // swallowed into "no roles", not thrown.
         fixture.Hydra.RegisterTokenWithStringRoles(token, user.Id.ToString(), org.Id.ToString(), "[org_admin");
         fixture.Keto.AllowAll();
 
@@ -92,7 +91,6 @@ public class HydraServiceCoverageTests(TestFixture fixture)
         var user  = await fixture.Seed.CreateUserAsync(orgList.Id);
         var token = $"str-roles4-{Guid.NewGuid():N}";
 
-        // Register with roles as a number (ValueKind = Number) → hits line 279 (return [])
         fixture.Hydra.RegisterTokenWithNumericRoles(token, user.Id.ToString(), org.Id.ToString());
         fixture.Keto.AllowAll();
 
@@ -153,7 +151,8 @@ public class HydraServiceCoverageTests(TestFixture fixture)
         // Pre-configure the SA's Hydra client to already exist (GET /admin/clients/sa_{id} → 200)
         fixture.Hydra.SetupOAuth2ClientWithJwks($"sa_{sa.Id}");
 
-        // AddApiKey now sees an existing client → takes the PUT branch (line 197)
+        // With the client already present AddApiKey must update it rather than try to create a
+        // second one under the same id.
         var res = await client.PostAsJsonAsync($"/service-accounts/{sa.Id}/api-keys", new
         {
             jwk = new { kty = "RSA", use = "sig", kid = "update-key" }

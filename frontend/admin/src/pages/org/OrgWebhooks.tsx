@@ -61,6 +61,11 @@ export default function OrgWebhooks() {
   };
   useEffect(load, []);
 
+  /**
+   * The `else` branch below must not close the dialog quietly. A webhook created without a
+   * returned signing secret leaves the user with no way to verify signatures and no second
+   * chance to read the secret, so the failure is surfaced and they are told to rotate it.
+   */
   const handleCreate = async () => {
     setCreateError('');
     if (!newUrl.startsWith('https://')) { setCreateError('URL must use HTTPS.'); return; }
@@ -75,8 +80,6 @@ export default function OrgWebhooks() {
         setSecretOpen(true);
         load();
       } else {
-        // Don't silently close the dialog: the user just lost their only chance to capture
-        // the signing secret. Surface the failure so they can rotate it explicitly.
         setCreateError('Webhook created, but the server did not return a signing secret. Please rotate the secret manually before relying on signature verification.');
         load();
       }

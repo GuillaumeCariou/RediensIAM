@@ -157,7 +157,6 @@ function SecurityTab() {
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNext, setShowNext] = useState(false);
 
-  // Linked accounts
   const [linked, setLinked] = useState<SocialAccount[]>([]);
   const [linkedLoading, setLinkedLoading] = useState(true);
   const [unlinkError, setUnlinkError] = useState('');
@@ -318,6 +317,12 @@ function PasskeysCard() {
   };
   useEffect(load, []);
 
+  /**
+   * The completion call goes through `guard`, not straight to the API: adding a passkey to an
+   * account that already has a factor needs a re-authentication proof, while the first one does
+   * not. `guard` only prompts if the backend asks. The retry is safe because the backend checks
+   * the proof before it consumes the pending registration, so it replays the same attestation.
+   */
   const handleRegister = async () => {
     setError('');
     setRegistering(true);
@@ -348,9 +353,6 @@ function PasskeysCard() {
         device_name: deviceName || null,
       };
 
-      // Adding a passkey to an account that already has a factor needs a proof; the first one does
-      // not. `guard` only prompts if the backend asks, and the backend checks the proof before it
-      // consumes the pending registration, so the retry replays the same attestation successfully.
       await guard(async proof => {
         const res = await completeWebAuthnRegistration(body, proof);
         if (res.error) { setError('Registration failed: ' + res.error); return; }
@@ -455,18 +457,15 @@ function MfaTab() {
   const [status, setStatus] = useState<MfaStatus | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // TOTP setup flow
   const [setupData, setSetupData] = useState<{ otpauth_url: string; secret: string } | null>(null);
   const [setupCode, setSetupCode] = useState('');
   const [setupSaving, setSetupSaving] = useState(false);
   const [setupError, setSetupError] = useState('');
   const [backupCodes, setBackupCodes] = useState<string[]>([]);
 
-  // Backup code regen
   const [regenOpen, setRegenOpen] = useState(false);
   const [regenCodes, setRegenCodes] = useState<string[]>([]);
 
-  // Phone / SMS MFA setup
   const [phoneInput, setPhoneInput] = useState('');
   const [phoneOtp, setPhoneOtp]     = useState('');
   const [phoneSending, setPhoneSending] = useState(false);
@@ -489,13 +488,16 @@ function MfaTab() {
     setSetupData(data);
   };
 
+  /**
+   * Goes through `guard`: replacing an existing TOTP factor needs a re-authentication proof, a
+   * first enrolment does not. `guard` only prompts if the backend actually asks, so both cases
+   * go through this one call — do not add a separate unguarded path for first enrolment.
+   */
   const handleConfirmSetup = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSetupError('');
     setSetupSaving(true);
     try {
-      // Replacing an existing TOTP factor needs a proof; a first enrolment does not. `guard`
-      // only prompts if the backend actually asks, so both cases go through one call.
       await guard(async proof => {
         const res = await confirmTotp({ code: setupCode }, proof);
         if (res.error) { setSetupError('Invalid code. Please try again.'); return; }
@@ -531,13 +533,15 @@ function MfaTab() {
     finally { setPhoneSending(false); }
   };
 
+  /**
+   * Same rule as the passkey and TOTP paths, hence the `guard`: adding a factor to an account
+   * that already has one needs a re-authentication proof, a first enrolment does not.
+   */
   const handlePhoneVerify = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setPhoneError('');
     setPhoneSending(true);
     try {
-      // Same rule as the passkey and TOTP paths: adding a factor to an account that already has
-      // one needs a proof, a first enrolment does not.
       await guard(async proof => {
         const res = await verifyPhone(phoneOtp, proof);
         if (res.error) { setPhoneError('Invalid code. Try again.'); return; }
@@ -605,7 +609,6 @@ function MfaTab() {
 
   return (
     <div className="space-y-4">
-      {/* TOTP card */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -661,7 +664,6 @@ function MfaTab() {
         )}
       </Card>
 
-      {/* Backup codes shown after setup */}
       {backupCodes.length > 0 && (
         <Card className="border-amber-500/50 bg-amber-50 dark:bg-amber-950/20">
           <CardHeader>
@@ -677,7 +679,6 @@ function MfaTab() {
         </Card>
       )}
 
-      {/* Backup codes status (when TOTP enabled) */}
       {status?.totp_enabled && (
         <Card>
           <CardHeader>
@@ -707,10 +708,8 @@ function MfaTab() {
         </Card>
       )}
 
-      {/* Passkeys */}
       <PasskeysCard />
 
-      {/* Phone / SMS MFA */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">

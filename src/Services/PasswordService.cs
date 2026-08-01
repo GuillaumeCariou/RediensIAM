@@ -128,6 +128,15 @@ public class PasswordService(AppConfig appConfig)
     /// (keyId <c>p</c> = pepper id 1, <c>0</c> = no pepper, or a numeric pepper id), the previous
     /// keyId-less sha256:{hex} format (treated as pepper-less), and legacy argon2id hashes
     /// (forwarded to <see cref="Verify"/>).
+    ///
+    /// <para>
+    /// <see cref="TryResolveBackupCodeKey"/> resolves the key and nothing else — the
+    /// <see cref="CryptographicOperations.FixedTimeEquals"/> stays here, in the caller, holding both
+    /// buffers. That split is deliberate: a helper that both parsed and compared is one refactor
+    /// away from an early-out on length or a plain <c>SequenceEqual</c>, and either puts the timing
+    /// signal back. A false from the resolver means "no such pepper" and is answered before any
+    /// comparison happens, so the two outcomes never share a path.
+    /// </para>
     /// </summary>
     public bool VerifyBackupCode(string submitted, string storedHash)
     {

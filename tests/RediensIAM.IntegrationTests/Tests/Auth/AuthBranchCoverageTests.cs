@@ -283,7 +283,6 @@ public class AuthBranchCoverageTests(TestFixture fixture) : IAsyncLifetime
     [Fact]
     public async Task Register_SmsVerification_RequiresVerification()
     {
-        // EmailVerificationEnabled=false, SmsVerificationEnabled=true → SMS path (line 703)
         var (org, _) = await fixture.Seed.CreateOrgAsync();
         var project  = await fixture.Seed.CreateProjectAsync(org.Id);
         var list     = await fixture.Seed.CreateUserListAsync(org.Id);
@@ -316,7 +315,6 @@ public class AuthBranchCoverageTests(TestFixture fixture) : IAsyncLifetime
     [Fact]
     public async Task RequestPasswordReset_SmsOnly_SendsSms()
     {
-        // EmailVerificationEnabled=false, SmsVerificationEnabled=true → SMS path (line 834)
         var (org, _) = await fixture.Seed.CreateOrgAsync();
         var project  = await fixture.Seed.CreateProjectAsync(org.Id);
         var list     = await fixture.Seed.CreateUserListAsync(org.Id);
@@ -400,7 +398,8 @@ public class AuthBranchCoverageTests(TestFixture fixture) : IAsyncLifetime
     [Fact]
     public async Task AdminLogin_NullPasswordHash_ReturnsUnauthorized()
     {
-        // SAML-provisioned admin user: PasswordHash is null → short-circuit on line 909
+        // A SAML-provisioned admin has no password hash. Password login must refuse before it
+        // reaches the verifier, never treat "no hash" as "any password matches".
         var list = new UserList
         {
             Id        = Guid.NewGuid(),
@@ -536,7 +535,6 @@ public class AuthBranchCoverageTests(TestFixture fixture) : IAsyncLifetime
     [Fact]
     public async Task Login_AllowlistZeroPrefixMatchesAll_Succeeds()
     {
-        // prefixLen == 0 → mask = 0 → any IP matches (line 994 TRUE)
         var (org, _) = await fixture.Seed.CreateOrgAsync();
         var project  = await fixture.Seed.CreateProjectAsync(org.Id);
         var list     = await fixture.Seed.CreateUserListAsync(org.Id);
@@ -563,7 +561,6 @@ public class AuthBranchCoverageTests(TestFixture fixture) : IAsyncLifetime
     [Fact]
     public async Task Register_AllowSelfRegistrationNoList_ReturnsBadRequest()
     {
-        // Covers line 605: AllowSelfRegistration=true but AssignedUserListId=null → project_not_ready
         var (org, _) = await fixture.Seed.CreateOrgAsync();
         var project  = await fixture.Seed.CreateProjectAsync(org.Id);
         project.AllowSelfRegistration = true;
@@ -591,7 +588,6 @@ public class AuthBranchCoverageTests(TestFixture fixture) : IAsyncLifetime
     [Fact]
     public async Task Register_BreachedPassword_ReturnsBadRequest()
     {
-        // Covers line 638: CheckBreachedPasswords=true and HIBP count > 0 → password_breached
         const string breached = "BreachTestRegister_P@ss!Coverage";
         fixture.HibpStub.Setup(breached, count: 42);
         try
@@ -627,11 +623,14 @@ public class AuthBranchCoverageTests(TestFixture fixture) : IAsyncLifetime
 
     // ── POST /auth/login (admin) — expired lock (line 906 false branch) ───────
 
+    /// <summary>
+    /// A LockedUntil in the past must not keep the account locked: the guard has to compare the
+    /// timestamp, not merely check that one is present. A regression to a HasValue-only check would
+    /// lock every previously-locked account out permanently.
+    /// </summary>
     [Fact]
     public async Task AdminLogin_ExpiredLock_Succeeds()
     {
-        // Covers line 906 uncovered condition: LockedUntil.HasValue=true but LockedUntil <= now
-        // (lock already expired → should NOT return account_locked)
         var list = new UserList
         {
             Id        = Guid.NewGuid(),
@@ -657,7 +656,6 @@ public class AuthBranchCoverageTests(TestFixture fixture) : IAsyncLifetime
             password        = "Correct@Pass123!"
         });
 
-        // Expired lock → login should proceed (not return account_locked)
         res.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
         body.TryGetProperty("error", out _).Should().BeFalse();

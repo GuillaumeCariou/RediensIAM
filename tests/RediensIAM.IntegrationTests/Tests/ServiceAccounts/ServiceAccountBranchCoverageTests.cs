@@ -71,7 +71,6 @@ public class ServiceAccountBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task ListServiceAccounts_ProjectAdminNoAssignedList_Returns404()
     {
-        // Covers line 70: project.AssignedUserListId is null → listId == null → NotFound
         var (org, orgList) = await fixture.Seed.CreateOrgAsync();
         var project = await fixture.Seed.CreateProjectAsync(org.Id);
         // Do NOT assign a user list to the project
@@ -124,7 +123,7 @@ public class ServiceAccountBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task CreateServiceAccount_OrgAdminListFromOtherOrg_Returns403()
     {
-        // Covers line 97: Level == OrgAdmin && list.OrgId != CallerOrgId → 403
+        // An org admin may only place a service account in a list their own org owns.
         var (_, _, client) = await OrgAdminAsync();
         // Create a list in a DIFFERENT org
         var (otherOrg, _) = await fixture.Seed.CreateOrgAsync();
@@ -187,7 +186,6 @@ public class ServiceAccountBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task AssignSaRole_ProjectAdminWrongProject_Returns403()
     {
-        // Covers line 315: body.ProjectId != pId → project_mismatch
         var (org, orgList) = await fixture.Seed.CreateOrgAsync();
         var project = await fixture.Seed.CreateProjectAsync(org.Id);
         var list    = await fixture.Seed.CreateUserListAsync(org.Id);
@@ -309,8 +307,8 @@ public class ServiceAccountBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task AssignSaRole_ProjectAdminAssignsOrgAdminRole_Returns403InsufficientLevel()
     {
-        // Covers line 299 TRUE: ProjectAdmin (Level=3) tries to assign "org_admin" (targetLevel=2)
-        // → targetLevel(2) < Level(3) → "insufficient_level_to_grant_this_role"
+        // Privilege escalation attempt: a project admin must not be able to grant a service
+        // account a role that outranks their own.
         var (org, orgList) = await fixture.Seed.CreateOrgAsync();
         var project = await fixture.Seed.CreateProjectAsync(org.Id);
         var list    = await fixture.Seed.CreateUserListAsync(org.Id);
@@ -338,11 +336,11 @@ public class ServiceAccountBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task ListServiceAccounts_ProjectAdminInvalidProjectId_Returns403()
     {
-        // Covers line 65: Level == ProjectAdmin but !Guid.TryParse(Claims.ProjectId) → no_project_context
+        // A project_admin claim carrying an unparseable project id must be refused outright rather
+        // than degrade to "admin of no particular project" and list everything.
         var userId = Guid.NewGuid();
         var orgId  = Guid.NewGuid();
         var token  = $"badpid-{userId:N}";
-        // Register token with project_admin role but an unparseable ProjectId
         fixture.Hydra.RegisterToken(token, userId.ToString(), orgId.ToString(), "not-a-guid", ["project_admin"]);
         fixture.Keto.AllowAll();
         var client = fixture.ClientWithToken(token);
@@ -359,8 +357,8 @@ public class ServiceAccountBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task CreateServiceAccount_ProjectAdminInvalidProjectId_Returns403()
     {
-        // Covers line 103: Level == ProjectAdmin but !Guid.TryParse(Claims.ProjectId) → no_project_context
-        // First we need an existing list so the list-not-found check (line 94) passes
+        // Same unparseable-project-id refusal as the list endpoint. The list has to exist first,
+        // otherwise the request stops at the list-not-found check and never reaches it.
         var (org, _) = await fixture.Seed.CreateOrgAsync();
         var list = await fixture.Seed.CreateUserListAsync(org.Id);
 

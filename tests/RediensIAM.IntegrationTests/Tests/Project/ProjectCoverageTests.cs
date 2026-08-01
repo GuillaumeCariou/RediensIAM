@@ -238,7 +238,7 @@ public class ProjectCoverageTests(TestFixture fixture)
         var role = await fixture.Seed.CreateRoleAsync(project.Id, "TempRole");
         var user = await fixture.Seed.CreateUserAsync(list.Id);
 
-        // Assign the user to the role so UserProjectRoles has an entry
+        // Deleting a role that is still assigned must cascade, not fail on the dependent row.
         await client.PostAsJsonAsync($"/project/users/{user.Id}/roles", new { role_id = role.Id });
 
         var res = await client.DeleteAsync($"/project/roles/{role.Id}");

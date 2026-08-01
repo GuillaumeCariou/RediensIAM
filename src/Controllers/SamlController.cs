@@ -68,7 +68,6 @@ public class SamlController(
             AssertionConsumerServiceUrl = AcsUrl,
         };
 
-        // Store request ID in session to validate InResponseTo on ACS
         var result = binding.Bind(authnRequest);
         // Store the challenge with the IdP: ACS must confirm the response answers the request
         // WE issued, for the project we issued it for. RelayState is browser-controlled and is

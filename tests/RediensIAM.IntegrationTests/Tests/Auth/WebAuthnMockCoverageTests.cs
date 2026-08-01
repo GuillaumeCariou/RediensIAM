@@ -51,7 +51,8 @@ public class WebAuthnMockCoverageTests(TestFixture fixture)
         var beginRes = await client.PostAsync("/account/mfa/webauthn/register/begin", null);
         beginRes.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        // Complete — mock MakeNewCredentialAsync returns fake credential → covers L274-287
+        // Complete — the mock's MakeNewCredentialAsync returns a fake credential, which is the
+        // only way to reach the persist-and-return-200 path without a real authenticator.
         var res = await client.PostAsJsonAsync("/account/mfa/webauthn/register/complete", new
         {
             response    = new { clientDataJSON = B64Url(new byte[50]), attestationObject = B64Url(new byte[100]) },
@@ -103,7 +104,6 @@ public class WebAuthnMockCoverageTests(TestFixture fixture)
         fixture.Hydra.SetupLoginChallengeWithProject(
             challenge, project.HydraClientId, project.Id.ToString(), org.Id.ToString());
 
-        // Login → redirected to WebAuthn MFA
         var loginRes = await client.PostAsJsonAsync("/auth/login", new
         {
             login_challenge = challenge,
@@ -118,8 +118,8 @@ public class WebAuthnMockCoverageTests(TestFixture fixture)
         var optRes = await client.GetAsync("/auth/mfa/webauthn/options");
         optRes.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        // Verify with known credentialId — mock MakeAssertionAsync returns success
-        // → covers L1366 (try close), L1372-1392 (update SignCount, Hydra accept, audit)
+        // The mock's MakeAssertionAsync succeeds, so this reaches everything past the assertion:
+        // the SignCount update, the Hydra accept and the audit write.
         var payload = new
         {
             id    = B64Url(credId),

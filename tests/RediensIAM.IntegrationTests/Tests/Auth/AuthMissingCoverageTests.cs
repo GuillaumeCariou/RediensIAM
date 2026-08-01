@@ -36,8 +36,9 @@ public class AuthMissingCoverageTests(TestFixture fixture)
         await fixture.Db.SaveChangesAsync();
         var user = await fixture.Seed.CreateUserAsync(list.Id, password: "Correct@Pass123!");
 
-        // Pre-set FailedLoginCount to MaxLoginAttempts-1 so a single wrong-password call triggers lockout
-        user.FailedLoginCount = 4;  // MaxLoginAttempts=5; one more → LockedUntil set (line 913)
+        // One below MaxLoginAttempts (5 in TestFixture's configuration), so the single wrong
+        // password below is the one that trips the lockout.
+        user.FailedLoginCount = 4;
         await fixture.Db.SaveChangesAsync();
 
         fixture.Keto.AllowAll();
@@ -51,7 +52,6 @@ public class AuthMissingCoverageTests(TestFixture fixture)
             password        = "WRONG_PASSWORD"
         });
 
-        // Verify LockedUntil was set on the user (line 913 executed)
         await fixture.RefreshDbAsync();
         var reloaded = await fixture.Db.Users.FindAsync(user.Id);
         reloaded!.LockedUntil.Should().NotBeNull();
@@ -85,7 +85,6 @@ public class AuthMissingCoverageTests(TestFixture fixture)
 
         fixture.EmailStub.SentEmails.Clear();
 
-        // Step 1: start registration — creates a pending OTP session
         var regRes = await fixture.Client.PostAsJsonAsync("/auth/register", new
         {
             login_challenge = challenge,
@@ -96,15 +95,14 @@ public class AuthMissingCoverageTests(TestFixture fixture)
         var regBody   = await regRes.Content.ReadFromJsonAsync<JsonElement>();
         var sessionId = regBody.GetProperty("session_id").GetString()!;
 
-        // The stub email service captures the OTP code
         var sent = fixture.EmailStub.SentEmails.LastOrDefault(e => e.To == email && e.Purpose == "registration");
         sent.Should().NotBeNull("email stub should capture the OTP");
         var otp = sent!.Code;
 
-        // Step 2: seed a user with the same email directly — simulates race condition
+        // Seeded between start and verify to stand in for the race where another path claims the
+        // address while an OTP is outstanding.
         await fixture.Seed.CreateUserAsync(list.Id, email: email);
 
-        // Step 3: verify registration — hits line 730 (email_already_exists)
         var verifyRes = await fixture.Client.PostAsJsonAsync("/auth/register/verify", new
         {
             session_id = sessionId,
@@ -139,7 +137,6 @@ public class AuthMissingCoverageTests(TestFixture fixture)
         var user = await fixture.Seed.CreateUserAsync(orgList.Id, password: password);
         fixture.Keto.AllowAll();
 
-        // Inject an email service that throws specifically on SendNewDeviceAlertAsync
         var throwingEmail = new ThrowingNewDeviceEmailService();
         var (client, factory) = fixture.CreateSmtpEnabledClient(throwingEmail);
         await using var _f = factory;

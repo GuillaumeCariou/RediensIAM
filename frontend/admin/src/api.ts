@@ -118,7 +118,7 @@ export async function listSamlProviders(projectId: string) {
 export async function createSamlProvider(projectId: string, body: {
   entity_id: string; metadata_url?: string; sso_url?: string; certificate_pem?: string;
   email_attribute_name?: string;
-  // Backend field is display_name_attribute_name; `name_attribute_name` was silently dropped.
+  /** Backend field is `display_name_attribute_name`; `name_attribute_name` was silently dropped. */
   display_name_attribute_name?: string;
   jit_provisioning?: boolean; default_role_id?: string;
 }) {
@@ -223,11 +223,16 @@ export async function verifyPhone(code: string, reauth?: MfaReauth) {
   return (await apiFetch('/account/mfa/phone/verify', { method: 'POST', body: JSON.stringify({ code, reauth }) })).json();
 }
 // ── MFA mutations that add, replace or destroy a factor ───────────────────
-// Every one of these takes a re-authentication proof: a bearer token alone must not be enough to
-// overwrite the victim's second factor (R-24), nor to enrol the attacker's own alongside it. The
-// proof is omitted on the first attempt — the backend answers 401 reauthentication_required with
-// the methods this account can actually supply, and only then is the user prompted. Enrolling the
-// FIRST factor on an account that has none needs no proof. See ReauthDialog.
+/**
+ * Every mutation that adds, replaces or destroys an MFA factor — this one and every other
+ * `reauth?: MfaReauth` signature in this file — takes a re-authentication proof. A bearer token
+ * alone must not be enough to overwrite the victim's second factor (R-24), nor to enrol the
+ * attacker's own alongside it. Do not drop the parameter to simplify a call site.
+ *
+ * The proof is omitted on the first attempt: the backend answers 401 reauthentication_required
+ * with the methods this account can actually supply, and only then is the user prompted.
+ * Enrolling the FIRST factor on an account that has none needs no proof. See ReauthDialog.
+ */
 export async function removePhone(reauth?: MfaReauth) {
   return apiFetch('/account/mfa/phone', { method: 'DELETE', body: JSON.stringify(reauth ?? {}) });
 }
@@ -313,8 +318,11 @@ export async function listWebhookDeliveries(id: string) {
 export async function exportUserList(listId: string): Promise<Blob> {
   return (await apiFetch(`/org/userlists/${listId}/export?format=csv`)).blob();
 }
+/**
+ * The two branches below are not symmetrical: the org-scoped route is `/org/audit-log/export`
+ * (OrgController), not `/org/export/audit-log`. Do not "tidy" it to match the system-scoped path.
+ */
 export async function exportOrgAuditLog(orgId: string, isSystemCtx: boolean): Promise<Blob> {
-  // Org-scoped route is /org/audit-log/export (OrgController), not /org/export/audit-log.
   const path = isSystemCtx
     ? `/admin/organizations/${orgId}/export/audit-log?format=csv`
     : `/org/audit-log/export?format=csv`;

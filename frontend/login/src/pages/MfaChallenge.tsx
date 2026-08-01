@@ -77,6 +77,13 @@ export default function MfaChallenge() {
     if (mode !== 'webauthn') webauthnFired.current = false;
   }, [mode]);
 
+  /**
+   * `safeOptions` below is built field by field rather than spread from the server response, and
+   * `userVerification` is hard-coded to `'required'`. Passing the server's object straight to
+   * `navigator.credentials.get` would let a hostile or mis-configured backend downgrade the
+   * assertion — dropping user verification, or adding fields this flow never intended to honour.
+   * Keep it an allowlist; do not replace it with `{ ...options }`.
+   */
   async function handleWebAuthn() {
     setLoading(true);
     setError('');
@@ -84,8 +91,6 @@ export default function MfaChallenge() {
       const options = await getWebAuthnOptions();
       if (options.error) { setError('Failed to get passkey options.'); return; }
 
-      // Whitelist server-supplied fields and force userVerification=required so a
-      // hostile/mis-configured backend cannot downgrade the assertion strength.
       const safeOptions = {
         challenge: base64urlToBuffer(options.challenge),
         timeout: typeof options.timeout === 'number' ? options.timeout : 60000,

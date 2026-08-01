@@ -38,16 +38,19 @@ public class ConsentLogoutTests(TestFixture fixture)
         fixture.Hydra.ConsentWasAccepted(challenge).Should().BeTrue();
     }
 
+    /// <summary>
+    /// Asserts only "some error" because a consent challenge with an empty subject is not
+    /// handled uniformly: it may come back as a 400 from the explicit guard or as a 500 from the
+    /// empty-subject edge case further in. Either is acceptable; a 2xx is not.
+    /// </summary>
     [Fact]
     public async Task GetConsent_MissingContext_Returns400()
     {
         var challenge = NewChallenge();
-        // Set up consent with no context (user_id missing)
         fixture.Hydra.SetupConsentChallenge(challenge, "", "some-client");
 
         var res = await fixture.Client.GetAsync($"/auth/consent?consent_challenge={challenge}");
 
-        // Missing context causes 400 (handled) or 500 (unhandled empty-subject edge case)
         ((int)res.StatusCode).Should().BeGreaterThanOrEqualTo(400);
     }
 
@@ -101,6 +104,13 @@ public class ConsentLogoutTests(TestFixture fixture)
         body.GetProperty("redirect_to").GetString().Should().NotBeNullOrEmpty();
     }
 
+    /// <summary>
+    /// The name promises more than the assertion delivers, and that is the point worth recording:
+    /// POST /auth/logout does not validate the challenge against Hydra at all. AcceptLogoutAsync
+    /// passes through whatever Hydra returns — including an empty redirect_to — so an invalid
+    /// challenge still answers 200. This asserts only that it does not crash. If challenge
+    /// validation is ever added, tighten this to expect a real rejection.
+    /// </summary>
     [Fact]
     public async Task PostLogout_InvalidChallenge_ReturnsError()
     {
@@ -109,9 +119,6 @@ public class ConsentLogoutTests(TestFixture fixture)
             logout_challenge = "invalid-challenge"
         });
 
-        // The app accepts any logout challenge without validating it against Hydra
-        // (AcceptLogoutAsync returns whatever Hydra returns, including empty redirect_to).
-        // The endpoint returns 200 regardless — just verify it doesn't crash.
         ((int)res.StatusCode).Should().BeLessThan(500);
     }
 }

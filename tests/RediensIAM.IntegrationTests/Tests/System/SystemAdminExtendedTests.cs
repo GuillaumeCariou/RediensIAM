@@ -34,7 +34,6 @@ public class SystemAdminExtendedTests(TestFixture fixture)
     [Fact]
     public async Task ListSessions_WithNonEmptySessions_ReturnsMappedFields()
     {
-        // Covers SystemAdminController line 265 — the Select lambda with 5 ?. operators (10 conditions)
         var (org, _, client) = await SuperAdminAsync();
         var list  = await fixture.Seed.CreateUserListAsync(org.Id);
         var user  = await fixture.Seed.CreateUserAsync(list.Id);
@@ -519,7 +518,6 @@ public class SystemAdminExtendedTests(TestFixture fixture)
         var (org, _, client) = await SuperAdminAsync();
         var project = await fixture.Seed.CreateProjectAsync(org.Id);
 
-        // Create provider first
         var createRes = await client.PostAsJsonAsync($"/admin/projects/{project.Id}/saml-providers", new
         {
             entity_id = "https://idp.example.com/original"
@@ -527,7 +525,6 @@ public class SystemAdminExtendedTests(TestFixture fixture)
         var createBody = await createRes.Content.ReadFromJsonAsync<JsonElement>();
         var providerId = createBody.GetProperty("id").GetString();
 
-        // Update it
         var res = await client.PatchAsJsonAsync($"/admin/projects/{project.Id}/saml-providers/{providerId}", new
         {
             entity_id       = "https://idp.example.com/updated",
@@ -563,7 +560,6 @@ public class SystemAdminExtendedTests(TestFixture fixture)
     [Fact]
     public async Task UpdateSamlProvider_SetDefaultRole_Returns200()
     {
-        // Covers line 1030: DefaultRoleId.HasValue=true, != Guid.Empty → sets value
         var (org, _, client) = await SuperAdminAsync();
         var project  = await fixture.Seed.CreateProjectAsync(org.Id);
         var role     = await fixture.Seed.CreateRoleAsync(project.Id, "SamlDefault");
@@ -585,7 +581,7 @@ public class SystemAdminExtendedTests(TestFixture fixture)
     [Fact]
     public async Task UpdateSamlProvider_ClearDefaultRole_Returns200()
     {
-        // Covers line 1030: DefaultRoleId.HasValue=true, == Guid.Empty → sets null
+        // Guid.Empty is the sentinel for "clear", distinct from omitting the field entirely.
         var (org, _, client) = await SuperAdminAsync();
         var project  = await fixture.Seed.CreateProjectAsync(org.Id);
 
@@ -608,7 +604,6 @@ public class SystemAdminExtendedTests(TestFixture fixture)
     [Fact]
     public async Task ExportAuditLog_WithDateRange_Returns200()
     {
-        // Covers SystemAdminController line 935: from?.ToString("O") and to?.ToString("O") non-null branches
         var (org, _, client) = await SuperAdminAsync();
         await fixture.FlushCacheAsync();
 

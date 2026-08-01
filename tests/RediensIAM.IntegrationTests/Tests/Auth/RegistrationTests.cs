@@ -97,7 +97,6 @@ public class RegistrationTests(TestFixture fixture)
         var (org, project) = await ScaffoldAsync();
         var email          = SeedData.UniqueEmail();
 
-        // First registration
         var ch1 = NewChallenge();
         fixture.Hydra.SetupLoginChallengeWithProject(ch1, project.HydraClientId,
             project.Id.ToString(), org.Id.ToString());
@@ -106,7 +105,6 @@ public class RegistrationTests(TestFixture fixture)
             login_challenge = ch1, email, password = "P@ssw0rd!Test"
         });
 
-        // Second with same email
         var ch2 = NewChallenge();
         fixture.Hydra.SetupLoginChallengeWithProject(ch2, project.HydraClientId,
             project.Id.ToString(), org.Id.ToString());

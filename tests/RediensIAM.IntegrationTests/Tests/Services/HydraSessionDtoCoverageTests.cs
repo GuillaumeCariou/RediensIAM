@@ -52,7 +52,7 @@ public class HydraSessionDtoCoverageTests(TestFixture fixture)
                 granted_at     = DateTimeOffset.UtcNow.AddDays(-1).ToString("o"),
                 expires_at     = DateTimeOffset.UtcNow.AddYears(1).ToString("o"),
             },
-            // Null client → covers ?.Client null branch in AccountController line 146
+            // A session whose client is null — the mapper must tolerate it, not NRE
             new
             {
                 consent_request = new
@@ -65,7 +65,7 @@ public class HydraSessionDtoCoverageTests(TestFixture fixture)
                 granted_at     = DateTimeOffset.UtcNow.AddDays(-2).ToString("o"),
                 expires_at     = (string?)null,
             },
-            // Null consent_request → covers s.ConsentRequest == null branch (OrgController line 558)
+            // A session with no consent request at all — also has to survive the mapper
             new
             {
                 consent_request = (object?)null,

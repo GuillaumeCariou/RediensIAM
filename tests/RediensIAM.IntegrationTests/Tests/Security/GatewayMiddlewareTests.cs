@@ -168,7 +168,7 @@ public class GatewayMiddlewareTests(TestFixture fixture)
     [Fact]
     public async Task PatToken_NotFoundInDatabase_Returns401()
     {
-        // Covers GatewayAuthMiddleware line 28: result == null → claims = null → 401
+        // Introspection returning nothing must land on 401, never on "no claims, carry on".
         var fakePatToken = "rediens_pat_" + Guid.NewGuid().ToString("N");
         var client       = fixture.ClientWithToken(fakePatToken);
 

@@ -51,8 +51,8 @@ public class ProgramCoverageTests(TestFixture fixture)
         var emailStub = fixture.EmailStub;
         var smsStub   = fixture.SmsStub;
 
-        // Create a factory that sets Bootstrap:Email so Program.cs calls
-        // BootstrapSuperAdminAsync / EnsureBootstrapAdminAsync (lines 244-298).
+        // A separate factory rather than the shared fixture: Bootstrap:Email has to be set before
+        // the host starts for Program.cs to run the bootstrap-super-admin path at all.
         await using var bootstrapFactory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(b =>
             {
@@ -115,7 +115,6 @@ public class ProgramCoverageTests(TestFixture fixture)
             AllowAutoRedirect = false
         });
 
-        // Verify the bootstrap user was created in the shared DB
         await fixture.RefreshDbAsync();
         var user = await fixture.Db.Users.FirstOrDefaultAsync(u => u.Email == bootstrapEmail);
         user.Should().NotBeNull("BootstrapSuperAdminAsync should have created the user");
@@ -135,7 +134,6 @@ public class ProgramCoverageTests(TestFixture fixture)
         });
         await fixture.Db.SaveChangesAsync();
 
-        // Obtain the AuditLogRetentionService from the hosted services collection
         using var scope = fixture.Services.CreateScope();
         var retentionSvc = scope.ServiceProvider
             .GetServices<IHostedService>()
@@ -149,7 +147,6 @@ public class ProgramCoverageTests(TestFixture fixture)
                 BindingFlags.NonPublic | BindingFlags.Instance)!;
         await (Task)purgeMethod.Invoke(retentionSvc, [CancellationToken.None])!;
 
-        // The log should have been purged (total > 0 → line 57 executed)
         await fixture.RefreshDbAsync();
         var stillExists = await fixture.Db.AuditLogs
             .AnyAsync(a => a.Action == "test.retention.coverage");
@@ -161,9 +158,9 @@ public class ProgramCoverageTests(TestFixture fixture)
     [Fact]
     public async Task AdminSpaFallback_NonApiPath_ExecutesFallbackHandler()
     {
-        // GET /admin/ui doesn't match any API controller → MapFallback fires
-        // L371: sets ContentType; L372-373: SendFileAsync → FileNotFoundException (no wwwroot)
-        // ExceptionMiddleware catches it → 500 (not 404, which would mean no route matched)
+        // /admin/ui matches no API controller, so MapFallback runs and tries to serve the SPA file.
+        // There is no wwwroot under test, so that throws and comes back as a 500. The 500 is the
+        // pass condition: a 404 would mean the fallback route never matched at all.
         var res = await fixture.Client.GetAsync("/admin/ui");
         res.StatusCode.Should().NotBe(HttpStatusCode.NotFound,
             "MapFallback should have matched and executed the lambda (404 = no route matched at all)");

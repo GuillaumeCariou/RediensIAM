@@ -23,7 +23,7 @@ public class AuthController(
     Microsoft.Extensions.Caching.Distributed.IDistributedCache cache,
     ILogger<AuthController> logger) : ControllerBase
 {
-    // Unwrap bundle — keeps method bodies unchanged while satisfying S107
+    // Bundle forwarders — the constructor takes one aggregate to satisfy S107; see ControllerServices.
     private HydraService hydra            => svc.Hydra;
     private PasswordService passwords      => svc.Passwords;
     private OtpCacheService otp            => svc.Otp;
@@ -651,7 +651,6 @@ public class AuthController(
                 return SafeRedirect(rejectUrl);
             }
 
-            // Resolve the org and project scopes so the token carries them
             var orgRole = await db.OrgRoles
                 .Where(r => r.UserId == userId && r.Role == Roles.OrgAdmin)
                 .OrderBy(r => r.GrantedAt)
@@ -887,7 +886,6 @@ public class AuthController(
         var projId = Guid.Parse(root.GetProperty(CtxProjectId).GetString()!);
         var loginChallenge = root.GetProperty("login_challenge").GetString()!;
 
-        // Verify project is still active and configured before creating user
         var regProject = await db.Projects.FindAsync(projId);
         if (regProject == null || !regProject.Active || regProject.AssignedUserListId == null)
             return BadRequest(new { error = "project_inactive" });
@@ -932,7 +930,6 @@ public class AuthController(
         if (token == null || token.ExpiresAt < DateTimeOffset.UtcNow || token.UsedAt != null)
             return BadRequest(new { error = "invalid_or_expired_token" });
 
-        // Check project password policy
         var userList = await db.UserLists.Include(ul => ul.Projects).FirstOrDefaultAsync(ul => ul.Id == token.User.UserListId);
         var inviteProject = userList?.Projects.FirstOrDefault();
         if (inviteProject != null)
@@ -1116,7 +1113,6 @@ public class AuthController(
         await db.SaveChangesAsync();
         await rateLimiter.ResetAsync(Ip, user.Id);
 
-        // Require MFA if the user has any factor configured
         var hasMfa = user.TotpEnabled || user.PhoneVerified ||
                      await db.WebAuthnCredentials.AnyAsync(w => w.UserId == user.Id);
         if (hasMfa)
@@ -1150,7 +1146,6 @@ public class AuthController(
         if (!user.NewDeviceAlertsEnabled) return;
         try
         {
-            // Fingerprint: HMAC-SHA256 of "userAgent + /24 subnet"
             var subnet = ip.Contains('.') && System.Net.IPAddress.TryParse(ip, out var parsed)
                 ? string.Join(".", parsed.GetAddressBytes().Take(3)) + ".0"
                 : ip;
@@ -1289,7 +1284,6 @@ public class AuthController(
         if (providerCfg == null) return BadRequest(new { error = "provider_not_found" });
         if (string.IsNullOrEmpty(providerCfg.ClientId)) return BadRequest(new { error = "provider_not_configured" });
 
-        // Already linked?
         var alreadyLinked = await db.UserSocialAccounts.AnyAsync(s =>
             s.UserId == claims.ParsedUserId && s.Provider == provider_id);
         if (alreadyLinked) return BadRequest(new { error = "provider_already_linked" });
@@ -1395,7 +1389,6 @@ public class AuthController(
 
     private async Task<User?> FindOrCreateSocialUserAsync(SocialUserProfile profile, string provider, Project project)
     {
-        // Check allowed email domains before any provisioning
         if (project.AllowedEmailDomains.Length > 0 && !string.IsNullOrEmpty(profile.Email))
         {
             var domain = profile.Email.Split('@').LastOrDefault()?.ToLowerInvariant() ?? "";
@@ -1403,15 +1396,14 @@ public class AuthController(
                 return null;
         }
 
-        // 1. Check existing social link
         var social = await db.UserSocialAccounts
             .Include(s => s.User)
             .FirstOrDefaultAsync(s => s.Provider == provider && s.ProviderUserId == profile.ProviderUserId);
 
         if (social != null) return social.User;
 
-        // 2. Try to link to existing user by email — only when BOTH sides have verified the email.
-        // Linking on unverified email allows account takeover via attacker-controlled OAuth providers.
+        // Linking by email requires the address to be verified on BOTH sides. Linking on an
+        // unverified email is account takeover via an attacker-controlled OAuth provider.
         User? user = null;
         if (!string.IsNullOrEmpty(profile.Email) && profile.IsEmailVerified)
         {
@@ -1423,14 +1415,12 @@ public class AuthController(
                 u.Active);
         }
 
-        // 3. Create new user if not found
         if (user == null)
         {
             user = await CreateSocialUserAsync(profile, project);
             if (user == null) return null;
         }
 
-        // 4. Record the social link
         db.UserSocialAccounts.Add(new UserSocialAccount
         {
             UserId         = user.Id,

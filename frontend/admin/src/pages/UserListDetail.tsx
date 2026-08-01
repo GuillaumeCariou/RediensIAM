@@ -15,8 +15,12 @@ interface UserList {
   immovable: boolean; user_count: number; created_at: string;
 }
 
+/**
+ * Registered under three route shapes: `:id` (standalone /system/userlists/:id and /org/userlists/:id)
+ * and `:listId` (a list of an org viewed from the system context). Both params are read below;
+ * dropping either breaks one of the routes with no compile error.
+ */
 export default function UserListDetail() {
-  // Handles all three route shapes: :id, :listId (org under system org), and standalone
   const { id, listId } = useParams<{ id?: string; listId?: string }>();
   const resolvedId = listId ?? id ?? '';
   const navigate = useNavigate();

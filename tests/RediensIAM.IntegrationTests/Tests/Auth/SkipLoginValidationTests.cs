@@ -93,11 +93,14 @@ public class SkipLoginValidationTests(TestFixture fixture) : IAsyncLifetime
         (await ReadErrorAsync(res)).Should().Be("organisation_suspended");
     }
 
+    /// <summary>
+    /// The subject below is a bare GUID on purpose: system-admin subjects carry no "org:user"
+    /// prefix, so this is the alternate branch of ParseSubjectUserId. Do not "normalise" the
+    /// subject here — that would silently stop covering the system-admin shape.
+    /// </summary>
     [Fact]
     public async Task SkipLogin_BareGuidSubject_SystemAdminFormat_RedirectsSuccessfully()
     {
-        // System-admin subjects are bare GUIDs (no "org:user" prefix). Covers the
-        // alternate branch in ParseSubjectUserId.
         var (_, project, user) = await ScaffoldAsync();
         var challenge = NewChallenge();
         fixture.Hydra.SetupLoginChallengeWithProject(challenge, project.HydraClientId,

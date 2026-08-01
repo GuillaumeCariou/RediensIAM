@@ -55,7 +55,6 @@ public class ProjectMoreCoverageTests(TestFixture fixture)
         var (_, _, list, client) = await ScaffoldAsync();
         var user = await fixture.Seed.CreateUserAsync(list.Id);
 
-        // Delete a role assignment that was never created → NotFoundException
         var res = await client.DeleteAsync($"/project/users/{user.Id}/roles/{Guid.NewGuid()}");
 
         res.StatusCode.Should().Be(HttpStatusCode.NotFound);
@@ -67,7 +66,6 @@ public class ProjectMoreCoverageTests(TestFixture fixture)
     public async Task ForceLogout_UserNotInProjectList_Returns404()
     {
         var (org, _, _, client) = await ScaffoldAsync();
-        // Create a user in a different list — not the project's assigned list
         var otherList = await fixture.Seed.CreateUserListAsync(org.Id);
         var outsider  = await fixture.Seed.CreateUserAsync(otherList.Id);
 
@@ -102,7 +100,8 @@ public class ProjectMoreCoverageTests(TestFixture fixture)
     {
         var (_, project, list, client) = await ScaffoldAsync();
 
-        // Create a user outside the project's assigned list and seed an orphaned role for them
+        // The role row is seeded directly because the API will not grant a project role to somebody
+        // outside the project's list — an orphan can only arise after the fact.
         var (_, otherList) = await fixture.Seed.CreateOrgAsync();
         var orphanUser = await fixture.Seed.CreateUserAsync(otherList.Id);
         var role       = await fixture.Seed.CreateRoleAsync(project.Id, "Orphan");

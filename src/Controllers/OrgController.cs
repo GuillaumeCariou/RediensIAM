@@ -24,7 +24,7 @@ public class OrgController(
     private static readonly string[] _hydraGrantTypes    = ["authorization_code", "refresh_token"];
     private static readonly string[] _hydraResponseTypes = ["code"];
 
-    // Unwrap bundle (S107)
+    // Bundle forwarders — the constructor takes one aggregate to satisfy S107; see ControllerServices.
     private HydraService hydra         => svc.Hydra;
     private KetoService keto           => svc.Keto;
     private PasswordService passwords   => svc.Passwords;
@@ -140,7 +140,6 @@ public class OrgController(
         var project = await db.Projects.AsNoTracking()
             .FirstOrDefaultAsync(p => p.Id == id && (isSuperAdmin || p.OrgId == OrgId));
         if (project == null) return NotFound();
-        // Strip client secrets before exposing to caller
         project.LoginTheme = TotpEncryption.StripSecretsFromTheme(project.LoginTheme) ?? project.LoginTheme;
         return Ok(project);
     }
@@ -466,7 +465,6 @@ public class OrgController(
         if (user == null) return NotFound();
         if (user.Active) return BadRequest(new { error = "user_already_active" });
 
-        // Expire any existing invite tokens
         var existing = await db.EmailTokens
             .Where(t => t.UserId == uid && t.Kind == KindInvite && t.UsedAt == null)
             .ToListAsync();
@@ -657,7 +655,6 @@ public class OrgController(
         if (await ValidateScopeIsInOrgAsync(body.ScopeId, role.ScopeId, orgId) is { } scopeErr)
             return scopeErr;
 
-        // Delete old Keto tuple before updating
         var oldSubject = KetoSubject(role.UserId, role.ScopeId);
         await keto.DeleteRelationTupleAsync(Roles.KetoOrgsNamespace, orgId.ToString(), role.Role, oldSubject);
 
@@ -665,7 +662,6 @@ public class OrgController(
         if (body.ScopeId != null) role.ScopeId = body.ScopeId;
         await db.SaveChangesAsync();
 
-        // Write new Keto tuple
         var newSubject = KetoSubject(role.UserId, role.ScopeId);
         await keto.WriteRelationTupleAsync(Roles.KetoOrgsNamespace, orgId.ToString(), role.Role, newSubject);
         await live.InvalidateAsync(role.UserId);

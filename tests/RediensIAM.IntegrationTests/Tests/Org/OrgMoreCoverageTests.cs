@@ -119,7 +119,6 @@ public class OrgMoreCoverageTests(TestFixture fixture)
         project.AssignedUserListId = list.Id;
         await fixture.Db.SaveChangesAsync();
 
-        // Create a user in a DIFFERENT list (not the target list) and give them a role in the project
         var (_, otherList) = await fixture.Seed.CreateOrgAsync();
         var orphanUser = await fixture.Seed.CreateUserAsync(otherList.Id);
         var role       = await fixture.Seed.CreateRoleAsync(project.Id, "Orphan");

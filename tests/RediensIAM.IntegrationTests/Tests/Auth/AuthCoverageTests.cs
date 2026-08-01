@@ -156,15 +156,13 @@ public class AuthCoverageTests(TestFixture fixture)
         fixture.Hydra.SetupLoginChallengeWithProject(challenge, project.HydraClientId,
             project.Id.ToString(), org.Id.ToString());
 
-        // username has no "#" separator → parts.Length != 2 → LookupUserByCredentialsAsync returns null
         var res = await fixture.Client.PostAsJsonAsync("/auth/login", new
         {
             login_challenge = challenge,
-            username        = "justusername",   // no discriminator → returns null at line 197
+            username        = "justusername",   // no "#discriminator" — lookup cannot resolve it
             password        = "P@ssw0rd!Test"
         });
 
-        // User not found → 401 invalid_credentials
         res.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("error").GetString().Should().Be("invalid_credentials");
@@ -181,7 +179,7 @@ public class AuthCoverageTests(TestFixture fixture)
         project.AssignedUserListId        = list.Id;
         project.AllowSelfRegistration     = true;
         project.SmsVerificationEnabled    = true;
-        project.EmailVerificationEnabled  = false;   // SMS only → line 703 evaluates false
+        project.EmailVerificationEnabled  = false;   // SMS only
         await fixture.Db.SaveChangesAsync();
 
         var challenge = Guid.NewGuid().ToString("N");
@@ -193,13 +191,12 @@ public class AuthCoverageTests(TestFixture fixture)
             login_challenge = challenge,
             email           = SeedData.UniqueEmail(),
             password        = "P@ssw0rd!Test",
-            phone           = "+1234567890"    // required for SMS branch (line 703: body.Phone != null)
+            phone           = "+1234567890"    // without a phone the SMS branch is never taken
         });
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("requires_verification").GetBoolean().Should().BeTrue();
-        // SMS OTP was sent via the stub
         fixture.SmsStub.SentMessages.Should().NotBeEmpty();
     }
 }

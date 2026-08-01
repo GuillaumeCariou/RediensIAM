@@ -4,15 +4,20 @@ import { cleanup } from '@testing-library/react';
 
 afterEach(cleanup);
 
-// jsdom 29 ships HTMLDialogElement with a reflected `open` property and none of its methods,
-// so a component that calls showModal() cannot be rendered at all without this.
-//
-// The shim covers exactly the part of the platform contract CommandPalette depends on:
-// show() vs showModal() are distinguishable, close() fires a `close` event, and Escape closes
-// the top modal. It deliberately does NOT emulate focus containment or inertness — jsdom has
-// no layout or top-layer, so real Tab containment can only be verified in a browser. What the
-// tests below assert is the thing that regressed: that the palette asks for a *modal* dialog
-// rather than the non-modal one that let Tab walk into the page behind.
+/**
+ * Open dialogs that were opened with showModal(), newest last.
+ *
+ * jsdom 29 ships HTMLDialogElement with a reflected `open` property and none of its methods, so
+ * a component that calls showModal() cannot be rendered at all without the shim below.
+ *
+ * The shim covers exactly the part of the platform contract CommandPalette depends on: show()
+ * and showModal() are distinguishable, close() fires a `close` event, and Escape closes the top
+ * modal. It deliberately does NOT emulate focus containment or inertness — jsdom has no layout
+ * and no top layer, so real Tab containment can only be verified in a browser. Do not read a
+ * passing suite as proof of containment; what the tests assert is the thing that regressed, that
+ * the palette asks for a *modal* dialog rather than the non-modal one that let Tab walk into the
+ * page behind.
+ */
 const modals = new Set<HTMLDialogElement>();
 
 /** True when the element is currently open via showModal() rather than show(). */

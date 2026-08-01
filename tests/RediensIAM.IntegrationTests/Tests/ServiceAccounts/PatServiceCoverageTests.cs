@@ -42,7 +42,6 @@ public class PatServiceCoverageTests(TestFixture fixture)
     {
         var (org, project, sa, managerClient) = await ScaffoldAsync();
 
-        // Seed a ServiceAccountRole (project_admin scoped to org+project)
         fixture.Db.ServiceAccountRoles.Add(new ServiceAccountRole
         {
             Id               = Guid.NewGuid(),
@@ -55,7 +54,6 @@ public class PatServiceCoverageTests(TestFixture fixture)
         });
         await fixture.Db.SaveChangesAsync();
 
-        // Generate a PAT for the SA (via manager)
         var createRes = await managerClient.PostAsJsonAsync($"/service-accounts/{sa.Id}/pat", new
         {
             name       = "Role Coverage Token",
@@ -67,7 +65,6 @@ public class PatServiceCoverageTests(TestFixture fixture)
         // Flush cache so IntrospectAsync must hit DB (not Redis) and execute the switch
         await fixture.FlushCacheAsync();
 
-        // Use the PAT → triggers IntrospectAsync → saRoles non-empty → role switch runs
         var patClient = fixture.ClientWithToken(patToken);
         var res       = await patClient.GetAsync($"/service-accounts/{sa.Id}");
 
@@ -95,12 +92,10 @@ public class PatServiceCoverageTests(TestFixture fixture)
         var addRes = await managerClient.PostAsJsonAsync($"/service-accounts/{sa.Id}/api-keys", new { jwk });
         addRes.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        // Reload SA to get the HydraClientId assigned by AddKeyAsync
         await fixture.RefreshDbAsync();
         var updatedSa = await fixture.Db.ServiceAccounts.FindAsync(sa.Id);
         var clientId  = updatedSa!.HydraClientId!;
 
-        // Now stub Hydra GET to return a client with JWKS for the read
         fixture.Hydra.SetupOAuth2ClientWithJwks(clientId, kid: "test-key-abc");
 
         var res = await managerClient.GetAsync($"/service-accounts/{sa.Id}/api-keys");
@@ -146,7 +141,6 @@ public class PatServiceCoverageTests(TestFixture fixture)
     [Fact]
     public async Task PatToken_Expired_Returns401()
     {
-        // Covers PatService line 66: pat.ExpiresAt.HasValue && pat.ExpiresAt < UtcNow → return null
         var (_, _, sa, managerClient) = await ScaffoldAsync();
 
         var createRes = await managerClient.PostAsJsonAsync($"/service-accounts/{sa.Id}/pat", new
@@ -157,7 +151,6 @@ public class PatServiceCoverageTests(TestFixture fixture)
         var patToken = (await createRes.Content.ReadFromJsonAsync<JsonElement>())
             .GetProperty("token").GetString()!;
 
-        // Force the PAT to appear expired in the DB
         await fixture.RefreshDbAsync();
         var pat = await fixture.Db.PersonalAccessTokens.FirstOrDefaultAsync(p => p.ServiceAccountId == sa.Id);
         pat!.ExpiresAt = DateTimeOffset.UtcNow.AddHours(-1);
@@ -166,7 +159,6 @@ public class PatServiceCoverageTests(TestFixture fixture)
         // Flush cache so IntrospectAsync hits DB, not Redis
         await fixture.FlushCacheAsync();
 
-        // Using the expired PAT should be rejected
         var patClient = fixture.ClientWithToken(patToken);
         var res = await patClient.GetAsync($"/service-accounts/{sa.Id}");
 
@@ -195,7 +187,6 @@ public class PatServiceCoverageTests(TestFixture fixture)
     {
         var (_, _, sa, client) = await ScaffoldAsync();
 
-        // Seed HydraClientId
         sa.HydraClientId = $"sa_{sa.Id}";
         await fixture.Db.SaveChangesAsync();
 

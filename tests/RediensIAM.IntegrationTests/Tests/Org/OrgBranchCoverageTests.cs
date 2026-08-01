@@ -166,7 +166,6 @@ public class OrgBranchCoverageTests(TestFixture fixture)
     {
         var (org, _, client) = await OrgAdminClientAsync();
         var project = await fixture.Seed.CreateProjectAsync(org.Id);
-        // Create a list in a DIFFERENT org
         var (otherOrg, _) = await fixture.Seed.CreateOrgAsync();
         var foreignList   = await fixture.Seed.CreateUserListAsync(otherOrg.Id);
 
@@ -232,7 +231,6 @@ public class OrgBranchCoverageTests(TestFixture fixture)
         var (org, _, client) = await OrgAdminClientAsync();
         var project = await fixture.Seed.CreateProjectAsync(org.Id);
 
-        // Create SAML provider first
         var createRes = await client.PostAsJsonAsync($"/org/projects/{project.Id}/saml-providers", new
         {
             entity_id    = "https://idp.example.com/saml",
@@ -243,7 +241,6 @@ public class OrgBranchCoverageTests(TestFixture fixture)
         var createBody = await createRes.Content.ReadFromJsonAsync<JsonElement>();
         var providerId = createBody.GetProperty("id").GetGuid();
 
-        // Patch with empty body → covers all false branches (826-833)
         var res = await client.PatchAsJsonAsync(
             $"/org/projects/{project.Id}/saml-providers/{providerId}", new { });
 
@@ -295,7 +292,6 @@ public class OrgBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task ListOrgAdmins_RoleWithMissingProject_ReturnsScopeNameNull()
     {
-        // Covers OrgController line 644: TryGetValue returns false when project doesn't exist
         var (org, admin, client) = await OrgAdminClientAsync();
 
         // Directly seed an OrgRole with a ScopeId pointing to a non-existent project
@@ -316,7 +312,6 @@ public class OrgBranchCoverageTests(TestFixture fixture)
         res.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
         var roles = body.EnumerateArray().ToList();
-        // The role with missing project should have scope_name = null
         var orphanedRole = roles.FirstOrDefault(r => r.GetProperty("role").GetString() == "project_admin"
             && r.GetProperty("scope_name").ValueKind == JsonValueKind.Null);
         orphanedRole.ValueKind.Should().NotBe(JsonValueKind.Undefined);
@@ -360,10 +355,10 @@ public class OrgBranchCoverageTests(TestFixture fixture)
         {
             email          = SeedData.UniqueEmail(),
             username       = "updateduser",
-            display_name   = "",      // "" → sets to null (covers line 528 TRUE inner branch)
-            phone          = "",      // "" → sets to null (covers line 529 TRUE inner branch)
-            active         = false,   // false → DisabledAt = DateTimeOffset.UtcNow (covers line 540)
-            email_verified = false,   // false → EmailVerifiedAt = null (covers line 547)
+            display_name   = "",      // "" clears the field rather than leaving it unchanged
+            phone          = "",      // "" clears the field rather than leaving it unchanged
+            active         = false,   // stamps DisabledAt
+            email_verified = false,   // clears EmailVerifiedAt
             clear_lock     = true,
             new_password   = "NewP@ssw0rd!2"
         });
@@ -408,7 +403,6 @@ public class OrgBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task GetOrgInfo_OrgNotFound_Returns404()
     {
-        // Token with a non-existent OrgId → org == null → NotFound
         var userId = Guid.NewGuid();
         var fakeOrgId = Guid.NewGuid();
         var token = $"fake-{userId:N}";
@@ -445,15 +439,12 @@ public class OrgBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task DeleteSamlProvider_ProviderFromOtherOrg_Returns404()
     {
-        // Create SAML provider in org A, try to delete using org B's token
         var (orgA, _, _) = await OrgAdminClientAsync();
         var projectA = await fixture.Seed.CreateProjectAsync(orgA.Id);
 
-        // Create provider in org A
         var (orgB, orgBAdmin, clientB) = await OrgAdminClientAsync();
         var projectB = await fixture.Seed.CreateProjectAsync(orgB.Id);
 
-        // Seed a SAML provider directly for projectA
         var provider = new SamlIdpConfig
         {
             Id        = Guid.NewGuid(),
@@ -467,8 +458,9 @@ public class OrgBranchCoverageTests(TestFixture fixture)
         fixture.Db.SamlIdpConfigs.Add(provider);
         await fixture.Db.SaveChangesAsync();
 
-        // Try to delete projectA's provider using orgB's client and projectB as the route param
-        // The provider exists but provider.Project.OrgId (orgA) != OrgId (orgB) → 404
+        // Org B's admin naming org A's project and provider directly. The row exists, so the 404
+        // has to come from provider.Project.OrgId (orgA) != the caller's OrgId (orgB) — not from
+        // a missing row.
         var res = await clientB.DeleteAsync($"/org/projects/{projectA.Id}/saml-providers/{provider.Id}");
 
         res.StatusCode.Should().Be(HttpStatusCode.NotFound);
@@ -533,7 +525,6 @@ public class OrgBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task UpdateUser_ActiveTrue_SetsDisabledAtNull()
     {
-        // Covers line 540: body.Active.Value ? null : DateTimeOffset.UtcNow (TRUE path → null)
         var (org, _, client) = await OrgAdminClientAsync();
         var list = await fixture.Seed.CreateUserListAsync(org.Id);
         var user = await fixture.Seed.CreateUserAsync(list.Id);
@@ -543,7 +534,7 @@ public class OrgBranchCoverageTests(TestFixture fixture)
 
         var res = await client.PatchAsJsonAsync($"/org/userlists/{list.Id}/users/{user.Id}", new
         {
-            active = true   // TRUE → DisabledAt = null (line 540)
+            active = true
         });
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -557,14 +548,13 @@ public class OrgBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task UpdateUser_EmailVerifiedTrue_SetsEmailVerifiedAt()
     {
-        // Covers line 547: body.EmailVerified.Value ? DateTimeOffset.UtcNow : null (TRUE path)
         var (org, _, client) = await OrgAdminClientAsync();
         var list = await fixture.Seed.CreateUserListAsync(org.Id);
         var user = await fixture.Seed.CreateUserAsync(list.Id);
 
         var res = await client.PatchAsJsonAsync($"/org/userlists/{list.Id}/users/{user.Id}", new
         {
-            email_verified = true   // TRUE → EmailVerifiedAt = DateTimeOffset.UtcNow (line 547)
+            email_verified = true
         });
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -578,7 +568,6 @@ public class OrgBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task GetProject_WithLoginTheme_StripSecretsReturnsNonNull()
     {
-        // Covers line 141: StripSecretsFromTheme(LoginTheme) returns non-null (theme != null)
         var (org, _, client) = await OrgAdminClientAsync();
         var project = await fixture.Seed.CreateProjectAsync(org.Id);
         project.LoginTheme = new Dictionary<string, object> { ["color"] = "blue" };
@@ -594,7 +583,6 @@ public class OrgBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task CreateSamlProvider_MissingBothUrls_ReturnsBadRequest()
     {
-        // Covers line 796: both MetadataUrl and SsoUrl are empty
         var (org, _, client) = await OrgAdminClientAsync();
         var project = await fixture.Seed.CreateProjectAsync(org.Id);
 
@@ -614,7 +602,6 @@ public class OrgBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task UpdateSamlProvider_WithMetadataUrl_Returns200()
     {
-        // Covers line 827: body.MetadataUrl != null → provider.MetadataUrl = body.MetadataUrl
         var (org, _, client) = await OrgAdminClientAsync();
         var project  = await fixture.Seed.CreateProjectAsync(org.Id);
         var provider = new RediensIAM.Data.Entities.SamlIdpConfig
@@ -644,7 +631,6 @@ public class OrgBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task UpdateSamlProvider_WithDefaultRoleId_Returns200()
     {
-        // Covers line 833: body.DefaultRoleId.HasValue → provider.DefaultRoleId = body.DefaultRoleId
         var (org, _, client) = await OrgAdminClientAsync();
         var project  = await fixture.Seed.CreateProjectAsync(org.Id);
         var list     = await fixture.Seed.CreateUserListAsync(org.Id);
@@ -678,7 +664,6 @@ public class OrgBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task UpdateUserInList_UserNotFound_Returns404()
     {
-        // Covers line 482: user == null → NotFound
         var (org, _, client) = await OrgAdminClientAsync();
         var list = await fixture.Seed.CreateUserListAsync(org.Id);
 
@@ -693,8 +678,6 @@ public class OrgBranchCoverageTests(TestFixture fixture)
     [Fact]
     public async Task TestSmtp_ActorNotFound_ReturnsBadRequest()
     {
-        // Covers line 750: actor == null → BadRequest "user_not_found"
-        // Use a token with non-existent user ID
         var fakeUserId = Guid.NewGuid();
         var (org, _)   = await fixture.Seed.CreateOrgAsync();
         var token      = $"smtp-fake-{fakeUserId:N}";
@@ -729,11 +712,15 @@ public class OrgBranchCoverageTests(TestFixture fixture)
 
     // ── PATCH /org/admins/{id} — same ScopeId (line 644 AND condition FALSE) ──
 
+    /// <summary>
+    /// Re-sending the scope a role already carries must not be treated as a scope change: the
+    /// project-existence check is skipped, so the update succeeds without a second lookup. Guards
+    /// against a regression that would make an unchanged PATCH fail whenever the scoped project
+    /// has since been renamed or is momentarily unreadable.
+    /// </summary>
     [Fact]
     public async Task UpdateOrgListManager_SameScopeId_Returns200()
     {
-        // Covers line 644 uncovered condition: body.ScopeId != null && body.ScopeId == role.ScopeId
-        // → whole AND is FALSE → no project-existence check → update succeeds
         var (org, orgList) = await fixture.Seed.CreateOrgAsync();
         var admin          = await fixture.Seed.CreateUserAsync(orgList.Id);
         var target         = await fixture.Seed.CreateUserAsync(orgList.Id);
@@ -742,7 +729,6 @@ public class OrgBranchCoverageTests(TestFixture fixture)
         fixture.Keto.AllowAll();
         var client = fixture.ClientWithToken(token);
 
-        // Seed an org role with a ScopeId (project-scoped)
         var role = new OrgRole
         {
             Id        = Guid.NewGuid(),
@@ -756,10 +742,9 @@ public class OrgBranchCoverageTests(TestFixture fixture)
         fixture.Db.OrgRoles.Add(role);
         await fixture.Db.SaveChangesAsync();
 
-        // PATCH with the same ScopeId → condition is FALSE → no project check → 200
         var res = await client.PatchAsJsonAsync($"/org/admins/{role.Id}", new
         {
-            scope_id = project.Id   // same as role.ScopeId → body.ScopeId != role.ScopeId is FALSE
+            scope_id = role.ScopeId
         });
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);

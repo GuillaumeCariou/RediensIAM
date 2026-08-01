@@ -13,7 +13,7 @@ interface AuthState {
   logout: () => void;
 }
 
-// Must match src/Config/Roles.cs exactly — these strings come from the token's ext.roles.
+/** Must match src/Config/Roles.cs exactly — these strings come from the token's ext.roles. */
 export const ROLE_SUPER_ADMIN   = 'super_admin';
 export const ROLE_ORG_ADMIN     = 'org_admin';
 export const ROLE_PROJECT_ADMIN = 'project_admin';
@@ -74,7 +74,6 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
           return; // redirect in progress
         }
       } else {
-        // Attempt to restore token from stored OIDC session (survives page reload)
         await restoreSession();
         if (!isAuthenticated()) {
           await startLogin();
@@ -92,9 +91,12 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
     init();
   }, []);
 
-  // Don't chain startLogin after logout: signoutRedirect navigates to Hydra's logout
-  // endpoint which then redirects back via post_logout_redirect_uri. Calling startLogin
-  // races the navigation and can leave the Hydra session cookie alive (silent re-login).
+  /**
+   * Logs out and nothing else. Do not chain startLogin here: signoutRedirect navigates to
+   * Hydra's logout endpoint, which then redirects back via post_logout_redirect_uri. Calling
+   * startLogin races that navigation and can leave the Hydra session cookie alive, which is a
+   * silent re-login.
+   */
   const handleLogout = () => {
     logout();
   };
@@ -103,9 +105,11 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
     ready, authenticated, roles,
     isSuperAdmin: roles.includes(ROLE_SUPER_ADMIN),
     isOrgAdmin: roles.includes(ROLE_ORG_ADMIN) || roles.includes(ROLE_SUPER_ADMIN),
-    // The backend emits `project_admin` (src/Config/Roles.cs). This used to test for
-    // `project_manager`, a name the API never emits, so a user whose only role was
-    // project_admin fell through to the "No access" screen and could never reach the console.
+    /**
+     * The backend emits `project_admin` (src/Config/Roles.cs). This used to test for
+     * `project_manager`, a name the API never emits, so a user whose only role was
+     * project_admin fell through to the "No access" screen and could never reach the console.
+     */
     isProjectManager: roles.some(r => r === ROLE_PROJECT_ADMIN || r.startsWith(`${ROLE_PROJECT_ADMIN}:`))
       || roles.includes(ROLE_ORG_ADMIN) || roles.includes(ROLE_SUPER_ADMIN),
     orgId,

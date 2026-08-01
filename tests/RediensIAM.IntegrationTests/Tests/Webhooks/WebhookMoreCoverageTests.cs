@@ -48,7 +48,6 @@ public class WebhookMoreCoverageTests(TestFixture fixture)
     {
         var (client, webhookId, _) = await CreateOrgWebhookAsync();
 
-        // Seed a delivery so the LINQ Select body (lines 83-86) is exercised
         fixture.Db.WebhookDeliveries.Add(new WebhookDelivery
         {
             Id           = Guid.NewGuid(),
