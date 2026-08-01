@@ -84,4 +84,31 @@ public class ProjectInfoTests(TestFixture fixture)
 
         ((int)res.StatusCode).Should().BeLessThan(500);
     }
+
+    /// <summary>
+    /// The console's Authentication screen reads these nine fields, edits one, and PATCHes all of
+    /// them back. While GET omitted them the page rendered hardcoded defaults that were
+    /// indistinguishable from a real configuration, so pressing Save overwrote the tenant's login
+    /// theme, identity providers, self-registration setting, verification flags, allowed e-mail
+    /// domains, IP allowlist and OAuth2 scopes with those defaults. A read that omits what the
+    /// matching write accepts is a data-loss bug, not a missing convenience.
+    /// </summary>
+    [Fact]
+    public async Task GetProjectInfo_ReturnsEveryFieldTheEditorWritesBack()
+    {
+        var (_, project, _, client) = await ProjectManagerClientAsync();
+
+        var res  = await client.GetAsync($"/project/info?project_id={project.Id}");
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+
+        foreach (var field in new[]
+                 {
+                     "login_theme", "allow_self_registration", "check_breached_passwords",
+                     "email_verification_enabled", "sms_verification_enabled",
+                     "allowed_email_domains", "email_from_name", "ip_allowlist", "allowed_scopes",
+                 })
+        {
+            body.TryGetProperty(field, out _).Should().BeTrue($"the editor round-trips {field}");
+        }
+    }
 }

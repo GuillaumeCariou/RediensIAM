@@ -102,16 +102,91 @@ public class SecurityHeadersTests(TestFixture fixture)
         policy.Should().Contain("connect-src 'self';");
     }
 
-    // ── I-03: the /preview framing exemption was dead in two ways ─────────────
-    // No /preview route exists anywhere in src/, and the same response still carried
-    // frame-ancestors 'none', which browsers honour over X-Frame-Options. The exemption is gone;
-    // every response is DENY.
+    // ── The /preview framing exemption, reinstated correctly ─────────────────
+    //
+    // It was removed once, and the removal was right at the time: it named a route that did not
+    // exist, and it left `frame-ancestors 'none'` on the same response, which browsers honour over
+    // X-Frame-Options — so it exempted nothing. It is back because the console genuinely frames
+    // that page: the project Authentication screen renders the login SPA's /preview route in an
+    // iframe so an operator can see a project's branding before saving it. Both halves move
+    // together now, and the page itself is inert — it takes its configuration from the query
+    // string, posts nothing, and accepts no credentials.
 
     [Fact]
-    public async Task PreviewRoute_IsFramingDeniedLikeEverythingElse()
+    public async Task PreviewRoute_IsFramableByTheAdminConsole()
     {
         var res = await fixture.Client.GetAsync("/preview");
 
+        // X-Frame-Options has no per-origin form, so the only way to allow one origin is to omit it
+        // and let CSP carry the rule. Sending DENY alongside would re-block the iframe.
+        res.Headers.Contains("X-Frame-Options").Should().BeFalse();
+
+        var policy = res.Headers.GetValues("Content-Security-Policy").Single();
+        // 'self' alone: the console frames "/preview?cfg=…" relatively, so the frame is same-origin
+        // by construction. A second origin here would widen the policy for a case that cannot occur.
+        policy.Should().Contain("frame-ancestors 'self';");
+        policy.Should().NotContain("frame-ancestors 'none'");
+    }
+
+    /// <summary>
+    /// The exemption is matched with <c>StartsWithSegments</c>, which stops at a path-segment
+    /// boundary. A prefix match would have handed the same exemption to any route whose name
+    /// merely begins with the word.
+    /// </summary>
+    [Theory]
+    [InlineData("/previewer")]
+    [InlineData("/preview-anything")]
+    [InlineData("/login")]
+    [InlineData("/health")]
+    // The SPA fallback serves index.html for these, and the login SPA's catch-all route renders
+    // the real login form — password field and all. Framing that is the clickjacking case the
+    // exemption must not reach, so the match has to be the exact path, not a prefix, and not
+    // case-insensitive.
+    [InlineData("/preview/x")]
+    [InlineData("/preview/anything/deeper")]
+    [InlineData("/PREVIEW")]
+    public async Task EveryOtherRoute_IsStillDeniedFraming(string path)
+    {
+        var res = await fixture.Client.GetAsync(path);
+
         res.Headers.GetValues("X-Frame-Options").Should().ContainSingle().Which.Should().Be("DENY");
+        res.Headers.GetValues("Content-Security-Policy").Single()
+           .Should().Contain("frame-ancestors 'none'");
+    }
+
+    /// <summary>
+    /// The console reads its own version from here rather than carrying a constant: a SPA built
+    /// against one release and served by another would otherwise report the build it came from.
+    /// The sidebar showed a hardcoded "v0.1" for exactly that reason.
+    /// </summary>
+    [Fact]
+    public async Task AdminConfig_ReportsTheRunningServerVersion()
+    {
+        var res = await fixture.Client.GetAsync("/admin/config");
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        var version = body.GetProperty("version").GetString();
+        version.Should().NotBeNullOrWhiteSpace();
+        version.Should().MatchRegex(@"^\d+\.\d+\.\d+");
+    }
+
+    /// <summary>
+    /// `RequireHost("*:{AdminPort}")` matches the Host *header*, not the port the connection
+    /// arrived on, and host filtering strips the port before comparing — so an internet caller on
+    /// the public port could scrape the full Prometheus surface by sending the admin port in the
+    /// Host header. Swagger gets this right two lines away by reading Connection.LocalPort.
+    /// </summary>
+    [Fact]
+    public async Task Metrics_IsNotReachableOnThePublicPortByForgingTheHostHeader()
+    {
+        var adminPort = fixture.GetService<RediensIAM.Config.AppConfig>().AdminPort;
+        var req = new HttpRequestMessage(HttpMethod.Get, "/metrics");
+        req.Headers.Host = $"localhost:{adminPort}";
+
+        var res = await fixture.Client.SendAsync(req);
+
+        res.StatusCode.Should().NotBe(HttpStatusCode.OK,
+            "the metrics endpoint is bound to the admin port, and a header is not a port");
     }
 }

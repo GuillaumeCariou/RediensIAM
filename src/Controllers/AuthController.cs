@@ -649,6 +649,39 @@ public class AuthController(
     // needs a bearer token the user does not have yet — mid-login is exactly when they have no
     // token. These endpoints authenticate off the pending-MFA session instead.
 
+    /// <summary>
+    /// True when the pending-MFA session is an <i>enrolment</i> session rather than a challenge.
+    ///
+    /// <para>
+    /// Both states set <c>mfa_pending_user</c>, and for a long time that was all these endpoints
+    /// checked — so a caller who had proved only the password could enrol a fresh authenticator
+    /// over the account's existing one, which also wiped and reissued the backup codes, and then
+    /// complete the login. The second factor was bypassable with the first. <c>mfa_setup_required</c>
+    /// was already written on the enrolment path and only there; it was simply never read.
+    /// </para>
+    ///
+    /// <para>
+    /// The factor re-check on top of the flag is deliberate belt-and-braces: the answer must not
+    /// depend on session bookkeeping being right in every branch. Re-enrolling over a factor you
+    /// already hold is a legitimate operation — it lives at <c>/account/mfa/totp/*</c>, which
+    /// demands re-authentication first.
+    /// </para>
+    /// </summary>
+    private async Task<bool> IsEnrolmentSessionAsync(Guid userId)
+    {
+        if (HttpContext.Session.GetString(MfaSetupRequired) != "true") return false;
+        return !await HasAnyFactorAsync(userId);
+    }
+
+    private async Task<bool> HasAnyFactorAsync(Guid userId)
+    {
+        var user = await db.Users.FindAsync(userId);
+        if (user == null) return false;
+        return user.TotpEnabled
+            || user.PhoneVerified
+            || await db.WebAuthnCredentials.AnyAsync(w => w.UserId == userId);
+    }
+
     [HttpPost("mfa/setup/totp/start")]
     public async Task<IActionResult> SetupTotpDuringLogin()
     {
@@ -657,6 +690,9 @@ public class AuthController(
             return BadRequest(new { error = ErrNoMfaSession });
 
         await PinScopeToMfaSessionAsync();
+
+        if (!await IsEnrolmentSessionAsync(userGuid))
+            return BadRequest(new { error = ErrNoMfaSession });
 
         var user = await db.Users.FindAsync(userGuid);
         if (user == null) return NotFound();
@@ -694,6 +730,11 @@ public class AuthController(
             return StatusCode(429, new { error = ErrRateLimited });
 
         await PinScopeToMfaSessionAsync();
+
+        // Checked here too, not only on start: the pending secret outlives a single request, so a
+        // caller who obtained one before enrolling a factor must not be able to confirm it after.
+        if (!await IsEnrolmentSessionAsync(userGuid))
+            return BadRequest(new { error = ErrNoMfaSession });
 
         var encrypted = await otp.PeekPendingAsync(MfaSetupTotpPrefix, userId);
         if (encrypted == null) return BadRequest(new { error = "no_setup_session" });
@@ -1778,6 +1819,9 @@ public class AuthController(
         HttpContext.Session.Remove(MfaPendingChallenge);
         HttpContext.Session.Remove(MfaPendingProject);
         HttpContext.Session.Remove(MfaPendingOrg);
+        // The login is finished, so the enrolment window closes with it — leaving this set would
+        // keep the setup endpoints reachable for the life of the session cookie.
+        HttpContext.Session.Remove(MfaSetupRequired);
         // Rotate session ID to prevent fixation: clear + delete the cookie so the next response
         // issues a fresh session identifier rather than reusing the pre-MFA one.
         HttpContext.Session.Clear();

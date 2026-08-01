@@ -47,7 +47,12 @@ if helm status "${RELEASE}" -n "${NS}" >/dev/null 2>&1; then
   ISSUER=$(helm get values "${RELEASE}" -n "${NS}" -a -o json 2>/dev/null \
              | grep -oE '"issuer":[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4)
   case "${ISSUER}" in
-    *localhost*|*127.0.0.1*|"") : ;;
+    "")
+      echo "REFUSING: could not read the issuer of release '${RELEASE}' in namespace '${NS}'."
+      echo "          An unreadable value is not permission — the release may not exist, or the"
+      echo "          lookup may have failed for a reason that has nothing to do with dev."
+      exit 1 ;;
+    *localhost*|*127.0.0.1*) : ;;
     *)
       echo "REFUSING: release '${RELEASE}' in namespace '${NS}' has issuer ${ISSUER}."
       echo "          That is not a dev install. This script only clears localhost releases."

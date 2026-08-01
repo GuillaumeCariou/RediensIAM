@@ -82,6 +82,21 @@ public class ProjectController(
             project.PasswordRequireLowercase,
             project.PasswordRequireDigit,
             project.PasswordRequireSpecial,
+            // Everything below is accepted by the PATCH on this same route, and the console's
+            // Authentication screen round-trips all of it: it reads the project, edits one field
+            // and writes the whole set back. While the read omitted these the page fell back to
+            // hardcoded defaults that looked exactly like a real configuration, so pressing Save
+            // replaced the tenant's branding, providers and security settings with them. A read
+            // that returns less than its own write accepts is a data-loss bug.
+            project.LoginTheme,
+            project.AllowSelfRegistration,
+            project.CheckBreachedPasswords,
+            project.EmailVerificationEnabled,
+            project.SmsVerificationEnabled,
+            project.AllowedEmailDomains,
+            project.EmailFromName,
+            project.IpAllowlist,
+            project.AllowedScopes,
         });
     }
 
@@ -195,7 +210,14 @@ public class ProjectController(
     public async Task<IActionResult> ListUsers()
     {
         var project = await GetProjectAsync();
-        if (project?.AssignedUserListId == null) return NotFound();
+        if (project == null) return NotFound();
+
+        // Third instance of the same shape as the two stats handlers: no user list assigned means
+        // no users, which is a fact about a project that exists. The console fetches this beside
+        // the role list in one Promise.all, so a 404 here took the roles down with it and left the
+        // whole members panel empty on every freshly created project.
+        if (project.AssignedUserListId == null) return Ok(Array.Empty<object>());
+
         var users = await db.Users
             .Where(u => u.UserListId == project.AssignedUserListId)
             .Select(u => new
@@ -329,7 +351,11 @@ public class ProjectController(
     public async Task<IActionResult> GetStats()
     {
         var project = await GetProjectAsync();
-        if (project?.AssignedUserListId == null) return NotFound();
+        if (project == null) return NotFound();
+
+        // Same as the admin route: no user list means no users, not a missing project.
+        if (project.AssignedUserListId == null)
+            return Ok(new { total_users = 0, active_users = 0, users_by_role = Array.Empty<object>() });
 
         var totalUsers  = await db.Users.CountAsync(u => u.UserListId == project.AssignedUserListId);
         var activeUsers = await db.Users.CountAsync(u => u.UserListId == project.AssignedUserListId && u.Active);

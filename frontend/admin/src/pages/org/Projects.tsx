@@ -16,13 +16,7 @@ interface UserList { id: string; name: string; }
 
 function Toggle({ checked, onChange }: Readonly<{ checked: boolean; onChange: (v: boolean) => void }>) {
   return (
-    <button onClick={() => onChange(!checked)} style={{
-      width: 36, height: 20, borderRadius: 10,
-      background: checked ? 'var(--ia-accent)' : 'var(--border-strong)',
-      position: 'relative', border: 'none', cursor: 'pointer', flexShrink: 0, transition: 'background 150ms',
-    }}>
-      <span style={{ position: 'absolute', top: 2, left: checked ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 150ms' }} />
-    </button>
+    <input type="checkbox" className="iam-switch" checked={checked} onChange={e => onChange(e.target.checked)} />
   );
 }
 
@@ -61,7 +55,9 @@ export default function Projects() {
   const [createOpen, setCreateOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState<Project | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
-  const [selectedList, setSelectedList] = useState('');
+  // '__none__' is the option that means "no user list"; '' matches no option at all, so it would
+  // paint the first entry as chosen while state said otherwise.
+  const [selectedList, setSelectedList] = useState('__none__');
   const [form, setForm] = useState({ name: '', slug: '', redirect_uris: '', require_role_to_login: false });
   const [saving, setSaving] = useState(false);
   const [createError, setCreateError] = useState('');
@@ -158,7 +154,7 @@ export default function Projects() {
                     <td onClick={e => e.stopPropagation()}>
                       <ProjectMenu
                         onOpen={() => navigate(projectUrl(p.id))}
-                        onAssign={() => { setAssignOpen(p); setSelectedList(p.assigned_user_list_id ?? ''); }}
+                        onAssign={() => { setAssignOpen(p); setSelectedList(p.assigned_user_list_id ?? '__none__'); }}
                         onUnassign={() => { setAssignOpen(p); setSelectedList('__none__'); }}
                         hasUserList={!!p.assigned_user_list_id}
                         onDelete={() => setDeleteTarget(p)}

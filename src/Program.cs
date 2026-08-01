@@ -1,3 +1,4 @@
+using System.Reflection;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Mvc.Controllers;
@@ -123,8 +124,6 @@ builder.Services.AddHttpClient(SocialLoginService.NoRedirectClient)
     .ConfigurePrimaryHttpMessageHandler(() => WebhookUrlValidator.CreateSsrfSafeHandler());
 builder.Services.AddScoped<PatService>();
 builder.Services.AddSingleton<SocialLoginService>();
-
-// ── Controller service bundles (reduce constructor param counts, S107) ────────
 
 // ── WebAuthn / Passkeys ────────────────────────────────────────────────────
 builder.Services.AddFido2(opts =>
@@ -410,15 +409,32 @@ app.UseWhen(
     branch => branch.UseMiddleware<GatewayAuthMiddleware>());
 
 // Public — no auth required; must be a minimal endpoint to bypass [RequireManagementLevel] on SystemAdminController
+// `version` is the running assembly's own number, not a constant the SPA carries: a console built
+// against one release and served by another would otherwise show the build it came from.
 app.MapGet("/admin/config", (AppConfig cfg) => Results.Json(
-    new { hydra_url = cfg.PublicUrl, client_id = Roles.AdminClientId, redirect_uri = $"{cfg.AdminSpaOrigin}/admin/callback" },
+    new
+    {
+        hydra_url    = cfg.PublicUrl,
+        client_id    = Roles.AdminClientId,
+        redirect_uri = $"{cfg.AdminSpaOrigin}/admin/callback",
+        version      = typeof(Program).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion.Split('+')[0]
+            ?? typeof(Program).Assembly.GetName().Version?.ToString(3),
+    },
     new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower }));
 
 app.MapControllers();
 
 // ── Prometheus scrape endpoint — admin port only ───────────────────────────
+// RequireHost matches the Host *header*, and host filtering strips the port before comparing —
+// so a caller on the public port could scrape this by sending the admin port in a header. Bind to
+// the port the connection actually arrived on, the way the Swagger branch above does.
 app.MapMetrics("/metrics")
-   .RequireHost($"*:{appConfig.AdminPort}");
+   .AddEndpointFilter(async (ctx, next) =>
+       ctx.HttpContext.Connection.LocalPort == appConfig.AdminPort
+           ? await next(ctx)
+           : Results.NotFound());
 
 app.MapFallback("/admin/{**path}", async (string path, HttpContext ctx) =>
 {
@@ -481,7 +497,21 @@ static void AddSecurityHeaders(HttpContext ctx, string issuerOrigin)
     ctx.Response.Headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()";
     if (ctx.Request.IsHttps)
         ctx.Response.Headers.StrictTransportSecurity = "max-age=31536000; includeSubDomains";
-    ctx.Response.Headers.XFrameOptions = "DENY";
+    // The login SPA's /preview route is the one document meant to be framed: the console renders it
+    // in an iframe so an operator can see a project's branding before saving it. It is inert — no
+    // form posts, no credentials, config comes from the query string — so allowing the console's
+    // own origin to frame it costs nothing, and X-Frame-Options has no per-origin form, so the
+    // header has to be omitted there rather than widened.
+    // Exactly this path, and nothing under it. StartsWithSegments matches /preview/<anything> too,
+    // and the SPA fallback answers those with index.html — whose catch-all route renders the real
+    // login form. Unframing that is the clickjacking case this exemption must never reach.
+    //
+    // 'self' with no second origin: the console's iframe src is the relative "/preview?cfg=…", so
+    // the frame is same-origin by construction. Naming the admin origin as well would only widen
+    // the policy for a case that does not exist.
+    var framedByConsole = ctx.Request.Path.Equals("/preview", StringComparison.Ordinal);
+    if (!framedByConsole)
+        ctx.Response.Headers.XFrameOptions = "DENY";
     // default-src is the fallback for every directive that is not named. Omitting it left
     // connect-src, img-src, font-src and friends wide open on the admin policy.
     // base-uri and form-action are not covered by default-src and must be set explicitly.
@@ -500,7 +530,8 @@ static void AddSecurityHeaders(HttpContext ctx, string issuerOrigin)
         // remote HTTPS URLs the operator does not control. Images execute nothing.
         : "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
           "font-src 'self'; img-src 'self' data: https:; connect-src 'self'; " +
-          "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';";
+          $"object-src 'none'; frame-ancestors {(framedByConsole ? "'self'" : "'none'")}; " +
+          "base-uri 'self'; form-action 'self';";
 }
 
 // Configure forwarded-headers: honour X-Forwarded-* only from operator-trusted proxies.

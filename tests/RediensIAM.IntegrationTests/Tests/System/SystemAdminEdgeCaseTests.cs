@@ -1082,14 +1082,16 @@ public class SystemAdminExtendedTests(TestFixture fixture)
     }
 
     [Fact]
-    public async Task GetProjectStats_ProjectWithoutUserList_Returns404()
+    public async Task GetProjectStats_ProjectWithoutUserList_ReturnsZeroes()
     {
         var (org, _, client) = await SuperAdminAsync();
         var project = await fixture.Seed.CreateProjectAsync(org.Id);
 
         var res = await client.GetAsync($"/admin/projects/{project.Id}/stats");
 
-        res.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await res.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("total_users").GetInt32().Should().Be(0);
     }
 
     // ── DELETE /admin/projects/{id}/roles/{rid} ───────────────────────────────

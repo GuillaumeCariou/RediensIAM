@@ -29,12 +29,12 @@ export default function EditUserDialog({ open, targetLabel, form, loading, savin
       title={<>Edit {targetLabel}</>}
       desc="Update this account's information. Leave password blank to keep it unchanged."
       footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={onClose}>Cancel</button>
-                <button className="iam-btn iam-btn-primary" type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button></>}
+                <button className="iam-btn iam-btn-primary" type="submit" form="edituserdialog-form" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button></>}
     >
 {loading
           ? <div className="space-y-3 py-2">{Array.from({ length: 5 }, (_, i) => `sk-${i}`).map(id => <div className="iam-skeleton h-8 w-full" key={id} />)}</div>
           : (
-            <form onSubmit={onSubmit} className="space-y-4">
+            <form id="edituserdialog-form" onSubmit={onSubmit} className="space-y-4">
               {error && <p className="text-sm text-destructive">{error}</p>}
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">

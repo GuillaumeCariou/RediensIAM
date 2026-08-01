@@ -230,7 +230,7 @@ export default function OrgDetail() {
                 </button>
               )}
               {isSuperAdmin && (
-                <button className="iam-btn iam-btn-secondary iam-btn-sm text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => setDeleteOrgOpen(true)}>
+                <button className="iam-btn iam-btn-secondary iam-btn-sm text-destructive border-[var(--danger)] hover:bg-[var(--danger-soft)]" onClick={() => setDeleteOrgOpen(true)}>
                   <Trash2 className="h-4 w-4" />Delete
                 </button>
               )}
@@ -376,7 +376,7 @@ export default function OrgDetail() {
                 );
                 return (
                   userLists.map(ul => (
-                      <tr className="cursor-pointer hover:bg-muted/50" key={ul.id} onClick={() => navigate(`/system/organisations/${id}/userlists/${ul.id}`)}>
+                      <tr className="cursor-pointer hover:bg-[var(--surface-2)]" key={ul.id} onClick={() => navigate(`/system/organisations/${id}/userlists/${ul.id}`)}>
                         <td className="font-medium">{ul.name}</td>
                         <td className="text-sm text-muted-foreground">—</td>
                       </tr>
@@ -414,7 +414,7 @@ export default function OrgDetail() {
                 );
                 return (
                   projects.map(p => (
-                      <tr className="cursor-pointer hover:bg-muted/50" key={p.id} onClick={() => navigate(`/system/organisations/${id}/projects/${p.id}`)}>
+                      <tr className="cursor-pointer hover:bg-[var(--surface-2)]" key={p.id} onClick={() => navigate(`/system/organisations/${id}/projects/${p.id}`)}>
                         <td className="font-medium">{p.name}</td>
                         <td className="text-sm text-muted-foreground">
                           {p.assigned_user_list_id
@@ -439,9 +439,9 @@ export default function OrgDetail() {
       <IamDialog open={renameOpen} onClose={() => setRenameOpen(false)}
       title="Rename Organisation"
       footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={() => setRenameOpen(false)}>Cancel</button>
-              <button className="iam-btn iam-btn-primary" type="submit">Save</button></>}
+              <button className="iam-btn iam-btn-primary" type="submit" form="orgdetail-form-5">Save</button></>}
     >
-<form onSubmit={handleRename} className="space-y-4">
+<form id="orgdetail-form-5" onSubmit={handleRename} className="space-y-4">
             <div className="space-y-2">
               <label className="iam-label" htmlFor="rename">Name</label>
               <input className="iam-input" id="rename" value={renameVal} onChange={e => setRenameVal(e.target.value)} required />
@@ -454,9 +454,9 @@ export default function OrgDetail() {
       title="Add User to Org List"
       desc="Creates a new user in the organisation's admin user list."
       footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={() => setAddUserOpen(false)}>Cancel</button>
-              <button className="iam-btn iam-btn-primary" type="submit" disabled={addUserSaving}>{addUserSaving ? 'Adding…' : 'Add User'}</button></>}
+              <button className="iam-btn iam-btn-primary" type="submit" form="orgdetail-form-4" disabled={addUserSaving}>{addUserSaving ? 'Adding…' : 'Add User'}</button></>}
     >
-<form onSubmit={handleAddUser} className="space-y-4">
+<form id="orgdetail-form-4" onSubmit={handleAddUser} className="space-y-4">
             {addUserError && <p className="text-sm text-destructive">{addUserError}</p>}
             <div className="space-y-2"><label className="iam-label">Email</label><input className="iam-input" value={addUserForm.email} onChange={e => setAddUserForm(f => ({ ...f, email: e.target.value }))} required type="email" /></div>
             <div className="space-y-2"><label className="iam-label">Username</label><input className="iam-input" value={addUserForm.username} onChange={e => setAddUserForm(f => ({ ...f, username: e.target.value }))} required /></div>
@@ -469,9 +469,9 @@ export default function OrgDetail() {
       title="Assign Role"
       desc={<>Assign an admin role to {assignRoleTarget?.username}#{assignRoleTarget?.discriminator}.</>}
       footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={() => setAssignRoleTarget(null)}>Cancel</button>
-              <button className="iam-btn iam-btn-primary" type="submit" disabled={assignRoleSaving}>{assignRoleSaving ? 'Assigning…' : 'Assign'}</button></>}
+              <button className="iam-btn iam-btn-primary" type="submit" form="orgdetail-form-3" disabled={assignRoleSaving}>{assignRoleSaving ? 'Assigning…' : 'Assign'}</button></>}
     >
-<form onSubmit={handleAssignRole} className="space-y-4">
+<form id="orgdetail-form-3" onSubmit={handleAssignRole} className="space-y-4">
             <div className="space-y-2">
               <label className="iam-label">Role</label>
               <select className="iam-select" value={assignRoleForm.role} onChange={e => (v => setAssignRoleForm(f => ({ ...f, role: v, scope_id: '' })))(e.target.value)}>
@@ -483,6 +483,7 @@ export default function OrgDetail() {
               <div className="space-y-2">
                 <label className="iam-label">Project (scope)</label>
                 <select className="iam-select" value={assignRoleForm.scope_id} onChange={e => (v => setAssignRoleForm(f => ({ ...f, scope_id: v })))(e.target.value)}>
+                  <option value="" disabled>Select a project…</option>
 {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
 </select>
               </div>
@@ -494,7 +495,7 @@ export default function OrgDetail() {
       <IamDialog open={!!removeUserTarget} onClose={() => (v => !v && setRemoveUserTarget(null))(false)}
       title={<>Remove {removeUserTarget?.username}#{removeUserTarget?.discriminator}?</>}
       desc="This removes the user from the org list and permanently deletes their account."
-      footer={<><button className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleRemoveUser}>Remove</button></>}
+      footer={<><button type="button" onClick={() => (v => !v && setRemoveUserTarget(null))(false)} className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleRemoveUser}>Remove</button></>}
     >
 
     </IamDialog>
@@ -503,9 +504,9 @@ export default function OrgDetail() {
       title="New User List"
       desc="Creates a movable user list in this organisation."
       footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={() => setCreateListOpen(false)}>Cancel</button>
-              <button className="iam-btn iam-btn-primary" type="submit" disabled={createListSaving}>{createListSaving ? 'Creating…' : 'Create'}</button></>}
+              <button className="iam-btn iam-btn-primary" type="submit" form="orgdetail-form-2" disabled={createListSaving}>{createListSaving ? 'Creating…' : 'Create'}</button></>}
     >
-<form onSubmit={handleCreateList} className="space-y-4">
+<form id="orgdetail-form-2" onSubmit={handleCreateList} className="space-y-4">
             <div className="space-y-2">
               <label className="iam-label">Name</label>
               <input className="iam-input" value={newListName} onChange={e => setNewListName(e.target.value)} required placeholder="Acme Employees" />
@@ -518,9 +519,9 @@ export default function OrgDetail() {
       title="New Project"
       desc="Create a new project in this organisation."
       footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={() => setCreateProjectOpen(false)}>Cancel</button>
-              <button className="iam-btn iam-btn-primary" type="submit" disabled={createProjectSaving}>{createProjectSaving ? 'Creating…' : 'Create'}</button></>}
+              <button className="iam-btn iam-btn-primary" type="submit" form="orgdetail-form" disabled={createProjectSaving}>{createProjectSaving ? 'Creating…' : 'Create'}</button></>}
     >
-<form onSubmit={handleCreateProject} className="space-y-4">
+<form id="orgdetail-form" onSubmit={handleCreateProject} className="space-y-4">
             {createProjectError && <p className="text-sm text-destructive">{createProjectError}</p>}
             <div className="space-y-2">
               <label className="iam-label">Name</label>
@@ -542,7 +543,7 @@ export default function OrgDetail() {
       <IamDialog open={deleteOrgOpen} onClose={() => setDeleteOrgOpen(false)}
       title={<>Delete organisation "{org?.name}"?</>}
       desc="All user lists, projects, and service accounts belonging to this organisation will be permanently deleted. This cannot be undone."
-      footer={<><button className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleDeleteOrg}>Delete</button></>}
+      footer={<><button type="button" onClick={() => setDeleteOrgOpen(false)} className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleDeleteOrg}>Delete</button></>}
     >
 
     </IamDialog>

@@ -173,7 +173,7 @@ export default function OrgAdminsPage() {
                         <button className="iam-btn iam-btn-ghost iam-btn-icon" onClick={() => openEdit(r.user_id, r.user_name)}>
                           <Pencil className="h-4 w-4" />
                         </button>
-                        <button className="iam-btn iam-btn-ghost iam-btn-icon text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setRemoveTarget({ id: r.id, label: `${r.user_name} — ${r.role}` })}>
+                        <button className="iam-btn iam-btn-ghost iam-btn-icon text-destructive hover:text-destructive hover:bg-[var(--danger-soft)]" onClick={() => setRemoveTarget({ id: r.id, label: `${r.user_name} — ${r.role}` })}>
                           <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
@@ -190,9 +190,9 @@ export default function OrgAdminsPage() {
       title="Assign Admin Role"
       desc="Grant a user administrative access to this organisation."
       footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={() => setAssignOpen(false)}>Cancel</button>
-              <button className="iam-btn iam-btn-primary" type="submit" disabled={assignSaving}>{assignSaving ? 'Assigning…' : 'Assign'}</button></>}
+              <button className="iam-btn iam-btn-primary" type="submit" form="orgadminspage-form" disabled={assignSaving}>{assignSaving ? 'Assigning…' : 'Assign'}</button></>}
     >
-<form onSubmit={handleAssign} className="space-y-4">
+<form id="orgadminspage-form" onSubmit={handleAssign} className="space-y-4">
             <div className="space-y-2"><label className="iam-label">User ID</label><input className="iam-input" value={assignForm.user_id} onChange={e => setAssignForm(f => ({ ...f, user_id: e.target.value }))} required placeholder="User UUID" /></div>
             <div className="space-y-2">
               <label className="iam-label">Role</label>
@@ -205,6 +205,7 @@ export default function OrgAdminsPage() {
               <div className="space-y-2">
                 <label className="iam-label">Project scope</label>
                 <select className="iam-select" value={assignForm.scope_id} onChange={e => (v => setAssignForm(f => ({ ...f, scope_id: v })))(e.target.value)}>
+                  <option value="" disabled>Select a project…</option>
 {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
 </select>
               </div>
@@ -228,7 +229,7 @@ export default function OrgAdminsPage() {
       <IamDialog open={!!removeTarget} onClose={() => (v => !v && setRemoveTarget(null))(false)}
       title={<>Remove {removeTarget?.label}?</>}
       desc="This will revoke this management role from the user."
-      footer={<><button className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleRemove}>Remove</button></>}
+      footer={<><button type="button" onClick={() => (v => !v && setRemoveTarget(null))(false)} className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleRemove}>Remove</button></>}
     >
 
     </IamDialog>

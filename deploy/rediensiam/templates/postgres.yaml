@@ -89,6 +89,12 @@ data:
       -- SELECT on all tables plus USAGE on all schemas, which is what pg_dumpall needs when
       -- it is run with --no-role-passwords (the only part that requires superuser).
       CREATE ROLE iam_backup LOGIN PASSWORD :'backup_pw' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+      -- The grant the two comments below already assume. It was deleted once while every comment
+      -- and document citing it stayed, so pg_dumpall hit permission denied on the first table and
+      -- exited: no database this chart created has ever produced a backup. The 13 detection rules
+      -- authenticate as this same role, so they returned nothing but errors for just as long.
+      -- Role membership is cluster-wide, so granting it here covers every database below.
+      GRANT pg_read_all_data TO iam_backup;
       -- S-5 phase 2. pg_dump sets `row_security = off`, which ERRORS for a role that cannot
       -- bypass RLS, so the nightly pg_dumpall ABORTS on the first policied table. It hands
       -- iam_backup nothing it did not already have: pg_read_all_data above already reads

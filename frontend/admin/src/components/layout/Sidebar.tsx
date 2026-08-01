@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { useAuth } from '@/context/AuthContext';
+import { useTheme } from '@/context/ThemeContext';
+import { getServerVersion } from '@/auth';
 
 // ── Inline SVG icons (16×16 Lucide-compatible paths) ─────────────────────────
 
@@ -157,12 +159,12 @@ function UserPopover({ onClose }: Readonly<{ onClose: () => void }>) {
       borderRadius: 'var(--iam-radius)', boxShadow: 'var(--shadow-lg)',
       minWidth: 180, padding: '4px',
     }}>
-      <button className="iam-nav-item" style={{ width: '100%' }}
+      <button type="button" className="iam-menu-item" style={{ width: '100%' }}
         onClick={() => { navigate('/account'); onClose(); }}>
         <span className="iam-nav-icon"><Icon path={ICONS.user} size={14} /></span>{' '}My Account
       </button>
-      <div style={{ height: 1, background: 'var(--border)', margin: '4px 8px' }} />
-      <button className="iam-nav-item" style={{ width: '100%', color: 'var(--danger)' }}
+      <div className="iam-menu-sep" />
+      <button type="button" className="iam-menu-item iam-menu-item-danger" style={{ width: '100%' }}
         onClick={() => { logout(); onClose(); }}>
         <span className="iam-nav-icon"><Icon path={ICONS.logout} size={14} /></span>{' '}Sign out
       </button>
@@ -212,6 +214,9 @@ export default function Sidebar() {
   const { pathname } = useLocation();
   const { isSuperAdmin, isOrgAdmin, isProjectManager } = useAuth();
   const [userOpen, setUserOpen] = useState(false);
+  const { dark, toggleDark } = useTheme();
+  // Read once at mount: /admin/config has already been fetched by the time a session exists.
+  const version = getServerVersion();
   const userRef = useRef<HTMLDivElement>(null);
 
   const scope = deriveScope(pathname);
@@ -259,7 +264,27 @@ export default function Sidebar() {
       <div className="iam-sidebar-brand">
         <div className="iam-brand-mark">R</div>
         <span>RediensIAM</span>
-        <span className="mono" style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--fg-subtle)' }}>v0.1</span>
+        {version && (
+          <span className="iam-mono" style={{ fontSize: 10, color: 'var(--iam-sidebar-muted)' }}>v{version}</span>
+        )}
+        <button
+          className="iam-sidebar-icon-btn"
+          style={{ marginLeft: 'auto' }}
+          onClick={toggleDark}
+          aria-pressed={dark}
+          title={dark ? 'Switch to light theme' : 'Switch to dark theme'}
+        >
+          {dark ? (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="5"/>
+              <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+            </svg>
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+            </svg>
+          )}
+        </button>
       </div>
 
       <div className="iam-sidebar-nav">
@@ -304,7 +329,7 @@ export default function Sidebar() {
             {roleLabel(isSuperAdmin, isOrgAdmin)}
           </div>
         </div>
-        <button className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm"
+        <button type="button" className="iam-sidebar-icon-btn"
           title="Account & sign out"
           onClick={() => setUserOpen(o => !o)}>
           <Icon path={ICONS.chevDown} size={13} />

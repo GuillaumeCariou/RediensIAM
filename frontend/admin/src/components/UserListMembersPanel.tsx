@@ -273,9 +273,9 @@ export default function UserListMembersPanel({
       title="Add User"
       desc="Create a new user account in this list."
       footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={() => setAddOpen(false)}>Cancel</button>
-              <button className="iam-btn iam-btn-primary" type="submit" disabled={addSaving}>{addSaving ? 'Adding…' : 'Add User'}</button></>}
+              <button className="iam-btn iam-btn-primary" type="submit" form="userlistmemberspanel-form" disabled={addSaving}>{addSaving ? 'Adding…' : 'Add User'}</button></>}
     >
-<form onSubmit={handleAdd} className="space-y-4">
+<form id="userlistmemberspanel-form" onSubmit={handleAdd} className="space-y-4">
             <div className="space-y-2"><label className="iam-label">Email</label><input className="iam-input" type="email" value={addForm.email} onChange={e => setAddForm(f => ({ ...f, email: e.target.value }))} required autoFocus /></div>
             <div className="space-y-2"><label className="iam-label">Username</label><input className="iam-input" value={addForm.username} onChange={e => setAddForm(f => ({ ...f, username: e.target.value }))} required /></div>
             <div className="space-y-2"><label className="iam-label">Password</label><input className="iam-input" type="password" autoComplete="new-password" value={addForm.password} onChange={e => setAddForm(f => ({ ...f, password: e.target.value }))} required minLength={8} /></div>
@@ -305,7 +305,7 @@ export default function UserListMembersPanel({
                 <IamChip className="gap-1 pr-1" tone="default" key={r.id}>
                   {r.name}
                   {r.id === defaultRoleId && <span className="text-[10px] opacity-60 ml-0.5">default</span>}
-                  <button type="button" onClick={() => handleRemoveRole(editTarget.id, r.id)} className="ml-0.5 rounded-full hover:bg-muted-foreground/20 p-0.5">
+                  <button type="button" onClick={() => handleRemoveRole(editTarget.id, r.id)} className="ml-0.5 rounded-full hover:bg-[var(--surface-2)] p-0.5">
                     <Trash2 className="h-2.5 w-2.5" />
                   </button>
                 </IamChip>
@@ -315,6 +315,7 @@ export default function UserListMembersPanel({
             {unassignedRoles(editTarget.id).length > 0 && (
               <div className="flex gap-2">
                 <select className="iam-select flex-1" value={selectedRole} onChange={e => setSelectedRole(e.target.value)}>
+                  <option value="" disabled>Select a role…</option>
 {unassignedRoles(editTarget.id).map(r => (
                       <option key={r.id} value={r.id}>
                         {r.name}
@@ -344,7 +345,7 @@ export default function UserListMembersPanel({
       <IamDialog open={!!removeTarget} onClose={() => (v => !v && setRemoveTarget(null))(false)}
       title={<>Remove {removeTarget?.email}?</>}
       desc="This will permanently delete the user account."
-      footer={<><button className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleRemove}>Remove</button></>}
+      footer={<><button type="button" onClick={() => (v => !v && setRemoveTarget(null))(false)} className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleRemove}>Remove</button></>}
     >
 
     </IamDialog>

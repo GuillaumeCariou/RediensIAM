@@ -231,4 +231,36 @@ public class SystemProjectTests(TestFixture fixture)
 
         res.StatusCode.Should().Be(HttpStatusCode.Created);
     }
+
+    /// <summary>
+    /// Mirror of the tenant-scope case in ProjectStatsAuditTests: a project with no user list has
+    /// no users, and answering 404 made the console log an error on every new project. A project
+    /// that does not exist is still a 404.
+    /// </summary>
+    [Fact]
+    public async Task AdminGetProjectStats_ProjectWithNoUserList_ReturnsZeroesRatherThanNotFound()
+    {
+        var client   = await SuperAdminClientAsync();
+        var (org, _) = await fixture.Seed.CreateOrgAsync();
+        var project  = await fixture.Seed.CreateProjectAsync(org.Id);
+        project.AssignedUserListId = null;
+        await fixture.Db.SaveChangesAsync();
+
+        var res = await client.GetAsync($"/admin/projects/{project.Id}/stats");
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("total_users").GetInt32().Should().Be(0);
+        body.GetProperty("users_by_role").GetArrayLength().Should().Be(0);
+    }
+
+    [Fact]
+    public async Task AdminGetProjectStats_UnknownProject_IsStillNotFound()
+    {
+        var client = await SuperAdminClientAsync();
+
+        var res = await client.GetAsync($"/admin/projects/{Guid.NewGuid()}/stats");
+
+        res.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
 }

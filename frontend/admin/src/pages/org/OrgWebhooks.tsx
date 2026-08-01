@@ -23,16 +23,7 @@ const EVENT_GROUPS: { label: string; events: string[] }[] = [
 
 function Toggle({ checked, onChange }: Readonly<{ checked: boolean; onChange: () => void }>) {
   return (
-    <button onClick={onChange} style={{
-      width: 36, height: 20, borderRadius: 10,
-      background: checked ? 'var(--ia-accent)' : 'var(--border-strong)',
-      position: 'relative', border: 'none', cursor: 'pointer', flexShrink: 0, transition: 'background 150ms',
-    }}>
-      <span style={{
-        position: 'absolute', top: 2, left: checked ? 18 : 2,
-        width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 150ms',
-      }} />
-    </button>
+    <input type="checkbox" className="iam-switch" checked={checked} onChange={onChange} />
   );
 }
 
@@ -157,9 +148,9 @@ export default function OrgWebhooks() {
                     <td>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, maxWidth: 220 }}>
                         {wh.events.slice(0, 3).map(e => (
-                          <span key={e} className="iam-chip iam-chip-default iam-chip-mono" style={{ fontSize: 10 }}>{e}</span>
+                          <span key={e} className="iam-chip iam-chip-mono" style={{ fontSize: 10 }}>{e}</span>
                         ))}
-                        {wh.events.length > 3 && <span className="iam-chip iam-chip-default" style={{ fontSize: 10 }}>+{wh.events.length - 3}</span>}
+                        {wh.events.length > 3 && <span className="iam-chip" style={{ fontSize: 10 }}>+{wh.events.length - 3}</span>}
                       </div>
                     </td>
                     <td><Toggle checked={wh.active} onChange={() => handleToggleActive(wh)} /></td>

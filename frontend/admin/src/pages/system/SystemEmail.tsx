@@ -184,7 +184,7 @@ export default function SystemEmail() {
                       ) : (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                           {org.project_overrides.map(p => (
-                            <button key={p.id} className="iam-chip iam-chip-default"
+                            <button key={p.id} className="iam-chip"
                               title={`From name: "${p.email_from_name}"`}
                               onClick={() => navigate(`/system/organisations/${org.id}/projects`)}>
                               {p.name}

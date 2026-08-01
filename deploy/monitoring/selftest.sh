@@ -19,12 +19,25 @@ set -uo pipefail
 
 NS="${NS:-default}"
 PGPOD="${PGPOD:-rediensiam-postgres-0}"
-PGUSER="${PGUSER:-iam}"
+# The same role and the same credential source as audit-detections.sh, because this exists to
+# prove those rules fire. T-04 replaced `trust` in pg_hba.conf with scram-sha-256; the sibling
+# script was updated and this one was not, so every assertion below failed as a value mismatch
+# while the real answer was "psql could not log in".
+PGUSER="${PGUSER:-iam_backup}"
 PGDB="${PGDB:-rediensiam}"
 FAILS=0
 
+PGPASSWORD_CACHED=""
+db_password() {
+  [ -n "${PGPASSWORD_CACHED}" ] && { printf '%s' "${PGPASSWORD_CACHED}"; return; }
+  PGPASSWORD_CACHED="$(kubectl get secret -n "${NS}" "${SECRET:-rediensiam-secrets}" \
+    -o "jsonpath={.data.${PGPASSWORD_KEY:-postgres-backup-password}}" 2>/dev/null | base64 -d)"
+  printf '%s' "${PGPASSWORD_CACHED}"
+}
+
 psql_ro() {
   kubectl exec -n "${NS}" "${PGPOD}" -- \
+    env PGPASSWORD="$(db_password)" \
     psql -U "${PGUSER}" -d "${PGDB}" -qAt -v ON_ERROR_STOP=1 \
       -c 'BEGIN READ ONLY;' -c "$1" -c 'ROLLBACK;' 2>&1
 }

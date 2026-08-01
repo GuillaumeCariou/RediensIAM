@@ -1,59 +1,65 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
-  darkMode: 'media',
+  // `media` followed the operating system while the toggle sets data-theme, so a `dark:` utility
+  // and the palette could disagree on the same screen.
+  darkMode: ['selector', '[data-theme="dark"]'],
   theme: {
     extend: {
       fontFamily: {
         sans: ['Geist Variable', 'Geist', 'ui-sans-serif', 'system-ui', '-apple-system', 'sans-serif'],
         mono: ['Geist Mono Variable', 'Geist Mono', 'ui-monospace', 'SF Mono', 'Menlo', 'monospace'],
       },
+      // One palette. These used to be a second set of HSL tokens defined only for the light
+      // theme, so every `text-muted-foreground` / `bg-card` / `border-border` stayed light while
+      // the iam-* surfaces around it went dark. They now point at the same variables the rest of
+      // the design system uses, which are defined for both themes in index.css.
       colors: {
-        border: 'hsl(var(--border))',
-        input: 'hsl(var(--input))',
-        ring: 'hsl(var(--ring))',
-        background: 'hsl(var(--background))',
-        foreground: 'hsl(var(--foreground))',
+        border: 'var(--border)',
+        input: 'var(--border-strong)',
+        ring: 'var(--ia-accent)',
+        background: 'var(--bg)',
+        foreground: 'var(--fg)',
         primary: {
-          DEFAULT: 'hsl(var(--primary))',
-          foreground: 'hsl(var(--primary-foreground))',
+          DEFAULT: 'var(--ia-accent)',
+          foreground: 'var(--accent-fg)',
         },
         secondary: {
-          DEFAULT: 'hsl(var(--secondary))',
-          foreground: 'hsl(var(--secondary-foreground))',
+          DEFAULT: 'var(--surface-2)',
+          foreground: 'var(--fg)',
         },
         destructive: {
-          DEFAULT: 'hsl(var(--destructive))',
-          foreground: 'hsl(var(--destructive-foreground))',
+          DEFAULT: 'var(--danger)',
+          foreground: 'var(--danger-fg)',
         },
         muted: {
-          DEFAULT: 'hsl(var(--muted))',
-          foreground: 'hsl(var(--muted-foreground))',
+          DEFAULT: 'var(--surface-2)',
+          foreground: 'var(--fg-muted)',
         },
         accent: {
-          DEFAULT: 'hsl(var(--accent))',
-          foreground: 'hsl(var(--accent-foreground))',
+          DEFAULT: 'var(--accent-soft)',
+          foreground: 'var(--ia-accent)',
         },
         popover: {
-          DEFAULT: 'hsl(var(--popover))',
-          foreground: 'hsl(var(--popover-foreground))',
+          DEFAULT: 'var(--surface)',
+          foreground: 'var(--fg)',
         },
         card: {
-          DEFAULT: 'hsl(var(--card))',
-          foreground: 'hsl(var(--card-foreground))',
+          DEFAULT: 'var(--surface)',
+          foreground: 'var(--fg)',
         },
         sidebar: {
-          DEFAULT: 'hsl(var(--sidebar))',
-          foreground: 'hsl(var(--sidebar-foreground))',
-          border: 'hsl(var(--sidebar-border))',
-          accent: 'hsl(var(--sidebar-accent))',
-          'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
+          DEFAULT: 'var(--iam-sidebar)',
+          foreground: 'var(--iam-sidebar-fg)',
+          border: 'var(--iam-sidebar-border)',
+          accent: 'var(--iam-sidebar-accent)',
+          'accent-foreground': 'var(--iam-sidebar-fg)',
         },
       },
       borderRadius: {
-        lg: 'var(--radius)',
-        md: 'calc(var(--radius) - 2px)',
-        sm: 'calc(var(--radius) - 4px)',
+        lg: 'var(--iam-radius-lg)',
+        md: 'var(--iam-radius)',
+        sm: 'var(--iam-radius-sm)',
       },
     },
   },

@@ -4,9 +4,12 @@ interface AdminConfig {
   hydra_url: string;
   client_id: string;
   redirect_uri: string;
+  /** The running server's own version — see the /admin/config endpoint in src/Program.cs. */
+  version?: string;
 }
 
 let client: RediensIam | null = null;
+let serverVersion: string | null = null;
 let accessToken: string | null = null;
 /**
  * One-shot guard so concurrent 401 responses do not each fire a login redirect — the
@@ -35,6 +38,7 @@ async function getClient(): Promise<RediensIam> {
   if (client) return client;
   const res = await fetch('/admin/config');
   const cfg: AdminConfig = await res.json();
+  serverVersion = cfg.version ?? null;
   try {
     const cfgOrigin = new URL(cfg.redirect_uri).origin;
     if (cfgOrigin !== globalThis.location.origin) {
@@ -55,6 +59,13 @@ async function getClient(): Promise<RediensIam> {
 export async function restoreSession(): Promise<void> {
   await getClient();
 }
+
+/**
+ * The version of the server that served this console, once /admin/config has been read. Null
+ * before that — the console must not invent a number, and it must not report its own build:
+ * a SPA built against one release and served by another would show the wrong one.
+ */
+export function getServerVersion(): string | null { return serverVersion; }
 
 export async function startLogin() {
   const c = await getClient();

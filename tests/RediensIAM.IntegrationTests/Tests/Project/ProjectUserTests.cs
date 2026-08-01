@@ -154,4 +154,29 @@ public class ProjectUserTests(TestFixture fixture)
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
     }
+
+    /// <summary>
+    /// Third instance of the shape already fixed in both stats handlers: a project with no user
+    /// list assigned is an ordinary first-run state, not a missing resource. Answering 404 here
+    /// also takes down the roles request beside it — they share a Promise.all in the console — so
+    /// the whole members panel renders empty on every freshly created project.
+    /// </summary>
+    [Fact]
+    public async Task ListUsers_ProjectWithNoUserList_ReturnsEmptyRatherThanNotFound()
+    {
+        var (org, _) = await fixture.Seed.CreateOrgAsync();
+        var project  = await fixture.Seed.CreateProjectAsync(org.Id);
+        project.AssignedUserListId = null;
+        await fixture.Db.SaveChangesAsync();
+        var list    = await fixture.Seed.CreateUserListAsync(org.Id);
+        var manager = await fixture.Seed.CreateUserAsync(list.Id);
+        fixture.Keto.AllowAll();
+        var client = fixture.ClientWithToken(fixture.Seed.ProjectManagerToken(manager.Id, org.Id, project.Id));
+
+        var res = await client.GetAsync($"/project/users?project_id={project.Id}");
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetArrayLength().Should().Be(0);
+    }
 }

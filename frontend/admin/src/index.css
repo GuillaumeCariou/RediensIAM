@@ -2,39 +2,6 @@
 @tailwind components;
 @tailwind utilities;
 
-/* =====================================================================
-   SHADCN / TAILWIND BASE TOKENS
-   ===================================================================== */
-@layer base {
-  :root {
-    --background: 249 30% 97%;
-    --foreground: 264 30% 11%;
-    --card: 0 0% 100%;
-    --card-foreground: 264 30% 11%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 264 30% 11%;
-    --primary: 259 50% 36%;
-    --primary-foreground: 264 5% 99%;
-    --secondary: 264 20% 95%;
-    --secondary-foreground: 264 30% 11%;
-    --muted: 264 20% 95%;
-    --muted-foreground: 270 12% 42%;
-    --accent: 264 20% 95%;
-    --accent-foreground: 264 30% 11%;
-    --destructive: 25 85% 55%;
-    --destructive-foreground: 264 5% 99%;
-    --border: 260 10% 90%;
-    --input: 260 10% 90%;
-    --ring: 259 50% 36%;
-    --radius: 0.5rem;
-    --sidebar: 260 33% 11%;
-    --sidebar-foreground: 264 5% 96%;
-    --sidebar-border: 260 22% 23%;
-    --sidebar-accent: 260 22% 23%;
-    --sidebar-accent-foreground: 264 5% 96%;
-  }
-}
-
 @layer base {
   * { @apply border-border; }
   body {
@@ -65,6 +32,14 @@
    ────────────────────────────────────────────────────────────────────── */
 
 :root {
+  /* Everything the UA draws itself — select popups, date pickers, bare checkboxes, autofill,
+     scrollbars — follows this and not the custom properties below. Without it a dark palette
+     still gets light-chrome widgets. */
+  color-scheme: light;
+  --iam-avatar-bg-l: 0.90;
+  --iam-avatar-bg-c: 0.06;
+  --iam-avatar-fg-l: 0.35;
+  --iam-avatar-fg-c: 0.14;
   --bg:          oklch(0.985 0.002 260);
   --bg-sunken:   oklch(0.968 0.004 260);
   --surface:     oklch(1 0 0);
@@ -73,7 +48,7 @@
   --border-strong: oklch(0.820 0.010 260);
   --fg:          oklch(0.175 0.025 270);
   --fg-muted:    oklch(0.420 0.020 270);
-  --fg-subtle:   oklch(0.600 0.014 270);
+  --fg-subtle:   oklch(0.520 0.014 270);
   --ia-accent:   oklch(0.445 0.195 270);
   --accent-2:    oklch(0.550 0.180 310);
   --accent-fg:   oklch(0.99  0.005 270);
@@ -83,6 +58,7 @@
   --warn:        oklch(0.650 0.160 65);
   --warn-soft:   oklch(0.960 0.045 65);
   --danger:      oklch(0.550 0.210 25);
+  --danger-fg:   oklch(0.99 0.005 25);
   --danger-soft: oklch(0.960 0.040 25);
   --info:        oklch(0.540 0.160 225);
   --info-soft:   oklch(0.940 0.040 225);
@@ -94,6 +70,11 @@
 }
 
 :root[data-theme="dark"] {
+  color-scheme: dark;
+  --iam-avatar-bg-l: 0.30;
+  --iam-avatar-bg-c: 0.05;
+  --iam-avatar-fg-l: 0.86;
+  --iam-avatar-fg-c: 0.12;
   --bg:          oklch(0.135 0.025 265);
   --bg-sunken:   oklch(0.100 0.020 265);
   --surface:     oklch(0.175 0.028 265);
@@ -102,7 +83,7 @@
   --border-strong: oklch(0.430 0.035 265);
   --fg:          oklch(0.960 0.006 265);
   --fg-muted:    oklch(0.700 0.018 265);
-  --fg-subtle:   oklch(0.520 0.018 265);
+  --fg-subtle:   oklch(0.645 0.018 265);
   --ia-accent:   oklch(0.720 0.195 270);
   --accent-2:    oklch(0.760 0.180 310);
   --accent-fg:   oklch(0.120 0.025 270);
@@ -112,6 +93,7 @@
   --warn:        oklch(0.800 0.155 65);
   --warn-soft:   oklch(0.250 0.075 65);
   --danger:      oklch(0.710 0.200 25);
+  --danger-fg:   oklch(0.16 0.03 25);
   --danger-soft: oklch(0.230 0.080 25);
   --info:        oklch(0.720 0.150 225);
   --info-soft:   oklch(0.230 0.070 225);
@@ -119,7 +101,7 @@
   --iam-sidebar-border:  oklch(0.190 0.025 265);
   --iam-sidebar-accent:  oklch(0.220 0.028 265);
   --iam-sidebar-fg:      oklch(0.960 0.006 265);
-  --iam-sidebar-muted:   oklch(0.520 0.020 265);
+  --iam-sidebar-muted:   oklch(0.660 0.022 265);
   --shadow-sm: 0 1px 3px oklch(0 0 0 / 0.50);
   --shadow-md: 0 4px 14px oklch(0 0 0 / 0.50);
   --shadow-lg: 0 20px 40px oklch(0 0 0 / 0.60);
@@ -156,7 +138,7 @@
 .iam-btn-secondary:hover { background: var(--surface-2); }
 .iam-btn-ghost { color: var(--fg-muted); background: none; }
 .iam-btn-ghost:hover { background: var(--surface-2); color: var(--fg); }
-.iam-btn-danger { background: var(--danger); color: white; }
+.iam-btn-danger { background: var(--danger); color: var(--danger-fg); }
 .iam-btn-danger:hover { filter: brightness(1.08); }
 .iam-btn-sm { padding: 4px 8px; font-size: 12px; }
 .iam-btn-lg { padding: 10px 16px; font-size: 14px; }
@@ -183,6 +165,8 @@
   box-shadow: 0 0 0 3px oklch(from var(--ia-accent) l c h / 0.15);
 }
 .iam-input::placeholder { color: var(--fg-subtle); }
+.iam-input:disabled,
+.iam-select:disabled { opacity: 0.55; cursor: not-allowed; background: var(--surface-2); }
 
 .iam-label {
   font-size: 12px; font-weight: 500; color: var(--fg-muted);
@@ -280,6 +264,16 @@
   display: flex; flex-direction: column;
   transition: background 250ms, border-color 250ms;
 }
+.iam-sidebar-icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0; flex: none;
+  background: none; border: none; border-radius: var(--iam-radius-sm);
+  color: var(--iam-sidebar-muted); cursor: pointer;
+  transition: background 120ms, color 120ms;
+}
+.iam-sidebar-icon-btn:hover { background: var(--iam-sidebar-accent); color: var(--iam-sidebar-fg); }
+.iam-sidebar-icon-btn:focus-visible { outline: 2px solid var(--ia-accent); outline-offset: 2px; }
+
 .iam-sidebar-brand {
   height: 52px; padding: 0 16px;
   display: flex; align-items: center; gap: 10px;

@@ -689,7 +689,7 @@ function MfaTab() {
       <IamDialog open={regenOpen} onClose={() => setRegenOpen(false)}
       title="Regenerate backup codes?"
       desc="All existing backup codes will be invalidated. Make sure you save the new ones."
-      footer={<><button className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-primary" onClick={handleRegen}>Regenerate</button></>}
+      footer={<><button type="button" onClick={() => setRegenOpen(false)} className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-primary" onClick={handleRegen}>Regenerate</button></>}
     >
 
     </IamDialog>
@@ -786,7 +786,7 @@ function SessionsTab() {
       <IamDialog open={revokeAllOpen} onClose={() => setRevokeAllOpen(false)}
       title="Revoke all sessions?"
       desc="All applications will be signed out. You may be asked to log in again."
-      footer={<><button className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleRevokeAll}>Revoke All</button></>}
+      footer={<><button type="button" onClick={() => setRevokeAllOpen(false)} className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleRevokeAll}>Revoke All</button></>}
     >
 
     </IamDialog>

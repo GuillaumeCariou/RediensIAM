@@ -111,14 +111,20 @@ public class ProjectBranchCoverageTests(TestFixture fixture)
 
     // ── GET /project/users — no user list (line 131) ─────────────────────────
 
+    // These three used to assert 404 for a project with no user list assigned, which pinned the
+    // defect in place: the console logged an API error on every freshly created project, and the
+    // members panel — which fetches users and roles in one Promise.all — rendered empty. A project
+    // that exists with no users is an ordinary state, not a missing resource. A project that does
+    // not exist is still a 404, which the sibling tests cover.
     [Fact]
-    public async Task ListUsers_ProjectWithoutUserList_Returns404()
+    public async Task ListUsers_ProjectWithoutUserList_ReturnsEmpty()
     {
         var (_, client) = await ScaffoldWithoutListAsync();
 
         var res = await client.GetAsync("/project/users");
 
-        res.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await res.Content.ReadFromJsonAsync<JsonElement>()).GetArrayLength().Should().Be(0);
     }
 
     // ── GET /project/users/{id} — no user list (line 149) ────────────────────
@@ -191,13 +197,15 @@ public class ProjectBranchCoverageTests(TestFixture fixture)
     // ── GET /project/stats — no user list (line 241) ─────────────────────────
 
     [Fact]
-    public async Task GetStats_ProjectWithoutUserList_Returns404()
+    public async Task GetStats_ProjectWithoutUserList_ReturnsZeroes()
     {
         var (_, client) = await ScaffoldWithoutListAsync();
 
         var res = await client.GetAsync("/project/stats");
 
-        res.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await res.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("total_users").GetInt32().Should().Be(0);
     }
 
     // ── GET /project/roles — project not found (line 260) ────────────────────

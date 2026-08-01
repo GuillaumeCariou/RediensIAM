@@ -70,7 +70,7 @@ function JwtProfileSection({ saId }: Readonly<{ saId: string }>) {
       <div className="flex items-center justify-between px-4 py-3 border-b">
         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">JWT Profile (private_key_jwt)</h2>
         {keyInfo?.has_key
-          ? <button className="iam-btn iam-btn-secondary iam-btn-sm text-destructive border-destructive/40 hover:bg-destructive/10" onClick={handleRemove} disabled={removing}>
+          ? <button className="iam-btn iam-btn-secondary iam-btn-sm text-destructive border-[var(--danger)] hover:bg-[var(--danger-soft)]" onClick={handleRemove} disabled={removing}>
               <Trash2 className="h-4 w-4" />{removing ? 'Removing…' : 'Remove key'}
             </button>
           : <button className="iam-btn iam-btn-primary iam-btn-sm" onClick={handleGenerate} disabled={generating}>
@@ -244,7 +244,7 @@ export default function ServiceAccountDetail() {
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <IamChip tone={sa.active ? 'success' : 'default'}>{sa.active ? 'Active' : 'Inactive'}</IamChip>
-                <button className="iam-btn iam-btn-secondary iam-btn-sm text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => setDeleteOpen(true)}>
+                <button className="iam-btn iam-btn-secondary iam-btn-sm text-destructive border-[var(--danger)] hover:bg-[var(--danger-soft)]" onClick={() => setDeleteOpen(true)}>
                   <Trash2 className="h-4 w-4" />Delete
                 </button>
               </div>
@@ -357,9 +357,9 @@ export default function ServiceAccountDetail() {
       title="Generate PAT"
       desc="The raw token will be shown once — copy it before closing."
       footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={() => setPatOpen(false)}>Cancel</button>
-              <button className="iam-btn iam-btn-primary" type="submit" disabled={patSaving}>{patSaving ? 'Generating…' : 'Generate'}</button></>}
+              <button className="iam-btn iam-btn-primary" type="submit" form="serviceaccountdetail-form-2" disabled={patSaving}>{patSaving ? 'Generating…' : 'Generate'}</button></>}
     >
-<form onSubmit={handleGeneratePat} className="space-y-4">
+<form id="serviceaccountdetail-form-2" onSubmit={handleGeneratePat} className="space-y-4">
             <div className="space-y-2">
               <label className="iam-label">Name</label>
               <input className="iam-input" value={newPat.name} onChange={e => setNewPat(p => ({ ...p, name: e.target.value }))} required placeholder="ci-pipeline" />
@@ -388,7 +388,7 @@ export default function ServiceAccountDetail() {
       <IamDialog open={!!revokeTarget} onClose={() => (v => !v && setRevokeTarget(null))(false)}
       title={<>Revoke "{revokeTarget?.name}"?</>}
       desc="Any integration using this token will lose access immediately."
-      footer={<><button className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleRevokePat}>Revoke</button></>}
+      footer={<><button type="button" onClick={() => (v => !v && setRevokeTarget(null))(false)} className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleRevokePat}>Revoke</button></>}
     >
 
     </IamDialog>
@@ -397,12 +397,13 @@ export default function ServiceAccountDetail() {
       title="Assign Role"
       desc="Grant a management role to this service account."
       footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={() => setRoleOpen(false)}>Cancel</button>
-              <button className="iam-btn iam-btn-primary" type="submit" disabled={roleSubmitDisabled}>{roleSaving ? 'Assigning…' : 'Assign'}</button></>}
+              <button className="iam-btn iam-btn-primary" type="submit" form="serviceaccountdetail-form" disabled={roleSubmitDisabled}>{roleSaving ? 'Assigning…' : 'Assign'}</button></>}
     >
-<form onSubmit={handleAssignRole} className="space-y-4">
+<form id="serviceaccountdetail-form" onSubmit={handleAssignRole} className="space-y-4">
             <div className="space-y-2">
               <label className="iam-label">Role</label>
               <select className="iam-select" value={roleForm.role} onChange={e => handleRoleChange(e.target.value)} disabled={roleSaving}>
+                  <option value="" disabled>Select a role…</option>
 {isSuperAdmin && <option value="super_admin">super_admin</option>}
                   <option value="org_admin">org_admin</option>
                   <option value="project_admin">project_admin</option>
@@ -412,6 +413,7 @@ export default function ServiceAccountDetail() {
               <div className="space-y-2">
                 <label className="iam-label">Organisation</label>
                 <select className="iam-select" value={roleForm.org_id} onChange={e => handleOrgChange(e.target.value)} disabled={roleSaving}>
+                  <option value="" disabled>Select an organisation…</option>
 {orgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
 </select>
               </div>
@@ -420,6 +422,7 @@ export default function ServiceAccountDetail() {
               <div className="space-y-2">
                 <label className="iam-label">Project</label>
                 <select className="iam-select" value={roleForm.project_id} onChange={e => (v => setRoleForm(f => ({ ...f, project_id: v })))(e.target.value)} disabled={roleSaving}>
+                  <option value="" disabled>Select a project…</option>
 {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
 </select>
               </div>
@@ -431,7 +434,7 @@ export default function ServiceAccountDetail() {
       <IamDialog open={!!removeRoleTarget} onClose={() => (v => !v && setRemoveRoleTarget(null))(false)}
       title={<>Remove role "{removeRoleTarget?.role}"?</>}
       desc="This will revoke this management role from the service account."
-      footer={<><button className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleRemoveRole}>Remove</button></>}
+      footer={<><button type="button" onClick={() => (v => !v && setRemoveRoleTarget(null))(false)} className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleRemoveRole}>Remove</button></>}
     >
 
     </IamDialog>
@@ -439,7 +442,7 @@ export default function ServiceAccountDetail() {
       <IamDialog open={deleteOpen} onClose={() => setDeleteOpen(false)}
       title={<>Delete "{sa?.name}"?</>}
       desc="All PATs will be revoked. This cannot be undone."
-      footer={<><button className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleDelete}>Delete</button></>}
+      footer={<><button type="button" onClick={() => setDeleteOpen(false)} className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleDelete}>Delete</button></>}
     >
 
     </IamDialog>

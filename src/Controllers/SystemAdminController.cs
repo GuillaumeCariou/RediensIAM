@@ -808,7 +808,13 @@ var project = await db.Projects.FindAsync(id);
     public async Task<IActionResult> AdminGetProjectStats(Guid id)
     {
 var project = await db.Projects.FindAsync(id);
-        if (project?.AssignedUserListId == null) return NotFound();
+        if (project == null) return NotFound();
+
+        // A project with no user list assigned has no users, which is a fact about the project and
+        // not a missing resource. Answering 404 made the console log an error on every freshly
+        // created project — the state every project is in for its first few minutes.
+        if (project.AssignedUserListId == null)
+            return Ok(new { total_users = 0, active_users = 0, users_by_role = Array.Empty<object>() });
 
         var totalUsers  = await db.Users.CountAsync(u => u.UserListId == project.AssignedUserListId);
         var activeUsers = await db.Users.CountAsync(u => u.UserListId == project.AssignedUserListId && u.Active);

@@ -80,7 +80,7 @@ export default function SystemProjectDetail() {
                 <IamChip tone={project.active ? 'success' : 'default'}>
                   {project.active ? 'Active' : 'Inactive'}
                 </IamChip>
-                <button className="iam-btn iam-btn-secondary iam-btn-sm text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => setDeleteProjectOpen(true)}>
+                <button className="iam-btn iam-btn-secondary iam-btn-sm text-destructive border-[var(--danger)] hover:bg-[var(--danger-soft)]" onClick={() => setDeleteProjectOpen(true)}>
                   <Trash2 className="h-4 w-4" />Delete
                 </button>
                 <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={() => { setRenameVal(project.name); setRenameOpen(true); }}>
@@ -96,9 +96,9 @@ export default function SystemProjectDetail() {
       <IamDialog open={renameOpen} onClose={() => setRenameOpen(false)}
       title="Rename Project"
       footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={() => setRenameOpen(false)}>Cancel</button>
-              <button className="iam-btn iam-btn-primary" type="submit">Save</button></>}
+              <button className="iam-btn iam-btn-primary" type="submit" form="systemprojectdetail-form">Save</button></>}
     >
-<form onSubmit={handleRename} className="space-y-4">
+<form id="systemprojectdetail-form" onSubmit={handleRename} className="space-y-4">
             <div className="space-y-2">
               <label className="iam-label">Name</label>
               <input className="iam-input" value={renameVal} onChange={e => setRenameVal(e.target.value)} required />
@@ -110,7 +110,7 @@ export default function SystemProjectDetail() {
       <IamDialog open={deleteProjectOpen} onClose={() => setDeleteProjectOpen(false)}
       title={<>Delete project "{project?.name}"?</>}
       desc="The OAuth2 client for this project will also be deleted. All role assignments will be lost. This cannot be undone."
-      footer={<><button className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleDeleteProject}>Delete</button></>}
+      footer={<><button type="button" onClick={() => setDeleteProjectOpen(false)} className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleDeleteProject}>Delete</button></>}
     >
 
     </IamDialog>

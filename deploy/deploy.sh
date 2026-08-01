@@ -118,9 +118,15 @@ wait_workloads() {
 helm_deploy() {
   local release="$1"; local chart="$2"; shift 2
   for attempt in $(seq 1 3); do
-    helm rollback "${release}" 0 -n "${NAMESPACE}" 2>/dev/null \
-      || helm uninstall "${release}" -n "${NAMESPACE}" --no-hooks 2>/dev/null \
-      || true
+    # `helm upgrade --install` is already idempotent. The rollback/uninstall pair that used to
+    # stand here was meant to clear a stuck pending-* release, but `rollback 0` errors on a
+    # single-revision release, so the `|| helm uninstall` fired instead — and since uninstalling
+    # and reinstalling returns the release to revision 1, it fired on every deploy from then on.
+    # Each one deleted the backup PVC and every dump retained in it.
+    if helm status "${release}" -n "${NAMESPACE}" 2>/dev/null | grep -qE 'STATUS: pending-'; then
+      echo "  release is stuck in a pending state — rolling back before upgrading"
+      helm rollback "${release}" -n "${NAMESPACE}" 2>/dev/null || true
+    fi
     helm upgrade --install "${release}" "${chart}" --namespace "${NAMESPACE}" "$@" \
       && wait_workloads && return 0
     echo "  helm failed (attempt $attempt/3)"; wait_api
@@ -332,8 +338,8 @@ if [ "${ROTATE}" = "true" ]; then
   fi
   echo "  Rotating dev secrets — this discards dev DB and cache state."
   rm -f "${SECRETS_FILE}"
-  helm uninstall rediensiam -n "${NAMESPACE}" --no-hooks 2>/dev/null || true
-  kubectl delete pvc -n "${NAMESPACE}" data-rediensiam-postgres-0 2>/dev/null || true
+  helm uninstall "${RELEASE}" -n "${NAMESPACE}" --no-hooks 2>/dev/null || true
+  kubectl delete pvc -n "${NAMESPACE}" "data-${RELEASE}-postgres-0" 2>/dev/null || true
 fi
 
 if [ ! -f "${SECRETS_FILE}" ]; then
@@ -487,7 +493,7 @@ echo ""
 echo "──── [4/4] Deploy ───────────────────────────────"
 wait_api
 
-kubectl delete job -n "${NAMESPACE}" -l "app.kubernetes.io/instance=rediensiam" 2>/dev/null || true
+kubectl delete job -n "${NAMESPACE}" -l "app.kubernetes.io/instance=${RELEASE}" 2>/dev/null || true
 
 if [ "${PROD}" = "true" ]; then
   helm_deploy "${RELEASE}" "${CHART}" \
