@@ -14,7 +14,7 @@
 # Exit codes: 0 no page-severity hit · 1 page-severity hit · 2 could not run.
 #
 # Rules are labelled with the finding / chain ID they cover. See
-# `SECURITY-AUDIT-LOG.md` step 13 for the reasoning behind each.
+# SECURITY-AUDIT-LOG.md step 13 for the reasoning behind each.
 # ─────────────────────────────────────────────────────────────────────────────
 set -uo pipefail
 

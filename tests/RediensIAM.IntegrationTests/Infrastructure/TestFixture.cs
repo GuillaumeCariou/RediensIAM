@@ -135,6 +135,9 @@ public sealed class TestFixture : IAsyncLifetime
                         ["Security:MaxSmsPerWindow"]            = "3",
                         ["Security:SmsWindowMinutes"]           = "10",
                         ["Security:PatPrefix"]                  = "rediens_pat_",
+                        // Shipped default is now off so a first launch can reach the console;
+                        // the suite pins it on, because the enforced path is the one worth testing.
+                        ["Security:RequireAdminMfa"]            = "true",
                         ["Security:ArgonTimeCost"]              = "1",  // fast in tests
                         ["Security:ArgonMemoryCost"]            = "8192",
                         ["Security:ArgonParallelism"]           = "1",
@@ -293,6 +296,9 @@ public sealed class TestFixture : IAsyncLifetime
                         ["Security:MaxSmsPerWindow"]            = "3",
                         ["Security:SmsWindowMinutes"]           = "10",
                         ["Security:PatPrefix"]                  = "rediens_pat_",
+                        // Shipped default is now off so a first launch can reach the console;
+                        // the suite pins it on, because the enforced path is the one worth testing.
+                        ["Security:RequireAdminMfa"]            = "true",
                         ["Security:ArgonTimeCost"]              = "1",
                         ["Security:ArgonMemoryCost"]            = "8192",
                         ["Security:ArgonParallelism"]           = "1",
@@ -364,6 +370,9 @@ public sealed class TestFixture : IAsyncLifetime
                         ["Security:MaxSmsPerWindow"]            = "3",
                         ["Security:SmsWindowMinutes"]           = "10",
                         ["Security:PatPrefix"]                  = "rediens_pat_",
+                        // Shipped default is now off so a first launch can reach the console;
+                        // the suite pins it on, because the enforced path is the one worth testing.
+                        ["Security:RequireAdminMfa"]            = "true",
                         ["Security:ArgonTimeCost"]              = "1",
                         ["Security:ArgonMemoryCost"]            = "8192",
                         ["Security:ArgonParallelism"]           = "1",
@@ -439,6 +448,9 @@ public sealed class TestFixture : IAsyncLifetime
                         ["Security:MaxSmsPerWindow"]            = "3",
                         ["Security:SmsWindowMinutes"]           = "10",
                         ["Security:PatPrefix"]                  = "rediens_pat_",
+                        // Shipped default is now off so a first launch can reach the console;
+                        // the suite pins it on, because the enforced path is the one worth testing.
+                        ["Security:RequireAdminMfa"]            = "true",
                         ["Security:ArgonTimeCost"]              = "1",
                         ["Security:ArgonMemoryCost"]            = "8192",
                         ["Security:ArgonParallelism"]           = "1",

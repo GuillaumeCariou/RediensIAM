@@ -8,7 +8,7 @@
 --
 -- WHAT THIS IS FOR
 -- Tenant isolation is currently ~200 hand-written `&& OrgId == …` conjuncts in C#
--- (03-architecture-review.md §3.1). Every one of them is an opportunity to forget,
+-- (SECURITY-AUDIT-LOG.md step 03 §3.1). Every one of them is an opportunity to forget,
 -- and one already went wrong in a way the codebase documents in a comment
 -- (ServiceAccountController.cs:29-33). Query filters in the ORM fix that for LINQ;
 -- they do not survive raw SQL, a psql session, or a second service pointed at the
@@ -49,7 +49,7 @@
 --   - `pg_dumpall` run by `iam_backup`. libpq sets `row_security = off`, which
 --     ERRORS for a role that cannot bypass RLS, so the nightly backup ABORTS on the
 --     first protected table. `ALTER ROLE iam_backup BYPASSRLS` (superuser, once) is
---     a hard prerequisite — see 18-cnpg-tls-rls.md §3.
+--     a hard prerequisite — see SECURITY-AUDIT-LOG.md step 18 §3.
 -- ═══════════════════════════════════════════════════════════════════════════════
 
 \set ON_ERROR_STOP on

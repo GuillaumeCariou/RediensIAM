@@ -47,6 +47,15 @@ rediensiam:
     argon2Pepper: ""
     argon2Peppers: ""
 
+    # Require a second factor to reach the management console.
+    #
+    # Off here on purpose: on a first launch the only account that exists is the bootstrap admin,
+    # and gating its first login on enrolment locks the operator out of the console they need in
+    # order to configure SMTP and SMS — the providers that make a factor deliverable. The console
+    # shows a standing reminder instead of blocking. values.prod.yaml turns this on; turn it on
+    # here too once the deployment is configured.
+    requireAdminMfa: false
+
   # ── Networking ────────────────────────────────────────────────────────────────
   service:
     public:
@@ -98,7 +107,7 @@ rediensiam:
       # Issuer for the admin ingress cert: the name of a ClusterIssuer you already run.
       # Empty falls back to the chart's own self-signed Issuer (<release>-selfsigned, in this
       # namespace), which trains operators to click through a warning on the most privileged
-      # UI here — see the runbook in 09-infra-security.md for the two ways out (internal CA,
+      # UI here — see the runbook in SECURITY-AUDIT-LOG.md step 09 for the two ways out (internal CA,
       # or ACME DNS-01 on the Tailscale domain).
       clusterIssuer: ""
 
@@ -159,7 +168,7 @@ rediensiam:
   # encryptionKeys : S-10 rotation. Empty until you rotate. Format "id:hex,id:hex" with the
   #   ACTIVE key first — everything new is encrypted under it, everything listed can decrypt.
   #   Ids are positive integers and must never be reused. Setting this supersedes encryptionKey.
-  #   Runbook: `SECURITY-AUDIT-LOG.md` step 16 §7. Do not drop the old key until
+  #   Runbook: SECURITY-AUDIT-LOG.md step 16 §7. Do not drop the old key until
   #   GET /admin/key-rotation reports totalPending: 0.
   secrets:
     encryptionKey: ""
@@ -207,7 +216,7 @@ rediensiam:
       #   iam_keto   → keto          iam_backup → read-only across all of them
       # deploy.sh generates all four. An existing installation does NOT get them from a
       # chart upgrade — init.sh only ever runs against an empty data directory — so see the
-      # migration runbook in `SECURITY-AUDIT-LOG.md` step 15c.
+      # migration runbook in SECURITY-AUDIT-LOG.md step 15c.
       roles:
         appPassword: ""
         hydraPassword: ""
@@ -216,7 +225,7 @@ rediensiam:
       # R-15. Turns on server-side TLS using a cert-manager Certificate issued by the
       # `selfsigned` ClusterIssuer. Off by default because it has two hard prerequisites:
       #   1. cert-manager must be installed (this chart does not install it), and
-      #   2. every DSN must carry sslmode — see the R-15 runbook in 09-infra-security.md.
+      #   2. every DSN must carry sslmode — see the R-15 runbook in SECURITY-AUDIT-LOG.md step 09.
       # Postgres with ssl=on still accepts non-TLS clients, so enabling this alone does not
       # break anything; it is the DSN change that actually enforces it.
       tls:
@@ -234,7 +243,7 @@ rediensiam:
         # This only takes effect on a FIRST-EVER start — pg_hba.conf is written by
         # initdb. On a running database do it live (one sed and pg_reload_conf, no
         # restart, reversible) and set this flag so a rebuild reproduces it:
-        #   `SECURITY-AUDIT-LOG.md` step 18 §2
+        #   SECURITY-AUDIT-LOG.md step 18 §2
         requireSsl: false
       resources:
         requests:
@@ -256,7 +265,7 @@ rediensiam:
     #        hydra.hydra.config.dsn          → iam_hydra @ database `hydra`
     #        keto.keto.config.dsn            → iam_keto  @ database `keto`
     #      The T-04 role split is not optional here — see
-    #      `SECURITY-AUDIT-LOG.md` step 18 for the Cluster manifest that
+    #      SECURITY-AUDIT-LOG.md step 18 for the Cluster manifest that
     #      creates the same four roles, databases and CONNECT grants that
     #      postgres.yaml's init.sh creates for the built-in StatefulSet.
     #   2. podSelector below, so the NetworkPolicies that let the app, Hydra and
@@ -296,8 +305,8 @@ rediensiam:
     # unscoped paths are TenantScopeInterceptor.LegitimatelyUnscopedPaths.
     #
     # Off by default for one reason only: on an ALREADY-RUNNING database this is a
-    # migration, not an upgrade — see `SECURITY-AUDIT-LOG.md` step 29 for
-    # the enablement as performed, and 18-cnpg-tls-rls.md §3 for the runbook.
+    # migration, not an upgrade — see SECURITY-AUDIT-LOG.md step 29 for
+    # the enablement as performed, and SECURITY-AUDIT-LOG.md step 18 §3 for the runbook.
     #
     # The one superuser prerequisite, `ALTER ROLE iam_backup BYPASSRLS`, is not a
     # thing to remember on a database initdb'd by this chart: init.sh grants it
@@ -335,7 +344,7 @@ rediensiam:
       #
       # Still off by default only because cert-manager is not this chart's to install; it is
       # on in values.dev.yaml. `enabled: true` also requires `password` to be set — Dragonfly
-      # refuses to start with TLS and no auth method. Runbook: 09-infra-security.md §6.5.
+      # refuses to start with TLS and no auth method. Runbook: SECURITY-AUDIT-LOG.md step 09 §6.5.
       tls:
         enabled: false
       resources:

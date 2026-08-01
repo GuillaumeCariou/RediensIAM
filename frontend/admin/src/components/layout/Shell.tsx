@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import CommandPalette from './CommandPalette';
+import MfaReminder from '@/components/MfaReminder';
 
 /**
  * CommandPalette is mounted conditionally rather than kept mounted and hidden: unmounting is what
@@ -27,6 +28,7 @@ export default function Shell({ children }: Readonly<{ children: React.ReactNode
       <Sidebar />
       <div className="iam-main">
         <Topbar onCmdK={() => setCmdOpen(true)} />
+        <MfaReminder />
         <div className="iam-main-scroll">
           {children}
         </div>

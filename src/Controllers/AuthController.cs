@@ -1101,7 +1101,7 @@ public class AuthController(
 
         // body.ProjectId is caller-supplied, but the organisation is read off the project row it
         // names, so the scope is still server-decided. See the enumeration note in
-        // `SECURITY-AUDIT-LOG.md` step 32: the user lookup below is already keyed
+        // SECURITY-AUDIT-LOG.md step 32: the user lookup below is already keyed
         // by this project's user list, so scoping it reveals nothing a caller could not observe.
         await PinScopeAsync(project.OrgId);
 

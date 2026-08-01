@@ -17,6 +17,30 @@ public class ConfigKeyRegressionTests
             .AddInMemoryCollection(entries.ToDictionary(e => e.Key, e => (string?)e.Value))
             .Build());
 
+    // ── Security:RequireAdminMfa ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Unset must mean "do not gate the login". The default used to be on, and on a first launch
+    /// that is a lockout: the only account is the bootstrap admin, and enrolment is what it cannot
+    /// finish until it reaches the console and configures SMTP or SMS. The console reminds instead
+    /// (<c>MfaReminder</c>), and <c>values.prod.yaml</c> turns enforcement back on.
+    /// </summary>
+    [Fact]
+    public void RequireAdminMfa_WhenUnset_DoesNotGateTheLogin()
+    {
+        Build().RequireAdminMfa.Should().BeFalse();
+    }
+
+    /// <summary>Off by default is only defensible while turning it on still works.</summary>
+    [Theory]
+    [InlineData("true", true)]
+    [InlineData("True", true)]
+    [InlineData("false", false)]
+    public void RequireAdminMfa_IsHonoured(string configured, bool expected)
+    {
+        Build(("Security:RequireAdminMfa", configured)).RequireAdminMfa.Should().Be(expected);
+    }
+
     // ── Database:MigrateOnStartup ─────────────────────────────────────────────
 
     /// <summary>

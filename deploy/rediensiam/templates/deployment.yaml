@@ -100,6 +100,10 @@ spec:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secrets
                   key: cache-url
+            # Off by default (see values.yaml): a first launch must not gate the bootstrap admin's
+            # own login on a factor it has no way to deliver yet.
+            - name: Security__RequireAdminMfa
+              value: {{ .Values.rediensiam.security.requireAdminMfa | default false | quote }}
             - name: Security__TotpSecretEncryptionKey
               valueFrom:
                 secretKeyRef:

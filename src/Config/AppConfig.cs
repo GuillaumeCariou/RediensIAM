@@ -121,13 +121,27 @@ public class AppConfig(IConfiguration config)
     /// outlives every revocation path the deployment has.</summary>
     public int    MaxPatLifetimeDays      => Math.Clamp(config.GetValue<int>("Security:MaxPatLifetimeDays", 365), 1, 730);
     /// <summary>
-    /// Whether the management console requires a second factor. A tenant project has
-    /// <c>Project.RequireMfa</c>; RediensIAM's own admin surface — where <c>super_admin</c> lives —
-    /// had no equivalent and asked for MFA only when the account happened to have a factor, so the
-    /// most privileged accounts in the deployment were password-only by default. On means an admin
-    /// with no factor is sent through enrolment before the login completes, never refused.
+    /// Whether the management console <b>requires</b> a second factor. A tenant project has
+    /// <c>Project.RequireMfa</c>; this is the equivalent for RediensIAM's own admin surface, where
+    /// <c>super_admin</c> lives. On means an admin with no factor is sent through enrolment before
+    /// the login completes, never refused.
+    ///
+    /// <para>
+    /// Off by default, and the default is the deliberate part. On a first launch the only account
+    /// that exists is the bootstrap admin, and gating its very first login on enrolment locks the
+    /// operator out of the console they need in order to configure the deployment — including the
+    /// SMTP and SMS providers that make the other factors deliverable. The console shows a standing
+    /// reminder instead (<c>frontend/admin</c>, <c>MfaReminder</c>), so an admin without a factor is
+    /// told on every page rather than blocked on the first.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>Turn it on once the deployment is configured.</b> The shipped production values do
+    /// (<c>values.prod.yaml</c>, <c>security.requireAdminMfa: true</c>): off is right for the first
+    /// ten minutes of a deployment's life and wrong for the rest of it.
+    /// </para>
     /// </summary>
-    public bool   RequireAdminMfa         => config.GetValue("Security:RequireAdminMfa", true);
+    public bool   RequireAdminMfa         => config.GetValue("Security:RequireAdminMfa", false);
 
     /// <summary>
     /// OAuth2 client IDs allowed to call the management surfaces (/admin, /org, /project,

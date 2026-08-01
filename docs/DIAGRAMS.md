@@ -1011,6 +1011,6 @@ including the record of the change that purged it.
 - **The `instances` configuration table's precedence rules.** They are a three-row table in
   [`ARCHITECTURE.md`](ARCHITECTURE.md#configuration-model--zitadel-style), which is clearer than a
   flowchart.
-- **Anything under `~/Desktop/rediensiam-audit-perime/`.** Five reports were moved out of
-  `SECURITY-AUDIT-LOG.md` because they assert things that are no longer true. None of them informed
-  a diagram here.
+- **The five retired audit reports (14, 17, 19, 20, 23).** They were removed before the 2026-08-01
+  cleanup because they assert things that are no longer true — see `SECURITY-AUDIT-LOG.md`. None of
+  them informed a diagram here.

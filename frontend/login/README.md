@@ -194,4 +194,4 @@ rather than fixed.
 among them. The remaining fixes need `npm audit fix --force`, i.e. breaking major bumps, which was
 judged riskier than the advisories as reached by this SPA. That judgement has not been re-tested
 since the SPA was rewritten. Tracked as R-21 / R-03 / T-06 in
-`SECURITY-AUDIT-LOG.md` step 14 §9.
+[`docs/SECURITY.md`](../../docs/SECURITY.md) §8, the status of record.

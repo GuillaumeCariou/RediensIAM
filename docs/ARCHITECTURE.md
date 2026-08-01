@@ -621,4 +621,4 @@ which is the correct trade.
 | How to integrate an app or a resource server | [`INTEGRATION.md`](INTEGRATION.md) |
 | How to install, upgrade and rotate | [`DEPLOYMENT.md`](DEPLOYMENT.md) |
 | How to run the tests | [`TESTING.md`](TESTING.md) |
-| The audit trail itself, step by step | `SECURITY-AUDIT-LOG.md` — start with its `README.md`, which records which reports have been retired |
+| The audit trail itself, step by step | `SECURITY-AUDIT-LOG.md` — the step index, and which reports were retired and why |

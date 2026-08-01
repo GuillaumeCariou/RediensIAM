@@ -25,7 +25,7 @@ fi
 # ── Config ─────────────────────────────────────────────────────────────────────
 # NOTE: `default` is a shared namespace on this cluster. The chart's default-deny is
 # release-scoped for that reason. Moving this release to its own namespace is the
-# prerequisite for a true namespace-wide baseline deny — see `SECURITY-AUDIT-LOG.md`09.
+# prerequisite for a true namespace-wide baseline deny — see SECURITY-AUDIT-LOG.md step 09.
 # 15c recommends moving the release out of `default` at the FIRST install — it cannot be done
 # as an upgrade (no cross-namespace PVC move, and helm cannot change a release's namespace).
 # Overridable so that decision is available without editing this file:  NAMESPACE=rediensiam ./deploy/setup.sh --prod
@@ -266,7 +266,7 @@ write_secrets_file() {
   # R-15: the DSNs below say sslmode=disable because the bundled Postgres ships without TLS.
   # Turning on rediensiam.postgres.local.tls.enabled makes the server offer TLS; the DSNs then
   # have to be changed to sslmode=require in this file for it to be used. Both steps are in the
-  # R-15 runbook in `SECURITY-AUDIT-LOG.md` step 09. Do not raise the sslmode here
+  # R-15 runbook in SECURITY-AUDIT-LOG.md step 09. Do not raise the sslmode here
   # without enabling the server side first — `require` against a non-TLS server fails to connect.
   #
   # The subshell keeps the umask local: leaking 077 into the rest of the script would silently
@@ -302,7 +302,7 @@ hydra:
       secrets:
         # Hydra reads this list newest-first: element 0 encrypts, the rest only decrypt. That is
         # what makes a rotation non-destructive — prepend, upgrade, then drop the tail once the
-        # old tokens have expired. See 10-secrets-management.md §4.
+        # old tokens have expired. See SECURITY-AUDIT-LOG.md step 10 §4.
         system:
           - "${hydra_sys}"
 
@@ -327,7 +327,7 @@ if [ "${ROTATE}" = "true" ]; then
   # which is why it is dev-only. Prod rotation is per-secret and ordered.
   if [ "${PROD}" = "true" ]; then
     echo "  ERROR: --rotate-secrets is dev-only. Prod rotation is per-secret and ordered;"
-    echo "         follow `SECURITY-AUDIT-LOG.md` step 10 §4."
+    echo "         follow SECURITY-AUDIT-LOG.md step 10 §4."
     exit 1
   fi
   echo "  Rotating dev secrets — this discards dev DB and cache state."
@@ -370,7 +370,7 @@ else
       echo "  ERROR (R-06): ${SECRETS_FILE} still holds a credential this repo shipped as a"
       echo "                default. Refusing to deploy it. Generate a fresh one:"
       echo "                  mv ${SECRETS_FILE} ${SECRETS_FILE}.old && ./deploy/deploy.sh --prod"
-      echo "                then follow 10-secrets-management.md §4 to migrate existing state."
+      echo "                then follow SECURITY-AUDIT-LOG.md step 10 §4 to migrate existing state."
       exit 1
     fi
     echo "  WARNING (R-06): this file still holds credentials this repo shipped as defaults."
@@ -393,7 +393,7 @@ else
     echo "  │  data directory, so a helm upgrade will NOT create the new roles."
     echo "  │"
     echo "  │  Run the migration first — it is one psql session and a redeploy:"
-    echo "  │    `SECURITY-AUDIT-LOG.md` step 15c  §T-04 migration runbook"
+    echo "  │    SECURITY-AUDIT-LOG.md step 15c §T-04 migration runbook"
     echo "  │"
     echo "  │  Or, for a dev box with disposable data, start clean:"
     echo "  │    ./deploy/deploy.sh --dev --rotate-secrets"

@@ -6,6 +6,12 @@ rediensiam:
   publicUrl: "https://auth.rediens.net"
   adminUrl:  "https://auth.ts.rediens.net"    # Tailscale MagicDNS — Tailscale-only
 
+  security:
+    # The chart default is off so a first launch can reach the console and configure SMTP/SMS.
+    # A configured production deployment has no such excuse: super_admin is the most privileged
+    # account here, and password-only is not enough for it.
+    requireAdminMfa: true
+
   # R-05. No NodePort in prod: the admin surface is reached only through the Tailscale-only
   # admin ingress below. This is what the values.yaml comment used to claim NodePort provided.
   service:
@@ -24,7 +30,7 @@ rediensiam:
       enabled: true
       host: "auth.ts.rediens.net"
       # Still self-signed: nothing here can certify a headscale-issued name. Empty means the
-      # chart's own Issuer. The runbook in `SECURITY-AUDIT-LOG.md` step 09 gives the
+      # chart's own Issuer. The runbook in SECURITY-AUDIT-LOG.md step 09 gives the
       # two ways to fix that; until one is done, this is a known click-through warning on the
       # most privileged UI.
       clusterIssuer: ""
@@ -38,7 +44,7 @@ rediensiam:
   # branch. On a FRESH install this is correct and self-consistent. On an EXISTING
   # prod database it is a migration, not an upgrade: pg_hba.conf is written by initdb
   # and a chart upgrade will not rewrite it. Follow §2 of
-  # `SECURITY-AUDIT-LOG.md` step 18 before the first upgrade that carries this.
+  # SECURITY-AUDIT-LOG.md step 18 before the first upgrade that carries this.
   postgres:
     local:
       tls:
@@ -70,7 +76,7 @@ rediensiam:
   #      when the cache is upgraded separately or has been given persistence.
   #
   # NOT YET RUN AGAINST A REAL PROD CLUSTER — this is `helm template`-verified and reasoned
-  # from the dev cutover in `SECURITY-AUDIT-LOG.md` step 23, not observed in prod.
+  # from the dev cutover in SECURITY-AUDIT-LOG.md step 23, not observed in prod.
   dragonfly:
     local:
       tls:

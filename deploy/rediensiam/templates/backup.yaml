@@ -8,7 +8,7 @@
   single-node k3s cluster with local-path storage, so there is no second failure
   domain to ship WAL to. A dump on the same node survives a dropped table, a bad
   migration and a tenant deleting itself — not the disk dying. Copying the PVC
-  off-node is what actually closes that case; see the runbook in 13-monitoring-siem.md.
+  off-node is what actually closes that case; see the runbook in SECURITY-AUDIT-LOG.md step 13.
 
   Gated on postgres.local.enabled as well as backup.enabled. With an external
   CloudNativePG cluster the operator already has continuous WAL archiving to object

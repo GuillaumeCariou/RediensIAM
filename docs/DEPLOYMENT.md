@@ -266,7 +266,7 @@ anyway, in the right order, so the deploy does not fail at all.
 conditional on `postgres.rls.enabled` being true *at initdb*, and `init.sh` only ever runs at
 initdb — while `setup.sh --prod` forces RLS off on a first install and does not ask. So **no
 database `setup.sh --prod` could produce ever had the grant**, and enabling RLS on one could only
-ever fail. Observed on the first prod-profile install, `33-prod-profile-proof.md §2.6`: the
+ever fail. Observed on the first prod-profile install, SECURITY-AUDIT-LOG.md step 33 §2.6`: the
 post-upgrade Job aborting with `iam_backup cannot bypass RLS`. The fail-closed abort did its job —
 the deploy stopped instead of the backup — but the trap was unconditional. The grant is
 unconditional now; existing databases still need it applied by hand.
@@ -330,12 +330,12 @@ manifest alone.
 
 | Secret | Runbook | Shape |
 |---|---|---|
-| HKDF root encryption key | `16-key-rotation.md §7.1` | Two keys configured → roll all replicas → sweep → `total_pending == 0` → **only then** drop the old key. Dropping it early is unrecoverable. |
-| Argon2 pepper | `16-key-rotation.md §7.3` | Prepend. No sweep and no completion signal — accounts re-pepper on next login, so finishing it is a policy decision about dormant users. |
-| Hydra system secret | `10-secrets-management.md §4.1` | Prepend, never replace. Keep the old entry for at least `refresh_token` TTL (7 days here) before trimming. |
-| Database roles | `10-secrets-management.md §4.2` | `ALTER ROLE` first — `POSTGRES_PASSWORD` is read only at initdb, so editing values alone rotates nothing. |
-| Hydra client secrets | `10-secrets-management.md §4.4` | No dual-secret window in OAuth2. Deploy the new secret to the consumer in the same step. |
-| PATs | `10-secrets-management.md §4.3` | Issue → deploy → confirm traffic → revoke. |
+| HKDF root encryption key | SECURITY-AUDIT-LOG.md step 16 §7.1` | Two keys configured → roll all replicas → sweep → `total_pending == 0` → **only then** drop the old key. Dropping it early is unrecoverable. |
+| Argon2 pepper | SECURITY-AUDIT-LOG.md step 16 §7.3` | Prepend. No sweep and no completion signal — accounts re-pepper on next login, so finishing it is a policy decision about dormant users. |
+| Hydra system secret | SECURITY-AUDIT-LOG.md step 10 §4.1` | Prepend, never replace. Keep the old entry for at least `refresh_token` TTL (7 days here) before trimming. |
+| Database roles | SECURITY-AUDIT-LOG.md step 10 §4.2` | `ALTER ROLE` first — `POSTGRES_PASSWORD` is read only at initdb, so editing values alone rotates nothing. |
+| Hydra client secrets | SECURITY-AUDIT-LOG.md step 10 §4.4` | No dual-secret window in OAuth2. Deploy the new secret to the consumer in the same step. |
+| PATs | SECURITY-AUDIT-LOG.md step 10 §4.3` | Issue → deploy → confirm traffic → revoke. |
 
 Before rotating anything cryptographic, read `SECURITY-AUDIT-LOG.md` step 16 §8 — it is
 the table of which rollbacks are safe. Two of them are not.

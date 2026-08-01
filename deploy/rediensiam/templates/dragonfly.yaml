@@ -29,10 +29,10 @@
 */}}
 {{- $wantsSsl := regexMatch "(?i)(^|,) *ssl *= *true" $cacheUrl }}
 {{- if and $tls (not $wantsSsl) }}
-{{- fail "rediensiam.dragonfly.local.tls.enabled is set but rediensiam.secrets.cacheUrl has no `ssl=true` — Dragonfly stops answering cleartext, so both must change in the SAME upgrade (09-infra-security.md §6.5)" }}
+{{- fail "rediensiam.dragonfly.local.tls.enabled is set but rediensiam.secrets.cacheUrl has no `ssl=true` — Dragonfly stops answering cleartext, so both must change in the SAME upgrade (SECURITY-AUDIT-LOG.md step 09 §6.5)" }}
 {{- end }}
 {{- if and (not $tls) $wantsSsl }}
-{{- fail "rediensiam.secrets.cacheUrl asks for `ssl=true` but rediensiam.dragonfly.local.tls.enabled is off — the cache serves no TLS and the app will not connect (09-infra-security.md §6.5)" }}
+{{- fail "rediensiam.secrets.cacheUrl asks for `ssl=true` but rediensiam.dragonfly.local.tls.enabled is off — the cache serves no TLS and the app will not connect (SECURITY-AUDIT-LOG.md step 09 §6.5)" }}
 {{- end }}
 {{- end }}
 {{- if .Values.rediensiam.dragonfly.local.tls.enabled }}

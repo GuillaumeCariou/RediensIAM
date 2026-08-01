@@ -426,7 +426,7 @@ postgres.local.roles.backupPassword
 > **These roles are created only on a first-ever start**, because they are created by initdb. An
 > **existing** installation is not migrated by upgrading the chart — it keeps running on `iam` and
 > gets none of the benefit. The manual migration is in
-> [`SECURITY-AUDIT-LOG.md` step 15c](`SECURITY-AUDIT-LOG.md` step 15c).
+> [`SECURITY-AUDIT-LOG.md`](SECURITY-AUDIT-LOG.md) step 15c.
 
 The `iam` SUPERUSER with `local all all trust` in `pg_hba.conf` on an existing cluster remains the
 highest-ranked open finding in the ledger (T-04). Splitting the roles on a *new* install is the

@@ -8,7 +8,7 @@ below was checked against the code on the `security/hardening-2026-07-30` branch
 report and the code disagreed, the code won and the disagreement is named.
 
 The finding-by-finding audit trail lives in `SECURITY-AUDIT-LOG.md`. There is no status ledger any
-more: `14-finding-ledger.md` was moved out of the repository because too many of the items it
+more: the step 14 finding ledger was retired because too many of the items it
 listed as open had since been closed, and a ledger that is out of date is worse than none.
 **The current status is what is written here.** `SECURITY-AUDIT-LOG.md` records which
 reports have been retired and why.
@@ -622,8 +622,7 @@ assumed unaddressed.
 ## 9. Reporting a vulnerability
 
 There is no published disclosure process in this repository. Until there is, the audit trail in
-`SECURITY-AUDIT-LOG.md` is the record of what has been looked at and by whom. Start with its
-`README.md`, which says which reports have been retired and why, and then with
-`11-pentest-results.md` — the only one that set out to break the others. The finding ledger this
-section used to point at, `14-finding-ledger.md`, is no longer in the repository; it was moved out
-because it went stale.
+`SECURITY-AUDIT-LOG.md` is the record of what has been looked at and by whom. It says which reports
+were retired and why; step 11 is the one that set out to break the others. The finding ledger this
+section used to point at (step 14) was retired before that log was written and is not retrievable —
+this document is the status of record.
