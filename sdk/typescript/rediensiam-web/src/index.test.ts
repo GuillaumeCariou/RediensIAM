@@ -190,3 +190,154 @@ test('malformed tokens decode to null rather than throwing', () => {
   assert.equal(decodeJwtPayload('a.b'), null);
   assert.equal(decodeJwtPayload('a.!!!not-base64!!!.c'), null);
 });
+
+/**
+ * `id_token_hint` must be the ID token, and the SDK dropped the one it received.
+ *
+ * It sent the ACCESS token instead — into a query string, which lands in browser history, the
+ * IdP's access logs and every intermediary. That is precisely what the in-memory-only token design
+ * exists to prevent. RP-initiated logout also wants an ID token, so Hydra would not have honoured
+ * the post-logout redirect with an access token in that field.
+ *
+ * Driven through a real callback rather than by poking at state: `#accessToken` is a private
+ * field, and a test that assigns to `iam['#accessToken']` silently sets an unrelated property and
+ * then passes because there was no token to leak.
+ */
+test('logout sends the id token, never the access token', async () => {
+  const assigned: string[] = [];
+  const realFetch = globalThis.fetch;
+  const stub = <T,>(name: string, value: T) =>
+    Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
+
+  const store = new Map<string, string>();
+  stub('sessionStorage', {
+    setItem: (k: string, v: string) => store.set(k, v),
+    getItem: (k: string) => store.get(k) ?? null,
+    removeItem: (k: string) => store.delete(k),
+  });
+  stub('location', {
+    origin: 'https://app.example.com',
+    href: 'https://app.example.com/callback?code=abc&state=the-state',
+    assign: (url: string) => assigned.push(url),
+  });
+  stub('history', { replaceState() {} });
+  store.set('rediensiam:pkce', JSON.stringify({ verifier: 'v'.repeat(43), state: 'the-state' }));
+
+  const discovery = {
+    issuer: 'https://auth.example.com',
+    authorization_endpoint: 'https://auth.example.com/oauth2/auth',
+    token_endpoint: 'https://auth.example.com/oauth2/token',
+    end_session_endpoint: 'https://auth.example.com/oauth2/sessions/logout',
+  };
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith('/oauth2/token')) {
+      return new Response(
+        JSON.stringify({
+          access_token: 'ACCESS-TOKEN-SECRET',
+          id_token: 'THE-ID-TOKEN',
+          expires_in: 3600,
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify(discovery), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as typeof fetch;
+
+  try {
+    const iam = new RediensIam(validConfig);
+    assert.equal(await iam.handleRedirect(), true, 'the callback should complete');
+
+    await iam.logout();
+
+    assert.equal(assigned.length, 1);
+    assert.ok(
+      !assigned[0].includes('ACCESS-TOKEN-SECRET'),
+      `the access token reached the logout URL: ${assigned[0]}`,
+    );
+    assert.ok(
+      assigned[0].includes('id_token_hint=THE-ID-TOKEN'),
+      `the id token was not sent: ${assigned[0]}`,
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+    delete (globalThis as { location?: unknown }).location;
+    delete (globalThis as { sessionStorage?: unknown }).sessionStorage;
+    delete (globalThis as { history?: unknown }).history;
+  }
+});
+
+/**
+ * `fetch` merged headers by spreading `init.headers`. Spreading a `Headers` instance yields `{}` —
+ * its entries are not own enumerable properties — and spreading the `[[k, v]]` array form yields
+ * `{"0": [...]}`. Either way the caller's Content-Type and friends vanished without error and the
+ * API answered 415. `Headers` is the canonical form and what `Request.headers` gives you.
+ *
+ * Driven through a real callback for the same reason as the logout test: the token lives in a
+ * private field, so a client that was not really signed in throws `not_authenticated` and a test
+ * that swallows the error passes without ever reaching the header merge.
+ */
+test('fetch preserves caller headers given as a Headers instance', async () => {
+  let seen: Headers | undefined;
+  const realFetch = globalThis.fetch;
+  const stub = <T,>(name: string, value: T) =>
+    Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
+
+  const store = new Map<string, string>();
+  stub('sessionStorage', {
+    setItem: (k: string, v: string) => store.set(k, v),
+    getItem: (k: string) => store.get(k) ?? null,
+    removeItem: (k: string) => store.delete(k),
+  });
+  stub('location', {
+    origin: 'https://app.example.com',
+    href: 'https://app.example.com/callback?code=abc&state=the-state',
+    assign() {},
+  });
+  stub('history', { replaceState() {} });
+  store.set('rediensiam:pkce', JSON.stringify({ verifier: 'v'.repeat(43), state: 'the-state' }));
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith('/oauth2/token')) {
+      return new Response(JSON.stringify({ access_token: 'token', expires_in: 3600 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (url.includes('/api/thing')) {
+      seen = new Headers(init?.headers);
+      return new Response('{}', { status: 200 });
+    }
+    return new Response(
+      JSON.stringify({
+        issuer: 'https://auth.example.com',
+        authorization_endpoint: 'https://auth.example.com/oauth2/auth',
+        token_endpoint: 'https://auth.example.com/oauth2/token',
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+  }) as typeof fetch;
+
+  try {
+    const iam = new RediensIam(validConfig);
+    assert.equal(await iam.handleRedirect(), true);
+
+    await iam.fetch('https://app.example.com/api/thing', {
+      method: 'POST',
+      headers: new Headers({ 'Content-Type': 'application/json', 'Idempotency-Key': 'abc' }),
+    });
+
+    assert.equal(seen?.get('content-type'), 'application/json');
+    assert.equal(seen?.get('idempotency-key'), 'abc');
+    assert.equal(seen?.get('authorization'), 'Bearer token');
+  } finally {
+    globalThis.fetch = realFetch;
+    delete (globalThis as { location?: unknown }).location;
+    delete (globalThis as { sessionStorage?: unknown }).sessionStorage;
+    delete (globalThis as { history?: unknown }).history;
+  }
+});

@@ -152,4 +152,80 @@ public class AudienceBindingTests
             };
         }
     }
+
+    // ── The inactive answer, and who it belongs to ────────────────────────────
+
+    /// <summary>
+    /// A server older than the roles-are-never-null fix answers an inactive token with every
+    /// optional field explicitly null. System.Text.Json writes that null straight over the
+    /// initialiser, so <c>Roles</c> became null and <c>HasRole</c> threw — on the documented path
+    /// where this client "returns TokenInfo.Inactive for an unusable token rather than throwing".
+    /// </summary>
+    [Fact]
+    public async Task Inactive_answer_with_null_roles_still_has_an_empty_role_list()
+    {
+        var (client, _) = ClientAnswering(
+            """{"active":false,"sub":null,"user_id":null,"org_id":null,"project_id":null,"roles":null,"client_id":null,"is_service_account":false,"aud":null,"ver":1}""");
+
+        var info = await client.IntrospectAsync("rediens_pat_expired");
+
+        Assert.False(info.Active);
+        Assert.NotNull(info.Roles);
+        Assert.Empty(info.Roles);
+        Assert.False(info.HasRole("org_admin"));
+    }
+
+    /// <summary>
+    /// One token, two audiences, two different answers — the whole point of the `aud` contract.
+    /// The cache key hashed the token alone, so with a shared IMemoryCache (which
+    /// <c>AddRediensIam</c> resolves from the host) the first tenant's `active: true` was served
+    /// to the second, roles and all, with no round trip.
+    /// </summary>
+    [Fact]
+    public async Task Cached_answers_are_not_shared_across_audiences()
+    {
+        var cache = new MemoryCache(new MemoryCacheOptions());
+
+        var clientA = new RediensIamClient(
+            new HttpClient(new StubHandler("""{"active":true,"org_id":"org-a","roles":["org_admin"],"aud":"proj-a","ver":1}"""))
+            { BaseAddress = new Uri("https://auth.example.com/") },
+            new RediensIamOptions { BaseUrl = "https://auth.example.com", ServiceAccountToken = "t", Audience = "proj-a" },
+            cache);
+
+        var clientB = new RediensIamClient(
+            new HttpClient(new StubHandler("""{"active":false,"roles":[],"ver":1}"""))
+            { BaseAddress = new Uri("https://auth.example.com/") },
+            new RediensIamOptions { BaseUrl = "https://auth.example.com", ServiceAccountToken = "t", Audience = "proj-b" },
+            cache);
+
+        var a = await clientA.IntrospectAsync("the-same-token");
+        var b = await clientB.IntrospectAsync("the-same-token");
+
+        Assert.True(a.Active);
+        Assert.False(b.Active, "tenant B's server said inactive; a cache keyed on the token alone answered for it");
+    }
+
+    /// <summary>
+    /// `Timeout` is documented as an option and honoured only by the DI extension, while the
+    /// README blesses direct construction. A hung IAM then stalled every request for the
+    /// HttpClient default of 100 seconds instead of the five this asks for.
+    /// </summary>
+    [Fact]
+    public void Timeout_option_is_applied_when_the_client_is_constructed_directly()
+    {
+        var http = new HttpClient(new StubHandler("""{"active":true,"ver":1}"""))
+        {
+            BaseAddress = new Uri("https://auth.example.com/"),
+        };
+
+        _ = new RediensIamClient(http, new RediensIamOptions
+        {
+            BaseUrl             = "https://auth.example.com",
+            ServiceAccountToken = "t",
+            Audience            = Audience,
+            Timeout             = TimeSpan.FromSeconds(5),
+        }, new MemoryCache(new MemoryCacheOptions()));
+
+        Assert.Equal(TimeSpan.FromSeconds(5), http.Timeout);
+    }
 }

@@ -113,6 +113,12 @@ export class RediensIam {
    * cost is a silent re-authentication after a reload, which `handleRedirect()` covers.
    */
   #accessToken: string | null = null;
+  /**
+   * Kept solely for `id_token_hint` at logout. It is not a credential this SDK presents anywhere
+   * — but the alternative was sending the ACCESS token in that query parameter, which put it in
+   * browser history and the IdP's logs, and RP-initiated logout would not have honoured it.
+   */
+  #idToken: string | null = null;
   #refreshToken: string | null = null;
   #expiresAt = 0;
   #discovery: Discovery | null = null;
@@ -253,8 +259,9 @@ export class RediensIam {
    * user is still signed in at the IdP in that case.
    */
   async logout(): Promise<void> {
-    const idToken = this.#accessToken;
+    const idToken = this.#idToken;
     this.#accessToken = null;
+    this.#idToken = null;
     this.#refreshToken = null;
     this.#expiresAt = 0;
 
@@ -295,7 +302,11 @@ export class RediensIam {
     const call = (bearer: string) =>
       fetch(input, {
         ...init,
-        headers: { ...init.headers, Authorization: `Bearer ${bearer}` },
+        // Built through Headers, not by spreading: spreading a Headers instance yields {} — its
+        // entries are not own enumerable properties — and spreading the [[k, v]] array form yields
+        // {"0": [...]}. Either way the caller's Content-Type and friends vanished silently and the
+        // API answered 415. Headers is the canonical form, and what Request.headers hands you.
+        headers: withBearer(init.headers, bearer),
       });
 
     const response = await call(token);
@@ -432,6 +443,7 @@ export class RediensIam {
    */
   #store(tokens: TokenResponse): void {
     this.#accessToken = tokens.access_token;
+    if (tokens.id_token) this.#idToken = tokens.id_token;
     if (tokens.refresh_token) this.#refreshToken = tokens.refresh_token;
     const lifetime = (tokens.expires_in ?? 3600) - 30;
     this.#expiresAt = Date.now() + Math.max(lifetime, 0) * 1000;
@@ -491,6 +503,13 @@ function secureOrigin(value: string, what: string): string {
     );
   }
   return url.origin;
+}
+
+/** The caller's headers, plus the bearer, without losing whichever form they used. */
+function withBearer(headers: HeadersInit | undefined, bearer: string): Headers {
+  const merged = new Headers(headers);
+  merged.set('Authorization', `Bearer ${bearer}`);
+  return merged;
 }
 
 function targetUrl(target: FetchTarget): string {

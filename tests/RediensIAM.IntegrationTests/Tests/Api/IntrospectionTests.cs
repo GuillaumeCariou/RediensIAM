@@ -229,4 +229,37 @@ public class IntrospectionTests(TestFixture fixture)
             .GetProperty("allowed").GetBoolean().Should().BeFalse(
                 "an unusable token grants nothing, even when Keto would allow the subject");
     }
+
+    /// <summary>
+    /// The inactive answer must not carry a null <c>roles</c>.
+    ///
+    /// <para>
+    /// Every SDK models this field as a list. The Rust client declares <c>Vec&lt;String&gt;</c> with
+    /// <c>#[serde(default)]</c>, which fills a <i>missing</i> field but errors on an explicit null —
+    /// so every expired, revoked, unknown-audience or out-of-scope token came back as a transport
+    /// error rather than <c>active: false</c>. Its README tells integrators that a transport error
+    /// means the IAM is unreachable and the decision is theirs, so anything that degrades gracefully
+    /// on an outage would have admitted every revoked token. The .NET client has the same shape:
+    /// its <c>Roles</c> initialiser is overwritten by the null and <c>HasRole</c> then throws.
+    /// </para>
+    ///
+    /// <para>The inactive body is the most common response this endpoint gives. It is checked on the
+    /// wire rather than through a deserialiser, because a deserialiser is the thing that broke.</para>
+    /// </summary>
+    [Fact]
+    public async Task Introspect_InactiveToken_SendsAnEmptyRolesArrayNotNull()
+    {
+        var (client, org, _) = await GatewayClientAsync();
+
+        var res  = await client.PostAsync("/api/introspect", Form("not-a-real-token", org.Id));
+        var body = await res.Content.ReadAsStringAsync();
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        body.Should().NotContain("\"roles\":null");
+
+        using var doc = JsonDocument.Parse(body);
+        doc.RootElement.GetProperty("active").GetBoolean().Should().BeFalse();
+        doc.RootElement.GetProperty("roles").ValueKind.Should().Be(JsonValueKind.Array);
+        doc.RootElement.GetProperty("roles").GetArrayLength().Should().Be(0);
+    }
 }

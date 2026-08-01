@@ -20,7 +20,14 @@ public sealed record TokenInfo
     [JsonPropertyName("user_id")]            public string? UserId { get; init; }
     [JsonPropertyName("org_id")]             public string? OrgId { get; init; }
     [JsonPropertyName("project_id")]         public string? ProjectId { get; init; }
-    [JsonPropertyName("roles")]              public IReadOnlyList<string> Roles { get; init; } = [];
+    /// <summary>
+    /// Roles on the token; empty when there are none. The initialiser alone is not enough — a
+    /// server that sends <c>"roles": null</c> (any build before the fix, on every inactive answer)
+    /// writes that null straight over it, and <see cref="HasRole"/> then throws on the documented
+    /// path where an unusable token "returns TokenInfo.Inactive rather than throwing".
+    /// </summary>
+    [JsonPropertyName("roles")]
+    public IReadOnlyList<string> Roles { get => field ?? []; init => field = value ?? []; } = [];
     [JsonPropertyName("client_id")]          public string? ClientId { get; init; }
     [JsonPropertyName("is_service_account")] public bool IsServiceAccount { get; init; }
 
@@ -166,6 +173,16 @@ public sealed class RediensIamClient
         this.options = options.Validated();
         this.cache   = cache;
         this.logger  = logger;
+
+        // Only AddRediensIam applied this, while the README blesses direct construction too — so a
+        // hand-built client fell back to HttpClient's 100-second default and a hung IAM stalled
+        // every authenticated request for that long. Guarded because the timeout cannot be changed
+        // once a request has been sent on this HttpClient.
+        if (http.Timeout != this.options.Timeout)
+        {
+            try { http.Timeout = this.options.Timeout; }
+            catch (InvalidOperationException) { /* already in use — the caller owns it */ }
+        }
     }
 
     /// <summary>
@@ -264,9 +281,16 @@ public sealed class RediensIamClient
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", options.ServiceAccountToken);
 
     // Cache on a hash, never the token itself: cache keys end up in dumps and diagnostics.
-    private static string CacheKey(string token)
+    //
+    // The audience and the base URL are part of the key because they are part of the question. One
+    // token introspected for two audiences has two different answers — that is what `aud` is for —
+    // and IMemoryCache is resolved from the host, so a multi-tenant gateway shares one instance
+    // across its per-tenant clients. Keyed on the token alone, tenant A's `active: true` was served
+    // to tenant B, roles and all, without a round trip.
+    private string CacheKey(string token)
     {
-        var digest = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token));
+        var digest = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes($"{options.BaseUrl}\n{options.Audience}\n{token}"));
         return "rediensiam:" + Convert.ToHexString(digest);
     }
 

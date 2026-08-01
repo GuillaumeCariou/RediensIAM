@@ -337,6 +337,16 @@ public record IntrospectionResult(
     string? Aud = null,
     int Ver = IntrospectionController.ContractVersion)
 {
+    /// <summary>
+    /// Never null on the wire. The inactive answer — by far the most common one this endpoint
+    /// gives — used to serialise <c>"roles": null</c>, and every SDK models the field as a list:
+    /// the Rust client's <c>Vec&lt;String&gt;</c> failed to deserialise it and returned a transport
+    /// error for every expired, revoked or out-of-audience token, and the .NET client's non-null
+    /// initialiser was overwritten by the null so <c>HasRole</c> threw. An absent role set is an
+    /// empty one; saying so costs two characters.
+    /// </summary>
+    public List<string> Roles { get; init; } = Roles ?? [];
+
     public static readonly IntrospectionResult Inactive = new(false);
 }
 

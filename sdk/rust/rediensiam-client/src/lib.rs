@@ -92,7 +92,13 @@ pub struct TokenInfo {
     pub org_id: Option<String>,
     #[serde(default)]
     pub project_id: Option<String>,
-    #[serde(default)]
+    /// Roles the token carries. Empty rather than absent when the token is inactive.
+    ///
+    /// `deserialize_with` and not a bare `default`: the latter fills a *missing* field but errors
+    /// on an explicit `null`, and an inactive answer from a server older than the fix sends
+    /// `"roles": null`. That turned every expired or revoked token into `Error::Transport`, which
+    /// this crate documents as "the IAM is unreachable" — the opposite of what had happened.
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub roles: Vec<String>,
     #[serde(default)]
     pub client_id: Option<String>,
@@ -387,6 +393,14 @@ fn cache_key(token: &str) -> String {
     out
 }
 
+/// Treats `null` as an empty sequence. Used for fields a server may send explicitly null.
+fn null_as_empty<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<Vec<String>>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -577,6 +591,32 @@ mod tests {
         let request = server.await.unwrap();
         assert!(request.contains("POST /api/introspect"), "{request}");
         assert!(request.contains("aud=proj-1"), "aud missing from the form body: {request}");
+    }
+
+    /// The most common answer this endpoint gives, in the shape a server that predates the fix
+    /// still sends it: every optional field explicitly null.
+    ///
+    /// `#[serde(default)]` fills a *missing* field and errors on an explicit null, so this used to
+    /// come back as `Error::Transport`. That is the one error this crate's own documentation tells
+    /// integrators to treat as "the IAM is unreachable, decide for yourself" — so a caller that
+    /// degrades gracefully during an outage would have admitted every expired and revoked token.
+    /// An inactive answer must deserialise as `active: false`, not as a network fault.
+    #[tokio::test]
+    async fn an_inactive_answer_with_null_fields_is_not_a_transport_error() {
+        let (base_url, server) = serve_once(
+            r#"{"active":false,"sub":null,"user_id":null,"org_id":null,"project_id":null,"roles":null,"client_id":null,"is_service_account":false,"aud":null,"ver":1}"#,
+        )
+        .await;
+        let iam = RediensIamClient::new(config(&base_url)).unwrap();
+
+        let info = iam
+            .introspect("rediens_pat_expired")
+            .await
+            .expect("an inactive token is an answer, not a transport failure");
+
+        assert!(!info.active);
+        assert!(info.roles.is_empty());
+        let _ = server.await.unwrap();
     }
 
     #[tokio::test]
