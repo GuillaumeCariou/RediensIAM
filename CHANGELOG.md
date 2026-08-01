@@ -8,6 +8,101 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.2.3] — unreleased
+
+No wire-contract change. **Contains a fix for a full second-factor bypass — upgrade before anything
+else in this series.**
+
+### Security
+
+- **An attacker holding only a password could take over an MFA-protected account.**
+  `POST /auth/mfa/setup/totp/start` and `/confirm` authenticated off the `mfa_pending_user` session
+  key, which is also set when the server has just *challenged* for a factor. The
+  `mfa_setup_required` flag meant to separate enrolment from challenge was written twice and read
+  nowhere. So after answering the password step an attacker could ask for a fresh TOTP secret,
+  confirm it with a code from their own authenticator, and complete the login — replacing the
+  victim's factor and destroying their backup codes. It applied to tenant accounts and to the
+  console's `super_admin` alike. Both endpoints now require an enrolment session *and* an account
+  with no existing factor, and the flag is cleared when the login completes. Re-enrolling over an
+  existing factor remains available at `/account/mfa/totp/*`, which demands re-authentication.
+- **`/metrics` was reachable on the public port.** It was bound with `RequireHost("*:5001")`, which
+  matches the `Host` header rather than the port the connection arrived on — and host filtering
+  strips the port before comparing. Anyone could scrape login outcomes, per-tenant DB-scope counters
+  and route volumes by sending the admin port in a header. Now bound to `Connection.LocalPort`.
+- **The `/preview` framing exemption reached the login page.** It matched the whole path subtree,
+  and the SPA fallback answers `/preview/<anything>` with `index.html`, whose catch-all route renders
+  the real login form — served with `X-Frame-Options` omitted. Narrowed to that exact path,
+  case-sensitively, with `frame-ancestors 'self'` and no second origin.
+
+### Fixed — data loss
+
+- `GET /project/info` returned none of the nine fields its own `PATCH` accepts. The console's
+  Authentication screen reads them, edits one and writes them all back, so opening that page and
+  pressing Save replaced the project's login theme, identity providers, self-registration setting,
+  verification flags, allowed e-mail domains, IP allowlist and OAuth2 scopes with the page's
+  hardcoded defaults.
+- `GET /project/users` answered 404 for a project with no user list assigned — the same shape as the
+  two stats handlers, and the third instance of it. The console fetches users and roles together, so
+  the members panel of every freshly created project rendered empty.
+
+### Fixed — admin console
+
+- Eleven dialogs rendered their submit button outside the form it submits, so the primary action did
+  nothing at all: editing any user, renaming an organisation or project, creating projects and user
+  lists, generating a PAT, and assigning roles. Ten more dialogs had a Cancel button that was a
+  submit with no handler — inert, beside a live Delete.
+- Seven `<select>` controls could hold a value absent from their own options, so the browser painted
+  the first entry as chosen while state stayed empty. Two of them granted a role org-wide while
+  displaying a project as the scope.
+- Dark theme: `color-scheme` was never declared, so every widget the browser draws itself — select
+  popups, date pickers, checkboxes, autofill, scrollbars — stayed in light chrome. The destructive
+  button ignored the foreground token added for it, the sidebar popover and footer used page tokens
+  on a rail that is dark in both themes, the avatar hardcoded a light-only colour pair, and twelve
+  opacity-modified utilities compiled to nothing because Tailwind cannot apply a modifier to a bare
+  `var()`. Nav labels, table headers and placeholders were also below AA contrast.
+- The sidebar showed a hardcoded `v0.1`; it now reports the running server's version, which
+  `/admin/config` returns.
+- The theme selector moved from the top bar to the sidebar, beside the product name and version.
+
+### Fixed — deploy
+
+- **Every deploy uninstalled the release it was upgrading.** `helm_deploy` ran
+  `helm rollback <rel> 0 || helm uninstall --no-hooks` first; `rollback 0` errors on a
+  single-revision release, so the uninstall fired — and since uninstall-then-install returns the
+  release to revision 1, it fired on every subsequent deploy. Each one deleted the backup PVC and
+  every dump retained in it. It now upgrades in place, and only rolls back a release genuinely stuck
+  in a `pending-*` state.
+- **No backup has ever worked.** `GRANT pg_read_all_data TO iam_backup` had been removed from the
+  Postgres init while every comment and document citing it stayed in place, so `pg_dumpall` hit
+  permission denied on the first table. The 13 detection rules authenticate as the same role and had
+  been erroring for just as long.
+- **The image could not build the console.** The admin build stage's context excluded the SDK tree
+  its Vite alias resolves to. Because `deploy.sh` builds both SPAs on the host first, a failed image
+  build still had a `dist` to ship: the deploy reported success and pushed a stale image. Every
+  deploy since the console moved onto `rediensiam-web` shipped pre-cleanup code.
+- `monitoring/selftest.sh` never got the password the T-04 role split made mandatory, so its six
+  assertions failed as value mismatches rather than as an authentication error.
+- `reset-dev.sh` treated an issuer it could not read as confirmation that the release was a dev one.
+- Destructive commands in `deploy.sh` named the release literally instead of using `${RELEASE}`.
+
+### Changed
+
+- `Security:RequireAdminMfa` now defaults to **false**, and the console shows a standing reminder
+  instead. Gating the bootstrap admin's first login on enrolment locks the operator out of the
+  console they need in order to configure the SMTP or SMS provider that makes a factor deliverable.
+  `values.prod.yaml` sets it back to `true`; turn it on in your own values once configured.
+
+### Added
+
+- `deploy/tests.sh` — static tests for the deploy layer, which had no harness. Four of the faults
+  above are pinned by it.
+- Contract tests in the admin console for markup that type-checking cannot see: dialog submit
+  buttons with no form owner, buttons that do nothing, selects that can display a value they do not
+  hold, light/dark palette parity, `iam-*` class names with no rule, and that the image copies
+  everything the console's aliases import.
+
+---
+
 ## [0.2.2] — unreleased
 
 No wire-contract change. **But one behaviour change for existing SAML integrations, and an upgrade

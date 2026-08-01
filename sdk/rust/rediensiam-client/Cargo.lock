@@ -802,7 +802,7 @@ dependencies = [
 
 [[package]]
 name = "rediensiam-client"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "rcgen",
  "reqwest",
