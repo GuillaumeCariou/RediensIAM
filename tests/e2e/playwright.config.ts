@@ -20,7 +20,7 @@ import 'dotenv/config';
  * redirect crosses between them correctly.
  */
 export const APP_URL     = process.env.TEST_APP_URL     ?? 'http://iam.localhost';
-export const CONSOLE_URL = process.env.TEST_CONSOLE_URL ?? 'http://localhost:30501';
+export const CONSOLE_URL = process.env.TEST_CONSOLE_URL ?? 'http://admin.iam.localhost';
 
 export default defineConfig({
   testDir: './tests',

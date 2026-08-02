@@ -574,11 +574,13 @@ PUBLIC_IP=$(kubectl get svc -n "${NAMESPACE}" rediensiam-public -o jsonpath='{.s
 ADMIN_IP=$(kubectl get svc -n "${NAMESPACE}" rediensiam-admin -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
 ADMIN_HOST=$(echo "${ADMIN_URL}" | sed 's|https\?://||' | cut -d: -f1)
 
-if [ -n "${PUBLIC_IP}" ]; then
-  check "Health"          "http://${PUBLIC_IP}:5000/health"                           "200"
-  check "OIDC discovery"  "http://${PUBLIC_IP}:5000/.well-known/openid-configuration" "200"
-  check "Login page"      "http://${PUBLIC_IP}:5000/login"                            "200"
-fi
+# Through the ingress, on the URL an operator actually opens — not the Service ClusterIP. A
+# ClusterIP is routable from inside the cluster; probing it from this shell worked often enough to
+# look deliberate and failed often enough to report 000 against a healthy install, which is the
+# worst of both. It also proved nothing about the path a user takes: ingress, TLS, host routing.
+check "Health"          "${PUBLIC_URL}/health"                           "200"
+check "OIDC discovery"  "${PUBLIC_URL}/.well-known/openid-configuration" "200"
+check "Login page"      "${PUBLIC_URL}/login"                            "200"
 ADMIN_SVC_TYPE=$(kubectl get svc -n "${NAMESPACE}" rediensiam-admin -o jsonpath='{.spec.type}' 2>/dev/null)
 if [ -n "${ADMIN_IP}" ] && [ "${ADMIN_SVC_TYPE}" = "NodePort" ]; then
   check "Admin SPA"       "http://${ADMIN_IP}:5001/console/"                          "200" "${ADMIN_HOST}"

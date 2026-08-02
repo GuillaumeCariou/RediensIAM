@@ -3,14 +3,27 @@
 
 rediensiam:
   publicUrl: "http://iam.localhost"
-  adminUrl:  "http://localhost:30501"
+  # A subdomain of the issuer's host, and that is the point. The console used to be reached at
+  # http://localhost:30501, which is a *different site* from iam.localhost as browsers count them:
+  # the registrable domain of iam.localhost is iam.localhost, and localhost is its own. Hydra's
+  # session cookie is SameSite=Strict, so it was never sent when the console started an
+  # authorization request — Hydra saw no session, could not skip, and asked for the password again
+  # on every reload. Ory's own documentation is explicit about this: "Ory APIs must be exposed on
+  # the same domain as your application. If you don't fulfill this requirement, HTTP Cookies are
+  # ignored by the browser." Production already satisfied it (auth.rediens.net and
+  # auth.ts.rediens.net share rediens.net); dev now mirrors it.
+  adminUrl:  "http://admin.iam.localhost"
 
   service:
     admin:
-      # DEV ONLY. The chart default is ClusterIP (R-05); dev opts back in because the admin
-      # SPA is reached at http://localhost:30501 with no ingress and no DNS name. A NodePort
-      # binds on every node interface, so on a laptop this is loopback plus the LAN address —
-      # acceptable on a dev box, never on a deployed node. Prod does not set this.
+      # DEV ONLY, and now only a troubleshooting door. The console is reached at
+      # http://admin.iam.localhost/console/ through the admin ingress above. This NodePort still
+      # answers on :30501, but only to a request carrying `Host: admin.iam.localhost` — the app
+      # accepts the hosts this deployment declares and nothing else, so a bare
+      # http://localhost:30501 is refused with a 400. That is host filtering working.
+      # The chart default is ClusterIP (R-05): a NodePort binds on every node interface, so on a
+      # laptop this is loopback plus the LAN address — fine on a dev box, never on a deployed node.
+      # Prod does not set this.
       type: NodePort
 
   # R-15, live on this cluster since 2026-07-31. cert-manager v1.21.1 is installed
@@ -62,6 +75,14 @@ rediensiam:
         # own default cert, so dev stays on cleartext. This is the one place R-02 is not fixed,
         # and it is gated to dev precisely so prod cannot inherit it.
         enabled: false
+    admin:
+      # The console gets a host of its own under the issuer's domain — see adminUrl above for why
+      # a NodePort on localhost could not work. Prod already had this ingress; dev now has it too.
+      enabled: true
+      host: "admin.iam.localhost"
+      entrypoints: "web"        # dev serves plain http
+      tls:
+        enabled: false          # nothing can certify a .localhost name
 
   smtp:
     fromAddress: "noreply@localhost"
@@ -88,4 +109,8 @@ hydra:
           cors:
             enabled: true
             allowed_origins:
-              - "http://localhost:30501"
+              # The console's origin, which is where the SDK fetches /.well-known/openid-configuration
+              # from. It must track adminUrl: pointing it at the old NodePort origin left the
+              # console with a CORS failure on discovery and a blank page, the browser's only
+              # account of it being one console error.
+              - "http://admin.iam.localhost"

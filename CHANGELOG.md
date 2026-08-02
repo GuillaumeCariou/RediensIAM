@@ -12,6 +12,30 @@ all three SDKs and both SPAs share one number.
 
 **Breaking for anyone with a bookmark: the admin console moved from `/admin/` to `/console/`.**
 
+### Fixed — the deployment's own configuration was ignored
+
+- **A row in the database shadowed `App:PublicUrl`, `App:AdminSpaOrigin` and `App:Domain`.** They
+  are captured into the `instances` row at first install and served back as a configuration source
+  above the environment; `ApplyEnv` only runs again when `RECONFIGURE_FROM_ENV` is set, and nothing
+  sets it. So changing a hostname in the chart did nothing on an existing database: the chart said
+  one thing, `kubectl get deploy` showed it, and the process used the value from months earlier.
+  Moving the console to its own hostname failed exactly that way, and every symptom pointed
+  elsewhere — a bare 400 from host filtering, with the correct value in the pod's environment.
+  These three now come from the deployment only, for the reason the same file already gives for the
+  trust anchors: a process must not learn its own topology from data it can write.
+
+### Fixed — dev
+
+- **The dev console moved to `http://admin.iam.localhost/console/`**, a host under the issuer's own
+  domain, mirroring production. Hydra's CORS origins follow it — pointed at the old NodePort origin,
+  the SDK's discovery request was blocked and the console rendered nothing, the browser's only
+  account of it being one console error. The NodePort survives as a troubleshooting door and now
+  answers only to a request carrying the right `Host`, which is host filtering working.
+- **`deploy.sh`'s smoke tests probe the ingress**, not the Service ClusterIP. A ClusterIP is
+  routable from inside the cluster: probing it from the operator's shell worked often enough to look
+  deliberate and failed often enough to report `000` against a healthy install. It also proved
+  nothing about the path a user takes.
+
 ### Fixed — the console could not be reached by URL
 
 - **Thirty of the console's forty-nine pages answered a browser with a bare 401.** The console and

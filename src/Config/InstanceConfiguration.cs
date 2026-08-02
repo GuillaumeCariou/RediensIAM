@@ -138,9 +138,17 @@ public sealed class InstanceConfigurationProvider(InstanceBootstrapOptions opts)
     /// </summary>
     private static Dictionary<string, string?> ToDict(Instance i) => new(StringComparer.OrdinalIgnoreCase)
     {
-        ["App:PublicUrl"]               = i.PublicUrl,
-        ["App:AdminSpaOrigin"]          = i.AdminSpaOrigin,
-        ["App:Domain"]                  = i.Domain,
+        // App:PublicUrl, App:AdminSpaOrigin and App:Domain are NOT emitted either, for the same
+        // reason as the trust anchors above and one more that is purely operational.
+        //
+        // They decide which Host headers the process accepts and which origin an authorization
+        // code may be redirected to — a topology decision, made by whoever deploys. Serving them
+        // from this row means the value captured at first install outlives every later change: the
+        // chart says one thing, `kubectl get deploy` shows it, and the process uses another,
+        // because ApplyEnv only runs again when RECONFIGURE_FROM_ENV is set and nothing sets it.
+        // Moving the console to its own hostname failed exactly that way, and every symptom
+        // pointed somewhere else — a 400 from host filtering, with the correct value in the pod's
+        // environment.
         ["IAM_ADMIN_PATH"]              = i.AdminPath,
         ["IAM_PUBLIC_PORT"]             = i.PublicPort.ToString(),
         ["IAM_ADMIN_PORT"]              = i.AdminPort.ToString(),
