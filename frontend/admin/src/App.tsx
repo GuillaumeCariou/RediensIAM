@@ -1,4 +1,5 @@
-import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router';
+import { useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useNavigate } from 'react-router';
 import { useAuth } from './context/AuthContext';
 import { AuthProvider } from './context/AuthProvider';
 import { consumeReturnTo } from './context/returnTo';
@@ -78,6 +79,22 @@ function NoRolesError({ onLogout }: Readonly<{ onLogout: () => void }>) {
  */
 function AppRoutes() {
   const { ready, authenticated, isSuperAdmin, isOrgAdmin, isProjectManager, roles, logout } = useAuth();
+  const navigate = useNavigate();
+
+  /**
+   * Back to the page the sign-in interrupted, exactly once.
+   *
+   * Imperative rather than `<Navigate to={returnTo ?? home}>` in the catch-all: the callback path
+   * matches no route, so the catch-all is what renders, and feeding it the destination made the two
+   * take turns — it navigates to a path the router cannot match, which renders the catch-all again.
+   * An effect that runs once, after the value has been consumed, terminates: a destination the
+   * application cannot render falls through to the catch-all and lands on the scope home.
+   */
+  useEffect(() => {
+    if (!ready || !authenticated) return;
+    const target = consumeReturnTo(import.meta.env.BASE_URL.replace(/\/$/, ''), globalThis.location.pathname);
+    if (target) navigate(target, { replace: true });
+  }, [ready, authenticated, navigate]);
 
   if (!ready) return <Loading />;
   if (!authenticated) return <Loading />;
@@ -87,13 +104,11 @@ function AppRoutes() {
   }
 
   const home = defaultPath(isSuperAdmin, isOrgAdmin);
-  // Where the operator was going before the sign-in interrupted them, if anywhere.
-  const returnTo = consumeReturnTo(import.meta.env.BASE_URL.replace(/\/$/, ''), globalThis.location.pathname);
 
   return (
     <Shell>
       <Routes>
-        <Route index element={<Navigate to={returnTo ?? home} replace />} />
+        <Route index element={<Navigate to={home} replace />} />
 
         <Route path="account" element={<AccountPage />} />
 
@@ -153,7 +168,7 @@ function AppRoutes() {
           <Route path="project/settings" element={<ProjectSettings />} />
         </Route>
 
-        <Route path="*" element={<Navigate to={returnTo ?? home} replace />} />
+        <Route path="*" element={<Navigate to={home} replace />} />
       </Routes>
     </Shell>
   );
