@@ -10,8 +10,8 @@ rediensiam:
   # authorization request — Hydra saw no session, could not skip, and asked for the password again
   # on every reload. Ory's own documentation is explicit about this: "Ory APIs must be exposed on
   # the same domain as your application. If you don't fulfill this requirement, HTTP Cookies are
-  # ignored by the browser." Production already satisfied it (auth.rediens.net and
-  # auth.ts.rediens.net share rediens.net); dev now mirrors it.
+  # ignored by the browser." The production profile already satisfies it — its console host is a
+  # subdomain of the issuer's registrable domain — and dev now mirrors that shape.
   adminUrl:  "http://admin.iam.localhost"
 
   service:

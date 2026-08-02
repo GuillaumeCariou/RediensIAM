@@ -157,3 +157,23 @@ misconfiguration rather than a missing prerequisite.
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+rediensiam.secretName
+The Secret every credential in this release is read from.
+
+Defaults to `<release>-secrets`, which templates/secret.yaml renders from values — the shape the
+chart has always had, where the values arrive through a gitignored overlay such as
+values.prod.secret.yaml.
+
+That overlay cannot exist under GitOps: Argo CD renders the chart from what the repository
+contains, so the only two ways to give the app a password would be to commit it, or to seal a
+Secret that Helm then overwrites with empty strings on every sync. Hence `secrets.existingSecret`:
+name a Secret that already lives in the namespace, and the chart stops creating one.
+
+The keys are the same either way — see templates/secret.yaml for the list. An existing Secret that
+is missing one of them fails the pod at start with a named key, not a silent empty value.
+*/}}
+{{- define "rediensiam.secretName" -}}
+{{ .Values.rediensiam.secrets.existingSecret | default (printf "%s-secrets" .Release.Name) }}
+{{- end -}}

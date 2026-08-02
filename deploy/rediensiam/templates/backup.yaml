@@ -88,7 +88,7 @@ spec:
                 - name: PGPASSWORD
                   valueFrom:
                     secretKeyRef:
-                      name: {{ .Release.Name }}-secrets
+                      name: {{ include "rediensiam.secretName" . }}
                       key: postgres-backup-password
                 - name: RETAIN
                   value: {{ .Values.rediensiam.backup.retainCopies | quote }}

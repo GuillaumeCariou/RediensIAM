@@ -63,8 +63,19 @@ spec:
               value: {{ .Values.rediensiam.adminUrl | quote }}
             - name: App__Domain
               value: {{ index (urlParse .Values.rediensiam.publicUrl) "host" | quote }}
-            - name: IAM_ADMIN_PATH
-              value: {{ .Values.rediensiam.app.adminPath | quote }}
+            - name: Security__SsoSessionMinutes
+              value: {{ .Values.rediensiam.security.ssoSessionMinutes | default 480 | quote }}
+            {{- /*
+              Everything the block above does not name. The application reads far more settings
+              than this template sets — the lockout policy, the Argon2 cost, the audit retention,
+              the OTP lifetimes — and until this existed the only way to reach one was to edit the
+              chart. Non-secret values only: a secret belongs in `secrets`, which lands in a Secret
+              rather than in the pod spec where `kubectl describe` prints it.
+            */}}
+            {{- range $name, $value := .Values.rediensiam.app.extraEnv }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
             - name: App__TrustedProxies
               value: {{ .Values.rediensiam.app.trustedProxies | default "" | quote }}
             # ── Ory ────────────────────────────────────────────────────────────
@@ -93,12 +104,12 @@ spec:
             - name: ConnectionStrings__Default
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: database-url
             - name: Cache__ConnectionString
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: cache-url
             # Off by default (see values.yaml): a first launch must not gate the bootstrap admin's
             # own login on a factor it has no way to deliver yet.
@@ -112,43 +123,43 @@ spec:
             - name: Security__TotpSecretEncryptionKey
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: totp-key
             # S-10: when non-empty, supersedes Security__TotpSecretEncryptionKey.
             - name: Security__EncryptionKeys
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: encryption-keys
                   optional: true
             - name: Security__Argon2Pepper
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: argon2-pepper
                   optional: true
             # S-10: when non-empty, supersedes Security__Argon2Pepper.
             - name: Security__Argon2Peppers
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: argon2-peppers
                   optional: true
             - name: Smtp__Password
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: smtp-password
             - name: IAM_BOOTSTRAP_EMAIL
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: bootstrap-email
                   optional: true
             - name: IAM_BOOTSTRAP_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: bootstrap-password
                   optional: true
           startupProbe:

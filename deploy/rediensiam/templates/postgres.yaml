@@ -232,7 +232,7 @@ spec:
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: postgres-password
             - name: POSTGRES_DB
               value: postgres
@@ -257,22 +257,22 @@ spec:
             - name: APP_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: postgres-app-password
             - name: HYDRA_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: postgres-hydra-password
             - name: KETO_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: postgres-keto-password
             - name: BACKUP_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: postgres-backup-password
           {{- if .Values.rediensiam.postgres.local.tls.enabled }}
           args:

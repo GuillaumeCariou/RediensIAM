@@ -1,10 +1,23 @@
 # ── Prod environment overrides ────────────────────────────────────────────────
 # Layered on top of values.yaml. Secrets in values.prod.secret.yaml (gitignored).
-# Admin SPA accessible via Tailscale mesh (100.64.0.3) — no public hostname.
+#
+# This is a production PROFILE, not a production DEPLOYMENT. What it fixes is the posture —
+# TLS on, RLS on, no NodePort, two replicas, ACME off — because those are decisions that hold
+# for any operator. Every hostname and address below is a placeholder in the example.com family
+# and will not resolve anywhere. The chart is published, so a real name written here would ship
+# one deployment's topology to everyone who installs it; the real values belong in the operator's
+# own values overlay or infrastructure repository, layered on top of this file.
+#
+# The two hosts must stay same-site: the admin host is a subdomain of the public host's
+# registrable domain so Hydra's SameSite=Strict session cookie is sent when the console starts
+# an authorization request. Substituting your own names has to preserve that, not just the shape.
+#
+# The admin surface has no public hostname: it is reached over the operator's private network
+# (mesh VPN, VPN, or an internal-only load balancer) through the admin ingress below.
 
 rediensiam:
-  publicUrl: "https://auth.rediens.net"
-  adminUrl:  "https://auth.ts.rediens.net"    # Tailscale MagicDNS — Tailscale-only
+  publicUrl: "https://auth.example.com"
+  adminUrl:  "https://auth.admin.example.com"    # private-network name — not publicly resolvable
 
   # Two replicas is what makes the PodDisruptionBudget mean anything: maxUnavailable: 1 against a
   # single pod lets a node drain take the last one, so the object that looks like it prevents
@@ -13,7 +26,7 @@ rediensiam:
   replicaCount: 2
 
 
-  # R-05. No NodePort in prod: the admin surface is reached only through the Tailscale-only
+  # R-05. No NodePort in prod: the admin surface is reached only through the private-network
   # admin ingress below. This is what the values.yaml comment used to claim NodePort provided.
   service:
     admin:
@@ -29,11 +42,12 @@ rediensiam:
         clusterIssuer: letsencrypt
     admin:
       enabled: true
-      host: "auth.ts.rediens.net"
+      host: "auth.admin.example.com"
       tls:
         enabled: true
-        # Still self-signed: nothing here can certify a headscale-issued name. Empty means the
-        # chart's own Issuer. The runbook in SECURITY-AUDIT-LOG.md step 09 gives the
+        # Still self-signed: no public CA can certify a name that only exists inside the
+        # operator's private network. Empty means the chart's own Issuer. The runbook in
+        # SECURITY-AUDIT-LOG.md step 09 gives the
         # two ways to fix that; until one is done, this is a known click-through warning on the
         # most privileged UI.
         clusterIssuer: ""
@@ -100,7 +114,7 @@ rediensiam:
     # If you do not run an issuer, set acme.enabled and acme.email instead.
     assumeExternalIssuer: true
     acme:
-      enabled: false          # set true + email to issue a real cert for auth.rediens.net
+      enabled: false          # set true + email to issue a real cert for the public host
       email: ""
 
   smtp:
@@ -108,7 +122,7 @@ rediensiam:
     port: 587
     startTls: true
     username: ""                         # set your SMTP login
-    fromAddress: "noreply@rediens.net"
+    fromAddress: "noreply@example.com"   # set a sender your SMTP domain is allowed to send as
     fromName: "Rediens"
 
 hydra:
@@ -118,15 +132,15 @@ hydra:
     config:
       urls:
         self:
-          issuer:              "https://auth.rediens.net"
-        login:                 "https://auth.rediens.net/login"
-        consent:               "https://auth.rediens.net/auth/consent"
+          issuer:              "https://auth.example.com"
+        login:                 "https://auth.example.com/login"
+        consent:               "https://auth.example.com/auth/consent"
         # A browser redirect target, so it must be a page. It pointed at /auth/logout, which is
         # the JSON controller behind this page — the browser landed on the raw challenge body and
         # nothing ever accepted the request, so the session outlived the sign-out.
-        logout:                "https://auth.rediens.net/logout"
-        post_logout_redirect:  "https://auth.ts.rediens.net/console/"
-        error:                 "https://auth.rediens.net/auth/oauth2/error"
+        logout:                "https://auth.example.com/logout"
+        post_logout_redirect:  "https://auth.admin.example.com/console/"
+        error:                 "https://auth.example.com/auth/oauth2/error"
       serve:
         public:
           cors:
@@ -135,6 +149,6 @@ hydra:
               # R-19 / chain C-9: `http://localhost:30501` is gone. It made port 30501 on ANY
               # operator workstation a trusted origin against the production OAuth2 endpoints,
               # permanently, for an SSH-tunnel convenience. The tunnel it existed for is also
-              # gone now that prod uses ClusterIP + the Tailscale admin ingress; reach the
-              # console at https://auth.ts.rediens.net/admin/ over Tailscale instead.
-              - "https://auth.ts.rediens.net"
+              # gone now that prod uses ClusterIP + the private admin ingress; reach the console
+              # at the admin host over the private network instead. This must track adminUrl.
+              - "https://auth.admin.example.com"

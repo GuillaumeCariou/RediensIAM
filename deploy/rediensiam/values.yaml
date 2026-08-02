@@ -51,13 +51,24 @@ rediensiam:
 
   # ── App config ────────────────────────────────────────────────────────────────
   app:
-    adminPath: "/admin"
     # CSV of CIDRs allowed to set X-Forwarded-* (must contain your ingress controller's
     # pod/node network). Maps to App__TrustedProxies.
     # NOT optional: the image runs as Production, and Program.cs refuses to start on an
     # empty value rather than silently trusting RFC1918 — a pod that can spoof
     # X-Forwarded-For defeats every IP-based control. The default below is the k3s pod
     # and service CIDR; override it for any other cluster.
+    # Any environment variable the blocks below do not already set, as name/value pairs. The app
+    # reads more settings than this chart names — see docs/CONFIGURATION.md for the full list — and
+    # this is how you reach one without editing a template:
+    #
+    #   extraEnv:
+    #     Security__MaxLoginAttempts: "3"
+    #     Audit__RetentionDays: "730"
+    #
+    # Non-secret values only. Anything secret-bearing goes through `secrets`, which renders into a
+    # Secret instead of the pod spec.
+    extraEnv: {}
+
     trustedProxies: "10.42.0.0/16,10.43.0.0/16"
 
   # ── Argon2 password hashing ───────────────────────────────────────────────────
@@ -69,6 +80,11 @@ rediensiam:
   #   without the password, so accounts re-pepper on their next successful login and the old
   #   pepper must stay listed for as long as you are unwilling to lock out dormant accounts.
   security:
+    # How long one sign-in lasts before Hydra asks for the password again, in minutes. Eight hours
+    # is a working day; a shared machine does not carry the session into the next one. Zero turns
+    # SSO off entirely — every authorization request then needs the password, which is what this
+    # deployment did by accident until 0.5.0 and which some deployments will want on purpose.
+    ssoSessionMinutes: 480
     argon2Pepper: ""
     argon2Peppers: ""
 
@@ -126,6 +142,10 @@ rediensiam:
     admin:
       enabled: false    # prod enables this; dev uses the NodePort
       host: ""
+      # Empty inherits ingress.className above. Set it when the admin host is served by a different
+      # controller from the public one — which is the only arrangement in which "this host is not
+      # reachable from outside" is a property of the deployment rather than a hope.
+      className: ""
       entrypoints: "websecure"
       # The public ingress has had a tls toggle all along; this one emitted its tls: block
       # unconditionally, so a deployment terminating TLS upstream could not turn it off.
@@ -201,6 +221,18 @@ rediensiam:
   #   Runbook: SECURITY-AUDIT-LOG.md step 16 §7. Do not drop the old key until
   #   GET /admin/key-rotation reports totalPending: 0.
   secrets:
+    # Name of a Secret that ALREADY exists in the release namespace, carrying the same keys
+    # templates/secret.yaml would render. Empty (the default) keeps today's behaviour: the chart
+    # creates `<release>-secrets` from the values below.
+    #
+    # Set it when the values below cannot exist — which is every GitOps deployment. Argo CD and
+    # Flux render this chart from the repository itself, so a gitignored values.secret.yaml is
+    # never read, and the two remaining options are both wrong: commit the passwords, or seal a
+    # Secret that Helm immediately overwrites with empty strings on the next sync.
+    #
+    # Setting this ALSO disables the three render-time guards in templates/dragonfly.yaml, which
+    # are conditioned on a non-empty cacheUrl — see the note at the top of that file.
+    existingSecret: ""
     encryptionKey: ""
     encryptionKeys: ""
     databaseUrl: ""
