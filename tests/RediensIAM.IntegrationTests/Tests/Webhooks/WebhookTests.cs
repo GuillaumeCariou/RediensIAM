@@ -385,6 +385,49 @@ public class WebhookCoverageTests(TestFixture fixture)
         return (client, webhookId);
     }
 
+    /// <summary>
+    /// The queued job must not carry the signing secret in the clear.
+    ///
+    /// <para>
+    /// <c>EnqueueAsync</c> decrypted the secret and serialised it into the Redis job, where it sat
+    /// until delivery — and, on the SSRF-blocked path, indefinitely. The webhook secret is what a
+    /// receiver checks a delivery against, so anyone with read access to the cache could forge
+    /// signed events for every tenant. The data-protection key ring stored in the same cache is
+    /// encrypted precisely against that reader; these payloads were not.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task QueuedJob_DoesNotCarryThePlaintextSigningSecret()
+    {
+        var (client, webhookId) = await CreateOrgWebhookAsync();
+
+        var rotate = await client.PostAsync($"/org/webhooks/{webhookId}/rotate-secret", null);
+        rotate.StatusCode.Should().Be(HttpStatusCode.OK);
+        var secret = (await rotate.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("secret").GetString()!;
+        secret.Should().NotBeNullOrWhiteSpace();
+
+        var test = await client.PostAsync($"/org/webhooks/{webhookId}/test", null);
+        ((int)test.StatusCode).Should().BeLessThan(500);
+
+        // The dispatcher runs in the background and removes a job once it settles, so the queue is
+        // sampled until this webhook's job shows up. Requiring it to appear is what keeps the
+        // assertion from passing simply because there was nothing to look at.
+        var queue = fixture.GetService<IWebhookQueue>();
+        string[] queued = [];
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            queued = await queue.RecoverAllAsync();
+            if (queued.Any(j => j.Contains(webhookId.ToString()))) break;
+            await Task.Delay(20);
+        }
+
+        queued.Should().Contain(j => j.Contains(webhookId.ToString()),
+            "the job has to reach the queue before anything can be asserted about it");
+        queued.Should().NotContain(job => job.Contains(secret),
+            "a job sitting in the cache must not spell out the key that signs it");
+    }
+
     private async Task<(HttpClient client, Guid webhookId)> CreateAdminWebhookAsync()
     {
         var (org, orgList) = await fixture.Seed.CreateOrgAsync();

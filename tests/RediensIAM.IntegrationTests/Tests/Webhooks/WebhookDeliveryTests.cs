@@ -239,11 +239,23 @@ public class WebhookDeliveryTests(TestFixture fixture)
 
     // ── Failure scenarios ─────────────────────────────────────────────────────
 
+    /// <summary>
+    /// A secret that cannot be read fails the delivery and says so.
+    ///
+    /// <para>
+    /// This test previously asserted the opposite — that the payload still had to reach the
+    /// endpoint, unsigned, rather than being "silently dropped". The reasoning was availability,
+    /// and the deciding argument against it is that nothing about it is silent any more: the
+    /// attempt is recorded with its reason, which is visible in the deliveries list. Weighed
+    /// against that, an unsigned delivery is accepted by any receiver that checks only whether a
+    /// signature header is present — and the signature is the only thing that makes a webhook
+    /// payload trustworthy. A receiver that verifies properly would reject it anyway, so the
+    /// event is lost in both designs; only one of them can also be forged.
+    /// </para>
+    /// </summary>
     [Fact]
-    public async Task Delivery_CorruptSecretEnc_StillDeliversPayload()
+    public async Task Delivery_CorruptSecretEnc_IsRefusedAndRecorded()
     {
-        // A stored secret that will not decrypt must degrade to an unsigned delivery, not silently
-        // drop the event: the payload still has to reach the endpoint.
         using var target = WireMockServer.Start(new WireMockServerSettings { Port = 0 });
         target.Given(Request.Create().WithPath("/hook").UsingPost())
               .RespondWith(Response.Create().WithStatusCode(200));
@@ -255,7 +267,16 @@ public class WebhookDeliveryTests(TestFixture fixture)
         await client.PostAsJsonAsync($"/org/webhooks/{wh.Id}/test", new { });
         await Task.Delay(500);
 
-        target.LogEntries.Where(e => e.RequestMessage!.Path == "/hook").Should().HaveCount(1);
+        target.LogEntries.Where(e => e.RequestMessage!.Path == "/hook").Should().BeEmpty(
+            "an unsigned payload is one a receiver cannot tell from a forged one");
+
+        await fixture.RefreshDbAsync();
+        var delivery = await fixture.Db.WebhookDeliveries
+            .Where(d => d.WebhookId == wh.Id)
+            .OrderByDescending(d => d.CreatedAt)
+            .FirstOrDefaultAsync();
+        delivery.Should().NotBeNull("the refusal has to be visible in the deliveries list");
+        delivery!.ErrorMessage.Should().Contain("signing secret");
     }
 
     [Fact]

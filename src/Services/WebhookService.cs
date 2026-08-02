@@ -71,11 +71,18 @@ public sealed class RedisWebhookQueue(IConnectionMultiplexer redis) : IWebhookQu
 
 // ── Channel job ───────────────────────────────────────────────────────────────
 
+/// <summary>
+/// A queued delivery. <paramref name="SecretEnc"/> is the stored ciphertext, decrypted at delivery
+/// and never before: this record is serialised into the cache, where it waits — and, when delivery
+/// was blocked, waited indefinitely. A reader of the cache could otherwise lift the key that signs
+/// every tenant's events, which is the reader the data-protection key ring in the same cache is
+/// encrypted against.
+/// </summary>
 public sealed record WebhookJob(
     Guid WebhookId,
     string EventType,
     string Payload,
-    string SecretPlain,
+    string SecretEnc,
     string Url);
 
 // ── WebhookService — enqueues jobs, used by other services ───────────────────
@@ -148,14 +155,7 @@ public class WebhookService(
 
     private async Task EnqueueAsync(Webhook wh, string eventType, string payload)
     {
-        var secret = "";
-        if (!string.IsNullOrEmpty(wh.SecretEnc))
-        {
-            try { secret = TotpEncryption.DecryptString(appConfig.WebhookEncKey, wh.SecretEnc); }
-            catch { /* corrupt key — still deliver, just without a valid signature */ }
-        }
-
-        var job = new WebhookJob(wh.Id, eventType, payload, secret, wh.Url);
+        var job = new WebhookJob(wh.Id, eventType, payload, wh.SecretEnc ?? "", wh.Url);
         var jobJson = JsonSerializer.Serialize(job, JobOpts);
         await webhookQueue.PersistAsync(jobJson, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         await channel.Writer.WriteAsync(job);
@@ -234,12 +234,48 @@ public class WebhookDispatcherService(
         }
     }
 
+    /// <summary>
+    /// Persists an attempt that never reached the network — a blocked URL, or a secret that could
+    /// not be read. Both used to leave no trace at all, so the operator saw an empty delivery list
+    /// and no reason for it.
+    /// </summary>
+    private async Task RecordDeliveryAsync(
+        WebhookJob job, int? statusCode, string error, int attempts, bool delivered)
+    {
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var service = scope.ServiceProvider.GetRequiredService<WebhookService>();
+            await service.RecordDeliveryAsync(new WebhookDelivery
+            {
+                Id           = Guid.NewGuid(),
+                WebhookId    = job.WebhookId,
+                Event        = job.EventType,
+                Payload      = job.Payload,
+                StatusCode   = statusCode,
+                ErrorMessage = delivered ? null : error,
+                AttemptCount = attempts,
+                DeliveredAt  = delivered ? DateTimeOffset.UtcNow : null,
+                CreatedAt    = DateTimeOffset.UtcNow,
+            });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to persist webhook delivery record for {Id}", job.WebhookId);
+        }
+    }
+
     private async Task ProcessJobAsync(WebhookJob job, string jobJson, CancellationToken ct)
     {
         // Re-validate IP at delivery to prevent DNS rebinding (C8)
         if (await ssrfValidator.IsPrivateOrReservedAsync(job.Url))
         {
             logger.LogWarning("Webhook {Id} delivery blocked: URL resolved to private IP at delivery time", job.WebhookId);
+            // Recorded and removed, not simply abandoned. Returning here left the job in the
+            // pending set forever: every replica replayed it on every restart, and the operator saw
+            // an empty delivery list rather than a refusal.
+            await RecordDeliveryAsync(job, null, "blocked: url resolved to a private address", 1, false);
+            await webhookQueue.RemoveAsync(jobJson);
             return;
         }
 
@@ -253,12 +289,22 @@ public class WebhookDispatcherService(
         string sig;
         try
         {
-            sig = ComputeSignature(job.SecretPlain, timestamp, payloadBytes);
+            // Decrypted here rather than at enqueue: the job is serialised into the cache, and the
+            // signing key has no business sitting there. A secret that cannot be decrypted or is
+            // not valid base64 fails the delivery — sending it unsigned looked like a graceful
+            // degradation, but a receiver that only checks "is the signature header present"
+            // accepts an unsigned payload from anyone.
+            var secret = string.IsNullOrEmpty(job.SecretEnc)
+                ? ""
+                : TotpEncryption.DecryptString(appConfig.WebhookEncKey, job.SecretEnc);
+            sig = ComputeSignature(secret, timestamp, payloadBytes);
         }
-        catch (FormatException ex)
+        catch (Exception ex) when (ex is FormatException or CryptographicException)
         {
-            logger.LogWarning(ex, "Webhook {Id}: stored secret is not valid base64 — delivering unsigned", job.WebhookId);
-            sig = "";
+            logger.LogError(ex, "Webhook {Id}: signing secret unusable — refusing to deliver unsigned", job.WebhookId);
+            await RecordDeliveryAsync(job, null, "signing secret could not be read", 1, false);
+            await webhookQueue.RemoveAsync(jobJson);
+            return;
         }
 
         int? lastStatus = null;
