@@ -14,7 +14,7 @@ export async function getOrg(id: string) {
 export async function getOrgInfo() {
   return (await apiFetch('/org/info')).json();
 }
-export async function updateOrg(id: string, body: { name?: string; metadata?: Record<string, string> }) {
+export async function updateOrg(id: string, body: { name?: string; metadata?: Record<string, string>; audit_retention_days?: number | null }) {
   return (await apiFetch(`/admin/organizations/${id}`, { method: 'PATCH', body: JSON.stringify(body) })).json();
 }
 export async function deleteOrg(id: string) {
@@ -275,12 +275,25 @@ export async function regenerateBackupCodes(reauth?: MfaReauth) {
 }
 
 // ── Audit log ─────────────────────────────────────────────────────
-export async function getAuditLog(params?: { org_id?: string; project_id?: string; limit?: number; offset?: number }) {
+/**
+ * The audit log for one scope.
+ *
+ * `scope: 'org'` is not a convenience — it is a different route. `/admin/audit-log` is
+ * super-admin-only and binds nothing but limit/offset, so passing `org_id` to it filtered
+ * nothing: an org admin got a 403, and a super admin browsing an organisation saw *every*
+ * tenant's entries under a heading that said otherwise.
+ */
+export async function getAuditLog(
+  params?: { org_id?: string; project_id?: string; limit?: number; offset?: number; scope?: 'system' | 'org' },
+) {
   const q = new URLSearchParams();
-  if (params?.org_id) q.set('org_id', params.org_id);
   if (params?.project_id) q.set('project_id', params.project_id);
   if (params?.limit) q.set('limit', String(params.limit));
   if (params?.offset) q.set('offset', String(params.offset));
+  if (params?.scope === 'org') {
+    return (await apiFetch(`/org/audit-log?${q}`)).json();
+  }
+  if (params?.org_id) q.set('org_id', params.org_id);
   return (await apiFetch(`/admin/audit-log?${q}`)).json();
 }
 
@@ -291,7 +304,9 @@ export async function getMetrics() {
 
 // ── Org info (update) ─────────────────────────────────────────────
 export async function updateOrgInfo(patch: { audit_retention_days?: number | null }) {
-  return (await apiFetch('/org/info', { method: 'PATCH', body: JSON.stringify(patch) })).json();
+  // PATCH /org/settings, not /org/info: the latter is registered GET-only, so this answered 405
+  // and the caller — which has no catch — showed nothing. Retention could never be saved.
+  return (await apiFetch('/org/settings', { method: 'PATCH', body: JSON.stringify(patch) })).json();
 }
 
 // ── Webhooks ──────────────────────────────────────────────────────

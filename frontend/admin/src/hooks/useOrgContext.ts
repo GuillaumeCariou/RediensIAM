@@ -1,4 +1,4 @@
-import { useParams, useSearchParams } from 'react-router';
+import { useLocation, useParams, useSearchParams } from 'react-router';
 import { useAuth } from '@/context/AuthContext';
 
 // ── Org context ────────────────────────────────────────────────────────────────
@@ -12,9 +12,15 @@ import { useAuth } from '@/context/AuthContext';
 export function useOrgContext() {
   const { id, oid } = useParams<{ id?: string; oid?: string }>();
   const { orgId: tokenOrgId } = useAuth();
+  const { pathname } = useLocation();
 
   const orgId        = id ?? oid ?? tokenOrgId;
-  const isSystemCtx  = !!(id ?? oid);
+  // Read from the path, not from the presence of a param. `org/userlists/:id` bound :id to the
+  // USER LIST id, so every org admin opening one of their own lists was treated as being in the
+  // system context and sent to the super-admin-only routes — a 403 on every request, swallowed by
+  // the page's catch, leaving a titled page with an empty table. The param is now :listId, and
+  // this no longer depends on anyone remembering that.
+  const isSystemCtx  = pathname.startsWith('/system');
   const orgBase      = isSystemCtx ? `/system/organisations/${orgId}` : '/org';
   const userListBase = isSystemCtx ? `${orgBase}/userlists`           : '/org/userlists';
 

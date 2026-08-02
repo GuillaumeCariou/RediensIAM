@@ -117,7 +117,7 @@ function AppRoutes() {
           <Route path="system/organisations/:oid/projects/:pid/settings" element={<ProjectSettings />} />
           <Route path="system/users" element={<SystemUsers />} />
           <Route path="system/userlists" element={<UserLists />} />
-          <Route path="system/userlists/:id" element={<UserListDetail />} />
+          <Route path="system/userlists/:listId" element={<UserListDetail />} />
           <Route path="system/organisations/:id/userlists/:listId" element={<UserListDetail />} />
           <Route path="system/service-accounts" element={<SystemServiceAccounts />} />
           <Route path="system/service-accounts/:id" element={<ServiceAccountDetail />} />
@@ -130,7 +130,7 @@ function AppRoutes() {
         <Route element={isOrgAdmin ? <Outlet /> : <Navigate to={home} replace />}>
           <Route path="org" element={<OrgDashboard />} />
           <Route path="org/userlists" element={<UserLists />} />
-          <Route path="org/userlists/:id" element={<UserListDetail />} />
+          <Route path="org/userlists/:listId" element={<UserListDetail />} />
           <Route path="org/projects" element={<Projects />} />
           <Route path="org/admins" element={<OrgAdminsPage />} />
           <Route path="org/service-accounts" element={<OrgServiceAccounts />} />

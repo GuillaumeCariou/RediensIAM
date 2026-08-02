@@ -30,7 +30,7 @@ export default function OrgAuditLog() {
 
   const load = (off: number) => {
     setLoading(true);
-    getAuditLog({ org_id: orgId, limit: PAGE_SIZE, offset: off })
+    getAuditLog({ scope: isSystemCtx ? 'system' : 'org', org_id: orgId, limit: PAGE_SIZE, offset: off })
       .then(res => {
         const rows = Array.isArray(res) ? res : (res?.entries ?? []);
         setEntries(rows);

@@ -85,7 +85,13 @@ public class OrgController(
             throw new ForbiddenException("No org context");
         var projects = await db.Projects
             .Where(p => p.OrgId == orgId)
-            .Select(p => new { p.Id, p.Name, p.Slug, p.Active, p.AssignedUserListId, p.RequireRoleToLogin })
+            // The console shows the assigned user list by name and the creation date; without them
+            // the User List column read "None" for every project that had one.
+            .Select(p => new
+            {
+                p.Id, p.Name, p.Slug, p.Active, p.AssignedUserListId, p.RequireRoleToLogin, p.CreatedAt,
+                AssignedUserListName = p.AssignedUserList != null ? p.AssignedUserList.Name : null,
+            })
             .ToListAsync();
         return Ok(projects);
     }

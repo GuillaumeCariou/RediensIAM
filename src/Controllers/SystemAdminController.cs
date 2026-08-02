@@ -308,6 +308,12 @@ var org = await db.Organisations.FindAsync(id);
     {
         if (!string.IsNullOrEmpty(q) && q.Length < 3)
             return BadRequest(new { error = "query_too_short", min_length = 3 });
+
+        // Clamped like every other paged endpoint here: page=0 produced Skip(-50), which Postgres
+        // rejects outright, and an unbounded pageSize serialised the whole table.
+        page     = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 200);
+
         var query = db.Users.AsQueryable();
         if (!string.IsNullOrEmpty(q))
             query = query.Where(u => u.Email.Contains(q) || u.Username.Contains(q));
@@ -315,7 +321,17 @@ var org = await db.Organisations.FindAsync(id);
             .Include(u => u.UserList)
             .OrderBy(u => u.Email)
             .Skip((page - 1) * pageSize).Take(pageSize)
-            .Select(u => new { u.Id, u.Username, u.Discriminator, u.Email, u.Active, u.UserListId, u.LastLoginAt, OrgId = u.UserList.OrgId })
+            // display_name, org_name, user_list_name and locked_until are what the console's user
+            // table renders. Without locked_until its isLocked() was permanently false, so the
+            // Locked badge never appeared and the Unlock action it gates was unreachable.
+            .Select(u => new
+            {
+                u.Id, u.Username, u.Discriminator, u.Email, u.DisplayName, u.Active,
+                u.UserListId, u.LastLoginAt, u.LockedUntil,
+                OrgId        = u.UserList.OrgId,
+                OrgName      = u.UserList.Organisation != null ? u.UserList.Organisation.Name : null,
+                UserListName = u.UserList.Name,
+            })
             .ToListAsync();
         return Ok(users);
     }

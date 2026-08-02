@@ -33,7 +33,19 @@ public class OrgWebhookController(
     {
         var webhooks = await db.Webhooks
             .Where(w => w.OrgId == OrgId && w.ProjectId == null)
-            .Select(w => new { w.Id, w.Url, w.Events, w.Active, w.CreatedAt })
+            // last_delivery_status drives the "Last status" column, which read "—" even for a
+            // webhook that had been failing for days. Derived from the most recent delivery rather
+            // than denormalised onto the row: this list is short, and a column would need a
+            // migration and a second write on every delivery to say the same thing.
+            .Select(w => new
+            {
+                w.Id, w.Url, w.Events, w.Active, w.CreatedAt,
+                LastDeliveryStatus = db.WebhookDeliveries
+                    .Where(d => d.WebhookId == w.Id)
+                    .OrderByDescending(d => d.CreatedAt)
+                    .Select(d => d.StatusCode)
+                    .FirstOrDefault(),
+            })
             .ToListAsync();
         return Ok(webhooks);
     }
@@ -158,7 +170,9 @@ public class OrgWebhookController(
             .Where(d => d.WebhookId == id)
             .OrderByDescending(d => d.CreatedAt)
             .Skip(offset).Take(limit)
-            .Select(d => new { d.Id, d.Event, d.StatusCode, d.ErrorMessage, d.AttemptCount, d.DeliveredAt, d.CreatedAt })
+            // The console expands a delivery to show what was sent; without the payload the
+            // viewer opened onto nothing.
+            .Select(d => new { d.Id, d.Event, d.Payload, d.StatusCode, d.ErrorMessage, d.AttemptCount, d.DeliveredAt, d.CreatedAt })
             .ToListAsync();
         return Ok(deliveries);
     }

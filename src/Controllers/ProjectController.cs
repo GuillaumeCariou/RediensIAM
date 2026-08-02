@@ -131,6 +131,7 @@ public class ProjectController(
         if (body.EmailVerificationEnabled.HasValue) project.EmailVerificationEnabled = body.EmailVerificationEnabled.Value;
         if (body.SmsVerificationEnabled.HasValue)   project.SmsVerificationEnabled  = body.SmsVerificationEnabled.Value;
         if (body.AllowedEmailDomains != null)       project.AllowedEmailDomains     = body.AllowedEmailDomains;
+        if (body.AllowedScopes != null)             project.AllowedScopes           = body.AllowedScopes;
         ApplyPasswordPolicyFields(project, body);
         if (body.ClearEmailFromName == true)          project.EmailFromName              = null;
         else if (body.EmailFromName != null)          project.EmailFromName              = body.EmailFromName;
@@ -483,6 +484,9 @@ public record UpdateProjectInfoRequest(string? Name, bool? Active, bool? Require
     // dropped them and the API answered 200 while applying nothing — an operator could
     // enable an IP allowlist that never took effect.
     string[]? IpAllowlist, bool? CheckBreachedPasswords,
+    // Same defect as IpAllowlist above, one release later: the console sends allowed_scopes, the
+    // record did not name it, so custom OAuth2 scopes answered 200 and were empty on reload.
+    string[]? AllowedScopes,
     string? EmailFromName, bool? ClearEmailFromName,
     // Acknowledges the 409 from MfaDowngradeGuard. Only read when require_mfa goes true → false.
     bool? ConfirmMfaDowngrade = null);

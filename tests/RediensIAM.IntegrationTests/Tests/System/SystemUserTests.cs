@@ -193,4 +193,30 @@ public class SystemUserTests(TestFixture fixture)
 
         res.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
+
+    /// <summary>
+    /// The console's user table reads four fields this projection never sent, so the Organisation
+    /// and User List columns were always blank and <c>isLocked()</c> was permanently false — which
+    /// hid the Locked badge and, with it, the only route to the Unlock action.
+    /// </summary>
+    [Fact]
+    public async Task SearchUsers_ReturnsTheFieldsTheConsoleRenders()
+    {
+        var (user, client) = await ScaffoldAsync();
+        user.LockedUntil = DateTimeOffset.UtcNow.AddMinutes(10);
+        await fixture.Db.SaveChangesAsync();
+
+        var res  = await client.GetAsync($"/admin/users?q={Uri.EscapeDataString(user.Email)}");
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+
+        var row = body.EnumerateArray()
+            .First(u => u.GetProperty("email").GetString() == user.Email);
+
+        foreach (var field in new[] { "display_name", "org_name", "user_list_name", "locked_until" })
+            row.TryGetProperty(field, out _).Should().BeTrue($"the console renders {field}");
+
+        row.GetProperty("locked_until").ValueKind.Should().NotBe(JsonValueKind.Null,
+            "this account is locked, and the badge and the unlock action both key off it");
+    }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router';
 import { IamChip, IamDot } from '@/components/iam';
 import { useAuth } from '@/context/AuthContext';
@@ -63,7 +63,10 @@ export default function OrgEmail() {
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [error, setError] = useState('');
 
-  const fetchConfig = async () => {
+  // Keyed on the org being viewed. React Router reuses this component across :id changes, and with
+  // an empty dependency list the effect never re-ran: navigating from one organisation's Email page
+  // to another showed the first org's relay under the second org's URL, and Save wrote it there.
+  const fetchConfig = useCallback(async () => {
     try {
       const data: SmtpConfig = isAdmin ? await adminGetOrgSmtp(id) : await getOrgSmtp();
       setConfig(data);
@@ -72,9 +75,9 @@ export default function OrgEmail() {
       } else { setForm(EMPTY_FORM); }
     } catch { setError('Failed to load SMTP configuration.'); }
     finally { setLoading(false); }
-  };
+  }, [id, isAdmin]);
 
-  useEffect(() => { fetchConfig(); }, []);
+  useEffect(() => { void fetchConfig(); }, [fetchConfig]);
 
   const handleSave = async () => {
     setSaving(true); setError('');
