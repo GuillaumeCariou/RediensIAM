@@ -167,7 +167,13 @@ public class OrgController(
             return BadRequest(new { error = themeErr });
         ApplyLoginTheme(project, body.LoginTheme);
         ApplyEmailFromName(project, body.ClearEmailFromName, body.EmailFromName);
-        if (body.IpAllowlist != null) project.IpAllowlist = body.IpAllowlist;
+        if (body.IpAllowlist != null)
+        {
+            var invalidCidrs = body.IpAllowlist.Where(entry => !ProjectController.IsValidCidr(entry)).ToArray();
+            if (invalidCidrs.Length > 0)
+                return BadRequest(new { error = "invalid_ip_allowlist", invalid = invalidCidrs });
+            project.IpAllowlist = body.IpAllowlist;
+        }
         if (body.CheckBreachedPasswords.HasValue) project.CheckBreachedPasswords = body.CheckBreachedPasswords.Value;
         project.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
@@ -414,6 +420,14 @@ public class OrgController(
     {
         var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(ul => ul.Id == id && ul.OrgId == OrgId);
         if (ul == null) return NotFound();
+
+        // The same check the /admin path already had. Without it the unique index on
+        // (UserListId, Email) surfaced as a DbUpdateException and a 500 internal_error, which tells
+        // the caller nothing about the one thing they can fix.
+        var normalizedEmail = body.Email.ToLowerInvariant();
+        if (await db.Users.AnyAsync(u => u.UserListId == id && u.Email == normalizedEmail))
+            return Conflict(new { error = "email_already_exists" });
+
         if (UserHelpers.PasswordFloorError(body.Password) is { } floorErr) return floorErr;
 
         var username = body.Username ?? body.Email.Split('@')[0];

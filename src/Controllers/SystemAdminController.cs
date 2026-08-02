@@ -519,6 +519,16 @@ var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(u
             await emailService.SendInviteAsync(user.Email, inviteUrl, orgName);
         }
 
+        // Neither this nor the removal below wrote anything to the audit log, and adding a user to
+        // the system list grants System:rediensiam#super_admin — deployment-wide administration,
+        // recorded nowhere, with a hash chain that had nothing to protect. The org-scoped
+        // equivalent has always audited.
+        var grantsSuperAdmin = ul.OrgId == null && ul.Immovable;
+        await audit.RecordAsync(ul.OrgId, null, GetActorId(),
+            grantsSuperAdmin ? "user.super_admin_granted" : "userlist.user_added",
+            "user", user.Id.ToString(),
+            new() { ["user_list_id"] = id.ToString() });
+
         return Created($"/admin/userlists/{id}/users/{user.Id}", new
         {
             user.Id, username = $"{user.Username}#{user.Discriminator}", user.Email,
@@ -537,6 +547,13 @@ var ul   = await db.UserLists.FindAsync(id);
             await keto.DeleteRelationTupleAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{uid}");
         db.Users.Remove(user);
         await db.SaveChangesAsync();
+
+        var revokedSuperAdmin = ul?.OrgId == null && ul?.Immovable == true;
+        await audit.RecordAsync(ul?.OrgId, null, GetActorId(),
+            revokedSuperAdmin ? "user.super_admin_revoked" : "userlist.user_removed",
+            "user", uid.ToString(),
+            new() { ["user_list_id"] = id.ToString() });
+
         return NoContent();
     }
 
@@ -721,7 +738,13 @@ var project = await db.Projects.FindAsync(id);
         if (LoginThemeValidator.Validate(body.LoginTheme) is { } themeErr)
             return BadRequest(new { error = themeErr });
         ApplyLoginTheme(project, body.LoginTheme);
-        if (body.IpAllowlist != null) project.IpAllowlist = body.IpAllowlist;
+        if (body.IpAllowlist != null)
+        {
+            var invalidCidrs = body.IpAllowlist.Where(entry => !ProjectController.IsValidCidr(entry)).ToArray();
+            if (invalidCidrs.Length > 0)
+                return BadRequest(new { error = "invalid_ip_allowlist", invalid = invalidCidrs });
+            project.IpAllowlist = body.IpAllowlist;
+        }
         if (body.CheckBreachedPasswords.HasValue) project.CheckBreachedPasswords = body.CheckBreachedPasswords.Value;
         project.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
@@ -776,7 +799,9 @@ var project = await db.Projects.FindAsync(id);
             catch (Exception ex) { logger.LogWarning(ex, "Hydra scope update failed for project {ProjectId}", id); }
         }
 
-        await audit.RecordAsync(null, id, GetActorId(), "project.scopes_updated", "project", id.ToString());
+        // OrgId, not null: a row written with a null org lands on the deployment-wide chain, so
+        // the tenant could never see in /org/audit-log that a super admin changed their scopes.
+        await audit.RecordAsync(project.OrgId, id, GetActorId(), "project.scopes_updated", "project", id.ToString());
         return Ok(new { project.Id, custom_scopes = project.AllowedScopes });
     }
 
@@ -790,6 +815,12 @@ var project = await db.Projects.FindAsync(id);
             try { await hydra.DeleteOAuth2ClientAsync(project.HydraClientId); }
             catch (Exception ex) { logger.LogWarning(ex, "Hydra client deletion failed for {ClientId}", project.HydraClientId); }
         }
+        // The org-scoped delete does this; this one did not, so every Projects:{id}#role:*@user:*
+        // tuple outlived the project row — a live grant with nothing left in the database to name
+        // who holds it, which is what the integrity monitor reports and cannot repair.
+        try { await keto.DeleteAllProjectTuplesAsync(id.ToString()); }
+        catch (Exception ex) { logger.LogWarning(ex, "Keto tuple cleanup failed for project {ProjectId}", id); }
+
         db.Projects.Remove(project);
         await db.SaveChangesAsync();
         await audit.RecordAsync(project.OrgId, id, GetActorId(), "project.deleted", "project", id.ToString());
@@ -877,11 +908,30 @@ var roles = await db.Roles
     [HttpDelete("projects/{id}/roles/{rid}")]
     public async Task<IActionResult> AdminDeleteRole(Guid id, Guid rid)
     {
-var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == rid && r.ProjectId == id);
+var role = await db.Roles
+            .Include(r => r.UserProjectRoles)
+            .FirstOrDefaultAsync(r => r.Id == rid && r.ProjectId == id);
         if (role == null) return NotFound();
+
+        // ProjectController.DeleteRole walks the holders and drops a tuple each; removing the row
+        // here only cascaded the UserProjectRoles, leaving every holder's grant live in Keto.
+        foreach (var assignment in role.UserProjectRoles.ToList())
+        {
+            try
+            {
+                await keto.DeleteRelationTupleAsync(
+                    Roles.KetoProjectsNamespace, id.ToString(), role.Name, assignment.UserId.ToString());
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Keto tuple cleanup failed for role {RoleId} user {UserId}", rid, assignment.UserId);
+            }
+        }
+
         db.Roles.Remove(role);
         await db.SaveChangesAsync();
-        await audit.RecordAsync(null, id, GetActorId(), "role.deleted", "role", rid.ToString(),
+        var project = await db.Projects.FindAsync(id);
+        await audit.RecordAsync(project?.OrgId, id, GetActorId(), "role.deleted", "role", rid.ToString(),
             new() { ["name"] = role.Name });
         return NoContent();
     }

@@ -1829,6 +1829,12 @@ public class AuthController(
     private async Task<IActionResult> CompleteMfaLoginAsync(User user, Guid userGuid, string challenge, string projectId, string auditEvent, bool resetRateLimit = true)
     {
         user.LastLoginAt = DateTimeOffset.UtcNow;
+        // Cleared here as well as on the password path. Without it a user with a second factor
+        // accumulated failed-password attempts for the life of the account: five mistyped
+        // passwords spread over a year reached MaxLoginAttempts, and from then on every single
+        // typo re-locked the account for the full lockout window until an admin intervened.
+        user.FailedLoginCount = 0;
+        user.LockedUntil      = null;
         await db.SaveChangesAsync();
         if (resetRateLimit) await rateLimiter.ResetAsync(Ip, userGuid);
         // Only CompleteLoginAsync had this, so every login that passed a second factor — including

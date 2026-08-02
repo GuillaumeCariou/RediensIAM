@@ -21,6 +21,7 @@ public class SamlController(
     HydraService hydra,
     AuditLogService audit,
     SamlService saml,
+    KetoService keto,
     AppConfig appConfig,
     OtpCacheService pending,
     TenantScopeInterceptor tenantScope,
@@ -394,6 +395,17 @@ public class SamlController(
 
         if (defaultRoleId.HasValue)
         {
+            // Written through Keto rather than straight into the table. A row with no matching
+            // tuple is exactly what GrantReconciler classifies as an orphan, so the first repair
+            // run deleted the role this provisioning had just granted — and on a project with
+            // require_role_to_login that locked the user out of the tenant they had just joined.
+            var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == defaultRoleId.Value);
+            if (role != null)
+            {
+                await keto.WriteRelationTupleAsync(
+                    Roles.KetoProjectsNamespace, project.Id.ToString(), role.Name, user.Id.ToString());
+            }
+
             db.UserProjectRoles.Add(new UserProjectRole
             {
                 UserId    = user.Id,

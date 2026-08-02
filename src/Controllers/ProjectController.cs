@@ -168,7 +168,12 @@ public class ProjectController(
         return null;
     }
 
-    private static bool IsValidCidr(string entry)
+    /// <summary>
+    /// Shared with the org and admin project-update paths, which took the allowlist unchecked. An
+    /// entry that does not parse makes IpInRange answer false for every address, so a typo locks
+    /// the tenant out of its own project instead of reporting itself.
+    /// </summary>
+    internal static bool IsValidCidr(string entry)
     {
         if (string.IsNullOrWhiteSpace(entry)) return false;
         var parts = entry.Split('/');
@@ -309,6 +314,13 @@ public class ProjectController(
             return BadRequest(new { error = "password_requires_special" });
 
         var listId = project.AssignedUserListId.Value;
+
+        // Third copy of the check the /admin path has. The unique index on (UserListId, Email)
+        // would otherwise surface as a 500 rather than a conflict the caller can act on.
+        var normalizedEmail = body.Email.ToLowerInvariant();
+        if (await db.Users.AnyAsync(u => u.UserListId == listId && u.Email == normalizedEmail))
+            return Conflict(new { error = "email_already_exists" });
+
         var username = body.Username ?? body.Email.Split('@')[0];
         string discriminator;
         var discIter = 0;
