@@ -66,6 +66,17 @@ public class SmtpEmailService(
             ? await db.OrgSmtpConfigs.FirstOrDefaultAsync(c => c.OrgId == orgId.Value)
             : null;
 
+        // A tenant-supplied relay is re-validated every time it is used, not only when it was
+        // saved: DNS is the tenant's to change afterwards, and this is the one outbound path that
+        // does not dial through the SSRF-safe connect callback. The operator's own global relay is
+        // deliberately exempt — an in-cluster smarthost on a private address is the normal shape,
+        // and it comes from configuration rather than from a tenant.
+        if (orgConfig != null
+            && await SmtpEndpointValidator.ValidateAsync(orgConfig.Host, orgConfig.Port, orgConfig.StartTls) is { } orgSmtpError)
+        {
+            throw new InvalidOperationException($"org smtp endpoint refused: {orgSmtpError}");
+        }
+
         if (orgConfig != null)
         {
             host        = orgConfig.Host;
@@ -141,6 +152,17 @@ public class SmtpEmailService(
             ? await db.OrgSmtpConfigs.FirstOrDefaultAsync(c => c.OrgId == orgIdFromProject)
             : null;
 
+        // A tenant-supplied relay is re-validated every time it is used, not only when it was
+        // saved: DNS is the tenant's to change afterwards, and this is the one outbound path that
+        // does not dial through the SSRF-safe connect callback. The operator's own global relay is
+        // deliberately exempt — an in-cluster smarthost on a private address is the normal shape,
+        // and it comes from configuration rather than from a tenant.
+        if (orgConfig != null
+            && await SmtpEndpointValidator.ValidateAsync(orgConfig.Host, orgConfig.Port, orgConfig.StartTls) is { } orgSmtpError)
+        {
+            throw new InvalidOperationException($"org smtp endpoint refused: {orgSmtpError}");
+        }
+
         if (orgConfig != null)
         {
             host        = orgConfig.Host;
@@ -189,6 +211,17 @@ public class SmtpEmailService(
             : null;
 
         string host; int port; bool startTls; string? username; string? password; string fromAddress; string fromName;
+        // A tenant-supplied relay is re-validated every time it is used, not only when it was
+        // saved: DNS is the tenant's to change afterwards, and this is the one outbound path that
+        // does not dial through the SSRF-safe connect callback. The operator's own global relay is
+        // deliberately exempt — an in-cluster smarthost on a private address is the normal shape,
+        // and it comes from configuration rather than from a tenant.
+        if (orgConfig != null
+            && await SmtpEndpointValidator.ValidateAsync(orgConfig.Host, orgConfig.Port, orgConfig.StartTls) is { } orgSmtpError)
+        {
+            throw new InvalidOperationException($"org smtp endpoint refused: {orgSmtpError}");
+        }
+
         if (orgConfig != null)
         {
             host = orgConfig.Host; port = orgConfig.Port; startTls = orgConfig.StartTls;

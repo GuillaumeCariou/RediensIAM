@@ -259,7 +259,24 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
     {
         var url = $"{_adminUrl}/admin/oauth2/auth/sessions/consent?subject={Uri.EscapeDataString(subject)}";
         if (clientId != null) url += $"&client={Uri.EscapeDataString(clientId)}";
-        await Client.DeleteAsync(url);
+        EnsureRevoked(await Client.DeleteAsync(url));
+    }
+
+    /// <summary>
+    /// Throws unless Hydra actually revoked something.
+    ///
+    /// <para>
+    /// These three calls used to discard the response, so a 500 from Hydra was indistinguishable
+    /// from a successful revocation: <c>PATCH /account/password</c> answered
+    /// <c>"sessions_revoked": true</c> with every stolen session still live, and the try/catch
+    /// around the call could never fire because nothing threw. 404 is success — it means there was
+    /// nothing to revoke, which is the outcome the caller wanted.
+    /// </para>
+    /// </summary>
+    private static void EnsureRevoked(HttpResponseMessage response)
+    {
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return;
+        response.EnsureSuccessStatusCode();
     }
 
     public async Task<List<HydraConsentSession>> ListConsentSessionsAsync(string subject)
@@ -271,14 +288,14 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
 
     public async Task RevokeConsentSessionAsync(string subject, string clientId)
     {
-        await Client.DeleteAsync(
-            $"{_adminUrl}/admin/oauth2/auth/sessions/consent?subject={Uri.EscapeDataString(subject)}&client={Uri.EscapeDataString(clientId)}");
+        EnsureRevoked(await Client.DeleteAsync(
+            $"{_adminUrl}/admin/oauth2/auth/sessions/consent?subject={Uri.EscapeDataString(subject)}&client={Uri.EscapeDataString(clientId)}"));
     }
 
     public async Task RevokeAllConsentSessionsAsync(string subject)
     {
-        await Client.DeleteAsync(
-            $"{_adminUrl}/admin/oauth2/auth/sessions/consent?subject={Uri.EscapeDataString(subject)}");
+        EnsureRevoked(await Client.DeleteAsync(
+            $"{_adminUrl}/admin/oauth2/auth/sessions/consent?subject={Uri.EscapeDataString(subject)}"));
     }
 
     // ── Token validation ──────────────────────────────────────────────────────

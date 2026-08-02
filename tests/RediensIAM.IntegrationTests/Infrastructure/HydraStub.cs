@@ -509,6 +509,22 @@ public sealed class HydraStub : IDisposable
             .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(sessions));
     }
 
+    /// <summary>
+    /// Makes session revocation fail, so a caller that discards the status can be caught claiming
+    /// it revoked something it did not. Scoped to one subject: the stub server is shared across the
+    /// whole collection, and a blanket failure mapping breaks every later test that revokes.
+    /// </summary>
+    public void SetupSessionRevocationFailure(string subject)
+    {
+        _server
+            .Given(Request.Create()
+                .WithPath("/admin/oauth2/auth/sessions/consent")
+                .UsingDelete()
+                .WithParam("subject", subject))
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(500).WithBodyAsJson(new { error = "stub_failure" }));
+    }
+
     // ── OAuth2 client helpers ─────────────────────────────────────────────────
 
     /// <summary>

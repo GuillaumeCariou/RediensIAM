@@ -339,6 +339,93 @@ public class ResidualFindingsTests(TestFixture fixture)
         LoginThemeValidator.Validate(theme).Should().BeNull();
     }
 
+    /// <summary>
+    /// The org SMTP host is checked when it is written and never again.
+    ///
+    /// <para>
+    /// <c>SmtpEndpointValidator</c> runs in the two controllers that accept the value; the send
+    /// path re-read the stored row and handed the host straight to MailKit. So a host that
+    /// resolved to something public at save time and to an internal address afterwards — a DNS
+    /// record the tenant controls — turned <c>POST /org/smtp/test</c> into a connect probe against
+    /// the cluster, and every outbound mail presented the org's SMTP credentials to whatever
+    /// answered. <c>WebhookService</c> re-validates at delivery for exactly this reason.
+    /// </para>
+    ///
+    /// <para>
+    /// The row is written straight to the database, which is the only way to model "valid when
+    /// saved, hostile when used". The real SMTP client is used because the default fixture has no
+    /// relay configured and answers OK without dialling anything.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task OrgSmtp_HostIsRevalidatedAtSendTime()
+    {
+        var (client, factory) = fixture.CreateRealSmtpClient();
+        await using var _f = factory;
+
+        var (org, list) = await fixture.Seed.CreateOrgAsync();
+        var admin = await fixture.Seed.CreateUserAsync(list.Id);
+        fixture.Keto.AllowAll();
+
+        fixture.Db.OrgSmtpConfigs.Add(new OrgSmtpConfig
+        {
+            Id          = Guid.NewGuid(),
+            OrgId       = org.Id,
+            Host        = "169.254.169.254",   // link-local: the cloud metadata address
+            Port        = 587,
+            StartTls    = true,
+            FromAddress = "noreply@tenant.test",
+            FromName    = "Tenant",
+            CreatedAt   = DateTimeOffset.UtcNow,
+        });
+        await fixture.Db.SaveChangesAsync();
+
+        client.DefaultRequestHeaders.Authorization = new global::System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Bearer", fixture.Seed.OrgAdminToken(admin.Id, org.Id));
+
+        var res = await client.PostAsync("/org/smtp/test", null);
+
+        res.StatusCode.Should().NotBe(HttpStatusCode.OK,
+            "a host the validator would refuse must not be dialled just because it is already stored");
+    }
+
+    /// <summary>
+    /// A revocation that failed must not be reported as one that succeeded.
+    ///
+    /// <para>
+    /// <c>HydraService.RevokeSessionsAsync</c> and its two siblings threw the response away, so
+    /// <c>PATCH /account/password</c> answered <c>{"sessions_revoked": true}</c> whether or not
+    /// Hydra had done anything — and the <c>catch</c> beside the call could never fire, because
+    /// nothing was thrown. Every stolen session stayed live while the API said otherwise. The same
+    /// shape covered three Keto tuple deletes, which is what "tuple-first fails closed" depended on.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task PasswordChange_WhenSessionRevocationFails_DoesNotClaimSessionsWereRevoked()
+    {
+        var (org, list) = await fixture.Seed.CreateOrgAsync();
+        var user = await fixture.Seed.CreateUserAsync(list.Id);
+        fixture.Keto.AllowAll();
+        fixture.Hydra.SetupSessionRevocationFailure($"{org.Id}:{user.Id}");
+
+        var client = fixture.ClientWithToken(fixture.Seed.OrgAdminToken(user.Id, org.Id));
+        var res = await client.PatchAsJsonAsync("/account/password", new
+        {
+            current_password = "P@ssw0rd!Test",
+            new_password     = "An0ther!Passw0rd",
+        });
+
+        if (res.StatusCode == HttpStatusCode.OK)
+        {
+            var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+            if (body.TryGetProperty("sessions_revoked", out var revoked))
+            {
+                revoked.GetBoolean().Should().BeFalse(
+                    "Hydra refused the revocation, so the API must not report the sessions as gone");
+            }
+        }
+    }
+
     private async Task<UserList> CreateSystemListAsync()
     {
         var list = new UserList

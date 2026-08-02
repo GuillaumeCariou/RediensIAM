@@ -323,7 +323,13 @@ public static class WebhookUrlValidator
         }
         catch
         {
-            // DNS failure — webhook delivery will fail naturally
+            // A resolver failure is not evidence either way, and denying on it refuses legitimate
+            // hosts that only resolve from inside the cluster — it broke SAML metadata fetches and
+            // every SMTP config whose host does not resolve from the API pod. The rebinding case
+            // this looked like it addressed is covered where it actually matters: webhooks, OIDC
+            // and SAML dial through the SSRF-safe connect callback, which re-checks the address it
+            // is about to connect to, and NotificationService re-validates the SMTP host at send
+            // time rather than trusting what was stored.
         }
 
         return false;

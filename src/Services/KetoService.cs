@@ -40,16 +40,32 @@ public class KetoService(IHttpClientFactory http, AppConfig appConfig, RediensIa
         resp.EnsureSuccessStatusCode();
     }
 
+    /// <summary>
+    /// Throws unless Keto actually removed the tuple.
+    ///
+    /// <para>
+    /// The three delete calls discarded their response, so a revoke that Keto refused was reported
+    /// as done: the DB row went away and the grant stayed live with nothing left to name it. Every
+    /// "tuple-first, so it fails closed" comment in the controllers depended on this throwing.
+    /// A 404 means the tuple is already gone, which is the state the caller asked for.
+    /// </para>
+    /// </summary>
+    private static void EnsureDeleted(HttpResponseMessage response)
+    {
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return;
+        response.EnsureSuccessStatusCode();
+    }
+
     public async Task DeleteRelationTupleAsync(string namespaceName, string objectId, string relation, string subjectId)
     {
         var url = $"{_writeUrl}/admin/relation-tuples?namespace={Uri.EscapeDataString(namespaceName)}&object={Uri.EscapeDataString(objectId)}&relation={Uri.EscapeDataString(relation)}&subject_id={Uri.EscapeDataString(subjectId)}";
-        await WriteClient.DeleteAsync(url);
+        EnsureDeleted(await WriteClient.DeleteAsync(url));
     }
 
     public async Task DeleteAllProjectTuplesAsync(string projectId)
     {
         var url = $"{_writeUrl}/admin/relation-tuples?namespace={Uri.EscapeDataString("Projects")}&object={Uri.EscapeDataString(projectId)}";
-        await WriteClient.DeleteAsync(url);
+        EnsureDeleted(await WriteClient.DeleteAsync(url));
     }
 
     /// <summary>
@@ -64,7 +80,7 @@ public class KetoService(IHttpClientFactory http, AppConfig appConfig, RediensIa
     public async Task DeleteAllOrgTuplesAsync(string orgId)
     {
         var url = $"{_writeUrl}/admin/relation-tuples?namespace={Uri.EscapeDataString(Roles.KetoOrgsNamespace)}&object={Uri.EscapeDataString(orgId)}";
-        await WriteClient.DeleteAsync(url);
+        EnsureDeleted(await WriteClient.DeleteAsync(url));
     }
 
     /// <summary>
