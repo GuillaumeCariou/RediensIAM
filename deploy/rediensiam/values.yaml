@@ -58,9 +58,10 @@ rediensiam:
     # The first-launch problem is real — enrolment needs a delivery channel, and configuring one
     # needs the console — but it belongs to the first boot, not to the chart. `AppConfig` defaults
     # this to false so a deployment that sets nothing at all can still reach the console, and the
-    # console carries a standing reminder (MfaReminder) for an admin with no factor. Set this to
-    # false deliberately, for as long as it takes to configure SMTP or SMS, and then set it back.
-    requireAdminMfa: true
+    # console carries a standing reminder (MfaReminder) for an admin with no factor. The chart said
+    # true anyway, which overrode that default and locked the first admin out of the console they
+    # needed in order to configure a delivery channel. values.prod.yaml turns it on explicitly.
+    requireAdminMfa: false
 
   # ── Networking ────────────────────────────────────────────────────────────────
   service:

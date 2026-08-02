@@ -92,17 +92,6 @@ else
   pass "reset-dev.sh treats an unreadable issuer as a refusal"
 fi
 
-# ── the shipped defaults are the safe ones ───────────────────────────────────
-# The code default for RequireAdminMfa is false so a first launch can reach the console and
-# configure a delivery channel. The chart is a different question: an operator who installs it
-# without layering values.prod.yaml should not get a password-only super_admin.
-if grep -qE '^\s*requireAdminMfa:\s*true' "${DIR}/rediensiam/values.yaml"; then
-  pass "values.yaml requires admin MFA by default"
-else
-  fail "values.yaml requires admin MFA by default" \
-       "only values.prod.yaml re-enables it, so any other install ships password-only super_admin"
-fi
-
 # The RLS layer is the backstop under ~200 hand-written tenant conjuncts. Shipping prod with it
 # off means the one control that does not depend on remembering a WHERE clause never runs.
 # Checked against the rendered chart rather than the file: the first attempt at this set the key
@@ -149,6 +138,20 @@ if grep -nE 'grep[^|]*"?\$\{?CHART\}?"?/values\.yaml' "${DIR}/preflight.sh" | gr
        "$(grep -nE 'grep[^|]*values\.yaml' "${DIR}/preflight.sh" | head -3)"
 else
   pass "preflight.sh validates the rendered values, not just values.yaml"
+fi
+
+# ── the chart must not lock the first admin out ──────────────────────────────
+# AppConfig defaults RequireAdminMfa to false on purpose: enrolment needs SMTP or SMS, configuring
+# either needs the console, and the console carries a standing reminder instead. The chart set it
+# true anyway, so a fresh deployment demanded a factor the admin had no way to enrol. Prod turns it
+# on explicitly, which is where that decision belongs.
+DEFAULT_MFA="$(grep -E '^\s+requireAdminMfa:' "${DIR}/rediensiam/values.yaml" | head -1 | sed 's/.*requireAdminMfa:[[:space:]]*//' | tr -d ' ')"
+PROD_MFA="$(grep -E '^\s+requireAdminMfa:' "${DIR}/rediensiam/values.prod.yaml" | head -1 | sed 's/.*requireAdminMfa:[[:space:]]*//' | tr -d ' ')"
+if [ "${DEFAULT_MFA}" = "false" ] && [ "${PROD_MFA}" = "true" ]; then
+  pass "requireAdminMfa is off by default and on in prod"
+else
+  fail "requireAdminMfa is off by default and on in prod" \
+       "values.yaml says '${DEFAULT_MFA}', values.prod.yaml says '${PROD_MFA}'"
 fi
 
 # ── a tracked path with a backslash breaks the image build ───────────────────

@@ -8,6 +8,21 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.2.5] — 2026-08-02
+
+### Fixed
+
+- **The chart locked the first admin out of the console.** `AppConfig` defaults
+  `Security:RequireAdminMfa` to false on purpose — enrolling a factor needs SMTP or SMS,
+  configuring either needs the console, and the console carries a standing reminder
+  (`MfaReminder`) for an admin with no factor. `values.yaml` set it to `true` anyway, which
+  overrode that default on every install: the first sign-in answered `requires_mfa_setup` and sent
+  the operator to an enrolment page for a delivery channel that could not exist yet. The chart
+  default now matches the code; `values.prod.yaml` turns it on explicitly, which is where that
+  decision belongs. `deploy/tests.sh` holds both halves.
+
+---
+
 ## [0.2.4] — 2026-08-02
 
 No wire-contract change. **Contains a fix for a full second-factor bypass — upgrade before anything
