@@ -151,6 +151,18 @@ else
   pass "preflight.sh validates the rendered values, not just values.yaml"
 fi
 
+# ── a tracked path with a backslash breaks the image build ───────────────────
+# `src/bin\Debug` — one directory, literally named with a backslash, left by a Windows-style
+# `-o "bin\Debug\net10.0"` on Linux and then swept into a commit by `git add -A`. MSBuild reads the
+# backslash as a separator while expanding the SDK's default globs, so `**/*.cs` stayed literal and
+# `dotnet publish` failed with CS2021/CS2001 inside the container while the host build was fine.
+BACKSLASHED="$(cd "${ROOT}" && git ls-files | grep -F '\\' | head -3)"
+if [ -n "${BACKSLASHED}" ]; then
+  fail "no tracked path contains a backslash" "${BACKSLASHED}"
+else
+  pass "no tracked path contains a backslash"
+fi
+
 # ── the docs must not describe a stack that was removed ──────────────────────
 # The admin console dropped shadcn, every @radix-ui package and oidc-client-ts; the README still
 # described all three, which is worse than no README for anyone onboarding.
