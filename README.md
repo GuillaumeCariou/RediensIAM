@@ -3,7 +3,7 @@
 Multi-tenant Identity & Access Management built on Ory Hydra + Keto, ASP.NET Core 10, and React.
 
 - **Login SPA** — user-facing login, registration, MFA, password reset
-- **Admin SPA** — super-admin, org-admin and project-manager console
+- **Admin SPA** — super-admin, org-admin and project-manager console, served at `/console/`
 - **Backend API** — ASP.NET Core 10, one process, two listeners: public `:5000` / admin `:5001`
 - **Ory Hydra** — OAuth2/OIDC token issuance and consent
 - **Ory Keto** — the authorisation store, re-checked live on every privileged request
@@ -70,7 +70,7 @@ What you get:
 
 ```
 Login          http://iam.localhost/login
-Admin console  http://localhost:30501/admin/
+Admin console  http://localhost:30501/console/
 OIDC discovery http://iam.localhost/.well-known/openid-configuration
 ```
 
@@ -157,7 +157,7 @@ Everything is under the top-level `rediensiam:` key unless noted.
 
 | Key | Default | Notes |
 |---|---|---|
-| `app.adminPath` | `/admin` | path prefix for the admin SPA |
+| `app.adminPath` | `/admin` | **Read by nothing.** It is plumbed from here to an `IAM_ADMIN_PATH` env var and an `Instance` column, and no code consults it. The console is served at `/console/`, fixed in `Roles.ConsoleBasePath` — see below |
 | `app.trustedProxies` | `10.42.0.0/16,10.43.0.0/16` | **The app refuses to start on an empty value.** CSV of CIDRs whose `X-Forwarded-*` headers are honoured. Silently trusting RFC1918 would let any in-cluster pod spoof `X-Forwarded-For` and bypass every IP-based control. The default is the k3s pod and service CIDR |
 | `image.digest` | `""` | set by `deploy.sh` from `docker push`. When set it replaces `image.tag`, so a restart re-runs the exact bytes deployed |
 | `image.pullPolicy` | `IfNotPresent` | only safe *because* of the digest pin |
@@ -169,7 +169,7 @@ Everything is under the top-level `rediensiam:` key unless noted.
 | `ingress.public.tls.enabled` | `false` | on in prod; off in dev because `iam.localhost` cannot be certified |
 | `ingress.public.adminOnlyPaths` | `[/admin, /org, /project, /service-accounts]` | denied on the public hostname by an unconditional Traefik `ipAllowList`. `/api` is deliberately absent — see [docs/API.md](docs/API.md) |
 | `ingress.public.rateLimit` / `.maxBodyBytes` | 50/s burst 100 · 1 MiB | ingress-layer |
-| `ingress.admin.clusterIssuer` | `selfsigned` | a known defect — see [docs/SECURITY.md](docs/SECURITY.md) |
+| `ingress.admin.tls.enabled` / `.clusterIssuer` | `true` / `selfsigned` | disable when TLS is terminated upstream. The self-signed default is a known defect — see [docs/SECURITY.md](docs/SECURITY.md) |
 | `networkPolicy.defaultDenyScope` | `namespace` | set to `release` if you share the namespace with anything that has no policy of its own |
 
 #### Secrets — generated, not hand-written

@@ -19,9 +19,9 @@ import OrgDetail from './pages/system/OrgDetail';
 import SystemProjectDetail from './pages/system/SystemProjectDetail';
 import SystemProjects from './pages/system/SystemProjects';
 import SystemHealth from './pages/system/SystemHealth';
-import ServiceAccountDetail from './pages/ServiceAccountDetail';
-import OrgAdminsPage from './pages/OrgAdminsPage';
-import UserListDetail from './pages/UserListDetail';
+import ServiceAccountDetail from './pages/shared/ServiceAccountDetail';
+import OrgAdmins from './pages/shared/OrgAdmins';
+import UserListDetail from './pages/shared/UserListDetail';
 
 import OrgDashboard from './pages/org/OrgDashboard';
 import UserLists from './pages/org/UserLists';
@@ -102,7 +102,7 @@ function AppRoutes() {
           <Route path="system/organisations/:id" element={<OrgDetail />} />
           <Route path="system/organisations/:id/userlists" element={<UserLists />} />
           <Route path="system/organisations/:id/projects" element={<Projects />} />
-          <Route path="system/organisations/:id/admins" element={<OrgAdminsPage />} />
+          <Route path="system/organisations/:id/admins" element={<OrgAdmins />} />
           <Route path="system/organisations/:id/service-accounts" element={<OrgServiceAccounts />} />
           <Route path="system/organisations/:id/service-accounts/:saId" element={<ServiceAccountDetail />} />
           <Route path="system/organisations/:id/audit-log" element={<OrgAuditLog />} />
@@ -132,7 +132,7 @@ function AppRoutes() {
           <Route path="org/userlists" element={<UserLists />} />
           <Route path="org/userlists/:listId" element={<UserListDetail />} />
           <Route path="org/projects" element={<Projects />} />
-          <Route path="org/admins" element={<OrgAdminsPage />} />
+          <Route path="org/admins" element={<OrgAdmins />} />
           <Route path="org/service-accounts" element={<OrgServiceAccounts />} />
           <Route path="org/service-accounts/:saId" element={<ServiceAccountDetail />} />
           <Route path="org/audit-log" element={<OrgAuditLog />} />
@@ -157,8 +157,12 @@ function AppRoutes() {
 }
 
 export default function App() {
+  // basename comes from Vite, so the router, the bundle's asset paths and the server's fallback
+  // cannot drift apart — all three read the same `base`. Writing it here as a literal is how
+  // "/admin" survived the move to /console and left the router refusing to match any URL at all,
+  // with one console warning and a blank page as the only symptom.
   return (
-    <BrowserRouter basename="/admin">
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
       <ThemeProvider>
         <ScopeProvider>
           <AuthProvider>

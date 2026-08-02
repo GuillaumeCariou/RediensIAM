@@ -8,6 +8,50 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.4.0] — 2026-08-02
+
+**Breaking for anyone with a bookmark: the admin console moved from `/admin/` to `/console/`.**
+
+### Fixed — the console could not be reached by URL
+
+- **Thirty of the console's forty-nine pages answered a browser with a bare 401.** The console and
+  the management API shared the `/admin` prefix, and the API owns it: `SystemHealthController` is
+  mounted on `admin/system`, which is exactly where the console's System scope lives. A bookmark, a
+  refresh or a pasted link was judged by the API's bearer gate before a byte of the SPA had loaded,
+  so the screen showed a spinner that could never resolve — no JavaScript had arrived to resolve
+  it. The console now has its own prefix and `/admin/*` is the API's alone, which removes the
+  collision by construction rather than exempting one route from the gate.
+- The prefix is `Roles.ConsoleBasePath`, read by the server fallback, the OIDC redirect URI and
+  Vite's `base`. `BrowserRouter` takes it from `import.meta.env.BASE_URL`: it was a literal
+  `"/admin"`, and it survived the move silently — the router then refused to match any URL at all,
+  with one console warning and a blank page as the only symptom.
+- `ConsoleRoutingTests` asks for all forty-six console routes the way a browser does, with no
+  `Authorization` header, and refuses a 401. Against the old prefix, twenty-seven of them fail.
+- `ingress.public.adminOnlyPaths` gains `/console`, so the console stays off the public host exactly
+  as it did when it shared a prefix with the API.
+
+### Changed
+
+- `frontend/admin/src/pages/` — the three pages used from more than one scope moved into
+  `pages/shared/`, and the one component still named `*Page` lost the suffix. They sat loose beside
+  four scope folders with nothing saying why.
+
+### Testing
+
+- The Playwright suite was rebuilt rather than repaired. All fifteen previous spec files mocked the
+  admin API through `page.route()`, which made them a slower copy of the vitest suites; ten of them
+  authenticated nothing at all, because the fixture replayed a `sessionStorage` token that
+  `oidc-client-ts` used to write and that the SDK replacing it never did. The new suite runs against
+  a real deployment, needs no configuration — it reads the installer's own bootstrap account — and
+  proves those credentials before the first test rather than after a dozen timeouts.
+
+### Documentation
+
+- `app.adminPath` is documented as what it is: plumbed from the chart to an env var to a database
+  column, and **read by nothing**. It never controlled the console's prefix.
+
+---
+
 ## [0.3.0] — 2026-08-02
 
 **Two breaking changes for operators**, both in the list below: `Security:RequireAdminMfa` is gone,

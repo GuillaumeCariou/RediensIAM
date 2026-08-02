@@ -1,85 +1,108 @@
-/**
- * global-setup.ts
- *
- * Runs once before the test suite. Performs the full OIDC login flow through
- * the admin SPA → Hydra → Login SPA → back to admin SPA, then captures the
- * resulting sessionStorage (where oidc-client-ts stores the token) and writes
- * it to .auth/admin-session.json for reuse by the adminPage fixture.
- */
-import { chromium } from '@playwright/test';
-import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { APP_URL, CONSOLE_URL } from './playwright.config';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const AUTH_DIR  = path.join(__dirname, '.auth');
-const SESSION_FILE = path.join(AUTH_DIR, 'admin-session.json');
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const SECRETS = path.resolve(HERE, '../../deploy/rediensiam/values.secret.yaml');
 
-const BASE_URL = process.env.TEST_BASE_URL ?? 'http://localhost';
-const EMAIL    = process.env.TEST_SUPER_ADMIN_EMAIL;
-const PASSWORD = process.env.TEST_SUPER_ADMIN_PASSWORD;
+export interface Credentials { email: string; password: string }
 
-export default async function globalSetup() {
-  if (!EMAIL || !PASSWORD) {
+/**
+ * The bootstrap administrator.
+ *
+ * Environment first, so a suite can be pointed at any deployment. Otherwise the dev secrets file
+ * the installer wrote, which is the whole reason a developer does not have to configure anything
+ * before running these: `./deploy/setup.sh --dev` produced both the deployment and this account.
+ */
+export function credentials(): Credentials {
+  const email    = process.env.TEST_SUPER_ADMIN_EMAIL;
+  const password = process.env.TEST_SUPER_ADMIN_PASSWORD;
+  if (email && password) return { email, password };
+
+  if (!fs.existsSync(SECRETS)) {
     throw new Error(
-      'Missing TEST_SUPER_ADMIN_EMAIL / TEST_SUPER_ADMIN_PASSWORD env vars.\n' +
-      'Create tests/e2e/.env with these values before running E2E tests.'
+      `No credentials. Set TEST_SUPER_ADMIN_EMAIL and TEST_SUPER_ADMIN_PASSWORD, or install a dev\n` +
+      `deployment with ./deploy/setup.sh --dev, which writes them to ${SECRETS}.`,
+    );
+  }
+  const text = fs.readFileSync(SECRETS, 'utf8');
+  const read = (key: string) => {
+    const m = new RegExp(`^\\s*${key}:\\s*(.+)$`, 'm').exec(text);
+    // Values are quoted with whichever quote does not appear in the generated password.
+    return m ? m[1].trim().replace(/^['"]|['"]$/g, '') : null;
+  };
+  const fromFile = { email: read('bootstrapEmail'), password: read('bootstrapPassword') };
+  if (!fromFile.email || !fromFile.password) {
+    throw new Error(`bootstrapEmail / bootstrapPassword not found in ${SECRETS}`);
+  }
+  return fromFile as Credentials;
+}
+
+/**
+ * Fails the run before a single test does, with the reason.
+ *
+ * A suite that needs a deployment and finds none produces dozens of timeouts that all say
+ * "waiting for locator" and none of which say "nothing is running".
+ */
+export default async function globalSetup() {
+  for (const [name, url] of [['app', `${APP_URL}/health`], ['console', `${CONSOLE_URL}/console/config`]] as const) {
+    let res: Response;
+    try {
+      res = await fetch(url);
+    } catch (e) {
+      throw new Error(
+        `The ${name} is not reachable at ${url} (${(e as Error).message}).\n` +
+        `These tests need a running deployment: ./deploy/setup.sh --dev`,
+      );
+    }
+    if (!res.ok) throw new Error(`${url} answered ${res.status}; expected a healthy deployment.`);
+  }
+
+  // Prove the credentials before a single test uses them. A stale .env — this suite shipped with
+  // one dated six months before the deployment it was pointed at — otherwise turns into a dozen
+  // timeouts whose page all read "Invalid email or password", none of which name the file.
+  const { email, password } = credentials();
+  const authorize = new URL(`${APP_URL}/oauth2/auth`);
+  authorize.search = new URLSearchParams({
+    client_id: 'client_admin_system',
+    response_type: 'code',
+    scope: 'openid offline',
+    redirect_uri: `${CONSOLE_URL}/console/callback`,
+    state: 'globalsetupprobe01',
+    code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',   // RFC 7636 test vector
+    code_challenge_method: 'S256',
+  }).toString();
+
+  const redirect = await fetch(authorize, { redirect: 'manual' });
+  const challenge = new URL(redirect.headers.get('location') ?? '', APP_URL).searchParams.get('login_challenge');
+  if (!challenge) throw new Error(`${APP_URL} did not hand out a login challenge; is Hydra reachable?`);
+
+  const probe = await fetch(`${APP_URL}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, login_challenge: challenge }),
+  });
+  if (probe.status === 429) {
+    // The per-IP failure budget is five attempts and is deliberately never cleared by a success,
+    // so a run that failed to authenticate spends it for the next fifteen minutes. Say so, rather
+    // than blaming the credentials it never got to check.
+    throw new Error(
+      `${APP_URL} is rate-limiting this address: five failed sign-ins inside the lockout window.\n` +
+      `Wait it out (Security:LockoutMinutes, 15 by default) or, on a dev deployment, restart the\n` +
+      `cache that holds the counters: kubectl delete pod -l app=rediensiam-dragonfly`,
+    );
+  }
+  if (!probe.ok) {
+    const source = process.env.TEST_SUPER_ADMIN_EMAIL
+      ? 'TEST_SUPER_ADMIN_EMAIL / _PASSWORD (environment, possibly from tests/e2e/.env)'
+      : SECRETS;
+    throw new Error(
+      `The administrator ${email} cannot sign in (${probe.status}). Credentials came from ${source}.\n` +
+      `If the deployment was reinstalled, delete tests/e2e/.env so the installer's own secrets file is used.`,
     );
   }
 
-  fs.mkdirSync(AUTH_DIR, { recursive: true });
-
-  const browser = await chromium.launch();
-  const context = await browser.newContext({ baseURL: BASE_URL });
-  const page    = await context.newPage();
-
-  try {
-    // Triggers the OIDC redirect chain that lands us on the Login SPA.
-    await page.goto('/admin/');
-
-    await page.waitForURL(/login_challenge/, { timeout: 15_000 });
-
-    await page.locator('#identifier').fill(EMAIL);
-    await page.locator('#password').fill(PASSWORD);
-    await page.getByRole('button', { name: /sign in/i }).click();
-
-    // Hydra only shows the consent screen the first time a client is granted, so the run
-    // has to succeed whether or not it appears: race the direct landing against the
-    // click-through, and swallow the click's failure when there is no consent page.
-    await Promise.race([
-      page.waitForURL(/\/admin\//, { timeout: 10_000 }),
-      page.getByRole('button', { name: /allow|accept/i }).click().then(() =>
-        page.waitForURL(/\/admin\//, { timeout: 10_000 })
-      ).catch(() => {}),
-    ]);
-
-    // The token is written by the SPA's callback handler, not by the navigation, so there is
-    // nothing to wait on but the network going quiet. A timeout here is not fatal — the
-    // sessionStorage check below is the real assertion — hence the swallowed rejection.
-    await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
-
-    // oidc-client-ts keys the stored user by issuer and client id, so capture every entry
-    // rather than guessing the key.
-    const sessionState = await page.evaluate((): Record<string, string> => {
-      const out: Record<string, string> = {};
-      for (let i = 0; i < sessionStorage.length; i++) {
-        const k = sessionStorage.key(i)!;
-        out[k] = sessionStorage.getItem(k)!;
-      }
-      return out;
-    });
-
-    if (Object.keys(sessionState).length === 0) {
-      throw new Error(
-        'sessionStorage is empty after login — OIDC flow may not have completed.\n' +
-        'Check that the admin SPA is reachable at ' + BASE_URL + '/admin/'
-      );
-    }
-
-    fs.writeFileSync(SESSION_FILE, JSON.stringify(sessionState, null, 2));
-    console.log(`[global-setup] Auth state saved → ${SESSION_FILE}`);
-  } finally {
-    await browser.close();
-  }
+  // eslint-disable-next-line no-console
+  console.log(`\n  e2e → app ${APP_URL} · console ${CONSOLE_URL} · admin ${email}\n`);
 }

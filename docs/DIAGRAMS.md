@@ -518,7 +518,7 @@ sequenceDiagram
     Note over SPA: GET /admin/config is a MINIMAL endpoint,<br/>deliberately outside MapControllers so it bypasses<br/>SystemAdminController's RequireManagementLevel.<br/>Returns hydra_url, client_id, redirect_uri.
     SPA->>H: /oauth2/auth  client_id = client_admin_system
     H-->>R: login challenge - AdminLogin path, subject = bare USER_ID
-    Note over R: Security:RequireAdminMfa defaults to TRUE.<br/>An admin with no factor is sent through enrolment,<br/>never refused.
+    Note over R: The first admin of a deployment signs in without a factor.<br/>Once any admin has one, an admin without is sent<br/>through enrolment, never refused.
     R->>H: AcceptLogin subject = USER_ID, context user_id
     H-->>R: consent challenge
     R->>R: req.Client.ClientId == client_admin_system ?

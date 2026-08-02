@@ -22,7 +22,7 @@ interface Project { id: string; name: string; }
 
 const BLANK_FORM: UserEditFields = { email: '', username: '', display_name: '', phone: '', active: true, email_verified: false, clear_lock: false, new_password: '' };
 
-export default function OrgAdminsPage() {
+export default function OrgAdmins() {
   const { orgId, isSystemCtx } = useOrgContext();
 
   const [roles, setRoles] = useState<OrgRole[]>([]);

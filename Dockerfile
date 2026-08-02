@@ -30,7 +30,7 @@ WORKDIR /src
 COPY src/ ./
 # Copy SPA dist into wwwroot before publish
 COPY --from=login-build /src/frontend/login/dist /src/wwwroot/
-COPY --from=admin-build /src/frontend/admin/dist /src/wwwroot/admin/
+COPY --from=admin-build /src/frontend/admin/dist /src/wwwroot/console/
 RUN dotnet publish RediensIAM.csproj -c Release -o /publish
 
 # Stage 4 — runtime

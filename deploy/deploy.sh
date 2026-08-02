@@ -550,7 +550,7 @@ echo "   Login            →  ${PUBLIC_URL}/login"
 echo "   Register         →  ${PUBLIC_URL}/register"
 echo "   OIDC discovery   →  ${PUBLIC_URL}/.well-known/openid-configuration"
 echo "   Health           →  ${PUBLIC_URL}/health"
-echo "   Admin SPA        →  ${ADMIN_URL}/admin/  (Tailscale only)"
+echo "   Admin SPA        →  ${ADMIN_URL}/console/  (Tailscale only)"
 echo ""
 echo " Smoke tests:"
 
@@ -581,13 +581,13 @@ if [ -n "${PUBLIC_IP}" ]; then
 fi
 ADMIN_SVC_TYPE=$(kubectl get svc -n "${NAMESPACE}" rediensiam-admin -o jsonpath='{.spec.type}' 2>/dev/null)
 if [ -n "${ADMIN_IP}" ] && [ "${ADMIN_SVC_TYPE}" = "NodePort" ]; then
-  check "Admin SPA"       "http://${ADMIN_IP}:5001/admin/"                            "200" "${ADMIN_HOST}"
+  check "Admin SPA"       "http://${ADMIN_IP}:5001/console/"                          "200" "${ADMIN_HOST}"
 elif [ -n "${ADMIN_IP}" ]; then
   # ClusterIP + NetworkPolicy scopes :5001 to the ingress controller, so a curl from this
   # shell is expected to be refused. That is the control working, not a failure — reach the
   # console through the admin ingress instead.
   echo "   -  Admin SPA — not probed: :5001 is ClusterIP and admitted only from the ingress"
-  echo "                  controller. Verify at ${ADMIN_URL}/admin/ over Tailscale."
+  echo "                  controller. Verify at ${ADMIN_URL}/console/ over Tailscale."
 fi
 if [ -z "${PUBLIC_IP}" ] && [ -z "${ADMIN_IP}" ]; then
   echo "   (could not resolve cluster IPs — skipping curl checks)"

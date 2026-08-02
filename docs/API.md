@@ -45,7 +45,7 @@ public host carries a second Ingress whose Traefik middleware is an `ipAllowList
 (`deploy/rediensiam/templates/ingress.yaml:110-165`):
 
 ```yaml
-adminOnlyPaths: [/admin, /org, /project, /service-accounts]
+adminOnlyPaths: [/admin, /console, /org, /project, /service-accounts]
 ```
 
 `/auth`, `/account` and `/api` are deliberately absent. **This is why `/api/manage/*` is public and
@@ -85,14 +85,22 @@ skipped.
 | Method | Path | Authority | Reachable | Source |
 |---|---|---|---|---|
 | GET | `/health` | anonymous | public | `Program.cs:357` (`MapHealthChecks`) |
-| GET | `/admin/config` | anonymous | admin-only | `Program.cs:382` — a minimal endpoint, deliberately outside `SystemAdminController` so the SPA can bootstrap its OIDC config |
+| GET | `/console/config` | anonymous | admin-only | `Program.cs:382` — a minimal endpoint, deliberately outside `SystemAdminController` so the SPA can bootstrap its OIDC config |
 | GET | `/metrics` | anonymous | admin **port** only (`RequireHost`) | `Program.cs:389` — Prometheus scrape |
 | GET | `/swagger`, `/swagger/v1/swagger.json` | anonymous | admin **port** only | `Program.cs:343-347` |
 
-Plus two SPA fallbacks: `/admin/{**path}` serves the admin console's `index.html`
-(`Program.cs:393`), and everything else falls back to the login SPA (`:401`). Browser navigations
-to `/admin/*` carry no `Authorization` header and must load — which is why the admin bearer check
-keys on *"did this resolve to a controller action"* rather than on the header being absent.
+Plus two SPA fallbacks: `/console/{**path}` serves the admin console's `index.html`, and everything
+else falls back to the login SPA. Browser navigations carry no `Authorization` header and must
+load — which is why the admin bearer check keys on *"did this resolve to a controller action"*
+rather than on the header being absent.
+
+**The console does not live under `/admin`, and that is deliberate.** It did, and the management
+API owns that prefix: `SystemHealthController` is mounted on `admin/system`, which is exactly where
+the console's System scope lives. Every one of those thirty pages answered a browser with a bare
+401 before a byte of the SPA had loaded — no bookmark, no refresh, no pasted link. Giving the human
+surface its own prefix removes the collision by construction instead of exempting one route from
+the gate. `Roles.ConsoleBasePath` is the single place the prefix is written; the router reads it
+through Vite's `base`, so the bundle, the router and this fallback cannot drift apart.
 
 ---
 

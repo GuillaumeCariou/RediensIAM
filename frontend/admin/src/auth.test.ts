@@ -53,7 +53,7 @@ beforeEach(() => {
   login.mockClear();
   sdkFetch.mockClear();
   fetchMock = vi.fn(async (path: string) =>
-    path === '/admin/config' ? respond(200, CONFIG) : respond(200, {}));
+    path === '/console/config' ? respond(200, CONFIG) : respond(200, {}));
   vi.stubGlobal('fetch', fetchMock);
 });
 
@@ -91,7 +91,7 @@ describe('apiFetch', () => {
 
   it('keeps the session when a 401 only asks for re-authentication', async () => {
     fetchMock.mockImplementation(async (path: string) =>
-      path === '/admin/config'
+      path === '/console/config'
         ? respond(200, CONFIG)
         : respond(401, { error: 'reauthentication_required', methods: ['current_password'] }));
     const { apiFetch, ApiError } = await freshAuth();
@@ -101,15 +101,15 @@ describe('apiFetch', () => {
     expect(err).toBeInstanceOf(ApiError);
     expect((err as InstanceType<typeof ApiError>).status).toBe(401);
     expect(login).not.toHaveBeenCalled();
-    // No second call: fetching /admin/config would be the first step of throwing the session away.
-    // Counted on the SDK's fetch, not the global one: the global also serves /admin/config.
+    // No second call: fetching /console/config would be the first step of throwing the session away.
+    // Counted on the SDK's fetch, not the global one: the global also serves /console/config.
     expect(sdkFetch).toHaveBeenCalledTimes(1);
   });
 
   it('starts a fresh login when a 401 means the session really is gone', async () => {
     const auth = await freshAuth();
     fetchMock.mockImplementation(async (path: string) =>
-      path === '/admin/config' ? respond(200, CONFIG) : respond(401, { error: 'invalid_token' }));
+      path === '/console/config' ? respond(200, CONFIG) : respond(401, { error: 'invalid_token' }));
 
     await expect(auth.apiFetch('/admin/organizations')).rejects.toBeInstanceOf(auth.ApiError);
 
@@ -121,7 +121,7 @@ describe('apiFetch', () => {
     // for all the others.
     const auth = await freshAuth();
     fetchMock.mockImplementation(async (path: string) =>
-      path === '/admin/config' ? respond(200, CONFIG) : respond(401, { error: 'invalid_token' }));
+      path === '/console/config' ? respond(200, CONFIG) : respond(401, { error: 'invalid_token' }));
 
     await Promise.allSettled([
       auth.apiFetch('/admin/organizations'),
@@ -134,7 +134,7 @@ describe('apiFetch', () => {
 
   it('propagates other statuses as an ApiError carrying the body', async () => {
     fetchMock.mockImplementation(async (path: string) =>
-      path === '/admin/config' ? respond(200, CONFIG) : respond(400, { error: 'smtp_port_not_allowed' }));
+      path === '/console/config' ? respond(200, CONFIG) : respond(400, { error: 'smtp_port_not_allowed' }));
     const { apiFetch, ApiError } = await freshAuth();
 
     const err = await apiFetch('/org/smtp', { method: 'PUT' }).catch((e: unknown) => e) as ApiErrorInstance;
@@ -145,7 +145,7 @@ describe('apiFetch', () => {
   });
 
   it('survives an error response that is not JSON', async () => {
-    fetchMock.mockImplementation(async (path: string) => path === '/admin/config' ? respond(200, CONFIG) : ({
+    fetchMock.mockImplementation(async (path: string) => path === '/console/config' ? respond(200, CONFIG) : ({
       ok: false, status: 502, json: async () => { throw new SyntaxError('not json'); },
     } as unknown as Response));
     const { apiFetch, ApiError } = await freshAuth();
@@ -158,11 +158,11 @@ describe('apiFetch', () => {
   });
 });
 
-describe('the OIDC redirect_uri from /admin/config', () => {
+describe('the OIDC redirect_uri from /console/config', () => {
   it('is refused when its origin is not this SPA', async () => {
     // A compromised config endpoint could otherwise hand the authorization code to another origin.
     fetchMock.mockImplementation(async (path: string) =>
-      path === '/admin/config'
+      path === '/console/config'
         ? respond(200, { ...CONFIG, redirect_uri: 'https://evil.example/admin/callback' })
         : respond(200, {}));
     const { restoreSession } = await freshAuth();
@@ -172,7 +172,7 @@ describe('the OIDC redirect_uri from /admin/config', () => {
 
   it('is refused when it is not a URL at all', async () => {
     fetchMock.mockImplementation(async (path: string) =>
-      path === '/admin/config' ? respond(200, { ...CONFIG, redirect_uri: '/admin/callback' }) : respond(200, {}));
+      path === '/console/config' ? respond(200, { ...CONFIG, redirect_uri: '/console/callback' }) : respond(200, {}));
     const { restoreSession } = await freshAuth();
 
     await expect(restoreSession()).rejects.toThrow(/redirect_uri/);

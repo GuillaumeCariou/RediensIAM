@@ -215,7 +215,7 @@ export default function Sidebar() {
   const { isSuperAdmin, isOrgAdmin, isProjectManager } = useAuth();
   const [userOpen, setUserOpen] = useState(false);
   const { dark, toggleDark } = useTheme();
-  // Read once at mount: /admin/config has already been fetched by the time a session exists.
+  // Read once at mount: /console/config has already been fetched by the time a session exists.
   const version = getServerVersion();
   const userRef = useRef<HTMLDivElement>(null);
 

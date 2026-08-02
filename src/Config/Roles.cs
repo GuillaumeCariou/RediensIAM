@@ -64,6 +64,20 @@ public static class Roles
     public const string KetoManagerRelation    = "manager"; // relation on Projects namespace
     public const string KetoMemberRelation     = "member";  // relation on UserLists namespace
 
+    /// <summary>
+    /// Where the admin console is served, and deliberately not <c>admin</c>.
+    ///
+    /// <para>
+    /// The console and the management API shared the <c>/admin</c> prefix, and the API won every
+    /// collision: <c>SystemHealthController</c> is mounted on <c>admin/system</c>, which is where
+    /// the console's whole System scope lives, so a browser opening any of those thirty pages was
+    /// answered with a bare 401 before a single byte of the SPA had loaded. Sharing a namespace
+    /// between a human surface and a machine surface makes every new route a chance to take a page
+    /// away silently; separating them removes the question.
+    /// </para>
+    /// </summary>
+    public const string ConsoleBasePath = "console";
+
     // ── Well-known Hydra client IDs ───────────────────────────────────────────
     public const string AdminClientId = "client_admin_system";
 

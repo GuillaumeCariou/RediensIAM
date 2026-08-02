@@ -524,8 +524,9 @@ CSRF token.
 The session cookie is rotated on every successful MFA completion, to defeat session fixation.
 
 **Enforcement.** A project sets `Project.RequireMfa`; a user with no factor is sent through
-enrolment (`requires_mfa_setup`) rather than refused. The management console has the same policy
-under `Security:RequireAdminMfa`, **on by default**. Turning `require_mfa` *off* on a project with
+enrolment (`requires_mfa_setup`) rather than refused. The management console applies the same
+shape without a setting: the first administrator of a deployment signs in on a password alone, and
+every one after that is sent through enrolment. Turning `require_mfa` *off* on a project with
 enrolled users is a two-step confirmed call — see
 [`INTEGRATION.md`](INTEGRATION.md#turning-require_mfa-off).
 

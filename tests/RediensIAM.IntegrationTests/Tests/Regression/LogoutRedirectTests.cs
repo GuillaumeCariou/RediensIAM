@@ -33,7 +33,7 @@ public class LogoutRedirectTests(TestFixture fixture)
     /// <summary>
     /// The admin console signs out through the same SDK it ships. Its client is registered on
     /// startup from <c>App__AdminSpaOrigin</c>, and the URI it lands on has to be the console's own
-    /// base path — the bare origin serves the API, not the SPA.
+    /// base path, which is where the console is served — the bare origin is the API.
     /// </summary>
     [Fact]
     public async Task AdminSpaClient_RegistersThePostLogoutRedirectUri()
@@ -45,7 +45,7 @@ public class LogoutRedirectTests(TestFixture fixture)
         await hydra.EnsureAdminSpaClientAsync("https://console.example.test");
 
         var uris = PostLogoutUris(fixture.Hydra.LastRequestBody("/admin/clients", "POST"));
-        uris.Should().Contain("https://console.example.test/admin/",
+        uris.Should().Contain("https://console.example.test/console/",
             "a logout that cannot name where it lands is a logout Hydra refuses");
     }
 
@@ -61,7 +61,7 @@ public class LogoutRedirectTests(TestFixture fixture)
         await hydra.EnsureAdminSpaClientAsync("https://console.example.test");
 
         PostLogoutUris(fixture.Hydra.LastRequestBody("/admin/clients/", "PUT"))
-            .Should().Contain("https://console.example.test/admin/");
+            .Should().Contain("https://console.example.test/console/");
     }
 
     // ── Tenant clients ────────────────────────────────────────────────────────

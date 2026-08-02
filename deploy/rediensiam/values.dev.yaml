@@ -81,7 +81,7 @@ hydra:
         # the JSON controller behind this page — the browser landed on the raw challenge body and
         # nothing ever accepted the request, so the session outlived the sign-out.
         logout:                "http://iam.localhost/logout"
-        post_logout_redirect:  "http://localhost:30501/admin/"
+        post_logout_redirect:  "http://localhost:30501/console/"
         error:                 "http://iam.localhost/auth/oauth2/error"
       serve:
         public:

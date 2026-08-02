@@ -109,7 +109,7 @@ EOF
   esac
   ask ADMIN_HOST "Admin console hostname (e.g. auth.ts.example.com)"
   [ "${ADMIN_HOST}" = "${PUBLIC_HOST}" ] && die "the admin host must differ from the public host" \
-    "P-04: the ingress denies /admin, /org, /project and /service-accounts on the public host. Same name means no separation."
+    "P-04: the ingress denies /admin, /console, /org, /project and /service-accounts on the public host. Same name means no separation."
 
   # ── Public TLS ─────────────────────────────────────────────────────────────
   echo ""
@@ -151,7 +151,7 @@ EOF
     issuer_exists "${ADM_ISSUER}" || die "ClusterIssuer '${ADM_ISSUER}' does not exist in this cluster" \
       "create it first, or accept 'selfsigned' and its known warning"
   else
-    # Empty means "the chart's own Issuer" — see rediensiam.ingress.admin.clusterIssuer.
+    # Empty means "the chart's own Issuer" — see rediensiam.ingress.admin.tls.clusterIssuer.
     ADM_ISSUER=""
     confirm_typed "i accept the browser warning" \
       "Operators will get a certificate warning on ${ADMIN_HOST} every time. Treat it as a known defect, not as normal."
@@ -306,7 +306,7 @@ EOF
     echo "        login:                 \"https://${PUBLIC_HOST}/login\""
     echo "        consent:               \"https://${PUBLIC_HOST}/auth/consent\""
     echo "        logout:                \"https://${PUBLIC_HOST}/auth/logout\""
-    echo "        post_logout_redirect:  \"https://${ADMIN_HOST}/admin/\""
+    echo "        post_logout_redirect:  \"https://${ADMIN_HOST}/console/\""
     echo "      serve:"
     echo "        public:"
     echo "          cors:"
@@ -394,7 +394,7 @@ echo ""
 echo " Sign in"
 echo "   Login          ${PUBLIC_URL}/login"
 echo "   Register       ${PUBLIC_URL}/register"
-echo "   Admin console  ${ADMIN_URL}/admin/"
+echo "   Admin console  ${ADMIN_URL}/console/"
 echo "   OIDC discovery ${PUBLIC_URL}/.well-known/openid-configuration"
 echo ""
 

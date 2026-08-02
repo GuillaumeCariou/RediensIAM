@@ -119,6 +119,7 @@ rediensiam:
       # and `/api` is what the in-cluster gateway calls. Empty list removes the deny entirely.
       adminOnlyPaths:
         - /admin
+        - /console
         - /org
         - /project
         - /service-accounts

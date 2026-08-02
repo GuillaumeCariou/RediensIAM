@@ -1,6 +1,6 @@
 {{- if .Values.rediensiam.ingress.admin.enabled }}
 # Private admin ingress — Tailscale only (auth.ts.rediens.net).
-# Issuer is configurable (ingress.admin.clusterIssuer names a ClusterIssuer you run). Empty
+# Issuer is configurable (ingress.admin.tls.clusterIssuer names a ClusterIssuer you run). Empty
 # falls back to the chart's own self-signed Issuer, which produces a browser warning on the
 # most privileged UI in the deployment and so trains operators to click through certificate
 # errors — see the R-05 runbook in SECURITY-AUDIT-LOG.md step 09.

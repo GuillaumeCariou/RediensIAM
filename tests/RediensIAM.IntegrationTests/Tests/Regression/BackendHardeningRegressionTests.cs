@@ -359,7 +359,7 @@ public class BackendHardeningRegressionTests(TestFixture fixture)
     [Fact]
     public async Task AdminSpaNavigation_WithoutAuthorization_StillLoads()
     {
-        (await fixture.Client.GetAsync("/admin/config")).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await fixture.Client.GetAsync("/console/config")).StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     // ── I-11: SsoUrl was not scheme-validated ───────────────────────────────

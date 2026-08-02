@@ -91,7 +91,7 @@ What you get:
 
 ```
 Login          http://iam.localhost/login
-Admin console  http://localhost:30501/admin/
+Admin console  http://localhost:30501/console/
 OIDC discovery http://iam.localhost/.well-known/openid-configuration
 ```
 

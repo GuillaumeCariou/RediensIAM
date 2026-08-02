@@ -4,7 +4,7 @@ interface AdminConfig {
   hydra_url: string;
   client_id: string;
   redirect_uri: string;
-  /** The running server's own version — see the /admin/config endpoint in src/Program.cs. */
+  /** The running server's own version — see the /console/config endpoint in src/Program.cs. */
   version?: string;
 }
 
@@ -18,7 +18,7 @@ let accessToken: string | null = null;
 let signinRedirectInFlight = false;
 
 /**
- * Builds (once) the SDK client from `/admin/config`.
+ * Builds (once) the SDK client from `/console/config`.
  *
  * This console runs on `rediensiam-web`, the browser SDK this repo ships, rather than a second
  * OIDC implementation: the login the SDK gives integrators is the login the console itself uses,
@@ -36,7 +36,7 @@ let signinRedirectInFlight = false;
  */
 async function getClient(): Promise<RediensIam> {
   if (client) return client;
-  const res = await fetch('/admin/config');
+  const res = await fetch('/console/config');
   const cfg: AdminConfig = await res.json();
   serverVersion = cfg.version ?? null;
   try {
@@ -45,7 +45,7 @@ async function getClient(): Promise<RediensIam> {
       throw new Error(`redirect_uri origin (${cfgOrigin}) does not match SPA origin (${globalThis.location.origin})`);
     }
   } catch (e) {
-    throw new Error(`Invalid OIDC redirect_uri from /admin/config: ${(e as Error).message}`);
+    throw new Error(`Invalid OIDC redirect_uri from /console/config: ${(e as Error).message}`);
   }
   client = createRediensIam({
     issuer: cfg.hydra_url,
@@ -55,7 +55,7 @@ async function getClient(): Promise<RediensIam> {
     // the console — and Hydra refuses any value the client has not whitelisted, so a sign-out ended
     // on its error page with the session still open. This string must stay equal to the one
     // HydraService.EnsureAdminSpaClientAsync registers.
-    postLogoutRedirectUri: `${globalThis.location.origin}/admin/`,
+    postLogoutRedirectUri: `${globalThis.location.origin}/console/`,
     scope: 'openid offline',
   });
   return client;
@@ -66,7 +66,7 @@ export async function restoreSession(): Promise<void> {
 }
 
 /**
- * The version of the server that served this console, once /admin/config has been read. Null
+ * The version of the server that served this console, once /console/config has been read. Null
  * before that — the console must not invent a number, and it must not report its own build:
  * a SPA built against one release and served by another would show the wrong one.
  */

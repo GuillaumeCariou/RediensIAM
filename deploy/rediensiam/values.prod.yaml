@@ -125,7 +125,7 @@ hydra:
         # the JSON controller behind this page — the browser landed on the raw challenge body and
         # nothing ever accepted the request, so the session outlived the sign-out.
         logout:                "https://auth.rediens.net/logout"
-        post_logout_redirect:  "https://auth.ts.rediens.net/admin/"
+        post_logout_redirect:  "https://auth.ts.rediens.net/console/"
         error:                 "https://auth.rediens.net/auth/oauth2/error"
       serve:
         public:

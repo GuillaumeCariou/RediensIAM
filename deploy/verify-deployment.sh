@@ -112,8 +112,9 @@ else
 fi
 
 # ── V-04 · P-04 — management API refused on the public hostname ──────────────
-# The ingress denies /admin, /org, /project, /service-accounts on the public
-# host. Step 12 measured GET /admin/ → 200 there, serving the admin console.
+# The ingress denies /admin, /console, /org, /project, /service-accounts on the
+# public host. Step 12 measured GET /admin/ → 200 there, serving the console —
+# which lived under /admin then and has its own prefix now.
 LB=$(kubectl get svc -n kube-system traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
 [ -z "${LB}" ] && LB=$(kubectl get svc -A -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.status.loadBalancer.ingress[0].ip}{"\n"}{end}' 2>/dev/null | head -1)
 SCHEME=http; [ "${ENVIRONMENT}" = prod ] && SCHEME=https
@@ -127,7 +128,7 @@ if [ -n "${LB}" ]; then
     2*|3*) pass V-04/host "public host ${PUBLIC_HOST} is served here (/login ${LOGIN_CODE})" ;;
     *)     fail V-04/host "${PUBLIC_HOST} does not serve /login (${LOGIN_CODE}) — the deny probes below cannot distinguish a refusal from an unknown Host" ;;
   esac
-  for p in /admin/ /org /project /service-accounts; do
+  for p in /admin/ /console/ /org /project /service-accounts; do
     CODE=$(curl -sk -o /dev/null -w '%{http_code}' -H "Host: ${PUBLIC_HOST}" \
              --max-time 5 "${SCHEME}://${LB}${p}" 2>/dev/null)
     # 403 is the ipAllowList middleware refusing. 404 also means "not served here".

@@ -16,14 +16,30 @@ The bundle is served **by the backend**, not by a separate web server:
 
 | | |
 |---|---|
-| Vite `base` | `/admin/` |
-| Built into | `wwwroot/admin/` in the container image (`Dockerfile`, stage 2 → stage 3) |
-| Reached at | `https://<host>/admin` |
+| Vite `base` | `/console/` |
+| Built into | `wwwroot/console/` in the container image (`Dockerfile`, stage 2 → stage 3) |
+| Reached at | `https://<host>/console` |
+| Prefix defined in | `Roles.ConsoleBasePath` — one constant, read by the server fallback, the OIDC redirect URI and Vite's `base` |
 
-`/admin/*` is in the chart's `ingress.public.adminOnlyPaths`, so on a public host it answers 403.
-The console is reachable on the admin host only. The machine-to-machine equivalent of the same
-controllers is `/api/manage/*`, which is deliberately **not** in `adminOnlyPaths` — see
-[`docs/API.md`](../../docs/API.md).
+Both `/console/*` and `/admin/*` are in the chart's `ingress.public.adminOnlyPaths`, so on a public
+host they answer 403. The console is reachable on the admin host only. The machine-to-machine
+equivalent of the same controllers is `/api/manage/*`, which is deliberately **not** in
+`adminOnlyPaths` — see [`docs/API.md`](../../docs/API.md).
+
+**The console used to live under `/admin`, and could not be reached by URL.** The management API
+owns that prefix, and `SystemHealthController` is mounted on `admin/system` — exactly where the
+console's System scope lives. A browser opening any of those thirty pages was answered by the API's
+bearer gate with a bare 401 before a byte of the SPA had loaded, so bookmarks, refreshes and pasted
+links all produced a spinner that never resolved: no JavaScript had arrived to resolve it. Two
+things keep it from coming back — the prefix is a constant rather than a literal in four files
+(`BrowserRouter` reads it through `import.meta.env.BASE_URL`), and `ConsoleRoutingTests` asks for
+all forty-six routes the way a browser does and refuses a 401.
+
+One consequence worth knowing in **development**: the console (`localhost:30501`) and the issuer
+(`iam.localhost`) are different sites, so Hydra's `SameSite=Strict` session cookie is not sent when
+the console starts an authorization request. A full page reload therefore asks for the password
+again. Production serves both under one registrable domain and does not. Following links inside the
+console is unaffected — the token lives in memory for the life of the tab.
 
 ---
 
@@ -33,7 +49,7 @@ controllers is `/api/manage/*`, which is deliberately **not** in `adminOnlyPaths
 `rediensiam-web` — the console runs on the SDK it ships to integrators, so a defect in that login
 fails here first.
 
-- Configuration comes from `GET /admin/config` at runtime (`hydra_url`, `client_id`,
+- Configuration comes from `GET /console/config` at runtime (`hydra_url`, `client_id`,
   `redirect_uri`) — the bundle is built once and carries no deployment values.
 - The `redirect_uri` the server returns is checked against `location.origin` before it is used.
   Hydra validates its registered list too; this is the second lock, so a compromised config
@@ -114,7 +130,7 @@ npm run dev        # vite — see the caveat below
 
 **`npm run dev` does not stand alone.** There is no `server.proxy` in `vite.config.ts` and no
 `VITE_API_BASE_URL` escape hatch in `src/api.ts`; every call is a same-origin relative path
-(`/admin/config`, `/admin/…`, `/org/…`, `/account/…`). Against the Vite dev server on
+(`/console/config`, `/admin/…`, `/org/…`, `/account/…`). Against the Vite dev server on
 `localhost:5173` those 404. To work on this SPA against a live backend you need either a
 `server.proxy` entry of your own or a reverse proxy putting both on one origin.
 
@@ -160,7 +176,7 @@ setup is `src/test/setup.ts`. Tests sit next to the code they cover and are type
 | `src/components/ReauthDialog.test.tsx` | 23 | The MFA re-authentication contract: no proof on the first attempt, prompt only on `401 reauthentication_required`, `methods` is authoritative, **no auto-retry**, input cleared between attempts, 429 locks the form, focus containment |
 | `src/components/layout/CommandPalette.test.tsx` | 19 | Opens via `showModal()` (not `show()`), Escape closes, combobox/listbox keyboard behaviour — `aria-activedescendant`, arrows, Enter — and role gating |
 | `src/pages/org/OrgEmail.test.tsx` | 17 | The five SMTP 400 codes and their fallback, plus the assertion that no server-supplied text reaches the screen (the port-scanner defence) |
-| `src/auth.test.ts` | 12 | The 401 split — a re-auth 401 must not destroy the session — the one-shot signin-redirect guard, and the `/admin/config` `redirect_uri` origin check |
+| `src/auth.test.ts` | 12 | The 401 split — a re-auth 401 must not destroy the session — the one-shot signin-redirect guard, and the `/console/config` `redirect_uri` origin check |
 | `src/contracts.test.ts` | 11 | Markup defects no type checker sees: fabricated chart data, toggles with no switch semantics, an editor that PATCHes defaults after a failed load, unguarded `Number(e.target.value)` |
 | `src/theme.test.ts` | 6 | Light and dark declare the same variables, `color-scheme` is set, no colour is pinned outside the two blocks |
 

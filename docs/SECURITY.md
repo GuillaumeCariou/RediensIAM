@@ -592,10 +592,12 @@ assumed unaddressed.
 ### Deliberate product decisions, not defects
 
 - **`Project.RequireMfa` defaults to `false`.** Forcing a second factor on every new tenant is a UX
-  call belonging to whoever owns the tenant. RediensIAM's **own** admin surface is separate and
-  defaults MFA **on** (`Security:RequireAdminMfa`) — that one guards `super_admin`, so it is ours to
-  set. Turning `require_mfa` off on a project with enrolled users requires an explicit confirmation
-  in the same request body.
+  call belonging to whoever owns the tenant. RediensIAM's **own** admin surface is governed
+  separately and not by a setting at all: the first administrator of a deployment signs in without
+  a factor — nothing else can reach the console to configure the SMTP or SMS that makes one
+  deliverable — and every administrator after that is sent through enrolment. The exception closes
+  at the first enrolment, with nothing to remember to turn back on. Turning `require_mfa` off on a
+  project with enrolled users requires an explicit confirmation in the same request body.
 - **SMS is a stub and does not deliver.** `StubSmsService` is the only implementation
   (`src/Program.cs:142`). It reports `IsConfigured => false`, so the server does not offer an
   undeliverable factor rather than pretending to. Do not count SMS as an available second factor.

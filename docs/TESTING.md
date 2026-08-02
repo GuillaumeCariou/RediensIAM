@@ -17,7 +17,7 @@ What exists, how to run it, and — just as usefully — what has no tests at al
 | Deploy-layer static tests | `deploy/tests.sh` | 36 checks | yes, no cluster needed |
 | Deployment verification | `deploy/verify-deployment.sh` | 26 checks | yes, against a live cluster |
 | Detection-rule self-test | `deploy/monitoring/selftest.sh` | 6 assertions | yes, against a live database |
-| Playwright E2E | `tests/e2e/` | 158 across 15 specs | **not since April** — needs setup and a live stack |
+| Playwright E2E | `tests/e2e/` | 5, against a live deployment | yes — `npx playwright test`, no configuration |
 
 ---
 
@@ -304,36 +304,63 @@ upgrade path — one `.sql` file per rule, read by both — is written down next
 
 ## End-to-end tests
 
-`tests/e2e/` — Playwright, **158 tests across 15 spec files** covering both SPAs plus the account
-and org surfaces.
+`tests/e2e/` — Playwright, against a **running deployment**. Nothing is mocked: a pass means the
+OAuth2 client is registered, the challenge bound to a project, Keto answered on the role, Hydra
+minted a token and the console accepted it. That chain is what only an end-to-end test reaches.
 
 ```bash
+./deploy/setup.sh --dev            # the suite needs a deployment
 cd tests/e2e
 npm install && npx playwright install chromium     # first time
-cp .env.example .env                                # then edit
-npm test
+npx playwright test
 ```
 
-`.env` must match the running deployment:
+**No configuration is needed.** With no `.env`, `global-setup.ts` reads the bootstrap administrator
+out of `deploy/rediensiam/values.secret.yaml` — the account the installer created alongside the
+deployment — and proves it can sign in before a single test runs. Point the suite elsewhere with
+`TEST_APP_URL`, `TEST_CONSOLE_URL`, `TEST_SUPER_ADMIN_EMAIL` and `TEST_SUPER_ADMIN_PASSWORD`.
 
-```env
-TEST_BASE_URL=http://localhost          # public ingress
-TEST_ADMIN_URL=http://localhost:30501   # NodePort, smoke tests only
-TEST_SUPER_ADMIN_EMAIL=…                # must match the generated bootstrap credentials
-TEST_SUPER_ADMIN_PASSWORD=…
-```
+A stale `.env` is the failure worth knowing about: it silently outranks the secrets file, and every
+test then fails on a page reading "Invalid email or password". This suite shipped with one dated six
+months before the deployment it was pointed at, which is why the credentials are now verified up
+front and the error names the file.
 
-`App__AdminSpaOrigin` and the Hydra `redirect_uri` registered at deploy time must both equal
-`TEST_BASE_URL`, or the OIDC callback yields an empty session.
+### Why there is no `storageState`
 
-**These have not been run since April.** `tests/e2e/node_modules` does not exist, and
-`test-results/` holds four-month-old artefacts. Both SPAs have changed since (the step-6 CSP work,
-self-hosted fonts, the login preview repair). Treat the suite as unverified until someone runs it.
+The console runs on `rediensiam-web`, which keeps the access token in a private field and writes
+nothing to `localStorage` or `sessionStorage` — deliberately, so a token does not outlive the tab.
+The previous suite captured `sessionStorage` in a global setup and replayed it into every context.
+That worked against `oidc-client-ts` and became a no-op the day the SDK replaced it: ten specs went
+on passing while authenticating nothing at all.
 
-The admin project cannot use `storageState`: `frontend/admin/src/auth.ts` keeps the access token in
-an `InMemoryWebStorage`, so it lives only in the JS heap and a reload always re-runs
-`signinRedirect`. Every admin context therefore completes a real OIDC round-trip and mocks its API
-calls with `page.route()`. A stale `.auth/admin-session.json` from an old run is inert — delete it.
+So every console test drives the real form, which means the login flow is exercised by all of them
+rather than by one. After the first sign-in Hydra holds an SSO session in the context's cookies.
+
+### Two facts about the environment that shape the specs
+
+- **A full page load throws the token away.** It lives in memory, so every `goto` re-runs the whole
+  OAuth2 round trip before anything renders. Specs follow links, as a user does; `gotoConsole()` is
+  for the cases that genuinely need a fresh load and waits for the shell.
+- **In dev, a reload asks for the password again.** The console (`localhost:30501`) and the issuer
+  (`iam.localhost`) are different sites, so Hydra's `SameSite=Strict` session cookie is not sent
+  when the console starts an authorization request. Production serves both under one registrable
+  domain and does not have this.
+
+### The per-IP failure budget
+
+Five failed sign-ins inside `Security:LockoutMinutes` block the address, and the counter is
+deliberately **not** cleared by a success — a shared budget one valid account could reset would be a
+free brute-force lane for every other account behind it. A spec that tests a wrong password
+therefore spends part of the budget the others need, which is why the negative case runs last.
+`global-setup.ts` tells a 429 apart from a 401 and says how to clear it on a dev deployment.
+
+### Coverage today
+
+The harness and the authentication round trip are in place and green. The scope specs — the
+console's organisations, projects, user lists, service accounts, roles, audit and metrics, and the
+login SPA's registration, password reset, MFA and logout — are **not written yet**. The previous
+fifteen spec files were removed rather than repaired: all of them mocked the admin API through
+`page.route()`, which made them a slower copy of the vitest suites, and ten authenticated nothing.
 
 ---
 
@@ -350,8 +377,8 @@ Testing Library, config in the `test` block of `vite.config.ts`). What they do n
   (re-auth, the command palette, the SMTP error codes, the auth 401 split) plus two static
   passes over the source (`contracts.test.ts`, `theme.test.ts`). Ordinary CRUD pages are not
   rendered;
-- **the real backend** — every call is mocked. Only the Playwright suite crosses that line, and
-  it has not run since April.
+- **the real backend** — every call is mocked. Only the Playwright suite crosses that line, and it
+  covers the authentication round trip so far, not the scope pages.
 
 ### Other gaps carried from the audit
 

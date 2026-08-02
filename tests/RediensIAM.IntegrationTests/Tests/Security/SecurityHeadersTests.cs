@@ -59,7 +59,7 @@ public class SecurityHeadersTests(TestFixture fixture)
     [Fact]
     public async Task AdminRoute_HasSecurityHeaders_WithRelaxedCsp()
     {
-        var res = await fixture.Client.GetAsync("/admin/config");
+        var res = await fixture.Client.GetAsync("/console/config");
 
         res.Headers.TryGetValues("X-Content-Type-Options", out var xct).Should().BeTrue();
         xct!.First().Should().Be("nosniff");
@@ -81,7 +81,7 @@ public class SecurityHeadersTests(TestFixture fixture)
     [Fact]
     public async Task AdminRoute_ConnectSrc_NamesTheIssuerOrigin()
     {
-        var res = await fixture.Client.GetAsync("/admin/config");
+        var res = await fixture.Client.GetAsync("/console/config");
         var cfg = await res.Content.ReadFromJsonAsync<JsonElement>();
         var issuerOrigin = new Uri(cfg.GetProperty("hydra_url").GetString()!)
             .GetLeftPart(UriPartial.Authority);
@@ -162,7 +162,7 @@ public class SecurityHeadersTests(TestFixture fixture)
     [Fact]
     public async Task AdminConfig_ReportsTheRunningServerVersion()
     {
-        var res = await fixture.Client.GetAsync("/admin/config");
+        var res = await fixture.Client.GetAsync("/console/config");
         res.StatusCode.Should().Be(HttpStatusCode.OK);
 
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();

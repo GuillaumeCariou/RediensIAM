@@ -153,15 +153,18 @@ public class ProgramCoverageTests(TestFixture fixture)
         stillExists.Should().BeFalse("expired audit logs should have been purged");
     }
 
-    // ── Admin SPA fallback (Program.cs L370-373) ─────────────────────────────
+    // ── Console SPA fallback ─────────────────────────────────────────────────
 
     [Fact]
-    public async Task AdminSpaFallback_NonApiPath_ExecutesFallbackHandler()
+    public async Task ConsoleSpaFallback_NonApiPath_ExecutesFallbackHandler()
     {
-        // /admin/ui matches no API controller, so MapFallback runs and tries to serve the SPA file.
-        // There is no wwwroot under test, so that throws and comes back as a 500. The 500 is the
-        // pass condition: a 404 would mean the fallback route never matched at all.
-        var res = await fixture.Client.GetAsync("/admin/ui");
+        // /console/ui matches no API controller, so MapFallback runs and tries to serve the SPA
+        // file. There is no wwwroot under test, so that throws and comes back as a 500. The 500 is
+        // the pass condition: a 404 would mean the fallback route never matched at all.
+        //
+        // The path was /admin/ui, which is the prefix the management API owns — that is what made
+        // every console page under /admin/system answer a browser with a 401 before the SPA loaded.
+        var res = await fixture.Client.GetAsync($"/{RediensIAM.Config.Roles.ConsoleBasePath}/ui");
         res.StatusCode.Should().NotBe(HttpStatusCode.NotFound,
             "MapFallback should have matched and executed the lambda (404 = no route matched at all)");
     }

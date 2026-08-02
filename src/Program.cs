@@ -374,7 +374,7 @@ app.UseForwardedHeaders();
 // ── Security headers ───────────────────────────────────────────────────────
 // The admin console runs on its own origin and fetches {issuer}/.well-known/openid-configuration
 // before it can redirect, so connect-src has to name the issuer origin explicitly — 'self' can
-// never cover it. Resolved once at startup from the same value /admin/config hands the SPA.
+// never cover it. Resolved once at startup from the same value /console/config hands the SPA.
 var issuerOrigin = Uri.TryCreate(appConfig.PublicUrl, UriKind.Absolute, out var issuerUri)
     ? issuerUri.GetLeftPart(UriPartial.Authority)
     : "";
@@ -418,7 +418,6 @@ app.UseWhen(
 // not, it is a static asset or the SPA fallback.
 app.UseWhen(
     ctx => ctx.Request.Path.StartsWithSegments("/admin")
-        && !ctx.Request.Path.Equals("/admin/config")
         && (ctx.GetEndpoint()?.Metadata.GetMetadata<ControllerActionDescriptor>() != null
             || ctx.Request.Method != HttpMethods.Get),
     branch => branch.UseMiddleware<GatewayAuthMiddleware>());
@@ -426,12 +425,12 @@ app.UseWhen(
 // Public — no auth required; must be a minimal endpoint to bypass [RequireManagementLevel] on SystemAdminController
 // `version` is the running assembly's own number, not a constant the SPA carries: a console built
 // against one release and served by another would otherwise show the build it came from.
-app.MapGet("/admin/config", (AppConfig cfg) => Results.Json(
+app.MapGet("/console/config", (AppConfig cfg) => Results.Json(
     new
     {
         hydra_url    = cfg.PublicUrl,
         client_id    = Roles.AdminClientId,
-        redirect_uri = $"{cfg.AdminSpaOrigin}/admin/callback",
+        redirect_uri = $"{cfg.AdminSpaOrigin}/{Roles.ConsoleBasePath}/callback",
         version      = typeof(Program).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
             .InformationalVersion.Split('+')[0]
@@ -451,11 +450,11 @@ app.MapMetrics("/metrics")
            ? await next(ctx)
            : Results.NotFound());
 
-app.MapFallback("/admin/{**path}", async (string path, HttpContext ctx) =>
+app.MapFallback("/console/{**path}", async (string path, HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
     await ctx.Response.SendFileAsync(
-        Path.Combine(app.Environment.WebRootPath ?? "wwwroot", "admin", "index.html"));
+        Path.Combine(app.Environment.WebRootPath ?? "wwwroot", "console", "index.html"));
 });
 
 app.MapFallbackToFile("index.html");
@@ -537,7 +536,7 @@ static void AddSecurityHeaders(HttpContext ctx, string issuerOrigin)
     // is 'self' with no inline escape — and the CSS sink itself is guarded server-side by
     // LoginThemeValidator, which is what makes widening this safe (C-6).
     var issuerConnect = string.IsNullOrEmpty(issuerOrigin) ? "'self'" : $"'self' {issuerOrigin}";
-    ctx.Response.Headers.ContentSecurityPolicy = ctx.Request.Path.StartsWithSegments("/admin")
+    ctx.Response.Headers.ContentSecurityPolicy = ctx.Request.Path.StartsWithSegments($"/{Roles.ConsoleBasePath}")
         ? "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
           $"font-src 'self'; img-src 'self' data:; connect-src {issuerConnect}; " +
           "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"

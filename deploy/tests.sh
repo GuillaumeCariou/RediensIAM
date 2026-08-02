@@ -221,6 +221,39 @@ else
        "without the default, an existing install would be pointed somewhere else by an upgrade"
 fi
 
+# ── naming a real issuer must stop the self-signed one rendering ─────────────
+# The self-signed Issuer exists for the case where no ClusterIssuer is named. When the admin
+# ingress names one, rendering it anyway leaves an unused object whose only role is to make the
+# most privileged UI a click-through warning — and the condition read the old key path for a while
+# after the value moved under `tls:`, so it never saw the answer.
+# Chart defaults, where Postgres and cache TLS are both off: the admin ingress is then the only
+# thing that could ask for an Issuer. Built on values.prod.yaml the first version of this check
+# rendered nothing at all — prod sets requireSsl, which refuses to render with tls off — so it
+# passed by failing.
+ISSUER_NAMED="$(helm template rel "${DIR}/rediensiam" \
+                  --set rediensiam.ingress.admin.enabled=true \
+                  --set rediensiam.ingress.admin.tls.clusterIssuer=letsencrypt 2>&1)"
+if [[ "${ISSUER_NAMED}" != *'kind: Ingress'* ]]; then
+  fail "a named ClusterIssuer suppresses the self-signed Issuer" \
+       "the render produced nothing to judge: ${ISSUER_NAMED%%$'\n'*}"
+elif [[ "${ISSUER_NAMED}" == *'kind: Issuer'* ]]; then
+  fail "a named ClusterIssuer suppresses the self-signed Issuer" \
+       "the chart rendered its own Issuer while the admin ingress pointed at letsencrypt"
+else
+  pass "a named ClusterIssuer suppresses the self-signed Issuer"
+fi
+
+# ── the subcharts have to be present before anything renders ─────────────────
+# charts/ holds hydra-*.tgz and keto-*.tgz, fetched from the versions Chart.lock pins. It is
+# gitignored — a fetched artefact, not repository content — so a fresh clone has none, and every
+# helm command below then fails with a dependency error rather than with what it was checking.
+if [ -d "${DIR}/rediensiam/charts" ] && ls "${DIR}/rediensiam/charts"/*.tgz >/dev/null 2>&1; then
+  pass "the pinned subcharts are present"
+else
+  fail "the pinned subcharts are present" \
+       "run: helm dependency build ${DIR}/rediensiam — needs network, versions come from Chart.lock"
+fi
+
 # ── the chart must render on its own defaults ────────────────────────────────
 # A publishable chart has to render with no -f at all: that is what an offline validator does,
 # what `helm lint` does, and what anyone reading it for the first time does. publicUrl and adminUrl
