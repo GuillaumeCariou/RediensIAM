@@ -51,6 +51,10 @@ public class AppExceptionMiddleware(RequestDelegate next, ILogger<AppExceptionMi
         catch (Exception ex)
         {
             logger.LogError(ex, "Unhandled exception for {Method} {Path}", ctx.Request.Method, ctx.Request.Path);
+            // The CSV exports stream row by row, so a failure halfway through arrives with headers
+            // already sent. Setting a status then throws from inside the handler itself, replacing
+            // a truncated-but-diagnosable response with a second, unrelated exception.
+            if (ctx.Response.HasStarted) throw;
             ctx.Response.StatusCode = 500;
             ctx.Response.ContentType = AppJson;
             await ctx.Response.WriteAsJsonAsync(new { error = "internal_error" });

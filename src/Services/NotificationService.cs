@@ -13,7 +13,13 @@ namespace RediensIAM.Services;
 public interface IEmailService
 {
     Task SendOtpAsync(string to, string code, string purpose, Guid? orgId = null, Guid? projectId = null);
-    Task SendInviteAsync(string to, string inviteUrl, string orgName, Guid? projectId = null);
+    /// <summary>
+    /// Sends an invite. <paramref name="orgId"/> selects the organisation's own SMTP relay; it used
+    /// to be a projectId that no caller ever passed, so an org that had configured its own relay
+    /// still had every invite go out through the global one — or, on a deployment with no global
+    /// relay, not go out at all, leaving an inactive user nobody could recover.
+    /// </summary>
+    Task SendInviteAsync(string to, string inviteUrl, string orgName, Guid? orgId = null);
     Task SendNewDeviceAlertAsync(string to, string ipAddress, string userAgent, DateTimeOffset loginAt, Guid? orgId = null);
     /// <summary>Connect, optionally authenticate, then disconnect. Throws on failure.</summary>
     Task CheckConnectivityAsync();
@@ -27,7 +33,7 @@ public class StubEmailService(ILogger<StubEmailService> logger) : IEmailService
         return Task.CompletedTask;
     }
 
-    public Task SendInviteAsync(string to, string inviteUrl, string orgName, Guid? projectId = null)
+    public Task SendInviteAsync(string to, string inviteUrl, string orgName, Guid? orgId = null)
     {
         logger.LogWarning("[STUB EMAIL] Invite To={To} Org={Org} Url={Url}", to, orgName, inviteUrl);
         return Task.CompletedTask;
@@ -134,7 +140,7 @@ public class SmtpEmailService(
         await SmtpSendAsync(host, port, startTls, username, password, message);
     }
 
-    public async Task SendInviteAsync(string to, string inviteUrl, string orgName, Guid? projectId = null)
+    public async Task SendInviteAsync(string to, string inviteUrl, string orgName, Guid? orgId = null)
     {
         // ── Resolve SMTP config ──────────────────────────────────────────────
         string? host;
@@ -145,11 +151,8 @@ public class SmtpEmailService(
         string fromAddress;
         string fromName;
 
-        Guid? resolvedOrgId = projectId.HasValue
-            ? await db.Projects.Where(p => p.Id == projectId.Value).Select(p => p.OrgId).FirstOrDefaultAsync()
-            : null;
-        var orgConfig = resolvedOrgId is Guid orgIdFromProject
-            ? await db.OrgSmtpConfigs.FirstOrDefaultAsync(c => c.OrgId == orgIdFromProject)
+        var orgConfig = orgId is Guid tenantOrgId
+            ? await db.OrgSmtpConfigs.FirstOrDefaultAsync(c => c.OrgId == tenantOrgId)
             : null;
 
         // A tenant-supplied relay is re-validated every time it is used, not only when it was

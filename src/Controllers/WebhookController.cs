@@ -251,7 +251,11 @@ public class AdminWebhookController(
     }
 }
 
-public record CreateWebhookRequest(string Url, string[] Events);
+// Both are dereferenced by the handler on the first line. Without JsonRequired a body that omits
+// either left it null and produced a 500 where the caller should have been told what was missing.
+public record CreateWebhookRequest(
+    [property: System.Text.Json.Serialization.JsonRequired] string Url,
+    [property: System.Text.Json.Serialization.JsonRequired] string[] Events);
 public record UpdateWebhookRequest(string? Url, string[]? Events, bool? Active);
 
 // ── Shared SSRF validator ────────────────────────────────────────────────────

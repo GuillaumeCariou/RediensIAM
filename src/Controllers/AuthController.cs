@@ -502,7 +502,11 @@ public class AuthController(
         var redirectUrl = await hydra.AcceptLoginAsync(loginChallenge, subject, context);
         await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.success");
         IamMetrics.LoginAttempts.WithLabels("success").Inc();
-        _ = Task.Run(() => CheckNewDeviceAsync(user, project.OrgId, Ip, Request.Headers.UserAgent.ToString()));
+        // Snapshot before detaching, as the other two call sites already do: read inside the lambda
+        // these touch HttpContext after the response has completed, which throws into an unobserved
+        // task — so the busiest login path in the deployment sent no new-device alert at all.
+        var (newDeviceAgent, newDeviceIp) = (Request.Headers.UserAgent.ToString(), Ip);
+        _ = Task.Run(() => CheckNewDeviceAsync(user, project.OrgId, newDeviceIp, newDeviceAgent));
         return Ok(new { redirect_to = redirectUrl });
     }
 
@@ -779,7 +783,18 @@ public class AuthController(
     [HttpGet("consent")]
     public async Task<IActionResult> GetConsent([FromQuery] string consent_challenge)
     {
-        var req = await hydra.GetConsentRequestAsync(consent_challenge);
+        // Every sibling handler wraps this: GetConsentRequestAsync calls EnsureSuccessStatusCode, so
+        // an expired or already-used challenge threw HttpRequestException and surfaced as a 500,
+        // indistinguishable from a server fault to the login SPA.
+        HydraConsentRequest req;
+        try
+        {
+            req = await hydra.GetConsentRequestAsync(consent_challenge);
+        }
+        catch (HttpRequestException)
+        {
+            return BadRequest(new { error = ErrInvalidChallenge });
+        }
 
         var context = req.Context;
         var userIdStr = context?.GetValueOrDefault(CtxUserId)?.ToString();

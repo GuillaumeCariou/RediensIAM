@@ -464,7 +464,7 @@ public class OrgController(
             await db.SaveChangesAsync();
             inviteUrl = appConfig.InviteUrl(raw);
             var orgName = ul.Organisation?.Name ?? "the organization";
-            await emailService.SendInviteAsync(user.Email, inviteUrl, orgName);
+            await emailService.SendInviteAsync(user.Email, inviteUrl, orgName, OrgId);
         }
 
         await audit.RecordAsync(OrgId, null, ActorId, isInvite ? "user.invited" : "user.created", "user", user.Id.ToString());
@@ -504,7 +504,7 @@ public class OrgController(
 
         var inviteUrl = appConfig.InviteUrl(raw);
         var orgName   = ul.Organisation?.Name ?? "the organization";
-        await emailService.SendInviteAsync(user.Email, inviteUrl, orgName);
+        await emailService.SendInviteAsync(user.Email, inviteUrl, orgName, OrgId);
         await audit.RecordAsync(OrgId, null, ActorId, "user.invite_resent", "user", uid.ToString());
         return Ok(new { message = "invite_resent" });
     }

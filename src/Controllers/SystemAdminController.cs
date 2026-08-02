@@ -516,7 +516,7 @@ var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(u
             await db.SaveChangesAsync();
             var inviteUrl = appConfig.InviteUrl(raw);
             var orgName   = ul.Organisation?.Name ?? "the organization";
-            await emailService.SendInviteAsync(user.Email, inviteUrl, orgName);
+            await emailService.SendInviteAsync(user.Email, inviteUrl, orgName, ul.OrgId);
         }
 
         // Neither this nor the removal below wrote anything to the audit log, and adding a user to

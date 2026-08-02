@@ -350,11 +350,13 @@ public record IntrospectionResult(
     public static readonly IntrospectionResult Inactive = new(false);
 }
 
+// Every member below is dereferenced by the handler. A body omitting one left it null and threw,
+// so the two most likely client mistakes answered 500 instead of naming the missing field.
 public record AuthorizationRequest(
-    string Token,
-    string Namespace,
-    string Object,
-    string Relation,
+    [property: System.Text.Json.Serialization.JsonRequired] string Token,
+    [property: System.Text.Json.Serialization.JsonRequired] string Namespace,
+    [property: System.Text.Json.Serialization.JsonRequired] string Object,
+    [property: System.Text.Json.Serialization.JsonRequired] string Relation,
     string? Aud = null);
 
 public record AuthorizationResult(bool Allowed, string? UserId, int Ver = IntrospectionController.ContractVersion)
