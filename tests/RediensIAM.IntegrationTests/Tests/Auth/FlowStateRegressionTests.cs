@@ -1,7 +1,7 @@
 using System.Net.Http.Headers;
 using RediensIAM.Services;
 
-namespace RediensIAM.IntegrationTests.Tests.Regression;
+namespace RediensIAM.IntegrationTests.Tests.Auth;
 
 /// <summary>
 /// Flows that were broken by keeping state in the ASP.NET session cookie, and by offering

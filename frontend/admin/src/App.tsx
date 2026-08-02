@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router';
 import { useAuth } from './context/AuthContext';
 import { AuthProvider } from './context/AuthProvider';
+import { consumeReturnTo } from './context/returnTo';
 import { ThemeProvider } from './context/ThemeProvider';
 import { ScopeProvider } from './context/ScopeProvider';
 import Shell from './components/layout/Shell';
@@ -86,11 +87,13 @@ function AppRoutes() {
   }
 
   const home = defaultPath(isSuperAdmin, isOrgAdmin);
+  // Where the operator was going before the sign-in interrupted them, if anywhere.
+  const returnTo = consumeReturnTo(import.meta.env.BASE_URL.replace(/\/$/, ''), globalThis.location.pathname);
 
   return (
     <Shell>
       <Routes>
-        <Route index element={<Navigate to={home} replace />} />
+        <Route index element={<Navigate to={returnTo ?? home} replace />} />
 
         <Route path="account" element={<AccountPage />} />
 
@@ -150,7 +153,7 @@ function AppRoutes() {
           <Route path="project/settings" element={<ProjectSettings />} />
         </Route>
 
-        <Route path="*" element={<Navigate to={home} replace />} />
+        <Route path="*" element={<Navigate to={returnTo ?? home} replace />} />
       </Routes>
     </Shell>
   );

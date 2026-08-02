@@ -6,7 +6,7 @@ using Microsoft.Extensions.Hosting;
 using RediensIAM.Config;
 using RediensIAM.Services;
 
-namespace RediensIAM.IntegrationTests.Tests.Regression;
+namespace RediensIAM.IntegrationTests.Tests.Services;
 
 /// <summary>
 /// S-3 residual — the audit hash chain was an <b>unkeyed</b> SHA-256 over the row's own columns.
@@ -269,7 +269,7 @@ public class AuditChainKeyingTests(TestFixture fixture)
             .Where(a => a.OrgId == orgId).OrderBy(a => a.Id).ToListAsync();
 
     /// <summary>Writes a row's tampered contents and links straight past the application.</summary>
-    private Task WriteRowBehindTheApplicationsBackAsync(AuditLog row) =>
+    private Task<int> WriteRowBehindTheApplicationsBackAsync(AuditLog row) =>
         fixture.Db.Database.ExecuteSqlRawAsync(
             """
             UPDATE audit_log SET "Action" = {1}, "Hash" = {2}, "PrevHash" = NULLIF({3}, '') WHERE "Id" = {0}

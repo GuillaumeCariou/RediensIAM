@@ -290,7 +290,7 @@ export default function ServiceAccountDetail() {
                       </td>
                       <td className="text-sm text-muted-foreground">{fmtDateShort(r.granted_at)}</td>
                       <td>
-                        <IamMenu trigger={<><MoreHorizontal className="h-4 w-4" /></>}>
+                        <IamMenu trigger={<MoreHorizontal className="h-4 w-4" />}>
 <button type="button" className="iam-menu-item iam-menu-item-danger" onClick={() => setRemoveRoleTarget(r)}>
                               <Trash2 className="h-4 w-4" />Remove
                             </button>
@@ -337,7 +337,7 @@ export default function ServiceAccountDetail() {
                       <td className="text-sm text-muted-foreground">{fmtDateShort(p.last_used_at)}</td>
                       <td className="text-sm text-muted-foreground">{fmtDateShort(p.created_at)}</td>
                       <td>
-                        <IamMenu trigger={<><MoreHorizontal className="h-4 w-4" /></>}>
+                        <IamMenu trigger={<MoreHorizontal className="h-4 w-4" />}>
 <button type="button" className="iam-menu-item iam-menu-item-danger" onClick={() => setRevokeTarget(p)}>
                               <Trash2 className="h-4 w-4" />Revoke
                             </button>
@@ -361,12 +361,12 @@ export default function ServiceAccountDetail() {
     >
 <form id="serviceaccountdetail-form-2" onSubmit={handleGeneratePat} className="space-y-4">
             <div className="space-y-2">
-              <label className="iam-label">Name</label>
-              <input className="iam-input" value={newPat.name} onChange={e => setNewPat(p => ({ ...p, name: e.target.value }))} required placeholder="ci-pipeline" />
+              <label className="iam-label" htmlFor="sa-pat-name">Name</label>
+              <input className="iam-input" id="sa-pat-name" value={newPat.name} onChange={e => setNewPat(p => ({ ...p, name: e.target.value }))} required placeholder="ci-pipeline" />
             </div>
             <div className="space-y-2">
-              <label className="iam-label">Expiry date <span className="text-muted-foreground">(optional)</span></label>
-              <input className="iam-input" type="datetime-local" value={newPat.expires_at} onChange={e => setNewPat(p => ({ ...p, expires_at: e.target.value }))} />
+              <label className="iam-label" htmlFor="sa-pat-expiry">Expiry date <span className="text-muted-foreground">(optional)</span></label>
+              <input className="iam-input" id="sa-pat-expiry" type="datetime-local" value={newPat.expires_at} onChange={e => setNewPat(p => ({ ...p, expires_at: e.target.value }))} />
             </div>
             
           </form>
@@ -375,7 +375,7 @@ export default function ServiceAccountDetail() {
       <IamDialog open={!!rawToken} onClose={() => (v => !v && closeTokenDialog())(false)}
       title="Token Generated"
       desc="This token will not be shown again. Copy it now."
-      footer={<><button className="iam-btn iam-btn-primary" onClick={closeTokenDialog}>Done</button></>}
+      footer={<button className="iam-btn iam-btn-primary" onClick={closeTokenDialog}>Done</button>}
     >
 <div className="flex gap-2">
             <input className="iam-input font-mono text-xs" readOnly value={rawToken ?? ''} />
@@ -401,8 +401,8 @@ export default function ServiceAccountDetail() {
     >
 <form id="serviceaccountdetail-form" onSubmit={handleAssignRole} className="space-y-4">
             <div className="space-y-2">
-              <label className="iam-label">Role</label>
-              <select className="iam-select" value={roleForm.role} onChange={e => handleRoleChange(e.target.value)} disabled={roleSaving}>
+              <label className="iam-label" htmlFor="sa-role">Role</label>
+              <select className="iam-select" id="sa-role" value={roleForm.role} onChange={e => handleRoleChange(e.target.value)} disabled={roleSaving}>
                   <option value="" disabled>Select a role…</option>
 {isSuperAdmin && <option value="super_admin">super_admin</option>}
                   <option value="org_admin">org_admin</option>
@@ -411,8 +411,8 @@ export default function ServiceAccountDetail() {
             </div>
             {isSuperAdmin && (roleForm.role === 'org_admin' || roleForm.role === 'project_admin') && (
               <div className="space-y-2">
-                <label className="iam-label">Organisation</label>
-                <select className="iam-select" value={roleForm.org_id} onChange={e => handleOrgChange(e.target.value)} disabled={roleSaving}>
+                <label className="iam-label" htmlFor="sa-role-org">Organisation</label>
+                <select className="iam-select" id="sa-role-org" value={roleForm.org_id} onChange={e => handleOrgChange(e.target.value)} disabled={roleSaving}>
                   <option value="" disabled>Select an organisation…</option>
 {orgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
 </select>
@@ -420,8 +420,8 @@ export default function ServiceAccountDetail() {
             )}
             {roleForm.role === 'project_admin' && roleForm.org_id && (
               <div className="space-y-2">
-                <label className="iam-label">Project</label>
-                <select className="iam-select" value={roleForm.project_id} onChange={e => (v => setRoleForm(f => ({ ...f, project_id: v })))(e.target.value)} disabled={roleSaving}>
+                <label className="iam-label" htmlFor="sa-role-project">Project</label>
+                <select className="iam-select" id="sa-role-project" value={roleForm.project_id} onChange={e => (v => setRoleForm(f => ({ ...f, project_id: v })))(e.target.value)} disabled={roleSaving}>
                   <option value="" disabled>Select a project…</option>
 {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
 </select>

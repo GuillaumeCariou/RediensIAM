@@ -3,7 +3,7 @@ using System.Net.Http.Json;
 using RediensIAM.IntegrationTests.Infrastructure;
 using RediensIAM.Services;
 
-namespace RediensIAM.IntegrationTests.Tests.Regression;
+namespace RediensIAM.IntegrationTests.Tests.System;
 
 /// <summary>
 /// <c>GET /admin/system/health</c> used to hand the caller the raw <c>ex.Message</c> of whatever

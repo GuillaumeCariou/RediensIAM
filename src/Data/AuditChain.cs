@@ -203,29 +203,49 @@ public static class AuditChain
             if (string.IsNullOrEmpty(row.Hash))
                 return new AuditChainStatus(row.Id, verified, unverifiable);
 
-            switch (KeyIdOf(row.Hash))
-            {
-                case { } keyId:
-                    seenKeyed = true;
-                    if (!ring.KeyIds.Contains(keyId)) { unverifiable++; break; }
-                    if (row.Hash != Envelope(keyId, Mac(ring.KeyFor(keyId), Canonical(row, row.PrevHash))))
-                        return new AuditChainStatus(row.Id, verified, unverifiable);
-                    verified++;
-                    break;
-
-                case null when seenKeyed:
-                    return new AuditChainStatus(row.Id, verified, unverifiable);
-
-                default:
-                    unverifiable++;
-                    if (row.Hash != LegacyCompute(row, row.PrevHash))
-                        return new AuditChainStatus(row.Id, verified, unverifiable);
-                    break;
-            }
+            var check = CheckRow(ring, row, ref seenKeyed);
+            verified += check.Verified;
+            unverifiable += check.Unverifiable;
+            if (check.Broken)
+                return new AuditChainStatus(row.Id, verified, unverifiable);
 
             expectedPrev = row.Hash;
         }
 
         return new AuditChainStatus(null, verified, unverifiable);
+    }
+
+    /// <summary>
+    /// What one row's own hash establishes, as counter deltas plus whether the chain breaks here.
+    ///
+    /// <para>
+    /// The deltas are applied <i>before</i> <see cref="Broken"/> is acted on, and which breaks
+    /// carry a delta is load-bearing. A legacy row is counted unverifiable the moment it is
+    /// recognised as legacy, so a legacy row that then fails its own recomputation is reported
+    /// with itself already in the unverifiable count. A keyed row that fails its MAC, and an
+    /// unkeyed row appearing after the first keyed one, are counted in neither: nothing about
+    /// them was established.
+    /// </para>
+    /// </summary>
+    private readonly record struct RowCheck(bool Broken, int Verified, int Unverifiable);
+
+    private static RowCheck CheckRow(KeyRing ring, AuditLog row, ref bool seenKeyed)
+    {
+        switch (KeyIdOf(row.Hash))
+        {
+            case { } keyId:
+                seenKeyed = true;
+                if (!ring.KeyIds.Contains(keyId))
+                    return new RowCheck(false, 0, 1);
+                return row.Hash != Envelope(keyId, Mac(ring.KeyFor(keyId), Canonical(row, row.PrevHash)))
+                    ? new RowCheck(true, 0, 0)
+                    : new RowCheck(false, 1, 0);
+
+            case null when seenKeyed:
+                return new RowCheck(true, 0, 0);
+
+            default:
+                return new RowCheck(row.Hash != LegacyCompute(row, row.PrevHash), 0, 1);
+        }
     }
 }

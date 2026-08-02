@@ -1,5 +1,5 @@
 import { rowActivation } from './iam/rowActivation';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useId, useState } from 'react';
 import { UserPlus, Trash2, Plus, MoreHorizontal } from 'lucide-react';
 import {
   listSystemUserListMembers, listUserListMembers,
@@ -45,6 +45,9 @@ export default function UserListMembersPanel({
   listId, title = 'Members', isSystemCtx = false,
   projectId, defaultRoleId, onChanged,
 }: Readonly<Props>) {
+  // A page can show more than one panel (an org list beside a project list), so the ids that tie
+  // a <label for> to its field have to be per-instance rather than constants.
+  const uid = useId();
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionMsg, setActionMsg] = useState<{ text: string; error?: boolean } | null>(null);
@@ -80,12 +83,12 @@ export default function UserListMembersPanel({
 
   const isLocked = (m: Member) => !!m.locked_until && new Date(m.locked_until) > new Date();
 
-  const loadMembers = async () => {
+  const loadMembers = useCallback(async () => {
     const res = isSystemCtx ? await listSystemUserListMembers(listId) : await listUserListMembers(listId);
     setMembers(res.users ?? res ?? []);
-  };
+  }, [isSystemCtx, listId]);
 
-  const loadRoles = async () => {
+  const loadRoles = useCallback(async () => {
     if (!projectId) return;
     const [usersRes, rolesRes] = await Promise.all([listProjectUsers(projectId), listRoles(projectId)]);
     const projectUsers: { id: string; roles: Role[] }[] = usersRes.users ?? usersRes ?? [];
@@ -93,11 +96,12 @@ export default function UserListMembersPanel({
     for (const u of projectUsers) map.set(u.id, u.roles ?? []);
     setMemberRoles(map);
     setAvailableRoles(rolesRes.roles ?? rolesRes ?? []);
-  };
+  }, [projectId]);
 
+  // Both loaders are memoised on what they actually read, so this one can depend on them by
+  // identity rather than on a suppression asserting what they read.
   const load = useCallback(async () => { await Promise.all([loadMembers(), loadRoles()]); },
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadMembers/loadRoles read only these two
-    [listId, projectId]);
+    [loadMembers, loadRoles]);
 
   useEffect(() => {
     setLoading(true);
@@ -254,7 +258,7 @@ export default function UserListMembersPanel({
                       )}
                       <td className="text-sm text-muted-foreground">{fmtDate(m.last_login_at)}</td>
                       <td onClick={e => e.stopPropagation()}>
-                        <IamMenu trigger={<><MoreHorizontal className="h-4 w-4" /></>}>
+                        <IamMenu trigger={<MoreHorizontal className="h-4 w-4" />}>
 <button type="button" className="iam-menu-item" onClick={() => openEdit(m)}>Edit</button>
                             <button type="button" className="iam-menu-item" onClick={() => openSessions(m)}>View sessions</button>
                             {m.invite_pending && <button type="button" className="iam-menu-item" onClick={() => handleResendInvite(m)}>Resend invite</button>}
@@ -279,12 +283,12 @@ export default function UserListMembersPanel({
               <button className="iam-btn iam-btn-primary" type="submit" form="userlistmemberspanel-form" disabled={addSaving}>{addSaving ? 'Adding…' : 'Add User'}</button></>}
     >
 <form id="userlistmemberspanel-form" onSubmit={handleAdd} className="space-y-4">
-            <div className="space-y-2"><label className="iam-label">Email</label><input className="iam-input" type="email" value={addForm.email} onChange={e => setAddForm(f => ({ ...f, email: e.target.value }))} required autoFocus /></div>
-            <div className="space-y-2"><label className="iam-label">Username</label><input className="iam-input" value={addForm.username} onChange={e => setAddForm(f => ({ ...f, username: e.target.value }))} required /></div>
-            <div className="space-y-2"><label className="iam-label">Password</label><input className="iam-input" type="password" autoComplete="new-password" value={addForm.password} onChange={e => setAddForm(f => ({ ...f, password: e.target.value }))} required minLength={8} /></div>
+            <div className="space-y-2"><label className="iam-label" htmlFor={`${uid}-add-email`}>Email</label><input className="iam-input" id={`${uid}-add-email`} type="email" value={addForm.email} onChange={e => setAddForm(f => ({ ...f, email: e.target.value }))} required autoFocus /></div>
+            <div className="space-y-2"><label className="iam-label" htmlFor={`${uid}-add-username`}>Username</label><input className="iam-input" id={`${uid}-add-username`} value={addForm.username} onChange={e => setAddForm(f => ({ ...f, username: e.target.value }))} required /></div>
+            <div className="space-y-2"><label className="iam-label" htmlFor={`${uid}-add-password`}>Password</label><input className="iam-input" id={`${uid}-add-password`} type="password" autoComplete="new-password" value={addForm.password} onChange={e => setAddForm(f => ({ ...f, password: e.target.value }))} required minLength={8} /></div>
             <div className="flex items-center justify-between">
-              <label className="iam-label">Email verified</label>
-              <input type="checkbox" className="iam-switch" checked={addForm.email_verified} onChange={e => (v => setAddForm(f => ({ ...f, email_verified: v })))(e.target.checked)} />
+              <label className="iam-label" htmlFor={`${uid}-add-email-verified`}>Email verified</label>
+              <input id={`${uid}-add-email-verified`} type="checkbox" className="iam-switch" checked={addForm.email_verified} onChange={e => (v => setAddForm(f => ({ ...f, email_verified: v })))(e.target.checked)} />
             </div>
             
           </form>
@@ -302,7 +306,9 @@ export default function UserListMembersPanel({
         onClose={() => setEditTarget(null)}
         extra={projectId && editTarget ? (
           <div className="space-y-2 pt-1 border-t">
-            <label className="iam-label">Project Roles</label>
+            {/* A caption for the whole block — the chips, their remove buttons and the picker
+                below — not a label for any one control, so it is not a <label>. */}
+            <p className="iam-label">Project Roles</p>
             <div className="flex flex-wrap gap-1 min-h-6">
               {userRoles(editTarget.id).map(r => (
                 <IamChip className="gap-1 pr-1" tone="default" key={r.id}>
@@ -317,7 +323,7 @@ export default function UserListMembersPanel({
             </div>
             {unassignedRoles(editTarget.id).length > 0 && (
               <div className="flex gap-2">
-                <select className="iam-select flex-1" value={selectedRole} onChange={e => setSelectedRole(e.target.value)}>
+                <select className="iam-select flex-1" aria-label="Project role to add" value={selectedRole} onChange={e => setSelectedRole(e.target.value)}>
                   <option value="" disabled>Select a role…</option>
 {unassignedRoles(editTarget.id).map(r => (
                       <option key={r.id} value={r.id}>

@@ -67,7 +67,7 @@ export default function ProjectSettings() {
       <div className="iam-page">
         <div className="iam-empty">
           <p>This configuration could not be loaded, so it is not safe to edit.</p>
-          <button type="button" className="iam-btn" onClick={() => window.location.reload()}>Retry</button>
+          <button type="button" className="iam-btn" onClick={() => globalThis.location.reload()}>Retry</button>
         </div>
       </div>
     </div>

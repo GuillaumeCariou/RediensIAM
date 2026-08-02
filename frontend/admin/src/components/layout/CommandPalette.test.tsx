@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+// Vitest's own interactivity API, driven by Playwright: real clicks, real key events, real focus.
+import { userEvent } from 'vitest/browser';
 import { MemoryRouter, useLocation } from 'react-router';
 import CommandPalette from './CommandPalette';
-import { isModal } from '@/test/setup';
 
 /**
  * The palette's contents are a function of the signed-in admin's roles, which normally come from
@@ -46,7 +46,38 @@ describe('opening', () => {
     const { dialog } = open({ isOrgAdmin: true });
 
     expect(dialog.open).toBe(true);
-    expect(isModal(dialog)).toBe(true);
+    // STRENGTHENED: `:modal` is Chromium's own answer to "is this in the top layer". Under jsdom
+    // this could only be a shim's record of which method had been called.
+    expect(dialog.matches(':modal')).toBe(true);
+  });
+
+  it('keeps Tab inside the palette instead of letting it reach the page behind', async () => {
+    // STRENGTHENED: the containment itself, which is the defect above rather than a proxy for it.
+    // jsdom has no top layer and no inertness, so it could not have caught the non-modal version.
+    const { user, dialog } = open({ isOrgAdmin: true });
+    const behind = screen.getByRole('button', { name: 'a button behind the palette' });
+
+    const visited: Element[] = [];
+    for (let i = 0; i < 5; i++) {
+      await user.tab();
+      visited.push(document.activeElement!);
+    }
+
+    expect(visited).not.toContain(behind);
+    // <body> is where Chromium parks focus for one press as the cycle wraps; the options are
+    // tabIndex={-1} by design, so the search box is the only stop inside.
+    for (const el of visited) expect(dialog.contains(el) || el === document.body).toBe(true);
+    expect(visited).toContain(search());
+  });
+
+  it('inerts the page behind, so it cannot even be focused programmatically', () => {
+    // STRENGTHENED: inertness is a top-layer property Chromium enforces and jsdom does not model.
+    open({ isOrgAdmin: true });
+    const behind = screen.getByRole('button', { name: 'a button behind the palette' });
+
+    behind.focus();
+
+    expect(behind).not.toHaveFocus();
   });
 
   it('puts the cursor in the search box', () => {

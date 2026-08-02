@@ -45,6 +45,15 @@ export default defineConfig({
 
   projects: [
     {
+      // Signs in once and saves the cookies. Playwright's guidance, and the reason for it, is in
+      // setup/authenticate.setup.ts.
+      name: 'setup',
+      testMatch: 'tests/setup/**/*.setup.ts',
+      use: { ...devices['Desktop Chrome'], baseURL: CONSOLE_URL },
+    },
+    {
+      // No stored state on purpose: these tests are about what an anonymous visitor sees, and
+      // several of them assert that a wrong password is refused.
       name: 'login',
       testMatch: 'tests/login/**/*.spec.ts',
       use: { ...devices['Desktop Chrome'], baseURL: APP_URL },
@@ -52,7 +61,15 @@ export default defineConfig({
     {
       name: 'console',
       testMatch: 'tests/console/**/*.spec.ts',
-      use: { ...devices['Desktop Chrome'], baseURL: CONSOLE_URL },
+      dependencies: ['setup'],
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: CONSOLE_URL,
+        // Hydra's session cookie. The access token is not in here and cannot be — it lives in a
+        // private field — so each test still completes a real OAuth2 round trip. What it skips is
+        // the form, which is the slow and collision-prone part.
+        storageState: './.auth/session.json',
+      },
     },
   ],
 });

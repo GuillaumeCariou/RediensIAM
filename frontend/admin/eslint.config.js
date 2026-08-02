@@ -6,7 +6,10 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // coverage/ is Istanbul's generated HTML report. It ships its own vendored scripts, each
+  // carrying eslint directives for a config that is not this one, so linting it reports warnings
+  // about suppressions nobody here wrote.
+  globalIgnores(['dist', 'coverage']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

@@ -9,6 +9,10 @@ namespace RediensIAM.IntegrationTests.Tests.Regression;
 /// Three of these cover fixes that already existed and had no test (P-03, P-08). That is the
 /// P-02 failure mode: a guard nothing exercises is a guard a refactor can delete with the suite
 /// still green. The rest cover the four authentication defaults (T-07a–d).
+///
+/// Stays under Regression: it crosses Project (theme validation), Org (suspension, SMTP),
+/// Auth (password floor, phone enrolment) and Account (password change) — the file is a ledger
+/// of leftovers, not a subject.
 /// </summary>
 [Collection("RediensIAM")]
 public class ResidualFindingsTests(TestFixture fixture)

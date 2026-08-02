@@ -87,9 +87,10 @@ public sealed record WebhookJob(
 
 // ── WebhookService — enqueues jobs, used by other services ───────────────────
 
+// appConfig is not a parameter here: this half only enqueues, and the encryption key and the
+// delivery timeout it would have carried are read by the dispatcher below, which takes its own.
 public class WebhookService(
     IServiceScopeFactory scopeFactory,
-    AppConfig appConfig,
     Channel<WebhookJob> channel,
     IWebhookQueue webhookQueue)
 {

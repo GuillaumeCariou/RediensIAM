@@ -27,10 +27,17 @@ vi.mock('rediensiam-web', () => ({
   }),
 }));
 
+/**
+ * This file runs in the `node` project — no DOM, so no `location`, which `auth.ts` reads to check
+ * the config's redirect_uri origin against the SPA's own. It is stubbed rather than inherited from
+ * a jsdom window so the origin the assertions below turn on is written down here.
+ */
+const ORIGIN = 'https://console.example.test';
+
 const CONFIG = {
   hydra_url: 'https://hydra.example.test',
   client_id: 'admin-spa',
-  redirect_uri: `${globalThis.location.origin}/admin/callback`,
+  redirect_uri: `${ORIGIN}/admin/callback`,
 };
 
 function respond(status: number, body: unknown) {
@@ -52,6 +59,7 @@ async function freshAuth() {
 beforeEach(() => {
   login.mockClear();
   sdkFetch.mockClear();
+  vi.stubGlobal('location', { origin: ORIGIN });
   fetchMock = vi.fn(async (path: string) =>
     path === '/console/config' ? respond(200, CONFIG) : respond(200, {}));
   vi.stubGlobal('fetch', fetchMock);

@@ -85,8 +85,8 @@ Notes that belong beside this picture and not in a caption:
 
 ```mermaid
 flowchart LR
-    pub["Public hostname<br/>dev iam.localhost - prod auth.rediens.net"]
-    adm["Admin hostname<br/>prod auth.ts.rediens.net - Tailscale only"]
+    pub["Public hostname<br/>the issuer, the login pages, the API"]
+    adm["Admin hostname<br/>the console - private network only"]
 
     subgraph routers["Traefik routers - longest PathPrefix wins"]
         r1["/.well-known /oauth2 /userinfo"]
@@ -1004,7 +1004,7 @@ including the record of the change that purged it.
 
 ## What is deliberately not drawn here
 
-- **The route table.** 184 routes do not fit in a diagram; [`API.md`](API.md) has them with their
+- **The route table.** 187 routes do not fit in a diagram; [`API.md`](API.md) has them with their
   required authority and where each is reachable.
 - **Webhook delivery.** It has its own queue, SSRF re-validation on every delivery, and a retry
   ladder; it is a subsystem, not part of the authorisation spine.

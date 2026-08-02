@@ -2,7 +2,7 @@ using OtpNet;
 using RediensIAM.Config;
 using RediensIAM.Services;
 
-namespace RediensIAM.IntegrationTests.Tests.Regression;
+namespace RediensIAM.IntegrationTests.Tests.Account;
 
 /// <summary>
 /// R-24 + T-N2 — silent MFA factor takeover.

@@ -5,7 +5,7 @@ using Npgsql;
 using RediensIAM.Config;
 using RediensIAM.Models;
 
-namespace RediensIAM.IntegrationTests.Tests.Regression;
+namespace RediensIAM.IntegrationTests.Tests.Auth;
 
 /// <summary>
 /// Step 32 — the login path resolves its tenant before it resolves its user.

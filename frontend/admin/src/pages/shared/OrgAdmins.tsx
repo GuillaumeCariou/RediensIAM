@@ -193,18 +193,18 @@ export default function OrgAdmins() {
               <button className="iam-btn iam-btn-primary" type="submit" form="orgadminspage-form" disabled={assignSaving}>{assignSaving ? 'Assigning…' : 'Assign'}</button></>}
     >
 <form id="orgadminspage-form" onSubmit={handleAssign} className="space-y-4">
-            <div className="space-y-2"><label className="iam-label">User ID</label><input className="iam-input" value={assignForm.user_id} onChange={e => setAssignForm(f => ({ ...f, user_id: e.target.value }))} required placeholder="User UUID" /></div>
+            <div className="space-y-2"><label className="iam-label" htmlFor="org-admin-user-id">User ID</label><input className="iam-input" id="org-admin-user-id" value={assignForm.user_id} onChange={e => setAssignForm(f => ({ ...f, user_id: e.target.value }))} required placeholder="User UUID" /></div>
             <div className="space-y-2">
-              <label className="iam-label">Role</label>
-              <select className="iam-select" value={assignForm.role} onChange={e => (v => setAssignForm(f => ({ ...f, role: v, scope_id: '' })))(e.target.value)}>
+              <label className="iam-label" htmlFor="org-admin-role">Role</label>
+              <select className="iam-select" id="org-admin-role" value={assignForm.role} onChange={e => (v => setAssignForm(f => ({ ...f, role: v, scope_id: '' })))(e.target.value)}>
 <option value="org_admin">Org Admin</option>
                   <option value="project_admin">Project Admin</option>
 </select>
             </div>
             {assignForm.role === 'project_admin' && (
               <div className="space-y-2">
-                <label className="iam-label">Project scope</label>
-                <select className="iam-select" value={assignForm.scope_id} onChange={e => (v => setAssignForm(f => ({ ...f, scope_id: v })))(e.target.value)}>
+                <label className="iam-label" htmlFor="org-admin-scope">Project scope</label>
+                <select className="iam-select" id="org-admin-scope" value={assignForm.scope_id} onChange={e => (v => setAssignForm(f => ({ ...f, scope_id: v })))(e.target.value)}>
                   <option value="" disabled>Select a project…</option>
 {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
 </select>

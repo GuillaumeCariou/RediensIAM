@@ -9,6 +9,10 @@ namespace RediensIAM.IntegrationTests.Tests.Regression;
 /// <summary>
 /// Step 5 — R-10, R-20, T-N6, R-18, R-17 and the informational items acted on.
 /// Each test pins a capability the pre-fix build had.
+///
+/// Stays under Regression: it crosses Org (SMTP endpoint validation), Webhooks (URL validator),
+/// Api (introspect/authorize scoping), Auth (login budget), Middleware (Host header, admin API
+/// gate) and Security (SSRF) — no one folder holds a majority of it.
 /// </summary>
 [Collection("RediensIAM")]
 public class BackendHardeningRegressionTests(TestFixture fixture)

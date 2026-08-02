@@ -8,5 +8,12 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
     include: ['src/**/*.test.{ts,tsx}'],
+    coverage: {
+      // lcov because that is the format sonar.javascript.lcov.reportPaths reads. Without it the
+      // scan warned "No coverage information will be saved" and the dashboard showed this SPA as
+      // untested — the reporters defaulted to HTML and clover, neither of which it looks for.
+      reporter: ['text-summary', 'lcov'],
+      reportsDirectory: './coverage',
+    },
   },
 })

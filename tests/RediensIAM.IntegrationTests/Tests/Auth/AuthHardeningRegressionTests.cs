@@ -3,7 +3,7 @@ using Fido2NetLib;
 using Fido2NetLib.Objects;
 using RediensIAM.Services;
 
-namespace RediensIAM.IntegrationTests.Tests.Regression;
+namespace RediensIAM.IntegrationTests.Tests.Auth;
 
 /// <summary>
 /// Authentication-path regressions: MFA credential binding, credential-stuffing

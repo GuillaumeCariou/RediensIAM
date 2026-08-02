@@ -8,6 +8,10 @@ namespace RediensIAM.IntegrationTests.Tests.Regression;
 /// <summary>
 /// Step 19 — the API surface: audience binding (P-06), /api/authorize object scoping (P-05),
 /// the MFA-disable guard, and /api/manage ↔ /admin parity.
+///
+/// Stays under Regression: it crosses Api (introspect/authorize), Project (the require_mfa
+/// setting) and ManagedApi (the /api/manage ↔ /admin twin), and the three only make sense read
+/// as one API-surface change.
 /// </summary>
 [Collection("RediensIAM")]
 public class ApiSurfaceIntrospectionTests(TestFixture fixture)

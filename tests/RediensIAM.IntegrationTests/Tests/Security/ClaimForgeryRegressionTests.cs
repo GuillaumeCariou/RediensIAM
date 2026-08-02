@@ -1,6 +1,6 @@
 using RediensIAM.Config;
 
-namespace RediensIAM.IntegrationTests.Tests.Regression;
+namespace RediensIAM.IntegrationTests.Tests.Security;
 
 /// <summary>
 /// R-23 + T-N3 — the claim-forgery chain.

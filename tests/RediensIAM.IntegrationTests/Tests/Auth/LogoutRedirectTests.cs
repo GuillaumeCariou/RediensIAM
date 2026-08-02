@@ -2,7 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using RediensIAM.IntegrationTests.Infrastructure;
 
-namespace RediensIAM.IntegrationTests.Tests.Regression;
+namespace RediensIAM.IntegrationTests.Tests.Auth;
 
 /// <summary>
 /// Every OAuth2 client this application registers must declare where a logout may land.

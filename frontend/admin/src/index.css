@@ -14,8 +14,17 @@
    REDIENSIAM DESIGN SYSTEM — from Claude Design prototype
    ===================================================================== */
 
-/* ── Shared non-color tokens ── */
+/* ──────────────────────────────────────────────────────────────────────
+   BASE  (the tokens that do not vary by theme, then the light palette)
+
+   One block, not two: a second `:root` is the same specificity at a later
+   line, so the split bought nothing and only invited a token to be set in
+   both halves with the lower one silently winning.
+   `:root[data-theme="dark"]` below overrides the palette part.
+   ────────────────────────────────────────────────────────────────────── */
+
 :root {
+  /* ── Shared, theme-independent ── */
   --font-sans: 'Geist Variable', 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: 'Geist Mono Variable', 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   --iam-radius:    8px;
@@ -25,13 +34,8 @@
   --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.06), 0 1px 1px oklch(0 0 0 / 0.03);
   --shadow-md: 0 4px 12px oklch(0 0 0 / 0.08), 0 1px 3px oklch(0 0 0 / 0.05);
   --shadow-lg: 0 12px 32px oklch(0 0 0 / 0.12), 0 4px 8px oklch(0 0 0 / 0.06);
-}
 
-/* ──────────────────────────────────────────────────────────────────────
-   THEME  (data-theme="dark" on <html>; absent means light)
-   ────────────────────────────────────────────────────────────────────── */
-
-:root {
+  /* ── Light palette ── */
   /* Everything the UA draws itself — select popups, date pickers, bare checkboxes, autofill,
      scrollbars — follows this and not the custom properties below. Without it a dark palette
      still gets light-chrome widgets. */

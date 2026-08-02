@@ -2,7 +2,7 @@ using System.Net.Sockets;
 using RediensIAM.Controllers;
 using RediensIAM.Services;
 
-namespace RediensIAM.IntegrationTests.Tests.Regression;
+namespace RediensIAM.IntegrationTests.Tests.Services;
 
 /// <summary>
 /// Pure-unit regression tests for the two allowlist/denylist validators.

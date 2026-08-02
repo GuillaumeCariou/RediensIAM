@@ -41,7 +41,7 @@ ENV_FILE="${CHART}/values.${ENVIRONMENT}.yaml"
 # The operator's answers from `setup.sh --prod` live in values.<env>.override.yaml and layer
 # LAST — preflight.sh and deploy.sh both read it, and this script did not. Every real prod
 # install has a different public hostname from the committed default, so V-04, V-05 and V-17
-# were all measuring auth.rediens.net against a cluster that serves something else: V-05 and
+# were all measuring the configured public host against a cluster that serves something else: V-05 and
 # V-17 failed for a host that does not exist here, and V-04 PASSED on four 404s that Traefik
 # returns for any unknown Host — the P-04 assertion reading green while proving nothing.
 OVERRIDE_FILE="${ENV_FILE%.yaml}.override.yaml"

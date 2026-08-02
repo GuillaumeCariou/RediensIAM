@@ -28,9 +28,9 @@ export function credentials(): Credentials {
   }
   const text = fs.readFileSync(SECRETS, 'utf8');
   const read = (key: string) => {
-    const m = new RegExp(`^\\s*${key}:\\s*(.+)$`, 'm').exec(text);
+    const m = new RegExp(String.raw`^\s*${key}:\s*(.+)$`, 'm').exec(text);
     // Values are quoted with whichever quote does not appear in the generated password.
-    return m ? m[1].trim().replace(/^['"]|['"]$/g, '') : null;
+    return m ? m[1].trim().replaceAll(/^['"]|['"]$/g, '') : null;
   };
   const fromFile = { email: read('bootstrapEmail'), password: read('bootstrapPassword') };
   if (!fromFile.email || !fromFile.password) {

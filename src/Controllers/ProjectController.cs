@@ -300,18 +300,17 @@ public class ProjectController(
 
         // M1: enforce project-level password policy. The minimum is the project's own setting or
         // the absolute floor, whichever is higher — reading MinPasswordLength directly let an
-        // admin-created user start below the floor every self-service path enforces.
-        var minLength = PasswordPolicyService.EffectiveMinimumLength(project);
-        if (body.Password.Length < minLength)
-            return BadRequest(new { error = "password_too_short",     min_length = minLength });
-        if (project.PasswordRequireUppercase && !body.Password.Any(char.IsUpper))
-            return BadRequest(new { error = "password_requires_uppercase" });
-        if (project.PasswordRequireLowercase && !body.Password.Any(char.IsLower))
-            return BadRequest(new { error = "password_requires_lowercase" });
-        if (project.PasswordRequireDigit && !body.Password.Any(char.IsDigit))
-            return BadRequest(new { error = "password_requires_digit" });
-        if (project.PasswordRequireSpecial && !body.Password.Any(c => !char.IsLetterOrDigit(c)))
-            return BadRequest(new { error = "password_requires_special" });
+        // admin-created user start below the floor every self-service path enforces. The breach
+        // check is deliberately not run here: this route never made that outbound call.
+        var policy = PasswordPolicyService.CheckComposition(project, body.Password);
+        if (policy == PasswordPolicyResult.TooShort)
+            return BadRequest(new
+            {
+                error = "password_too_short",
+                min_length = PasswordPolicyService.EffectiveMinimumLength(project),
+            });
+        if (policy != PasswordPolicyResult.Ok)
+            return BadRequest(new { error = PasswordPolicyService.ErrorCode(policy) });
 
         var listId = project.AssignedUserListId.Value;
 

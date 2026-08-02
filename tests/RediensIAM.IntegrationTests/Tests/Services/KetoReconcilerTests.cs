@@ -3,7 +3,7 @@ using Npgsql;
 using RediensIAM.Config;
 using RediensIAM.Services;
 
-namespace RediensIAM.IntegrationTests.Tests.Regression;
+namespace RediensIAM.IntegrationTests.Tests.Services;
 
 /// <summary>
 /// S-8's remaining half — the grant dual write had a compensating delete and no reconciler.

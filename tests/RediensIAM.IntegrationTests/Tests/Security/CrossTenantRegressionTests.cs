@@ -1,7 +1,7 @@
 using RediensIAM.Config;
 using RediensIAM.Services;
 
-namespace RediensIAM.IntegrationTests.Tests.Regression;
+namespace RediensIAM.IntegrationTests.Tests.Security;
 
 /// <summary>
 /// Tenant-isolation regressions.

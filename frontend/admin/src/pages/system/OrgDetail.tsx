@@ -284,7 +284,7 @@ export default function OrgDetail() {
                             }
                           </td>
                           <td>
-                            <IamMenu trigger={<><MoreHorizontal className="h-4 w-4" /></>}>
+                            <IamMenu trigger={<MoreHorizontal className="h-4 w-4" />}>
 <button type="button" className="iam-menu-item" onClick={() => { setAssignRoleTarget(m); setAssignRoleForm({ role: 'org_admin', scope_id: '' }); }}>
                                   <Shield className="h-4 w-4" />Assign role
                                 </button>
@@ -460,9 +460,9 @@ export default function OrgDetail() {
     >
 <form id="orgdetail-form-4" onSubmit={handleAddUser} className="space-y-4">
             {addUserError && <p className="text-sm text-destructive">{addUserError}</p>}
-            <div className="space-y-2"><label className="iam-label">Email</label><input className="iam-input" value={addUserForm.email} onChange={e => setAddUserForm(f => ({ ...f, email: e.target.value }))} required type="email" /></div>
-            <div className="space-y-2"><label className="iam-label">Username</label><input className="iam-input" value={addUserForm.username} onChange={e => setAddUserForm(f => ({ ...f, username: e.target.value }))} required /></div>
-            <div className="space-y-2"><label className="iam-label">Password</label><input className="iam-input" value={addUserForm.password} onChange={e => setAddUserForm(f => ({ ...f, password: e.target.value }))} required type="password" /></div>
+            <div className="space-y-2"><label className="iam-label" htmlFor="org-add-user-email">Email</label><input className="iam-input" id="org-add-user-email" value={addUserForm.email} onChange={e => setAddUserForm(f => ({ ...f, email: e.target.value }))} required type="email" /></div>
+            <div className="space-y-2"><label className="iam-label" htmlFor="org-add-user-username">Username</label><input className="iam-input" id="org-add-user-username" value={addUserForm.username} onChange={e => setAddUserForm(f => ({ ...f, username: e.target.value }))} required /></div>
+            <div className="space-y-2"><label className="iam-label" htmlFor="org-add-user-password">Password</label><input className="iam-input" id="org-add-user-password" autoComplete="new-password" value={addUserForm.password} onChange={e => setAddUserForm(f => ({ ...f, password: e.target.value }))} required type="password" /></div>
             
           </form>
     </IamDialog>
@@ -475,16 +475,16 @@ export default function OrgDetail() {
     >
 <form id="orgdetail-form-3" onSubmit={handleAssignRole} className="space-y-4">
             <div className="space-y-2">
-              <label className="iam-label">Role</label>
-              <select className="iam-select" value={assignRoleForm.role} onChange={e => (v => setAssignRoleForm(f => ({ ...f, role: v, scope_id: '' })))(e.target.value)}>
+              <label className="iam-label" htmlFor="org-assign-role">Role</label>
+              <select className="iam-select" id="org-assign-role" value={assignRoleForm.role} onChange={e => (v => setAssignRoleForm(f => ({ ...f, role: v, scope_id: '' })))(e.target.value)}>
 <option value="org_admin">Org Admin</option>
                   <option value="project_admin">Project Admin</option>
 </select>
             </div>
             {assignRoleForm.role === 'project_admin' && (
               <div className="space-y-2">
-                <label className="iam-label">Project (scope)</label>
-                <select className="iam-select" value={assignRoleForm.scope_id} onChange={e => (v => setAssignRoleForm(f => ({ ...f, scope_id: v })))(e.target.value)}>
+                <label className="iam-label" htmlFor="org-assign-role-scope">Project (scope)</label>
+                <select className="iam-select" id="org-assign-role-scope" value={assignRoleForm.scope_id} onChange={e => (v => setAssignRoleForm(f => ({ ...f, scope_id: v })))(e.target.value)}>
                   <option value="" disabled>Select a project…</option>
 {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
 </select>
@@ -510,8 +510,8 @@ export default function OrgDetail() {
     >
 <form id="orgdetail-form-2" onSubmit={handleCreateList} className="space-y-4">
             <div className="space-y-2">
-              <label className="iam-label">Name</label>
-              <input className="iam-input" value={newListName} onChange={e => setNewListName(e.target.value)} required placeholder="Acme Employees" />
+              <label className="iam-label" htmlFor="org-new-list-name">Name</label>
+              <input className="iam-input" id="org-new-list-name" value={newListName} onChange={e => setNewListName(e.target.value)} required placeholder="Acme Employees" />
             </div>
             
           </form>
@@ -526,17 +526,17 @@ export default function OrgDetail() {
 <form id="orgdetail-form" onSubmit={handleCreateProject} className="space-y-4">
             {createProjectError && <p className="text-sm text-destructive">{createProjectError}</p>}
             <div className="space-y-2">
-              <label className="iam-label">Name</label>
-              <input className="iam-input" value={newProject.name} onChange={e => setNewProject(p => ({ ...p, name: e.target.value }))} required placeholder="Main App" />
+              <label className="iam-label" htmlFor="org-new-project-name">Name</label>
+              <input className="iam-input" id="org-new-project-name" value={newProject.name} onChange={e => setNewProject(p => ({ ...p, name: e.target.value }))} required placeholder="Main App" />
             </div>
             <div className="space-y-2">
-              <label className="iam-label">Slug</label>
-              <input className="iam-input" value={newProject.slug} onChange={e => setNewProject(p => ({ ...p, slug: e.target.value.toLowerCase().replaceAll(/\s+/g, '-') }))} required placeholder="main-app" pattern="[a-z0-9]+(-[a-z0-9]+)*" />
+              <label className="iam-label" htmlFor="org-new-project-slug">Slug</label>
+              <input className="iam-input" id="org-new-project-slug" value={newProject.slug} onChange={e => setNewProject(p => ({ ...p, slug: e.target.value.toLowerCase().replaceAll(/\s+/g, '-') }))} required placeholder="main-app" pattern="[a-z0-9]+(-[a-z0-9]+)*" />
               <p className="text-xs text-muted-foreground">Lowercase letters, numbers and hyphens only.</p>
             </div>
             <div className="space-y-2">
-              <label className="iam-label">Redirect URI</label>
-              <input className="iam-input" value={newProject.redirect_uri} onChange={e => setNewProject(p => ({ ...p, redirect_uri: e.target.value }))} placeholder="https://app.example.com/callback" />
+              <label className="iam-label" htmlFor="org-new-project-redirect-uri">Redirect URI</label>
+              <input className="iam-input" id="org-new-project-redirect-uri" value={newProject.redirect_uri} onChange={e => setNewProject(p => ({ ...p, redirect_uri: e.target.value }))} placeholder="https://app.example.com/callback" />
             </div>
             <div>
               <label className="iam-label" htmlFor="org-proj-logout-uri">Post-logout redirect URI</label>

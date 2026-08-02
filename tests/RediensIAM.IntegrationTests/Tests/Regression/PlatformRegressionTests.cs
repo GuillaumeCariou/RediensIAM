@@ -7,6 +7,10 @@ namespace RediensIAM.IntegrationTests.Tests.Regression;
 /// Platform regressions: PAT revocation latency, webhook test dispatch, CSV export
 /// escaping, and the admin-console API contract (routes and request fields the SPA
 /// actually sends).
+///
+/// Stays under Regression: it crosses ServiceAccounts (PAT revocation), Webhooks (test dispatch),
+/// Org (CSV and audit-log export), Project (info patch) and System (encryption-key config) —
+/// a genuine cross-cut with no dominant subject.
 /// </summary>
 [Collection("RediensIAM")]
 public class PlatformRegressionTests(TestFixture fixture)

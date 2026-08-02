@@ -291,32 +291,8 @@ public class AuthController(
         if (req.Client?.ClientId == Roles.AdminClientId)
             return await AdminLogin(body);
 
-        var resolution = LoginChallengeProject.Resolve(req, out var projectId);
-        if (resolution == LoginChallengeProject.Resolution.Mismatch)
-        {
-            var rejectUrl = await hydra.RejectLoginAsync(body.LoginChallenge, ErrAccessDenied, "project_id mismatch");
-            return Ok(new { redirect_to = rejectUrl, error = "project_id_mismatch" });
-        }
-        if (resolution != LoginChallengeProject.Resolution.Ok || projectId == null)
-            return BadRequest(new { error = ErrMissingProjectId });
-
-        // The organisation registered on the challenge's client scopes this request before it
-        // reads anything — including the project row below.
-        await PinScopeToChallengeAsync(req);
-
-        var project = await db.Projects
-            .Include(p => p.AssignedUserList)
-            .Include(p => p.Organisation)
-            .FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId) && p.Active);
-
-        if (project?.AssignedUserListId == null)
-            return BadRequest(new { error = ErrProjectNotReady });
-
-        if (!await EnsureScopedToProjectAsync(project))
-            return BadRequest(new { error = ErrScopeMismatch });
-
-        if (project.Organisation == null || !project.Organisation.Active)
-            return Unauthorized(new { error = "organisation_suspended" });
+        var (project, projectId, projectErr) = await ResolveLoginProjectAsync(req, body.LoginChallenge);
+        if (project == null || projectId == null) return projectErr!;
 
         var user = await LookupUserByCredentialsAsync(project, body);
         if (user == null || !user.Active)
@@ -339,6 +315,44 @@ public class AuthController(
         if (mfaResult != null) return mfaResult;
 
         return await CompleteLoginAsync(user, project, body.LoginChallenge);
+    }
+
+    /// <summary>
+    /// Turns a login challenge into the active, login-ready project it names, or into the exact
+    /// response the caller must send instead. The checks stay in their original order: which one
+    /// fires first is what the login SPA distinguishes on.
+    /// </summary>
+    private async Task<(Project? Project, string? ProjectId, IActionResult? Error)> ResolveLoginProjectAsync(
+        HydraLoginRequest req, string loginChallenge)
+    {
+        var resolution = LoginChallengeProject.Resolve(req, out var projectId);
+        if (resolution == LoginChallengeProject.Resolution.Mismatch)
+        {
+            var rejectUrl = await hydra.RejectLoginAsync(loginChallenge, ErrAccessDenied, "project_id mismatch");
+            return (null, null, Ok(new { redirect_to = rejectUrl, error = "project_id_mismatch" }));
+        }
+        if (resolution != LoginChallengeProject.Resolution.Ok || projectId == null)
+            return (null, null, BadRequest(new { error = ErrMissingProjectId }));
+
+        // The organisation registered on the challenge's client scopes this request before it
+        // reads anything — including the project row below.
+        await PinScopeToChallengeAsync(req);
+
+        var project = await db.Projects
+            .Include(p => p.AssignedUserList)
+            .Include(p => p.Organisation)
+            .FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId) && p.Active);
+
+        if (project?.AssignedUserListId == null)
+            return (null, null, BadRequest(new { error = ErrProjectNotReady }));
+
+        if (!await EnsureScopedToProjectAsync(project))
+            return (null, null, BadRequest(new { error = ErrScopeMismatch }));
+
+        if (project.Organisation == null || !project.Organisation.Active)
+            return (null, null, Unauthorized(new { error = "organisation_suspended" }));
+
+        return (project, projectId, null);
     }
 
     private async Task<User?> LookupUserByCredentialsAsync(Project project, LoginRequest body)
@@ -803,43 +817,7 @@ public class AuthController(
         var userId = Guid.Parse(userIdStr);
 
         if (req.Client?.ClientId == Roles.AdminClientId)
-        {
-            var adminRoles = new List<string>();
-            if (await keto.CheckAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{userId}"))
-                adminRoles.Add(Roles.SuperAdmin);
-            if (await keto.HasAnyRelationAsync(Roles.KetoOrgsNamespace, Roles.KetoOrgAdminRelation, $"user:{userId}"))
-                adminRoles.Add(Roles.OrgAdmin);
-            if (await keto.HasAnyRelationAsync(Roles.KetoProjectsNamespace, Roles.KetoManagerRelation, $"user:{userId}"))
-                adminRoles.Add(Roles.ProjectAdmin);
-
-            if (adminRoles.Count == 0)
-            {
-                var rejectUrl = await hydra.RejectConsentAsync(consent_challenge, ErrAccessDenied, "insufficient_role");
-                return SafeRedirect(rejectUrl);
-            }
-
-            var orgRole = await db.OrgRoles
-                .Where(r => r.UserId == userId && r.Role == Roles.OrgAdmin)
-                .OrderBy(r => r.GrantedAt)
-                .FirstOrDefaultAsync();
-            var projectRole = await db.OrgRoles
-                .Where(r => r.UserId == userId && r.Role == Roles.ProjectAdmin)
-                .OrderBy(r => r.GrantedAt)
-                .FirstOrDefaultAsync();
-
-            var adminSession = new
-            {
-                access_token = new
-                {
-                    user_id = userIdStr,
-                    roles = adminRoles,
-                    org_id = orgRole?.OrgId.ToString() ?? "",
-                    project_id = projectRole?.ScopeId?.ToString() ?? ""
-                }
-            };
-            var adminRedirect = await hydra.AcceptConsentAsync(consent_challenge, adminSession, req.RequestedScope);
-            return SafeRedirect(adminRedirect);
-        }
+            return await ConsentForAdminAsync(consent_challenge, req, userId, userIdStr);
 
         var projectIdStr = context?.GetValueOrDefault(CtxProjectId)?.ToString();
         var orgIdStr = context?.GetValueOrDefault(CtxOrgId)?.ToString();
@@ -886,6 +864,61 @@ public class AuthController(
         var redirectUrl = await hydra.AcceptConsentAsync(consent_challenge, session, req.RequestedScope);
         return SafeRedirect(redirectUrl);
     }
+
+    /// <summary>
+    /// Consent for the admin console. Its OrgRoles lookups are deliberately cross-organisation,
+    /// which is why this branch returns before <see cref="GetConsent"/> pins a tenant scope.
+    /// </summary>
+    private async Task<IActionResult> ConsentForAdminAsync(
+        string consentChallenge, HydraConsentRequest req, Guid userId, string userIdStr)
+    {
+        var adminRoles = await ManagementRolesAsync(userId);
+        if (adminRoles.Count == 0)
+        {
+            var rejectUrl = await hydra.RejectConsentAsync(consentChallenge, ErrAccessDenied, "insufficient_role");
+            return SafeRedirect(rejectUrl);
+        }
+
+        var orgRole = await FirstGrantedOrgRoleAsync(userId, Roles.OrgAdmin);
+        var projectRole = await FirstGrantedOrgRoleAsync(userId, Roles.ProjectAdmin);
+
+        var adminSession = new
+        {
+            access_token = new
+            {
+                user_id = userIdStr,
+                roles = adminRoles,
+                org_id = orgRole?.OrgId.ToString() ?? "",
+                project_id = projectRole?.ScopeId?.ToString() ?? ""
+            }
+        };
+        var adminRedirect = await hydra.AcceptConsentAsync(consentChallenge, adminSession, req.RequestedScope);
+        return SafeRedirect(adminRedirect);
+    }
+
+    /// <summary>
+    /// Every management role this user holds, in the order the console expects. Unlike
+    /// <see cref="HasManagementRoleAsync"/> this asks Keto all three questions, because the answer
+    /// is the list rather than whether it is empty.
+    /// </summary>
+    private async Task<List<string>> ManagementRolesAsync(Guid userId)
+    {
+        var subject = $"user:{userId}";
+        var roles = new List<string>();
+        if (await keto.CheckAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, subject))
+            roles.Add(Roles.SuperAdmin);
+        if (await keto.HasAnyRelationAsync(Roles.KetoOrgsNamespace, Roles.KetoOrgAdminRelation, subject))
+            roles.Add(Roles.OrgAdmin);
+        if (await keto.HasAnyRelationAsync(Roles.KetoProjectsNamespace, Roles.KetoManagerRelation, subject))
+            roles.Add(Roles.ProjectAdmin);
+        return roles;
+    }
+
+    private Task<OrgRole?> FirstGrantedOrgRoleAsync(Guid userId, string role) =>
+        db.OrgRoles
+            .Where(r => r.UserId == userId && r.Role == role)
+            .OrderBy(r => r.GrantedAt)
+            .FirstOrDefaultAsync();
 
     [HttpGet("logout")]
     public async Task<IActionResult> GetLogout([FromQuery] string logout_challenge)
@@ -1276,19 +1309,8 @@ public class AuthController(
         if (await rateLimiter.IsBlockedAsync(Ip, user.Id))
             return StatusCode(429, new { error = ErrRateLimited });
 
-        if (user.LockedUntil.HasValue && user.LockedUntil > DateTimeOffset.UtcNow)
-            return Unauthorized(new { error = "account_locked", locked_until = user.LockedUntil });
-
-        if (user.PasswordHash == null || !passwords.Verify(body.Password, user.PasswordHash))
-        {
-            user.FailedLoginCount++;
-            user.LockedUntil = user.FailedLoginCount >= appConfig.MaxLoginAttempts
-                ? DateTimeOffset.UtcNow.AddMinutes(appConfig.LockoutMinutes)
-                : user.LockedUntil;
-            await db.SaveChangesAsync();
-            await rateLimiter.RecordFailureAsync(Ip, user.Id);
-            return Unauthorized(new { error = ErrInvalidCreds });
-        }
+        if (await CheckAdminPasswordAsync(user, body.Password) is { } passwordErr)
+            return passwordErr;
 
         if (!await HasManagementRoleAsync(user.Id))
             return Unauthorized(new { error = "insufficient_role" });
@@ -1299,9 +1321,7 @@ public class AuthController(
         await db.SaveChangesAsync();
         await rateLimiter.ResetAsync(Ip, user.Id);
 
-        var hasMfa = user.TotpEnabled || user.PhoneVerified ||
-                     await db.WebAuthnCredentials.AnyAsync(w => w.UserId == user.Id);
-        if (hasMfa)
+        if (await HasEnrolledFactorAsync(user))
         {
             SetMfaSession(user.Id.ToString(), body.LoginChallenge, null, null);
             return Ok(new { requires_mfa = true });
@@ -1321,12 +1341,7 @@ public class AuthController(
         //
         // This runs unscoped — see TenantScopeInterceptor.LegitimatelyUnscopedPaths, which already
         // names AdminLogin because the system list is invisible under every tenant scope.
-        var anyAdminEnrolled = await db.Users
-            .Where(u => u.UserListId == user.UserListId && u.Id != user.Id)
-            .AnyAsync(u => u.TotpEnabled || u.PhoneVerified
-                           || db.WebAuthnCredentials.Any(w => w.UserId == u.Id));
-
-        if (anyAdminEnrolled)
+        if (await AnyOtherAdminEnrolledAsync(user))
         {
             HttpContext.Session.SetString(MfaSetupRequired, "true");
             SetMfaSession(user.Id.ToString(), body.LoginChallenge, null, null);
@@ -1342,6 +1357,39 @@ public class AuthController(
         _ = Task.Run(() => CheckNewDeviceAsync(user, null, ip, userAgent));
         return Ok(new { redirect_to = redirectUrl });
     }
+
+    /// <summary>
+    /// Runs the admin lockout and password checks, recording the failure exactly as the tenant
+    /// login path does. Returns the response to send on refusal, or null when the password stands.
+    /// </summary>
+    private async Task<IActionResult?> CheckAdminPasswordAsync(User user, string password)
+    {
+        if (user.LockedUntil.HasValue && user.LockedUntil > DateTimeOffset.UtcNow)
+            return Unauthorized(new { error = "account_locked", locked_until = user.LockedUntil });
+
+        if (user.PasswordHash == null || !passwords.Verify(password, user.PasswordHash))
+        {
+            user.FailedLoginCount++;
+            user.LockedUntil = user.FailedLoginCount >= appConfig.MaxLoginAttempts
+                ? DateTimeOffset.UtcNow.AddMinutes(appConfig.LockoutMinutes)
+                : user.LockedUntil;
+            await db.SaveChangesAsync();
+            await rateLimiter.RecordFailureAsync(Ip, user.Id);
+            return Unauthorized(new { error = ErrInvalidCreds });
+        }
+
+        return null;
+    }
+
+    private async Task<bool> HasEnrolledFactorAsync(User user) =>
+        user.TotpEnabled || user.PhoneVerified ||
+        await db.WebAuthnCredentials.AnyAsync(w => w.UserId == user.Id);
+
+    private Task<bool> AnyOtherAdminEnrolledAsync(User user) =>
+        db.Users
+            .Where(u => u.UserListId == user.UserListId && u.Id != user.Id)
+            .AnyAsync(u => u.TotpEnabled || u.PhoneVerified
+                           || db.WebAuthnCredentials.Any(w => w.UserId == u.Id));
 
     private async Task CheckNewDeviceAsync(User user, Guid? orgId, string ip, string userAgent)
     {
@@ -1539,39 +1587,15 @@ public class AuthController(
         var user = await FindOrCreateSocialUserAsync(profile, stateData.ProviderId, project);
         if (user == null) return SafeRedirect(errorRedirect);
 
-        // The tenant's own login controls apply however the user authenticated. This path used to
-        // accept the login directly, so a project that switched on require_mfa or an IP allowlist
-        // had both enforced for password users and bypassed by everyone who used the identity
-        // provider the tenant had configured — which is the population those controls exist for.
-        if (!FederatedLoginGuard.IsIpAllowed(project, Ip))
-        {
-            await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.failure");
-            IamMetrics.LoginAttempts.WithLabels("ip_blocked").Inc();
-            return SafeRedirect(await hydra.RejectLoginAsync(
-                stateData.LoginChallenge, ErrAccessDenied, "ip_not_allowed"));
-        }
-
-        if (project.RequireRoleToLogin)
-        {
-            var hasRole = await db.UserProjectRoles.AnyAsync(r => r.UserId == user.Id && r.ProjectId == project.Id);
-            if (!hasRole)
-            {
-                return SafeRedirect(await hydra.RejectLoginAsync(
-                    stateData.LoginChallenge, ErrAccessDenied, "no_role_assigned"));
-            }
-        }
+        if (await CheckFederatedLoginAllowedAsync(project, user, stateData.LoginChallenge) is { } guardErr)
+            return guardErr;
 
         user.LastLoginAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
 
         var (factorRequired, needsEnrolment) = await FederatedLoginGuard.RequiresFactorAsync(db, user, project);
         if (factorRequired)
-        {
-            FederatedLoginGuard.SetMfaSession(
-                HttpContext.Session, user.Id, stateData.LoginChallenge, project.Id, project.OrgId, needsEnrolment);
-            IamMetrics.LoginAttempts.WithLabels(needsEnrolment ? MfaSetupRequired : "mfa_required").Inc();
-            return SafeRedirect(FederatedLoginGuard.MfaRedirectPath(stateData.LoginChallenge, needsEnrolment));
-        }
+            return StartFederatedMfa(project, user, stateData.LoginChallenge, needsEnrolment);
 
         var subject = $"{project.OrgId}:{user.Id}";
         var ctx = new Dictionary<string, object>
@@ -1584,6 +1608,44 @@ public class AuthController(
         var redirectTo = await hydra.AcceptLoginAsync(stateData.LoginChallenge, subject, ctx);
         await audit.RecordAsync(project.OrgId, project.Id, user.Id, $"user.login.social.{stateData.ProviderId}");
         return SafeRedirect(redirectTo);
+    }
+
+    /// <summary>
+    /// The tenant's own login controls apply however the user authenticated. This path used to
+    /// accept the login directly, so a project that switched on require_mfa or an IP allowlist
+    /// had both enforced for password users and bypassed by everyone who used the identity
+    /// provider the tenant had configured — which is the population those controls exist for.
+    /// </summary>
+    private async Task<IActionResult?> CheckFederatedLoginAllowedAsync(
+        Project project, User user, string loginChallenge)
+    {
+        if (!FederatedLoginGuard.IsIpAllowed(project, Ip))
+        {
+            await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.failure");
+            IamMetrics.LoginAttempts.WithLabels("ip_blocked").Inc();
+            return SafeRedirect(await hydra.RejectLoginAsync(
+                loginChallenge, ErrAccessDenied, "ip_not_allowed"));
+        }
+
+        if (project.RequireRoleToLogin)
+        {
+            var hasRole = await db.UserProjectRoles.AnyAsync(r => r.UserId == user.Id && r.ProjectId == project.Id);
+            if (!hasRole)
+            {
+                return SafeRedirect(await hydra.RejectLoginAsync(
+                    loginChallenge, ErrAccessDenied, "no_role_assigned"));
+            }
+        }
+
+        return null;
+    }
+
+    private IActionResult StartFederatedMfa(Project project, User user, string loginChallenge, bool needsEnrolment)
+    {
+        FederatedLoginGuard.SetMfaSession(
+            HttpContext.Session, user.Id, loginChallenge, project.Id, project.OrgId, needsEnrolment);
+        IamMetrics.LoginAttempts.WithLabels(needsEnrolment ? MfaSetupRequired : "mfa_required").Inc();
+        return SafeRedirect(FederatedLoginGuard.MfaRedirectPath(loginChallenge, needsEnrolment));
     }
 
     private async Task<IActionResult> HandleOAuthLinkModeAsync(OAuthStateData stateData, SocialUserProfile profile)

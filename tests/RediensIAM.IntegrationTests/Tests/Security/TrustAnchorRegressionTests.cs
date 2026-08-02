@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using RediensIAM.Config;
 
-namespace RediensIAM.IntegrationTests.Tests.Regression;
+namespace RediensIAM.IntegrationTests.Tests.Security;
 
 /// <summary>
 /// R-22, R-14/T-N5, T-N4, R-09 — the controls that decide what the process trusts.

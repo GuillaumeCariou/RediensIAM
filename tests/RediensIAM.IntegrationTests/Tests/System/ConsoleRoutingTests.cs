@@ -1,6 +1,6 @@
 using RediensIAM.IntegrationTests.Infrastructure;
 
-namespace RediensIAM.IntegrationTests.Tests.Regression;
+namespace RediensIAM.IntegrationTests.Tests.System;
 
 /// <summary>
 /// The console's URLs belong to the browser, not to the management API.

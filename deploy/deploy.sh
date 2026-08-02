@@ -349,8 +349,9 @@ fi
 
 if [ ! -f "${SECRETS_FILE}" ]; then
   if [ "${PROD}" = "true" ]; then
-    read -rp "  Bootstrap admin email    [admin@rediens.net]: " BOOTSTRAP_EMAIL
-    BOOTSTRAP_EMAIL="${BOOTSTRAP_EMAIL:-admin@rediens.net}"
+    read -rp "  Bootstrap admin email    [admin@${PUBLIC_HOST}]: " BOOTSTRAP_EMAIL
+    # Derived from the host this deployment declares, not from any one operator's domain.
+    BOOTSTRAP_EMAIL="${BOOTSTRAP_EMAIL:-admin@${PUBLIC_HOST}}"
     read -rsp "  Bootstrap admin password: " BOOTSTRAP_PASS
     echo ""
     if [ -z "${BOOTSTRAP_PASS}" ]; then

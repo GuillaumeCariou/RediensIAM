@@ -8,6 +8,117 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.5.0] — 2026-08-02
+
+**Breaking:** signing in now creates an SSO session. Deployments that want a password at every
+authorization must set `Security__SsoSessionMinutes: 0` deliberately.
+
+### Changed — signing in once means something
+
+- **Hydra was never asked to remember anybody.** `AcceptLoginAsync` sent `remember: false,
+  remember_for: 0`, so every authorization request needed the password again: refreshing the
+  console asked for it, and so did opening a second application against the same identity provider.
+  It read like a cookie problem for a long time and was not. `Security__SsoSessionMinutes` now sets
+  the lifetime — eight hours by default, a week at most, and zero restores the old behaviour as a
+  decision rather than an accident.
+
+### Fixed — configuration that could not be changed
+
+- **Roughly twenty settings were frozen at first install.** The `instances` row re-applied the
+  environment only when `RECONFIGURE_FROM_ENV` was set, and nothing set it — so the lockout policy,
+  the Argon2 cost, the audit retention and the rest kept whatever the first boot wrote, while
+  `kubectl get deploy` showed the value an operator had just changed. The environment is now
+  re-applied on every boot; the flag only decides whether that counts as a deliberate
+  reconfiguration worth stamping.
+- **The chart could only set 23 of them.** `rediensiam.app.extraEnv` passes arbitrary non-secret
+  name/value pairs into the pod, so every variable in the new reference is reachable without
+  editing a template.
+- `app.adminPath` is gone. It travelled from the chart to an env var to a database column and no
+  code ever read it; the console's path is the constant `Roles.ConsoleBasePath`. The column stays,
+  documented as unused, because dropping it is a migration for no gain.
+
+### Fixed — the admin ingress was served by the public controller
+
+- All three Ingresses read one `ingress.className`. With two controllers — a public one on a
+  forwarded address, an admin one on an address that is never forwarded — the admin Ingress
+  inherited the public class and was therefore answered by the public controller. No public DNS
+  record points at the admin host, so the topology looked like the protection; it was not, and a
+  request carrying the admin `Host` sent to the public address was served. `ingress.admin.className`
+  now exists, falling back to the shared one, and the P-04 deny router stays on the public class
+  because that is where it has to be.
+
+### Fixed — SDKs
+
+- **Rust: `http://[::1]` was rejected.** The check matched the bare `::1` while the URL parser keeps
+  the brackets, so IPv6 loopback — the one form of local development the exception exists for —
+  failed with a configuration error.
+- **TypeScript: a refused authorization looked like an ordinary page load.** An authorization server
+  answers a refusal on the redirect URI with `error` where `code` would be; `handleRedirect()`
+  returned false for it, which callers read as "this is not a callback" and answer by starting the
+  flow again — walking the user back into the same refusal. It now throws `authorization_denied`.
+- The Rust README claimed the crate compiled in webpki roots and warned that the OS trust store was
+  not consulted, which would have told an integrator with a private CA that it could not work. It
+  uses `rustls-tls-native-roots`, and a test proves it with a real handshake.
+
+### Documentation
+
+- [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) — every environment variable, its default, its
+  bounds, whether the chart sets it, and where each value actually comes from.
+- [`docs/CONSOLE.md`](docs/CONSOLE.md) — the console: three scopes, what each page does, and the
+  order a first run has to happen in.
+- `docs/API.md` recounted against the code: 187 routes, four of which were undocumented.
+- All three SDK READMEs rewritten from source.
+
+### Fixed — everything a SonarQube analysis found
+
+The gate failed on three conditions: 72 open issues, 72 % new-code coverage against a required 80,
+and one unreviewed security hotspot. All of it is addressed at the cause — **no suppression was
+added anywhere**, and three existing ones were removed by fixing what they hid.
+
+- **A regex vulnerable to catastrophic backtracking** in the browser SDK (`typescript:S5852`).
+  `=+$` stripped base64 padding; it bought nothing, because `btoa` emits `=` only as trailing
+  padding, so once `+` and `/` are rewritten every remaining `=` is padding. Linear now.
+- **41 form labels associated with nothing** across nine console files (`typescript:S6853`). A
+  `<label>` without `htmlFor` is not announced and does not focus its field on click — in an admin
+  console. Fixing them exposed **a real defect**: `LogoUpload` derived its element id from the
+  caption text, which is not unique, so every social provider's "browse" button opened the file
+  picker of whichever one came first in the DOM and uploaded the logo to that one.
+- **The project's only bug** (`typescript:S1082`) — a clickable element in `IamMenu` with no
+  keyboard listener, and a `role="menu"` container that could not be focused. It is now a real menu
+  widget: arrows walk the enabled items, Escape and activation return focus to the trigger. Note
+  the trap it hides, now pinned by a test: closing on `keydown` for Space unmounts the item before
+  its own handler runs, because a `<button>` fires its click on `keyup`.
+- **Eight methods above the cognitive-complexity limit** (`csharpsquid:S3776`), the worst at 32 for
+  a limit of 15. Extracted into named methods, behaviour identical — the audit chain's deliberate
+  counter asymmetry is preserved and documented rather than tidied into something simpler and
+  wrong, and `ProjectController.CreateUser` lost a fourth hand-written copy of the password rules
+  in favour of the shared one.
+- **`CA1847` — but not the way the rule asked.** `string.Contains(char)` has no EF translation, so
+  the mechanical fix compiled and then failed three tests with "Translation of method
+  'string.Contains' failed", which would have made the key-rotation sweep throw at runtime. The
+  predicate is now `EF.Functions.Like(value, "%:%")`, which is the `LIKE` the method's own comment
+  already described.
+- **The scan was also lying about coverage.** `sonar.javascript.lcov.reportPaths` pointed at files
+  nothing generated, so the dashboard showed both SPAs as untested. They report now — 95 % of lines
+  in the login SPA — and `sonar-scan.sh` generates the reports it claims to import.
+- The `**/Migrations/**` exclusion is gone: those files carry `<auto-generated/>` and the analyser
+  skips them anyway, while excluding them *after* MSBuild had analysed them made the scanner warn
+  about a protobuf reference on every run.
+
+One finding is left open deliberately: `csharpsquid:S4502` on the SAML assertion consumer. The
+`[IgnoreAntiforgeryToken]` attribute is what raises it and is what SAML requires — an identity
+provider posts a signed assertion from another site, and verifying that signature *is* the
+integrity control. No code change clears it without breaking SAML, and the server has already
+reviewed it as safe.
+
+### Builds
+
+- **Zero warnings**, across the API, the test project and both SPAs. Four Sonar findings and one
+  compiler warning fixed rather than suppressed, and three existing suppressions removed by fixing
+  what they were hiding — including a `Password=postgres` literal in the design-time factory.
+
+---
+
 ## [0.4.0] — 2026-08-02
 
 **Breaking for anyone with a bookmark: the admin console moved from `/admin/` to `/console/`.**

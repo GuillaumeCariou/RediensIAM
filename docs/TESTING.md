@@ -9,7 +9,7 @@ What exists, how to run it, and — just as usefully — what has no tests at al
 | Suite | Where | Count | Runs today? |
 |---|---|---:|---|
 | Backend integration tests | `tests/RediensIAM.IntegrationTests/` | **1460** | yes |
-| Admin SPA unit tests | `frontend/admin/src/**` | 88 across 6 files | yes, ~3s |
+| Admin SPA tests | `frontend/admin/src/**` | 99 across 6 files — 36 in node, 63 in a real browser | yes |
 | Login SPA unit tests | `frontend/login/src/**` | 80 across 3 files | yes, ~3s |
 | .NET SDK tests | `sdk/dotnet/RediensIAM.Client.Tests/` | 14 | yes |
 | Rust SDK tests | `sdk/rust/rediensiam-client/src/lib.rs` (inline) | 15 (13 unit + 2 doctests) | yes |
@@ -325,7 +325,18 @@ test then fails on a page reading "Invalid email or password". This suite shippe
 months before the deployment it was pointed at, which is why the credentials are now verified up
 front and the error names the file.
 
-### Why there is no `storageState`
+### One sign-in, reused
+
+Playwright's guidance is to reuse an authentication state rather than sign in per test, and it says
+why: redoing the login for every test slows the run down significantly. Fifteen console tests each
+driving the form took nearly two minutes, and worse, made Hydra reject a CSRF cookie belonging to a
+flow a previous test had abandoned mid-redirect.
+
+A `setup` project signs in once and saves the cookies; the console project depends on it and starts
+from that state. **This only became possible in 0.5.0**, when the deployment started asking Hydra to
+remember a login — before that there was no session cookie to save.
+
+### Why the token itself is not in that state
 
 The console runs on `rediensiam-web`, which keeps the access token in a private field and writes
 nothing to `localStorage` or `sessionStorage` — deliberately, so a token does not outlive the tab.
@@ -333,8 +344,10 @@ The previous suite captured `sessionStorage` in a global setup and replayed it i
 That worked against `oidc-client-ts` and became a no-op the day the SDK replaced it: ten specs went
 on passing while authenticating nothing at all.
 
-So every console test drives the real form, which means the login flow is exercised by all of them
-rather than by one. After the first sign-in Hydra holds an SSO session in the context's cookies.
+What `storageState` does carry is cookies — including Hydra's session — so a console test still
+completes a real OAuth2 round trip on every fresh load, but without the form. The login project
+deliberately keeps no stored state: its tests are about what an anonymous visitor sees, and several
+of them assert that a wrong password is refused.
 
 ### Two facts about the environment that shape the specs
 
@@ -366,13 +379,34 @@ fifteen spec files were removed rather than repaired: all of them mocked the adm
 
 ## What has no tests
 
+### The admin console runs its component tests in a browser
+
+Vitest's own guidance is that Browser Mode is the recommended way to test components, because a DOM
+simulation misses CSS layout, real browser API behaviour, event handling, focus management and
+accessibility. The admin console follows it, split into two projects in the `test` block of
+`vite.config.ts`:
+
+| Project | Environment | What runs there |
+|---|--:|---|
+| `node` | node | `contracts.test.ts` and `theme.test.ts`, which read source files off disk and assert on their text, plus `auth.test.ts`, which mocks `fetch` and asserts on logic |
+| `browser` | Chromium via Playwright | every `*.test.tsx` — the re-auth dialog, the command palette, the SMTP error codes |
+
+Three things are asserted directly now that could only be approximated before, and each carries a
+`STRENGTHENED:` comment saying what a simulation could not have caught:
+
+- **`dialog.matches(':modal')`** — Chromium's own answer to "is this in the top layer", where the
+  jsdom version could only record that `showModal()` rather than `show()` had been called;
+- **real Tab containment** — Tab is pressed past the end of the cycle and focus is asserted never to
+  land on the background element the harness renders for exactly that purpose. This is the original
+  defect — a non-modal `<dialog>` behind a scrim that let Tab walk into the page — rather than a
+  proxy for it;
+- **real background inertness** — `behind.focus()` followed by an assertion that focus did not move.
+  Top-layer inertness is not modelled by a simulation at all.
+
+The login SPA is still on jsdom (80 tests). Its suite is about form logic and the open-redirect
+guard, neither of which needs a real browser; it should move when it grows something that does.
+
 ### What the SPA suites still do not reach
-
-Both SPAs now have suites (88 and 80 tests, `npm test` in either directory, vitest + jsdom +
-Testing Library, config in the `test` block of `vite.config.ts`). What they do not cover:
-
-- **anything needing layout or a real top layer** — jsdom has neither, so native `<dialog>` Tab
-  containment and everything visual is asserted only structurally;
 - **the router and the page shells** — the suites cover the pieces with a contract worth pinning
   (re-auth, the command palette, the SMTP error codes, the auth 401 split) plus two static
   passes over the source (`contracts.test.ts`, `theme.test.ts`). Ordinary CRUD pages are not

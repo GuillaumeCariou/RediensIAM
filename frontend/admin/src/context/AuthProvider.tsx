@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { isAuthenticated, startLogin, handleCallback, logout, getToken, restoreSession } from '../auth';
+import { RETURN_TO_KEY } from './returnTo';
 import { AuthContext, ROLE_SUPER_ADMIN, ROLE_ORG_ADMIN, ROLE_PROJECT_ADMIN, parseToken, type AuthState } from './AuthContext';
 
 export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
@@ -25,6 +26,9 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
         if (ok) {
           url.searchParams.delete('code');
           url.searchParams.delete('state');
+          // The URL only. Where to go next is the router's business — see consumeReturnTo below:
+          // the callback path matches no route, so the catch-all navigates, and a history entry
+          // written here would be overwritten a tick later.
           globalThis.history.replaceState({}, '', url.toString());
         } else {
           await startLogin();
@@ -33,6 +37,11 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
       } else {
         await restoreSession();
         if (!isAuthenticated()) {
+          // Remembered before the redirect, because after it this page no longer exists. Path only
+          // and same-origin by construction: it is read back into history.replaceState, and a value
+          // that could name another origin would be an open redirect written by whoever can reach
+          // this tab's storage.
+          sessionStorage.setItem(RETURN_TO_KEY, globalThis.location.pathname + globalThis.location.search);
           await startLogin();
           return; // redirect in progress
         }

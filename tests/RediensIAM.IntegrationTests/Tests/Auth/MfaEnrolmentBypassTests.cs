@@ -4,7 +4,7 @@ using OtpNet;
 using RediensIAM.IntegrationTests.Infrastructure;
 using RediensIAM.Services;
 
-namespace RediensIAM.IntegrationTests.Tests.Regression;
+namespace RediensIAM.IntegrationTests.Tests.Auth;
 
 /// <summary>
 /// The login-time TOTP enrolment endpoints must not be reachable by an account that already holds

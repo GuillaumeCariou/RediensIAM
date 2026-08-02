@@ -17,7 +17,7 @@ export function uniqueName(what: string): string {
 }
 
 export function uniqueSlug(what: string): string {
-  return uniqueName(what).toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  return uniqueName(what).toLowerCase().replaceAll(/[^a-z0-9-]/g, '-');
 }
 
 export function uniqueEmail(what: string): string {

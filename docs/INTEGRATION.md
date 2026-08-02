@@ -309,7 +309,7 @@ cache negative ones.
 
 ## Endpoint reference
 
-The routes below are the ones an integrator uses. **The complete list of all 184 routes — with
+The routes below are the ones an integrator uses. **The complete list of all 187 routes — with
 required authority and whether each is reachable on the public hostname — is in
 [`API.md`](API.md).**
 

@@ -248,7 +248,6 @@ public class EntityModelTests
                 ["App:Domain"]                          = "localhost",
                 ["IAM_PUBLIC_PORT"]                     = "5000",
                 ["IAM_ADMIN_PORT"]                      = "5001",
-                ["IAM_ADMIN_PATH"]                      = "/myadmin",
                 ["IAM_BOOTSTRAP_PASSWORD"]              = "secret",
                 ["Smtp:Username"]                       = "smtpuser",
                 ["Smtp:Password"]                       = "smtppass",
@@ -258,7 +257,6 @@ public class EntityModelTests
             .Build());
 
         cfg.PublicPort.Should().Be(5000);
-        cfg.AdminPath.Should().Be("/myadmin");
         cfg.BootstrapPassword.Should().Be("secret");
         cfg.SmtpUsername.Should().Be("smtpuser");
         cfg.SmtpPassword.Should().Be("smtppass");
@@ -380,7 +378,6 @@ public class EntityModelTests
             })
             .Build());
 
-        cfg.AdminPath.Should().Be("/admin");
         cfg.CacheConnectionString.Should().Contain("localhost");
         cfg.CacheInstanceName.Should().Be("rediensiam:");
         cfg.PublicUrl.Should().Be("http://localhost");

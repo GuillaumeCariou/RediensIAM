@@ -100,8 +100,8 @@ export default function SystemProjectDetail() {
     >
 <form id="systemprojectdetail-form" onSubmit={handleRename} className="space-y-4">
             <div className="space-y-2">
-              <label className="iam-label">Name</label>
-              <input className="iam-input" value={renameVal} onChange={e => setRenameVal(e.target.value)} required />
+              <label className="iam-label" htmlFor="system-project-rename">Name</label>
+              <input className="iam-input" id="system-project-rename" value={renameVal} onChange={e => setRenameVal(e.target.value)} required />
             </div>
             
           </form>

@@ -228,4 +228,37 @@ public class AudienceBindingTests
 
         Assert.Equal(TimeSpan.FromSeconds(5), http.Timeout);
     }
+
+    /// <summary>
+    /// A base URL that carries a path keeps it.
+    ///
+    /// <para>
+    /// HttpClient resolves a relative request URI against the last path segment of its
+    /// BaseAddress, so the separator has to be there: with "https://host/iam", a request for
+    /// "introspect" goes to "https://host/introspect" — the segment is dropped and the call lands
+    /// somewhere the caller never configured. The separator used to be appended by string
+    /// concatenation, which also put it after any query string a base URL happened to carry.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("https://iam.example.com", "https://iam.example.com/")]
+    [InlineData("https://iam.example.com/", "https://iam.example.com/")]
+    [InlineData("https://iam.example.com/iam", "https://iam.example.com/iam/")]
+    [InlineData("https://iam.example.com/iam/", "https://iam.example.com/iam/")]
+    public void BaseAddress_AlwaysEndsAtADirectory(string configured, string expected)
+    {
+        var services = new ServiceCollection();
+        services.AddRediensIam(o =>
+        {
+            o.BaseUrl             = configured;
+            o.Audience            = "resource-server";
+            o.ServiceAccountToken = "rediens_pat_x";
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var factory = provider.GetRequiredService<IHttpClientFactory>();
+        var client  = factory.CreateClient(nameof(RediensIamClient));
+
+        Assert.Equal(expected, client.BaseAddress?.ToString());
+    }
 }

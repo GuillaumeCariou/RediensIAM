@@ -58,12 +58,10 @@ public static class LoginThemeValidator
     {
         if (theme == null) return null;
 
-        if (theme.TryGetValue(LogoUrlKey, out var logoRaw) && AsString(logoRaw) is { Length: > 0 } logoUrl
-            && (!Uri.TryCreate(logoUrl, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps))
-            return "logo_url_must_be_https";
+        if (theme.TryGetValue(LogoUrlKey, out var logoRaw) && ValidateLogoUrl(logoRaw) is { } logoErr)
+            return logoErr;
 
-        if (theme.TryGetValue(CustomCssKey, out var cssRaw) && AsString(cssRaw) is { Length: > 0 } css
-            && ValidateCss(css) is { } cssErr)
+        if (theme.TryGetValue(CustomCssKey, out var cssRaw) && ValidateCustomCss(cssRaw) is { } cssErr)
             return cssErr;
 
         // The theme is a free-form dictionary and the login page pushes every string value it
@@ -93,43 +91,49 @@ public static class LoginThemeValidator
     /// signed in, when, and from what address.
     /// </para>
     /// </summary>
-    private static string? ValidateNested(string key, object? raw)
+    private static string? ValidateNested(string key, object? raw) => raw switch
     {
-        if (raw is JsonElement { ValueKind: JsonValueKind.Array } array)
-        {
-            foreach (var item in array.EnumerateArray())
-                if (ValidateNested(key, item) is { } err) return err;
-            return null;
-        }
-
-        if (raw is JsonElement { ValueKind: JsonValueKind.Object } obj)
-        {
-            foreach (var property in obj.EnumerateObject())
-            {
-                // A nested logo_url ends up in the same <img src> as the top-level one, so it is
-                // held to the same rule rather than to the generic character check.
-                if (property.NameEquals(LogoUrlKey))
-                {
-                    if (AsString(property.Value) is { Length: > 0 } url
-                        && (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps))
-                        return "logo_url_must_be_https";
-                    continue;
-                }
-                if (property.NameEquals(CustomCssKey))
-                {
-                    if (AsString(property.Value) is { Length: > 0 } css && ValidateCss(css) is { } cssErr)
-                        return cssErr;
-                    continue;
-                }
-                if (ValidateNested(property.Name, property.Value) is { } err) return err;
-            }
-            return null;
-        }
-
-        return AsString(raw) is { } value && IsUnsafeThemeValue(value)
+        JsonElement { ValueKind: JsonValueKind.Array } array => ValidateArrayItems(key, array),
+        JsonElement { ValueKind: JsonValueKind.Object } obj  => ValidateObjectProperties(obj),
+        _ => AsString(raw) is { } value && IsUnsafeThemeValue(value)
             ? "theme_value_invalid_character"
-            : null;
+            : null,
+    };
+
+    /// <summary>Every entry of a list-valued theme key is held to the rule the key itself has.</summary>
+    private static string? ValidateArrayItems(string key, JsonElement array)
+    {
+        foreach (var item in array.EnumerateArray())
+            if (ValidateNested(key, item) is { } err) return err;
+        return null;
     }
+
+    private static string? ValidateObjectProperties(JsonElement obj)
+    {
+        foreach (var property in obj.EnumerateObject())
+            if (ValidateProperty(property) is { } err) return err;
+        return null;
+    }
+
+    /// <summary>
+    /// A nested <c>logo_url</c> or <c>custom_css</c> reaches exactly the same sink as the
+    /// top-level one, so it is held to the same rule rather than to the generic character check.
+    /// </summary>
+    private static string? ValidateProperty(JsonProperty property)
+    {
+        if (property.NameEquals(LogoUrlKey)) return ValidateLogoUrl(property.Value);
+        if (property.NameEquals(CustomCssKey)) return ValidateCustomCss(property.Value);
+        return ValidateNested(property.Name, property.Value);
+    }
+
+    private static string? ValidateLogoUrl(object? raw) =>
+        AsString(raw) is { Length: > 0 } url
+        && (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+            ? "logo_url_must_be_https"
+            : null;
+
+    private static string? ValidateCustomCss(object? raw) =>
+        AsString(raw) is { Length: > 0 } css ? ValidateCss(css) : null;
 
     private static bool IsUnsafeThemeValue(string value) =>
         value.Length > MaxThemeValueLength

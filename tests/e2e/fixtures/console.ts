@@ -1,8 +1,8 @@
 import { test as base, expect, type Page } from '@playwright/test';
 import { credentials } from '../global-setup';
-import { APP_URL, CONSOLE_URL } from '../playwright.config';
+import { CONSOLE_URL } from '../playwright.config';
 
-export { expect };
+export { expect } from '@playwright/test';
 
 /**
  * Signs the browser into the admin console, through the real OAuth2 round trip.
@@ -22,12 +22,14 @@ export async function signIn(page: Page): Promise<void> {
   const { email, password } = credentials();
 
   await page.goto(`${CONSOLE_URL}/console/`);
-  // Not waitForURL on "console or login": the console URL is already true the instant goto
-  // returns, so that predicate resolves before the redirect to Hydra has even been issued and the
-  // form is never filled. What settles the question is the network going quiet.
-  await page.waitForLoadState('networkidle');
+  // Wait for whichever of the two things can appear, not for the network to fall quiet.
+  // waitForURL on "console or login" is useless — the console URL is already true the instant goto
+  // returns, before the redirect to Hydra has been issued. And networkidle never arrives: the
+  // console keeps requests in flight, so a sixty-second timeout expired on a page that had been
+  // ready for fifty-nine of them.
+  await expect(shell(page).or(emailField(page))).toBeVisible({ timeout: 30_000 });
 
-  if (page.url().startsWith(`${APP_URL}/login`)) {
+  if (await emailField(page).isVisible()) {
     await page.getByRole('textbox', { name: /^email/i }).fill(email);
     await page.getByRole('textbox', { name: /^password/i }).fill(password);
     await page.getByRole('button', { name: /continue/i }).click();
@@ -36,6 +38,11 @@ export async function signIn(page: Page): Promise<void> {
   await page.waitForURL(url => url.href.startsWith(`${CONSOLE_URL}/console`), { timeout: 30_000 });
   // The shell is what tells us the token round-tripped: it only renders once the SDK holds one.
   await expect(shell(page)).toBeVisible({ timeout: 20_000 });
+}
+
+/** The sign-in form's identity field — the other thing a console URL can resolve to. */
+export function emailField(page: Page) {
+  return page.getByRole('textbox', { name: /^email/i });
 }
 
 /** The console shell. Present only once the SDK holds a token, so it is what "signed in" means. */
@@ -54,6 +61,19 @@ export function shell(page: Page) {
  */
 export async function gotoConsole(page: Page, path: string): Promise<void> {
   await page.goto(`${CONSOLE_URL}${path}`);
+
+  // A fresh load may come back through the sign-in form: the token is gone with the page, and
+  // whether Hydra recognises the browser depends on an SSO session whose lifetime is a deployment
+  // decision. Answering the form here keeps this helper about *the route* rather than about that
+  // decision — a page that cannot be reached at all still fails, which is the point.
+  await expect(shell(page).or(emailField(page))).toBeVisible({ timeout: 30_000 });
+  if (await emailField(page).isVisible()) {
+    const { email, password } = credentials();
+    await emailField(page).fill(email);
+    await page.getByRole('textbox', { name: /^password/i }).fill(password);
+    await page.getByRole('button', { name: /continue/i }).click();
+  }
+
   await expect(shell(page)).toBeVisible({ timeout: 30_000 });
 }
 

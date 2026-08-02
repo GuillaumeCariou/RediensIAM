@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { useProjectContext } from '@/hooks/useOrgContext';
 import { IamChip, IamDialog } from '@/components/iam';
 import { getProjectInfo, updateProject, listRoles, listSamlProviders, createSamlProvider, deleteSamlProvider } from '@/api';
@@ -61,7 +61,7 @@ const DEFAULT_THEME: Theme = {
 
 function nanoid() { return crypto.randomUUID().replaceAll('-', '').slice(0, 8); }
 
-function Toggle({ checked, onChange, label }: Readonly<{ checked: boolean; onChange: (v: boolean) => void; label?: string }>) {
+function Toggle({ checked, onChange, label, id }: Readonly<{ checked: boolean; onChange: (v: boolean) => void; label?: string; id?: string }>) {
   // A styled checkbox rather than a bare <button>: it carries the role, the checked state and the
   // accessible name for free. The button version announced itself as "button", fifteen times on
   // this page, with no name and no state — "Require MFA" was indistinguishable from "Reject
@@ -70,6 +70,7 @@ function Toggle({ checked, onChange, label }: Readonly<{ checked: boolean; onCha
     <input
       type="checkbox"
       className="iam-switch"
+      id={id}
       checked={checked}
       aria-label={label}
       onChange={e => onChange(e.target.checked)}
@@ -78,13 +79,18 @@ function Toggle({ checked, onChange, label }: Readonly<{ checked: boolean; onCha
 }
 
 function ColorRow({ label, value, onChange }: Readonly<{ label: string; value: string; onChange: (v: string) => void }>) {
+  // Four of these sit on the page at once, so the id has to be per-instance.
+  const uid = useId();
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <label className="iam-label">{label}</label>
+      {/* Two controls edit the one value. The caption drives the hex field rather than the
+          swatch, because a label click should put the cursor somewhere, not throw up the
+          operating system's colour picker. The swatch carries its own name instead. */}
+      <label className="iam-label" htmlFor={`${uid}-hex`}>{label}</label>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <input type="color" value={value || '#000000'} onChange={e => onChange(e.target.value)}
+        <input type="color" aria-label={`${label} colour picker`} value={value || '#000000'} onChange={e => onChange(e.target.value)}
           style={{ height: 36, width: 44, borderRadius: 6, cursor: 'pointer', border: '1px solid var(--border)', padding: 2, background: 'transparent', flexShrink: 0 }} />
-        <input className="iam-input iam-mono" value={value} onChange={e => onChange(e.target.value)} placeholder="#000000" />
+        <input className="iam-input iam-mono" id={`${uid}-hex`} value={value} onChange={e => onChange(e.target.value)} placeholder="#000000" />
       </div>
     </div>
   );
@@ -95,7 +101,10 @@ const MAX_LOGO_BYTES = 256 * 1024;
 function LogoUpload({ value, onChange, label = 'Logo' }: Readonly<{ value?: string; onChange: (v: string) => void; label?: string }>) {
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const inputId = `logo-file-input-${label.replaceAll(/\s+/g, '-')}`;
+  // Was derived from `label`, which is not unique: the per-provider blocks each render one of
+  // these with the same "Custom logo (optional)" caption, so every expanded provider produced the
+  // same element id and the file picker opened for whichever one happened to be first in the DOM.
+  const inputId = `${useId()}-file`;
   /**
    * Raster formats only, as an allowlist. `image/svg+xml` is absent on purpose and must stay
    * absent: an SVG can carry <script>/<onload> and executes when rendered via <img>/<object>/CSS
@@ -149,7 +158,10 @@ function LogoUpload({ value, onChange, label = 'Logo' }: Readonly<{ value?: stri
   };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <label className="iam-label">{label}</label>
+      {/* A caption over the whole uploader — the drop zone, the browse control inside it and the
+          URL field below — not a label for any one of them, so it is not a <label>. Each of those
+          carries its own name. */}
+      <p className="iam-label">{label}</p>
       <button type="button"
         onDragOver={e => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
@@ -178,7 +190,7 @@ function LogoUpload({ value, onChange, label = 'Logo' }: Readonly<{ value?: stri
           </div>
         )}
       </button>
-      <input className="iam-input" value={value?.startsWith('data:') ? '' : (value ?? '')} onChange={e => handleUrlInput(e.target.value)} placeholder="https://cdn.example.com/logo.png" />
+      <input className="iam-input" aria-label={`${label} URL`} value={value?.startsWith('data:') ? '' : (value ?? '')} onChange={e => handleUrlInput(e.target.value)} placeholder="https://cdn.example.com/logo.png" />
       {error && <div role="alert" style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</div>}
     </div>
   );
@@ -322,12 +334,15 @@ export default function Authentication() {
     try {
       const domains = allowedDomains.split(',').map(d => d.trim()).filter(Boolean);
       const safeProviders = (theme.providers ?? []).map(p => {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { client_secret_saved, ...rest } = p;
+        // Copy-then-delete rather than rest-destructuring: naming a binding only to discard it
+        // needs a lint suppression beside it, and a suppression is a thing the next reader has to
+        // evaluate. `client_secret_saved` is the server's own flag and must not be echoed back;
+        // `client_secret` is dropped when the server already holds one and the admin did not
+        // retype it, so saving an unrelated setting cannot overwrite the stored secret with "".
+        const rest = { ...p };
+        delete rest.client_secret_saved;
         if (p.client_secret_saved && !p.client_secret) {
-          const noSecret = { ...rest };
-          delete noSecret.client_secret;
-          return noSecret;
+          delete rest.client_secret;
         }
         return rest;
       });
@@ -360,14 +375,14 @@ export default function Authentication() {
    * Per-provider secrets are stripped before the theme is base64'd into the preview URL. That URL
    * ends up in browser history, web-server logs and Referer headers, so an OAuth `client_secret`
    * must never travel in it. Adding a field back to `cfg` without filtering it here leaks it.
-   *
-   * The `no-unused-vars` suppression is there because the discarded bindings exist only to be
-   * omitted by rest-destructuring; it is not hiding a real unused variable.
    */
   const previewUrl = useMemo(() => {
+    // Copy-then-delete rather than rest-destructuring: the discarded names would each need a lint
+    // suppression, and a suppression beside a secret-stripping step is the last place worth one.
     const safeProviders = (theme.providers ?? []).map(p => {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { client_secret, client_secret_saved, ...rest } = p as unknown as Record<string, unknown>;
+      const rest = { ...p } as Record<string, unknown>;
+      delete rest.client_secret;
+      delete rest.client_secret_saved;
       return rest;
     });
     const safeTheme = { ...theme, providers: safeProviders };
@@ -455,7 +470,7 @@ export default function Authentication() {
       <div className="iam-page">
         <div className="iam-empty">
           <p>This configuration could not be loaded, so it is not safe to edit.</p>
-          <button type="button" className="iam-btn" onClick={() => window.location.reload()}>Retry</button>
+          <button type="button" className="iam-btn" onClick={() => globalThis.location.reload()}>Retry</button>
         </div>
       </div>
     </div>
@@ -537,8 +552,8 @@ export default function Authentication() {
                       )}
                     </div>
                     <div>
-                      <label className="iam-label">Border Radius — {theme.border_radius ?? 8}px</label>
-                      <input type="range" min={0} max={24} value={theme.border_radius ?? 8}
+                      <label className="iam-label" htmlFor="login-theme-border-radius">Border Radius — {theme.border_radius ?? 8}px</label>
+                      <input type="range" id="login-theme-border-radius" min={0} max={24} value={theme.border_radius ?? 8}
                         onChange={e => set('border_radius', e.target.value)} style={{ width: '100%', accentColor: 'var(--ia-accent)', marginTop: 6 }} />
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--fg-subtle)', marginTop: 2 }}>
                         <span>Square</span><span>Rounded</span><span>Pill</span>
@@ -764,15 +779,17 @@ export default function Authentication() {
                       <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>characters (0 = disabled)</span>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {/* `id` and not the label text: these are the ids a <label for> points at,
+                          and the labels carry spaces and punctuation. */}
                       {([
-                        { label: 'Require uppercase letter (A–Z)', checked: requireUppercase, setter: setRequireUppercase },
-                        { label: 'Require lowercase letter (a–z)', checked: requireLowercase, setter: setRequireLowercase },
-                        { label: 'Require number (0–9)',           checked: requireDigit,     setter: setRequireDigit },
-                        { label: 'Require special character (!@#$…)', checked: requireSpecial, setter: setRequireSpecial },
-                      ] as const).map(({ label, checked, setter }) => (
-                        <div key={label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <label className="iam-label" style={{ margin: 0, fontWeight: 400 }}>{label}</label>
-                          <Toggle checked={checked} onChange={setter} />
+                        { id: 'uppercase', label: 'Require uppercase letter (A–Z)', checked: requireUppercase, setter: setRequireUppercase },
+                        { id: 'lowercase', label: 'Require lowercase letter (a–z)', checked: requireLowercase, setter: setRequireLowercase },
+                        { id: 'digit',     label: 'Require number (0–9)',           checked: requireDigit,     setter: setRequireDigit },
+                        { id: 'special',   label: 'Require special character (!@#$…)', checked: requireSpecial, setter: setRequireSpecial },
+                      ] as const).map(({ id, label, checked, setter }) => (
+                        <div key={id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <label className="iam-label" htmlFor={`pw-rule-${id}`} style={{ margin: 0, fontWeight: 400 }}>{label}</label>
+                          <Toggle id={`pw-rule-${id}`} checked={checked} onChange={setter} />
                         </div>
                       ))}
                     </div>

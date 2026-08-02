@@ -2,7 +2,7 @@ using OtpNet;
 using RediensIAM.Config;
 using RediensIAM.Services;
 
-namespace RediensIAM.IntegrationTests.Tests.Regression;
+namespace RediensIAM.IntegrationTests.Tests.Auth;
 
 /// <summary>
 /// Step 8 — authentication and authorisation enhancement.

@@ -3,9 +3,13 @@ const BASE = import.meta.env.VITE_API_BASE_URL ?? '';
 /**
  * Reads the body once and parses it, turning a non-JSON response (an HTML error page, a proxy
  * timeout) into `Server error <status>` rather than a parser stack trace shown to an
- * unauthenticated visitor. The `no-explicit-any` suppression is deliberate: every endpoint in
- * this file has a different response shape and the callers narrow it, so a single return type
- * here would be a lie rather than a check.
+ * unauthenticated visitor.
+ *
+ * The return type is `any` — deliberately, not for want of a better one. Every endpoint in this
+ * file has a different response shape, so a single named type here would be a lie; `unknown` would
+ * be honest and would force a cast at all thirty call sites, which is a cast either way and one
+ * that reads as a check without being one. What keeps this safe is that nothing branches on the
+ * result without testing the field it wants first.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function parseJson(r: Response): Promise<any> {

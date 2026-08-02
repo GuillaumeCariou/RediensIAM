@@ -76,7 +76,10 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
 
     public async Task<string> AcceptLoginAsync(string challenge, string subject, Dictionary<string, object> context)
     {
-        var body = new { subject, context, remember = false, remember_for = 0 };
+        // remember_for is seconds, and remember must be true for Hydra to keep anything at all —
+        // a non-zero remember_for beside remember: false is silently ignored.
+        var rememberFor = appConfig.SsoSessionMinutes * 60;
+        var body = new { subject, context, remember = rememberFor > 0, remember_for = rememberFor };
         var resp = await Client.PutAsJsonAsync(
             $"{_adminUrl}/admin/oauth2/auth/requests/login/accept?login_challenge={challenge}", body);
         resp.EnsureSuccessStatusCode();

@@ -34,27 +34,39 @@ public sealed class PasswordPolicyService(BreachCheckService breachCheck)
     public async Task<(PasswordPolicyResult Result, int BreachCount)> EvaluateAsync(
         Project? project, string password)
     {
-        var minLength = Math.Max(project?.MinPasswordLength ?? 0, AbsoluteMinimumLength);
-        if (password.Length < minLength) return (PasswordPolicyResult.TooShort, 0);
+        var composition = CheckComposition(project, password);
+        if (composition != PasswordPolicyResult.Ok) return (composition, 0);
 
-        if (project is null) return (PasswordPolicyResult.Ok, 0);
-
-        if (project.PasswordRequireUppercase && !password.Any(char.IsUpper))
-            return (PasswordPolicyResult.RequiresUppercase, 0);
-        if (project.PasswordRequireLowercase && !password.Any(char.IsLower))
-            return (PasswordPolicyResult.RequiresLowercase, 0);
-        if (project.PasswordRequireDigit && !password.Any(char.IsDigit))
-            return (PasswordPolicyResult.RequiresDigit, 0);
-        if (project.PasswordRequireSpecial && !password.Any(c => !char.IsLetterOrDigit(c)))
-            return (PasswordPolicyResult.RequiresSpecial, 0);
-
-        if (project.CheckBreachedPasswords)
+        if (project is { CheckBreachedPasswords: true })
         {
             var count = await breachCheck.GetBreachCountAsync(password);
             if (count > 0) return (PasswordPolicyResult.Breached, count);
         }
 
         return (PasswordPolicyResult.Ok, 0);
+    }
+
+    /// <summary>
+    /// The offline half of <see cref="EvaluateAsync"/> — length and character classes, in the
+    /// same order and with the same verdicts. Split out so a caller that must not make the breach
+    /// check's outbound call still runs exactly these rules rather than its own copy of them.
+    /// </summary>
+    public static PasswordPolicyResult CheckComposition(Project? project, string password)
+    {
+        if (password.Length < EffectiveMinimumLength(project)) return PasswordPolicyResult.TooShort;
+
+        if (project is null) return PasswordPolicyResult.Ok;
+
+        if (project.PasswordRequireUppercase && !password.Any(char.IsUpper))
+            return PasswordPolicyResult.RequiresUppercase;
+        if (project.PasswordRequireLowercase && !password.Any(char.IsLower))
+            return PasswordPolicyResult.RequiresLowercase;
+        if (project.PasswordRequireDigit && !password.Any(char.IsDigit))
+            return PasswordPolicyResult.RequiresDigit;
+        if (project.PasswordRequireSpecial && !password.Any(c => !char.IsLetterOrDigit(c)))
+            return PasswordPolicyResult.RequiresSpecial;
+
+        return PasswordPolicyResult.Ok;
     }
 
     /// <summary>The minimum length actually enforced for a project, for error payloads.</summary>

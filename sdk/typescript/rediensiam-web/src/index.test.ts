@@ -341,3 +341,33 @@ test('fetch preserves caller headers given as a Headers instance', async () => {
     delete (globalThis as { history?: unknown }).history;
   }
 });
+
+test('a refused authorization is reported, not mistaken for an ordinary page load', async () => {
+  // Hydra answers a refusal on the redirect URI, with `error` where `code` would be. Returning
+  // false here made it indistinguishable from "this page is not a callback", and the usual answer
+  // to false is to start the flow again — which walks the user back into the same refusal.
+  // location first: the constructor checks redirectUri against this SPA's origin, so building the
+  // client before the page exists fails for an unrelated reason.
+  globalThis.location = {
+    href: 'https://app.example.com/callback?error=access_denied&error_description=The+resource+owner+denied+the+request&state=abc',
+    origin: 'https://app.example.com',
+  } as unknown as Location;
+
+  // The SDK clears any stale PKCE state on the way out, and node has no sessionStorage.
+  const store = new Map<string, string>();
+  globalThis.sessionStorage = {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => { store.set(k, v); },
+    removeItem: (k: string) => { store.delete(k); },
+  } as unknown as Storage;
+
+  const iam = new RediensIam({
+    ...validConfig,
+    redirectUri: 'https://app.example.com/callback',
+  });
+
+  await assert.rejects(
+    () => iam.handleRedirect(),
+    (e: unknown) => e instanceof RediensIamError && e.code === 'authorization_denied',
+  );
+});

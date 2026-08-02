@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+// Vitest's own interactivity API, driven by Playwright: real clicks, real key events, real focus.
+import { userEvent } from 'vitest/browser';
 import { MemoryRouter } from 'react-router';
 import OrgEmail from './OrgEmail';
 import { ApiError } from '@/auth';

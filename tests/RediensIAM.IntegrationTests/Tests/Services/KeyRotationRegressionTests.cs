@@ -10,7 +10,7 @@ using RediensIAM.Config;
 using RediensIAM.Data;
 using RediensIAM.Services;
 
-namespace RediensIAM.IntegrationTests.Tests.Regression;
+namespace RediensIAM.IntegrationTests.Tests.Services;
 
 /// <summary>
 /// S-10 — key rotation for the HKDF root and the Argon2 pepper.

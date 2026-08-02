@@ -8,7 +8,6 @@ public class AppConfig(IConfiguration config)
     // ── Ports / paths ─────────────────────────────────────────────────────────
     public int    PublicPort => config.GetValue<int>("IAM_PUBLIC_PORT", 5000);
     public int    AdminPort  => config.GetValue<int>("IAM_ADMIN_PORT", 5001);
-    public string AdminPath  => config["IAM_ADMIN_PATH"] ?? "/admin";
 
     // ── Bootstrap ─────────────────────────────────────────────────────────────
     public string? BootstrapEmail    => config["IAM_BOOTSTRAP_EMAIL"];
@@ -94,6 +93,26 @@ public class AppConfig(IConfiguration config)
     // lockout, weakens Argon2 for every future hash, and makes PAT revocation ineffective.
     public int    MaxLoginAttempts        => Math.Clamp(config.GetValue<int>("Security:MaxLoginAttempts", 5), 1, 10);
     public int    LockoutMinutes          => Math.Clamp(config.GetValue<int>("Security:LockoutMinutes", 15), 1, 1440);
+
+    /// <summary>
+    /// How long Hydra keeps an SSO session after a successful login, in minutes.
+    ///
+    /// <para>
+    /// This used to be nothing at all: <c>AcceptLoginAsync</c> sent <c>remember = false</c>, so
+    /// every authorization request needed the password again — refreshing the console asked for it,
+    /// and so did opening a second application against the same identity provider. The symptom read
+    /// like a cookie problem. Nothing had ever asked Hydra to remember anybody.
+    /// </para>
+    ///
+    /// <para>
+    /// Eight hours by default: long enough to be a working day, short enough that a shared machine
+    /// does not carry the session into the next one. Clamped to a week, and <b>zero disables the
+    /// session entirely</b> — a deployment that wants a password at every authorization can have
+    /// it, as a decision rather than as an oversight. Signing out still ends it immediately, and so
+    /// does every path that calls <c>RevokeSessionsAsync</c>.
+    /// </para>
+    /// </summary>
+    public int    SsoSessionMinutes       => Math.Clamp(config.GetValue<int>("Security:SsoSessionMinutes", 480), 0, 10080);
     public int    OtpTtlSeconds           => config.GetValue<int>("Security:OtpTtlSeconds", 300);
     public int    MaxSmsPerWindow         => config.GetValue<int>("Security:MaxSmsPerWindow", 3);
     public int    SmsWindowMinutes        => config.GetValue<int>("Security:SmsWindowMinutes", 10);

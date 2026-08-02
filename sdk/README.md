@@ -251,7 +251,7 @@ it through unauthenticated.
 
 ```toml
 [dependencies]
-rediensiam-client = "0.2"
+rediensiam-client = "0.5"
 ```
 
 ```rust
@@ -360,10 +360,19 @@ await iam.logout();
   const iam = createRediensIam({ …, apiOrigins: ['https://api.example.com'] });
   ```
 
-**Local development:** `http://` is accepted on `localhost`, `127.0.0.1` and `[::1]` only — for
-`issuer` and for `apiOrigins`, and in the C#/Rust SDKs for `BaseUrl`/`base_url`. That is the whole
+**Local development:** `http://` is accepted on a loopback host only — for `issuer` and
+`apiOrigins` in the browser SDK, and for `BaseUrl` / `base_url` in the others. That is the whole
 opt-out; there is deliberately no flag to disable the check, because a flag gets set in production
 too.
+
+What counts as loopback is not identical across the three, and each README states its own rule
+rather than repeating a shared one that would be wrong somewhere:
+
+| SDK | Accepts over `http` |
+|---|---|
+| TypeScript | `localhost`, `127.0.0.1`, `[::1]`, and any `*.localhost` host (RFC 6761), matched at a label boundary so `evil-localhost.com` does not qualify |
+| .NET | whatever `Uri.IsLoopback` accepts, which includes all of `127.0.0.0/8` |
+| Rust | `localhost`, `127.0.0.1`, `[::1]` |
 
 ---
 

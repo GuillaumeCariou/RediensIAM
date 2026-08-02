@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+// Vitest's own interactivity API, driven by Playwright: real clicks, real key events, real focus.
+import { userEvent } from 'vitest/browser';
 import { useReauth } from './ReauthDialog';
-import { isModal } from '@/test/setup';
 import { ApiError } from '@/auth';
 import type { MfaReauth } from '@/auth';
 
@@ -279,16 +279,59 @@ describe('focus containment', () => {
   /**
    * Focus trapping and an inert background used to be JavaScript this app shipped, and were
    * asserted directly. They now come from `<dialog>.showModal()`, which the browser implements
-   * and jsdom does not — the shim in `src/test/setup.ts` only records that showModal(), rather
-   * than show(), was the call. So what is checkable here is that the prompt asks for the modal
-   * form; a non-modal dialog behind a scrim is the regression this guards against.
+   * and jsdom does not — so under jsdom this could only ever check that showModal(), rather than
+   * show(), was the call. Chromium runs these now, so the containment itself is asserted.
    */
   it('opens as a modal dialog, which is what contains focus and inerts the background', async () => {
     const action = vi.fn().mockRejectedValue(reauthRequired(['current_password']));
     await start(action);
     const dialog = await promptDialog();
 
-    expect(isModal(dialog as HTMLDialogElement)).toBe(true);
+    // STRENGTHENED: `:modal` is the browser's own answer to "is this in the top layer", rather
+    // than a shim's record of which method was called.
+    expect(dialog.matches(':modal')).toBe(true);
+  });
+
+  it('keeps Tab inside the dialog instead of letting it walk into the page behind', async () => {
+    // STRENGTHENED: this is the regression itself, not a proxy for it. jsdom has no layout and
+    // no top layer, so Tab there simply visits every focusable node in document order and the
+    // non-modal dialog that shipped the bug would have passed.
+    const action = vi.fn().mockRejectedValue(reauthRequired(['current_password']));
+    await start(action);
+    const dialog = await promptDialog();
+    const outside = [
+      screen.getByRole('link', { name: 'a link behind the dialog' }),
+      screen.getByRole('button', { name: 'Regenerate backup codes' }),
+    ];
+
+    // More presses than the dialog has controls, so the cycle wraps and a leak has to show up.
+    const visited: Element[] = [];
+    for (let i = 0; i < 8; i++) {
+      await userEvent.tab();
+      visited.push(document.activeElement!);
+    }
+
+    for (const el of outside) expect(visited).not.toContain(el);
+    // Every stop is either a control in the dialog or <body>, which is where Chromium parks
+    // focus for one press as the cycle wraps — never anything in the inert page behind.
+    for (const el of visited) expect(dialog.contains(el) || el === document.body).toBe(true);
+    // And Tab really did move: a no-op would satisfy the two assertions above for free. Confirm
+    // is not in this list because it starts disabled, which takes it out of the tab order.
+    expect(visited).toContain(within(dialog).getByLabelText('Current password'));
+    expect(visited).toContain(within(dialog).getByRole('button', { name: 'Cancel' }));
+  });
+
+  it('inerts the page behind, so it cannot even be focused programmatically', async () => {
+    // STRENGTHENED: inertness is a top-layer property Chromium enforces and jsdom does not model
+    // at all. Nothing behind a modal dialog may take focus, however it is asked.
+    const action = vi.fn().mockRejectedValue(reauthRequired(['current_password']));
+    await start(action);
+    await promptDialog();
+    const behind = screen.getByRole('link', { name: 'a link behind the dialog' });
+
+    behind.focus();
+
+    expect(behind).not.toHaveFocus();
   });
 
   it('renders the prompt controls inside the dialog element, not beside it', async () => {

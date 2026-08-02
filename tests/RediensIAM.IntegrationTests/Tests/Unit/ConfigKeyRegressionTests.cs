@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using RediensIAM.Config;
 
-namespace RediensIAM.IntegrationTests.Tests.Regression;
+namespace RediensIAM.IntegrationTests.Tests.Unit;
 
 /// <summary>
 /// Configuration keys that lied. <c>Database:MigrateOnStartup</c> was declared and read by nothing,
@@ -95,11 +95,19 @@ public class ConfigKeyRegressionTests
             .ContainsKey(key).Should().BeTrue($"{section}:{key} is read by the application");
     }
 
-    /// <summary>Top-level live keys, which have no section to look inside.</summary>
+    /// <summary>
+    /// Top-level live keys, which have no section to look inside.
+    ///
+    /// <para>
+    /// IAM_ADMIN_PATH used to be here, asserted as "read by the application", and it was not: it
+    /// travelled from appsettings to an env var to a database column that nothing consulted. Where
+    /// the console is served is the compile-time constant <c>Roles.ConsoleBasePath</c>. A test that
+    /// keeps a dead key alive is worse than no test — it makes the key look load-bearing.
+    /// </para>
+    /// </summary>
     [Theory]
     [InlineData("IAM_PUBLIC_PORT")]
     [InlineData("IAM_ADMIN_PORT")]
-    [InlineData("IAM_ADMIN_PATH")]
     [InlineData("AllowedHosts")]
     [InlineData("Logging")]
     public void LiveTopLevelKeys_AreStillDeclared(string key)

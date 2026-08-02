@@ -68,7 +68,8 @@ export type RediensIamErrorCode =
   | 'token_exchange_failed'
   | 'discovery_failed'
   | 'config_invalid'
-  | 'untrusted_target';
+  | 'untrusted_target'
+  | 'authorization_denied';
 
 /** Anything `fetch` accepts as its first argument. */
 export type FetchTarget = string | URL | Request;
@@ -206,6 +207,22 @@ export class RediensIam {
     const url = new URL(globalThis.location.href);
     const code = url.searchParams.get('code');
     const state = url.searchParams.get('state');
+
+    // An authorization server answers a refusal on the same redirect URI it answers a grant on,
+    // with `error` instead of `code`. Returning false for it said "this is not a callback", so a
+    // declined consent, an expired login request and an ordinary page load were the same event to
+    // the caller — and the usual reaction to false is to start the flow again, which sends the
+    // user straight back to the refusal.
+    const error = url.searchParams.get('error');
+    if (error) {
+      sessionStorage.removeItem(STATE_KEY);
+      const description = url.searchParams.get('error_description');
+      throw new RediensIamError(
+        description ? `${error}: ${description}` : error,
+        'authorization_denied',
+      );
+    }
+
     if (!code || !state) return false;
 
     const stored = sessionStorage.getItem(STATE_KEY);
@@ -547,7 +564,10 @@ export function isTrustedTarget(
 export function base64UrlEncode(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) binary += String.fromCodePoint(byte);
-  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+  // No regex for the padding. `=+$` is what a scanner flags as super-linear, and it buys nothing
+  // here: btoa emits `=` only as trailing padding, so once `+` and `/` are gone every remaining
+  // `=` is padding and removing all of them is the same string, in linear time.
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
 }
 
 export function randomUrlSafe(byteLength: number): string {

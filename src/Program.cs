@@ -1,3 +1,4 @@
+using RediensIAM.Health;
 using System.Reflection;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -524,6 +525,9 @@ static void AddSecurityHeaders(HttpContext ctx, string issuerOrigin)
     // the frame is same-origin by construction. Naming the admin origin as well would only widen
     // the policy for a case that does not exist.
     var framedByConsole = ctx.Request.Path.Equals("/preview", StringComparison.Ordinal);
+    // Named rather than inlined: a conditional inside an interpolation inside a conditional is
+    // three decisions on one line, and this one decides whether a page may be framed at all.
+    var frameAncestors = framedByConsole ? "'self'" : "'none'";
     if (!framedByConsole)
         ctx.Response.Headers.XFrameOptions = "DENY";
     // default-src is the fallback for every directive that is not named. Omitting it left
@@ -544,7 +548,7 @@ static void AddSecurityHeaders(HttpContext ctx, string issuerOrigin)
         // remote HTTPS URLs the operator does not control. Images execute nothing.
         : "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
           "font-src 'self'; img-src 'self' data: https:; connect-src 'self'; " +
-          $"object-src 'none'; frame-ancestors {(framedByConsole ? "'self'" : "'none'")}; " +
+          $"object-src 'none'; frame-ancestors {frameAncestors}; " +
           "base-uri 'self'; form-action 'self';";
 }
 
@@ -632,34 +636,4 @@ static void AddDefaultTrustedNetworks(ForwardedHeadersOptions o)
 public partial class Program
 {
     protected Program() { }
-}
-
-
-/// <summary>Answers unhealthy when the application database cannot be reached.</summary>
-public sealed class DatabaseHealthCheck(RediensIamDbContext db) : IHealthCheck
-{
-    public async Task<HealthCheckResult> CheckHealthAsync(
-        HealthCheckContext context, CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            return await db.Database.CanConnectAsync(cancellationToken)
-                ? HealthCheckResult.Healthy()
-                : HealthCheckResult.Unhealthy("database unreachable");
-        }
-        catch (Exception ex)
-        {
-            return HealthCheckResult.Unhealthy("database unreachable", ex);
-        }
-    }
-}
-
-/// <summary>Answers unhealthy when the cache multiplexer has lost its connection.</summary>
-public sealed class CacheHealthCheck(IConnectionMultiplexer cache) : IHealthCheck
-{
-    public Task<HealthCheckResult> CheckHealthAsync(
-        HealthCheckContext context, CancellationToken cancellationToken = default)
-        => Task.FromResult(cache.IsConnected
-            ? HealthCheckResult.Healthy()
-            : HealthCheckResult.Unhealthy("cache disconnected"));
 }

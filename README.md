@@ -19,9 +19,11 @@ Multi-tenant Identity & Access Management built on Ory Hydra + Keto, ASP.NET Cor
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | how the system is put together and where authority lives |
 | [docs/DIAGRAMS.md](docs/DIAGRAMS.md) | the same thing drawn — deployment topology, request pipeline, authorisation decision, OIDC and introspection sequences, data model and RLS coverage, key material, audit chain |
 | [docs/SECURITY.md](docs/SECURITY.md) | what protects what, and what is deliberately still open — **read before trusting it with anything** |
-| [docs/API.md](docs/API.md) | all 184 routes: method, path, required authority, where each is reachable |
-| [docs/INTEGRATION.md](docs/INTEGRATION.md) | plugging an application in — includes four breaking wire-contract changes in this release |
+| [docs/API.md](docs/API.md) | all 187 routes: method, path, required authority, where each is reachable |
+| [docs/INTEGRATION.md](docs/INTEGRATION.md) | plugging an application in — the wire contract, the SDKs, and what changes between releases |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | bare cluster to working IdP, plus the day-2 runbooks |
+| [docs/CONSOLE.md](docs/CONSOLE.md) | the admin console: the three scopes, what each page does, and the order a first run has to happen in |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | every environment variable, what it controls, and where each value actually comes from |
 | [docs/TESTING.md](docs/TESTING.md) | running the suites, and what has no tests |
 | [sdk/README.md](sdk/README.md) | which SDK, and why |
 | `SECURITY-AUDIT-LOG.md` | the audit trail, finding by finding |
@@ -157,7 +159,7 @@ Everything is under the top-level `rediensiam:` key unless noted.
 
 | Key | Default | Notes |
 |---|---|---|
-| `app.adminPath` | `/admin` | **Read by nothing.** It is plumbed from here to an `IAM_ADMIN_PATH` env var and an `Instance` column, and no code consults it. The console is served at `/console/`, fixed in `Roles.ConsoleBasePath` — see below |
+| `app.extraEnv` | `{}` | any environment variable this table does not name — see [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full list. Non-secret values only |
 | `app.trustedProxies` | `10.42.0.0/16,10.43.0.0/16` | **The app refuses to start on an empty value.** CSV of CIDRs whose `X-Forwarded-*` headers are honoured. Silently trusting RFC1918 would let any in-cluster pod spoof `X-Forwarded-For` and bypass every IP-based control. The default is the k3s pod and service CIDR |
 | `image.digest` | `""` | set by `deploy.sh` from `docker push`. When set it replaces `image.tag`, so a restart re-runs the exact bytes deployed |
 | `image.pullPolicy` | `IfNotPresent` | only safe *because* of the digest pin |

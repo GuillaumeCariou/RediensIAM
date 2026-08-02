@@ -37,8 +37,17 @@ public static class RediensIamServiceCollectionExtensions
         services.AddMemoryCache();
         services.AddHttpClient<RediensIamClient>(client =>
         {
-            // Trailing slash matters: relative request URIs are resolved against it.
-            client.BaseAddress = new Uri(options.BaseUrl.TrimEnd('/') + "/");
+            // The trailing separator matters: a relative request URI resolves against the last path
+            // segment, so a base of "https://host/iam" would send "introspect" to
+            // "https://host/introspect" — the segment is dropped, silently, and the call 404s
+            // somewhere the caller never configured.
+            //
+            // UriBuilder rather than string surgery: it parses the URL, so a base carrying a query
+            // or a fragment gets the separator in the path where it belongs instead of appended to
+            // the end of the whole string.
+            var baseUri = new UriBuilder(options.BaseUrl);
+            if (!baseUri.Path.EndsWith('/')) baseUri.Path += '/';
+            client.BaseAddress = baseUri.Uri;
             client.Timeout     = options.Timeout;
         });
 

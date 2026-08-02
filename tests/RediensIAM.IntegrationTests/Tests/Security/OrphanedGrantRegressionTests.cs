@@ -1,7 +1,7 @@
 using RediensIAM.Config;
 using RediensIAM.Services;
 
-namespace RediensIAM.IntegrationTests.Tests.Regression;
+namespace RediensIAM.IntegrationTests.Tests.Security;
 
 /// <summary>
 /// R-01 — an org_admin grant that outlived its organisation escalated to control of the system

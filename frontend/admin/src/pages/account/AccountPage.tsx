@@ -61,11 +61,11 @@ function ProfileTab({ me, onUpdated }: Readonly<{ me: Me; onUpdated: () => void 
         <div className="iam-card-pad space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1">
-              <label className="iam-label text-xs text-muted-foreground">Username</label>
+              <p className="iam-label text-xs text-muted-foreground">Username</p>
               <p className="font-mono text-sm font-medium">{me.username}<span className="text-muted-foreground">#{me.discriminator}</span></p>
             </div>
             <div className="space-y-1">
-              <label className="iam-label text-xs text-muted-foreground">Email</label>
+              <p className="iam-label text-xs text-muted-foreground">Email</p>
               <div className="flex items-center gap-2">
                 <p className="text-sm">{me.email}</p>
                 {me.email_verified
@@ -77,7 +77,7 @@ function ProfileTab({ me, onUpdated }: Readonly<{ me: Me; onUpdated: () => void 
           </div>
           <hr className="iam-sep" />
           <div className="space-y-1">
-            <label className="iam-label text-xs text-muted-foreground">Roles</label>
+            <p className="iam-label text-xs text-muted-foreground">Roles</p>
             <div className="flex flex-wrap gap-1 mt-1">
               {me.roles.length === 0
                 ? <span className="text-sm text-muted-foreground">No roles</span>
@@ -89,7 +89,7 @@ function ProfileTab({ me, onUpdated }: Readonly<{ me: Me; onUpdated: () => void 
             <>
               <hr className="iam-sep" />
               <div className="space-y-1">
-                <label className="iam-label text-xs text-muted-foreground">Last login</label>
+                <p className="iam-label text-xs text-muted-foreground">Last login</p>
                 <p className="text-sm">{new Date(me.last_login_at).toLocaleString()}</p>
               </div>
             </>
@@ -197,26 +197,26 @@ function SecurityTab() {
             {error && <div className="iam-alert iam-alert-danger text-sm py-2 px-3">{error}</div>}
             {success && <div className="iam-alert text-sm py-2 px-3 border-green-500 text-green-700">Password changed successfully.</div>}
             <div className="space-y-2">
-              <label className="iam-label">Current password</label>
+              <label className="iam-label" htmlFor="current-password">Current password</label>
               <div className="relative">
-                <input className="iam-input" type={showCurrent ? 'text' : 'password'} value={form.current} onChange={e => setForm(f => ({ ...f, current: e.target.value }))} required />
+                <input className="iam-input" id="current-password" autoComplete="current-password" type={showCurrent ? 'text' : 'password'} value={form.current} onChange={e => setForm(f => ({ ...f, current: e.target.value }))} required />
                 <button className="iam-btn iam-btn-ghost iam-btn-icon absolute right-0 top-0 h-full px-3" type="button" onClick={() => setShowCurrent(v => !v)}>
                   {showCurrent ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
             </div>
             <div className="space-y-2">
-              <label className="iam-label">New password</label>
+              <label className="iam-label" htmlFor="new-password">New password</label>
               <div className="relative">
-                <input className="iam-input" type={showNext ? 'text' : 'password'} value={form.next} onChange={e => setForm(f => ({ ...f, next: e.target.value }))} required />
+                <input className="iam-input" id="new-password" autoComplete="new-password" type={showNext ? 'text' : 'password'} value={form.next} onChange={e => setForm(f => ({ ...f, next: e.target.value }))} required />
                 <button className="iam-btn iam-btn-ghost iam-btn-icon absolute right-0 top-0 h-full px-3" type="button" onClick={() => setShowNext(v => !v)}>
                   {showNext ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
             </div>
             <div className="space-y-2">
-              <label className="iam-label">Confirm new password</label>
-              <input className="iam-input" type="password" value={form.confirm} onChange={e => setForm(f => ({ ...f, confirm: e.target.value }))} required />
+              <label className="iam-label" htmlFor="confirm-new-password">Confirm new password</label>
+              <input className="iam-input" id="confirm-new-password" autoComplete="new-password" type="password" value={form.confirm} onChange={e => setForm(f => ({ ...f, confirm: e.target.value }))} required />
             </div>
             <button className="iam-btn iam-btn-primary" type="submit" disabled={saving}>{saving ? 'Saving…' : 'Change Password'}</button>
           </form>
@@ -562,8 +562,8 @@ function MfaTab() {
     return (
       <form onSubmit={handlePhoneSend} className="flex gap-2 items-end max-w-sm">
         <div className="flex-1 space-y-2">
-          <label className="iam-label">Phone number</label>
-          <input className="iam-input" type="tel" placeholder="+1234567890" value={phoneInput} onChange={e => setPhoneInput(e.target.value)} required />
+          <label className="iam-label" htmlFor="mfa-phone">Phone number</label>
+          <input className="iam-input" id="mfa-phone" type="tel" placeholder="+1234567890" value={phoneInput} onChange={e => setPhoneInput(e.target.value)} required />
         </div>
         <button className="iam-btn iam-btn-primary" type="submit" disabled={phoneSending}>{phoneSending ? 'Sending…' : 'Send code'}</button>
       </form>
@@ -592,14 +592,14 @@ function MfaTab() {
                 <div className="rounded-lg bg-muted p-4 space-y-3">
                   <p className="text-sm font-medium">1. Open your authenticator app and add a new account manually.</p>
                   <div className="space-y-1">
-                    <label className="iam-label text-xs text-muted-foreground">Secret key</label>
+                    <p className="iam-label text-xs text-muted-foreground">Secret key</p>
                     <div className="flex items-center gap-2">
                       <code className="text-xs font-mono bg-background rounded px-2 py-1 break-all flex-1">{setupData.secret}</code>
                       <CopyButton text={setupData.secret} />
                     </div>
                   </div>
                   <div className="space-y-1">
-                    <label className="iam-label text-xs text-muted-foreground">Or open in authenticator app</label>
+                    <p className="iam-label text-xs text-muted-foreground">Or open in authenticator app</p>
                     <a href={setupData.otpauth_url} className="text-xs text-primary underline break-all">Open authenticator link</a>
                   </div>
                 </div>

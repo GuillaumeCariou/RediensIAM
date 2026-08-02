@@ -722,18 +722,11 @@ var actorId = GetActorId();
     [HttpPatch("projects/{id}")]
     public async Task<IActionResult> AdminUpdateProject(Guid id, [FromBody] AdminUpdateProjectRequest body)
     {
-var project = await db.Projects.FindAsync(id);
+        var project = await db.Projects.FindAsync(id);
         if (project == null) return NotFound();
         if (await MfaDowngradeGuard.CheckAsync(db, audit, GetActorId(), project, body.RequireMfa, body.ConfirmMfaDowngrade) is { } mfaErr)
             return mfaErr;
-        if (body.Name != null) project.Name = body.Name;
-        if (body.RequireRoleToLogin.HasValue)       project.RequireRoleToLogin       = body.RequireRoleToLogin.Value;
-        if (body.RequireMfa.HasValue)               project.RequireMfa               = body.RequireMfa.Value;
-        if (body.AllowSelfRegistration.HasValue)    project.AllowSelfRegistration    = body.AllowSelfRegistration.Value;
-        if (body.EmailVerificationEnabled.HasValue) project.EmailVerificationEnabled = body.EmailVerificationEnabled.Value;
-        if (body.SmsVerificationEnabled.HasValue)   project.SmsVerificationEnabled   = body.SmsVerificationEnabled.Value;
-        if (body.Active.HasValue)                   project.Active                   = body.Active.Value;
-        if (body.AllowedEmailDomains != null)       project.AllowedEmailDomains      = body.AllowedEmailDomains;
+        ApplyPlainFields(project, body);
         var roleErr = await ApplyDefaultRoleAsync(project, body.ClearDefaultRole, body.DefaultRoleId, id);
         if (roleErr != null) return roleErr;
         if (LoginThemeValidator.Validate(body.LoginTheme) is { } themeErr)
@@ -750,6 +743,22 @@ var project = await db.Projects.FindAsync(id);
         project.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
         return Ok(new { project.Id, project.Name });
+    }
+
+    /// <summary>
+    /// The fields that are simply "set it if the caller sent it" — no validation, no ordering
+    /// between them. Everything that can refuse the request stays in the handler, in its order.
+    /// </summary>
+    private static void ApplyPlainFields(Project project, AdminUpdateProjectRequest body)
+    {
+        if (body.Name != null) project.Name = body.Name;
+        if (body.RequireRoleToLogin.HasValue)       project.RequireRoleToLogin       = body.RequireRoleToLogin.Value;
+        if (body.RequireMfa.HasValue)               project.RequireMfa               = body.RequireMfa.Value;
+        if (body.AllowSelfRegistration.HasValue)    project.AllowSelfRegistration    = body.AllowSelfRegistration.Value;
+        if (body.EmailVerificationEnabled.HasValue) project.EmailVerificationEnabled = body.EmailVerificationEnabled.Value;
+        if (body.SmsVerificationEnabled.HasValue)   project.SmsVerificationEnabled   = body.SmsVerificationEnabled.Value;
+        if (body.Active.HasValue)                   project.Active                   = body.Active.Value;
+        if (body.AllowedEmailDomains != null)       project.AllowedEmailDomains      = body.AllowedEmailDomains;
     }
 
     private async Task<IActionResult?> ApplyDefaultRoleAsync(Project project, bool? clearRole, Guid? newRoleId, Guid projectId)
@@ -916,16 +925,18 @@ var role = await db.Roles
 
         // ProjectController.DeleteRole walks the holders and drops a tuple each; removing the row
         // here only cascaded the UserProjectRoles, leaving every holder's grant live in Keto.
-        foreach (var assignment in role.UserProjectRoles.ToList())
+        // The holder ids, not the assignment rows: nothing below reads any other column, and the
+        // list is materialised before the delete so the cascade cannot pull it out from under us.
+        foreach (var userId in role.UserProjectRoles.Select(a => a.UserId).ToList())
         {
             try
             {
                 await keto.DeleteRelationTupleAsync(
-                    Roles.KetoProjectsNamespace, id.ToString(), role.Name, assignment.UserId.ToString());
+                    Roles.KetoProjectsNamespace, id.ToString(), role.Name, userId.ToString());
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "Keto tuple cleanup failed for role {RoleId} user {UserId}", rid, assignment.UserId);
+                logger.LogWarning(ex, "Keto tuple cleanup failed for role {RoleId} user {UserId}", rid, userId);
             }
         }
 

@@ -370,7 +370,10 @@ fn require_secure_url(base_url: &str) -> Result<(), Error> {
 
     match url.scheme() {
         "https" => Ok(()),
-        "http" if matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1")) => Ok(()),
+        // `[::1]` and not `::1`: the url crate keeps the brackets an IPv6 authority is written
+        // with, so matching the bare form rejected every IPv6 loopback address — the one form of
+        // local development this check was written to allow.
+        "http" if matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]" | "::1")) => Ok(()),
         _ => Err(Error::Config(format!(
             "base_url must be https — http is accepted only on localhost: {base_url}"
         ))),
@@ -454,6 +457,9 @@ mod tests {
         assert!(with("https://auth.example.com").is_ok());
         assert!(with("http://localhost:8080").is_ok());
         assert!(with("http://127.0.0.1:8080").is_ok());
+        // The url crate keeps the brackets, so this asserts the bracketed form the parser produces
+        // rather than the bare address a reader would write in a match arm. It failed before.
+        assert!(with("http://[::1]:8080").is_ok(), "IPv6 loopback is loopback");
 
         assert!(with("http://auth.example.com").is_err());
         assert!(with("auth.example.com").is_err(), "must be an absolute URL");

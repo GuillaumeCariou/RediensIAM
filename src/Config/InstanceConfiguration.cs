@@ -57,12 +57,25 @@ public sealed class InstanceConfigurationProvider(InstanceBootstrapOptions opts)
                 db.Instances.Add(inst);
                 db.SaveChanges();
             }
-            else if (opts.ReconfigureFromEnv)
+            else
             {
+                // Unconditionally, and RECONFIGURE_FROM_ENV only decides whether that counts as a
+                // deliberate reconfiguration worth stamping.
+                //
+                // It used to be conditional, and nothing set the flag — so the row captured at
+                // first install outlived every later change. An operator editing a value in the
+                // chart saw it in `kubectl get deploy` and not in the process: roughly twenty keys,
+                // including the lockout policy, the Argon2 cost and the audit retention, were
+                // frozen at whatever the first boot happened to write. ApplyEnv already prefers the
+                // stored value where the environment says nothing, so running it always is not a
+                // reset — it is the deployment being allowed to describe itself.
                 ApplyEnv(inst, opts.EnvDefaults);
-                inst.ConfigVersion++;
+                if (opts.ReconfigureFromEnv)
+                {
+                    inst.ConfigVersion++;
+                    inst.ReconfiguredAt = now;
+                }
                 inst.UpdatedAt = now;
-                inst.ReconfiguredAt = now;
                 db.SaveChanges();
             }
             Data = ToDict(inst);
@@ -93,7 +106,6 @@ public sealed class InstanceConfigurationProvider(InstanceBootstrapOptions opts)
         i.PublicUrl       = S("App:PublicUrl",       i.PublicUrl);
         i.AdminSpaOrigin  = S("App:AdminSpaOrigin",  i.AdminSpaOrigin);
         i.Domain          = S("App:Domain",          i.Domain);
-        i.AdminPath       = S("IAM_ADMIN_PATH",      i.AdminPath);
         i.PublicPort      = I("IAM_PUBLIC_PORT",     i.PublicPort);
         i.AdminPort       = I("IAM_ADMIN_PORT",      i.AdminPort);
 
@@ -149,7 +161,6 @@ public sealed class InstanceConfigurationProvider(InstanceBootstrapOptions opts)
         // Moving the console to its own hostname failed exactly that way, and every symptom
         // pointed somewhere else — a 400 from host filtering, with the correct value in the pod's
         // environment.
-        ["IAM_ADMIN_PATH"]              = i.AdminPath,
         ["IAM_PUBLIC_PORT"]             = i.PublicPort.ToString(),
         ["IAM_ADMIN_PORT"]              = i.AdminPort.ToString(),
 

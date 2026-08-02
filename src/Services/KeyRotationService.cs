@@ -112,6 +112,12 @@ public class KeyRotationService(RediensIamDbContext db, AppConfig appConfig, ILo
     //
     // The key-1 case only has rows in it after a rollback to key 1 while key-2 ciphertexts
     // exist. It must still be reported, which is why it is not simply "nothing to do".
+    //
+    // "carries a prefix" is written as EF.Functions.Like rather than Contains, for two reasons:
+    // it is the LIKE the comment above already describes, and it is translatable. The provider
+    // has no translation for string.Contains(char) — the overload CA1847 asks for — so writing
+    // this the way that rule wants turns the whole sweep into a runtime translation failure.
+    private const string CarriesAnyPrefix = "%:%";
 
     private static bool NeedsReEncryption(string? value, int activeKeyId) =>
         !string.IsNullOrEmpty(value) && TotpEncryption.KeyIdOf(value) != activeKeyId;
@@ -122,7 +128,7 @@ public class KeyRotationService(RediensIamDbContext db, AppConfig appConfig, ILo
         var active = appConfig.ActiveEncryptionKeyId;
         var prefix = ActivePrefix(active);
         return active == TotpEncryption.LegacyKeyId
-            ? q.Where(u => u.TotpSecret!.Contains(":") && !u.TotpSecret!.StartsWith(prefix))
+            ? q.Where(u => EF.Functions.Like(u.TotpSecret!, CarriesAnyPrefix) && !u.TotpSecret!.StartsWith(prefix))
             : q.Where(u => !u.TotpSecret!.StartsWith(prefix));
     }
 
@@ -132,7 +138,7 @@ public class KeyRotationService(RediensIamDbContext db, AppConfig appConfig, ILo
         var active = appConfig.ActiveEncryptionKeyId;
         var prefix = ActivePrefix(active);
         return active == TotpEncryption.LegacyKeyId
-            ? q.Where(w => w.SecretEnc.Contains(":") && !w.SecretEnc.StartsWith(prefix))
+            ? q.Where(w => EF.Functions.Like(w.SecretEnc, CarriesAnyPrefix) && !w.SecretEnc.StartsWith(prefix))
             : q.Where(w => !w.SecretEnc.StartsWith(prefix));
     }
 
@@ -142,7 +148,7 @@ public class KeyRotationService(RediensIamDbContext db, AppConfig appConfig, ILo
         var active = appConfig.ActiveEncryptionKeyId;
         var prefix = ActivePrefix(active);
         return active == TotpEncryption.LegacyKeyId
-            ? q.Where(c => c.PasswordEnc!.Contains(":") && !c.PasswordEnc!.StartsWith(prefix))
+            ? q.Where(c => EF.Functions.Like(c.PasswordEnc!, CarriesAnyPrefix) && !c.PasswordEnc!.StartsWith(prefix))
             : q.Where(c => !c.PasswordEnc!.StartsWith(prefix));
     }
 

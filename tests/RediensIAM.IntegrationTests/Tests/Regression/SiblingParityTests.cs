@@ -12,6 +12,11 @@ namespace RediensIAM.IntegrationTests.Tests.Regression;
 /// does not. Each pair is asserted here together, so the next divergence fails a test that names
 /// both halves.
 /// </para>
+///
+/// <para>
+/// Stays under Regression: each test asserts an Org route and its System or Account twin in one
+/// body, so filing it under either half would hide the other — the crossing is the point.
+/// </para>
 /// </summary>
 [Collection("RediensIAM")]
 public class SiblingParityTests(TestFixture fixture)

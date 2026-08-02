@@ -221,6 +221,41 @@ else
        "without the default, an existing install would be pointed somewhere else by an upgrade"
 fi
 
+# ── the admin ingress must be able to name its own controller ────────────────
+# All three Ingresses read one `ingress.className`. With two Traefik controllers — a public one on
+# an address the router forwards, an admin one on an address it never does — the admin Ingress
+# inherits the public class and is therefore served by the public controller. No public DNS record
+# points at the admin host and the topology looks like the protection; it is not. A request
+# carrying `Host: <admin host>` sent to the public address serves the console from the internet.
+CLASSED="$(helm template rel "${DIR}/rediensiam" -f "${DIR}/rediensiam/values.prod.yaml" \
+             --set rediensiam.ingress.className=public-class \
+             --set rediensiam.ingress.admin.className=admin-class 2>&1)"
+# Per YAML document, not per line range: a Service is also called rel-public, and a range that
+# started at its name ran on until the next `rules:` — which belongs to a different object.
+class_of() {
+  printf '%s' "${CLASSED}" | awk -v want="$1" '
+    /^---/            { named = 0; next }
+    $0 == "  name: " want { named = 1; next }
+    named && /ingressClassName:/ { sub(/.*: */, ""); print; exit }
+  '
+}
+admin_class="$(class_of rel-admin-internal)"
+public_class="$(class_of rel-public)"
+deny_class="$(class_of rel-public-admin-deny)"
+
+if [ "${admin_class}" = "admin-class" ]; then
+  pass "the admin ingress takes its own IngressClass"
+else
+  fail "the admin ingress takes its own IngressClass" \
+       "it rendered '${admin_class:-<nothing>}' — served by whichever controller owns the public class"
+fi
+if [ "${public_class}" = "public-class" ] && [ "${deny_class}" = "public-class" ]; then
+  pass "the public ingress and the P-04 deny router stay on the public class"
+else
+  fail "the public ingress and the P-04 deny router stay on the public class" \
+       "public='${public_class:-<nothing>}' deny='${deny_class:-<nothing>}' — the deny router only works on the controller that serves the public host"
+fi
+
 # ── naming a real issuer must stop the self-signed one rendering ─────────────
 # The self-signed Issuer exists for the case where no ClusterIssuer is named. When the admin
 # ingress names one, rendering it anyway leaves an unused object whose only role is to make the

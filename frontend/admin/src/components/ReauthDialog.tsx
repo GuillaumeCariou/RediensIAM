@@ -19,8 +19,13 @@ import type { MfaReauth } from '@/auth';
 export type Pending = {
   methods: string[];
   run: (proof: MfaReauth) => Promise<unknown>;
-  /** Settles the caller's `await guard(...)`. Cancelling is not an error the page should report. */
-  settle: (failure?: unknown) => void;
+  /**
+   * Settles the caller's `await guard(...)`. Cancelling is not an error the page should report.
+   *
+   * `Error` and not `unknown`: this rejects the caller's promise, and a rejection carrying a bare
+   * string or object carries no stack, so the page's `catch` gets nothing to log.
+   */
+  settle: (failure?: Error) => void;
 };
 
 export function useReauth() {
@@ -74,7 +79,7 @@ export function useReauth() {
         setError('Too many failed attempts. Wait a few minutes before trying again.');
       } else {
         setPending(null);
-        pending.settle(e);
+        pending.settle(e instanceof Error ? e : new Error(String(e), { cause: e }));
       }
     } finally {
       setBusy(false);
