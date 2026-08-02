@@ -212,3 +212,75 @@ describe('removing the relay', () => {
     vi.unstubAllGlobals();
   });
 });
+
+
+describe('filling the relay in', () => {
+  it('carries every field to the server', async () => {
+    const user = await showEditor();
+    api.upsertOrgSmtp.mockResolvedValue({});
+
+    await user.fill(screen.getByLabelText('Host'), 'smtp.new.test');
+    await user.fill(screen.getByLabelText('Port'), '465');
+    await user.click(screen.getByLabelText('STARTTLS'));
+    await user.fill(screen.getByLabelText('Username'), 'mailer@acme.test');
+    await user.fill(screen.getByLabelText('Password'), 'hunter2');
+    await user.fill(screen.getByLabelText('From address'), 'hello@acme.test');
+    await user.fill(screen.getByLabelText('From name'), 'Acme Mail');
+    await save(user);
+
+    await vi.waitFor(() => expect(api.upsertOrgSmtp).toHaveBeenCalledWith({
+      host: 'smtp.new.test', port: 465, start_tls: false,
+      username: 'mailer@acme.test', password: 'hunter2',
+      from_address: 'hello@acme.test', from_name: 'Acme Mail',
+    }));
+  });
+
+  it('hides the password, and can reveal it', async () => {
+    const user = await showEditor();
+    const field = screen.getByLabelText('Password');
+    expect(field).toHaveAttribute('type', 'password');
+    // The operator's own saved password must not be offered for the relay's.
+    expect(field).toHaveAttribute('autocomplete', 'new-password');
+
+    await user.click(field.parentElement!.querySelector('button')!);
+
+    expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'text');
+  });
+
+  it('says the stored password is unchanged rather than showing a blank of unknown meaning', async () => {
+    await showEditor();
+    expect(screen.getByLabelText('Password')).toHaveAttribute('placeholder', '(unchanged)');
+  });
+
+  it('opens the editor from the unconfigured card', async () => {
+    const user = await show();
+    await screen.findByText('Using global SMTP');
+
+    await user.click(screen.getByRole('button', { name: 'Configure custom SMTP' }));
+
+    expect(screen.getByLabelText('Host')).toBeInTheDocument();
+  });
+
+  it('closes on cancel, dropping the error it was showing', async () => {
+    const user = await showEditor();
+    api.upsertOrgSmtp.mockRejectedValue(new ApiError(400, { error: 'smtp_host_required' }));
+    await save(user);
+    await screen.findByText('Host is required.');
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+
+    expect(screen.queryByText('Host is required.')).not.toBeInTheDocument();
+  });
+
+  it('says so when the relay cannot be removed', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    api.deleteOrgSmtp.mockRejectedValue(new ApiError(500, null));
+    const user = await showEditor();
+
+    await user.click(screen.getByRole('button', { name: 'Reset to global' }));
+
+    expect(await screen.findByText('Failed to remove SMTP configuration.')).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+});

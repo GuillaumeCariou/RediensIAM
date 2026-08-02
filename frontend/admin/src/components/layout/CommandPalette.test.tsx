@@ -31,6 +31,11 @@ function open(opts: Partial<typeof roles> = {}) {
   return { user, onClose, dialog: document.querySelector('dialog')! };
 }
 
+/**
+ * Keyboard steps below go through `user.type(search(), …)` rather than `user.keyboard(…)`: the
+ * latter sends to whatever holds focus, and under a loaded runner the dialog's autofocus has not
+ * always settled, so the keys went nowhere and the suite flaked.
+ */
 const search = () => screen.getByRole('combobox');
 const options = () => screen.getAllByRole('option');
 const active = () => {
@@ -134,16 +139,16 @@ describe('keyboard navigation', () => {
   it('moves the active option down and up with the arrow keys', async () => {
     const { user } = open({ isOrgAdmin: true });
 
-    await user.keyboard('{ArrowDown}{ArrowDown}');
+    await user.type(search(), '{ArrowDown}{ArrowDown}');
     expect(active()).toBe(options()[2]);
 
-    await user.keyboard('{ArrowUp}');
+    await user.type(search(), '{ArrowUp}');
     expect(active()).toBe(options()[1]);
   });
 
   it('marks exactly one option selected at a time', async () => {
     const { user } = open({ isOrgAdmin: true });
-    await user.keyboard('{ArrowDown}');
+    await user.type(search(), '{ArrowDown}');
 
     expect(options().filter(o => o.getAttribute('aria-selected') === 'true')).toHaveLength(1);
   });
@@ -151,18 +156,18 @@ describe('keyboard navigation', () => {
   it('stops at both ends instead of wrapping into nothing', async () => {
     const { user } = open({ isOrgAdmin: true });
 
-    await user.keyboard('{ArrowUp}{ArrowUp}');
+    await user.type(search(), '{ArrowUp}{ArrowUp}');
     expect(active()).toBe(options()[0]);
 
     const last = options().length - 1;
-    await user.keyboard('{ArrowDown}'.repeat(last + 5));
+    await user.type(search(), '{ArrowDown}'.repeat(last + 5));
     expect(active()).toBe(options()[last]);
   });
 
   it('keeps the cursor on a real option after the list is filtered under it', async () => {
     const { user } = open({ isOrgAdmin: true });
 
-    await user.keyboard('{ArrowDown}{ArrowDown}{ArrowDown}');
+    await user.type(search(), '{ArrowDown}{ArrowDown}{ArrowDown}');
     await user.type(search(), 'audit');
 
     // A stale index would point aria-activedescendant at an id no longer in the document.
@@ -174,7 +179,7 @@ describe('keyboard navigation', () => {
     const { user, onClose } = open({ isOrgAdmin: true });
 
     await user.type(search(), 'webhooks');
-    await user.keyboard('{Enter}');
+    await user.type(search(), '{Enter}');
 
     await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/org/webhooks'));
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -184,7 +189,7 @@ describe('keyboard navigation', () => {
     const { user, onClose } = open({ isOrgAdmin: true });
 
     await user.type(search(), 'zzzzz');
-    await user.keyboard('{Enter}');
+    await user.type(search(), '{Enter}');
 
     expect(screen.getByTestId('where')).toHaveTextContent('/start');
     expect(onClose).not.toHaveBeenCalled();
@@ -195,7 +200,7 @@ describe('keyboard navigation', () => {
     // would sit still.
     const { user } = open({ isOrgAdmin: true });
     await user.type(search(), 'a');
-    await user.keyboard('{ArrowDown}');
+    await user.type(search(), '{ArrowDown}');
 
     expect(active()).toBe(options()[1]);
   });

@@ -273,6 +273,21 @@ describe('tenant theming', () => {
     expect(document.documentElement.style.getPropertyValue('--font-sans')).toBe('Inter, sans-serif');
   });
 
+  it('derives the smaller radius from the larger one, never below a usable floor', async () => {
+    show({ theme: { border_radius: '1' } });
+
+    await waitFor(() => expect(document.documentElement.style.getPropertyValue('--radius')).toBe('1px'));
+    // A 4px floor: below it the small radius reads as square and the two stop being distinguishable.
+    expect(document.documentElement.style.getPropertyValue('--radius-sm')).toBe('4px');
+  });
+
+  it('applies a larger radius to both', async () => {
+    show({ theme: { border_radius: '16' } });
+
+    await waitFor(() => expect(document.documentElement.style.getPropertyValue('--radius')).toBe('16px'));
+    expect(document.documentElement.style.getPropertyValue('--radius-sm')).toBe('14px');
+  });
+
   it('refuses a colour that tries to break out of its declaration', async () => {
     show({ theme: { primary_color: 'red; background: url(https://evil.test/x)', background_color: '#fff' } });
 

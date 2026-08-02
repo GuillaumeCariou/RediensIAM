@@ -39,9 +39,10 @@ export default function OrgDashboard() {
 
   let orgStatusChip = null;
   if (org) {
-    if (org.suspended_at) orgStatusChip = <IamChip tone="danger">Suspended</IamChip>;
-    else if (org.active) orgStatusChip = <IamChip tone="success">Active</IamChip>;
-    else orgStatusChip = <IamChip tone="default">Inactive</IamChip>;
+    // `actions` is an array, so the chip needs a key of its own — React warns without one.
+    if (org.suspended_at) orgStatusChip = <IamChip key="status" tone="danger">Suspended</IamChip>;
+    else if (org.active) orgStatusChip = <IamChip key="status" tone="success">Active</IamChip>;
+    else orgStatusChip = <IamChip key="status" tone="default">Inactive</IamChip>;
   }
 
   return (

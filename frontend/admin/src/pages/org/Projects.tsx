@@ -25,6 +25,16 @@ function ProjectMenu({ onOpen, onAssign, onUnassign, hasUserList, onDelete }: Re
   onOpen: () => void; onAssign: () => void; onUnassign: () => void; hasUserList: boolean; onDelete: () => void;
 }>) {
   const [open, setOpen] = useState(false);
+
+  // On the document, not on the scrim below — see the same note in system/Organisations.tsx: a
+  // div with no tabindex never receives a key event, so Escape could not close this menu.
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [open]);
+
   return (
     <div style={{ position: 'relative' }}>
       <button className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm"
@@ -33,7 +43,7 @@ function ProjectMenu({ onOpen, onAssign, onUnassign, hasUserList, onDelete }: Re
       </button>
       {open && (
         <>
-          <div role="none" style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }} />
+          <div role="none" style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} />
           <div style={{ position: 'absolute', right: 0, top: '100%', zIndex: 50, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-md)', minWidth: 160, padding: 4 }}>
             <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }} onClick={() => { setOpen(false); onOpen(); }}>Open Project</button>
             <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }} onClick={() => { setOpen(false); onAssign(); }}>Assign User List</button>

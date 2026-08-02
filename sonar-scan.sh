@@ -46,28 +46,11 @@ cd "$ROOT"
 
 echo "Using SonarQube server: $SONAR_HOST"
 
-# Optional frontend coverage
-run_frontend_coverage() {
-    local dir="$1"
-
-    [[ -d "$dir/node_modules" ]] || return 0
-
-    if node -e "process.exit(require('./$dir/package.json').scripts?.['test:coverage'] ? 0 : 1)" 2>/dev/null; then
-        echo "==> Frontend coverage: $dir"
-        (
-            cd "$dir"
-            npm run test:coverage
-        ) || true
-    fi
-}
-
-run_frontend_coverage frontend/admin
-run_frontend_coverage frontend/login
-
 echo
 echo "==> Scanning RediensIAM..."
 
 rm -rf tests/RediensIAM.IntegrationTests/TestResults
+rm -rf sdk/dotnet/RediensIAM.Client.Tests/TestResults
 rm -rf .sonarqube
 rm -rf src/bin
 rm -rf src/obj
@@ -85,23 +68,53 @@ dotnet sonarscanner begin \
   `# analysed them left the scanner importing protobufs that referenced paths it had been told to` \
   `# forget, and warning about each one on every run.` \
   /d:sonar.exclusions="**/obj/**,**/bin/**,**/node_modules/**,**/dist/**,**/coverage/**,**/playwright-report/**,**/test-results/**,**/.sonarqube/**,**/*.min.js,**/package-lock.json" \
-    /d:sonar.cs.opencover.reportsPaths="tests/**/TestResults/**/coverage.opencover.xml" \
-    /d:sonar.javascript.lcov.reportPaths="frontend/admin/coverage/lcov.info,frontend/login/coverage/lcov.info"
+    `# Test code and mount points, kept out of the coverage denominator only — they stay in the` \
+  `# quality analysis. tests/e2e is a Playwright suite: it is the thing that does the covering, so` \
+  `# counting it as production lines to cover asks the tests to test themselves. main.tsx is the` \
+  `# createRoot() call each SPA boots from, and src/test/setup.ts is the vitest harness.` \
+  /d:sonar.coverage.exclusions="tests/e2e/**,**/src/main.tsx,**/src/test/setup.ts" \
+    /d:sonar.cs.opencover.reportsPaths="tests/**/TestResults/**/coverage.opencover.xml,sdk/**/TestResults/**/coverage.opencover.xml" \
+    /d:sonar.javascript.lcov.reportPaths="frontend/admin/coverage/lcov.info,frontend/login/coverage/lcov.info,sdk/typescript/rediensiam-web/coverage/lcov.info"
 
 dotnet build RediensIAM.slnx --no-incremental
 
 # The scan declares sonar.javascript.lcov.reportPaths, so the files have to exist: without them the
 # scanner warns "No coverage information will be saved" and the dashboard shows the SPAs as
 # untested, which is the opposite of true.
+# vitest and node:test both write `SF:` paths relative to their own package, so three files end
+# up called `src/api.ts` and two `src/App.tsx`. The scanner resolves those against the repo root,
+# matches whichever it indexed first, and reports the other as wholly uncovered — silently, with a
+# green scan. Rewriting them to repo-relative paths is what makes each record name one file.
+prefix_lcov() {
+  local dir="$1" file="$1/coverage/lcov.info"
+  [[ -f "$file" ]] || return 0
+  sed -i "s#^SF:\(\./\)\?src/#SF:${dir}/src/#" "$file"
+}
+
 for spa in admin login; do
   ( cd "${ROOT}/frontend/${spa}" && npm run test:coverage --silent ) || \
     echo "warning: coverage for frontend/${spa} failed — the scan will report none for it" >&2
+  prefix_lcov "frontend/${spa}"
 done
+
+# The browser SDK runs on node:test rather than vitest, so it has its own step. It is scanned
+# because the console imports it from source: a defect in it fails the console first.
+( cd "${ROOT}/sdk/typescript/rediensiam-web" && mkdir -p coverage && npm run test:coverage --silent ) || \
+  echo "warning: coverage for the browser SDK failed — the scan will report none for it" >&2
+prefix_lcov "sdk/typescript/rediensiam-web"
 
 dotnet test \
     tests/RediensIAM.IntegrationTests/RediensIAM.IntegrationTests.csproj \
     --collect:"XPlat Code Coverage" \
     --results-directory ./tests/RediensIAM.IntegrationTests/TestResults \
+    -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover || true
+
+# The .NET SDK has its own suite, and its own coverage: without this step the client shipped to
+# integrators is scanned as production code that nothing exercises.
+dotnet test \
+    sdk/dotnet/RediensIAM.Client.Tests/RediensIAM.Client.Tests.csproj \
+    --collect:"XPlat Code Coverage" \
+    --results-directory ./sdk/dotnet/RediensIAM.Client.Tests/TestResults \
     -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover || true
 
 dotnet sonarscanner end \

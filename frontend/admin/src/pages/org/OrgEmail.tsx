@@ -42,9 +42,12 @@ interface FormState {
 
 const EMPTY_FORM: FormState = { host: '', port: '587', start_tls: true, username: '', password: '', from_address: '', from_name: '' };
 
-function Toggle({ checked, onChange }: Readonly<{ checked: boolean; onChange: (v: boolean) => void }>) {
+function Toggle({ checked, onChange, label }: Readonly<{ checked: boolean; onChange: (v: boolean) => void; label: string }>) {
+  // `aria-label` because the switch sits opposite its caption rather than inside a <label>: a
+  // checkbox with no name announces itself as an unlabelled checkbox and says nothing about
+  // what it turns on.
   return (
-    <input type="checkbox" className="iam-switch" checked={checked} onChange={e => onChange(e.target.checked)} />
+    <input type="checkbox" className="iam-switch" aria-label={label} checked={checked} onChange={e => onChange(e.target.checked)} />
   );
 }
 
@@ -187,7 +190,7 @@ export default function OrgEmail() {
                 <div style={{ fontSize: 13, fontWeight: 500 }}>STARTTLS</div>
                 <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Use STARTTLS negotiation (port 587). Disable for SSL on port 465.</div>
               </div>
-              <Toggle checked={form.start_tls} onChange={v => set('start_tls', v)} />
+              <Toggle label="STARTTLS" checked={form.start_tls} onChange={v => set('start_tls', v)} />
             </div>
 
             <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--fg-subtle)', marginBottom: 12 }}>Authentication</div>

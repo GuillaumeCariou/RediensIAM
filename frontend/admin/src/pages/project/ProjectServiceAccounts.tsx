@@ -28,6 +28,15 @@ function SaMenu({ onViewPats, onGenPat, onDelete }: Readonly<{
   onViewPats: () => void; onGenPat: () => void; onDelete: () => void;
 }>) {
   const [open, setOpen] = useState(false);
+
+  // On the document, not on the scrim below — see the same note in system/Organisations.tsx.
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [open]);
+
   return (
     <div style={{ position: 'relative' }}>
       <button className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm"
@@ -36,7 +45,7 @@ function SaMenu({ onViewPats, onGenPat, onDelete }: Readonly<{
       </button>
       {open && (
         <>
-          <div role="none" style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }} />
+          <div role="none" style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} />
           <div style={{ position: 'absolute', right: 0, top: '100%', zIndex: 50, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-md)', minWidth: 160, padding: 4 }}>
             <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }} onClick={() => { setOpen(false); onViewPats(); }}>View PATs</button>
             <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }} onClick={() => { setOpen(false); onGenPat(); }}>Generate PAT</button>
@@ -101,7 +110,8 @@ export default function ProjectServiceAccounts() {
       setNewPat(res.token);
       setPatForm({ name: '', expires_at: '' });
       setGenPatOpen(null);
-      if (patSa?.id === genPatOpen.id) openPats(genPatOpen);
+      // No list to refresh: both ways into this dialog close the PAT list first — the footer
+      // button clears patSa on its way here, and the row menu is unreachable behind a modal.
     } finally { setSaving(false); }
   };
 

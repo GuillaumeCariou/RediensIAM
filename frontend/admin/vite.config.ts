@@ -36,6 +36,11 @@ export default defineConfig({
       // untested — the default reporters are HTML and clover, neither of which it looks for.
       reporter: ['text-summary', 'lcov'],
       reportsDirectory: './coverage',
+      // Every source file, not only the ones a test happens to import. Without this v8 reports a
+      // percentage of what was loaded, so adding a file with no test at all *raises* the number —
+      // the measurement flatters exactly the gap it should expose.
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: ['src/**/*.test.{ts,tsx}', 'src/test/**', 'src/vite-env.d.ts', 'src/main.tsx'],
     },
     projects: [
       {
@@ -43,7 +48,10 @@ export default defineConfig({
         test: {
           name: 'node',
           environment: 'node',
-          include: ['src/contracts.test.ts', 'src/theme.test.ts', 'src/auth.test.ts'],
+          // Every `.ts` test, by extension rather than by name: a test that needs a document is
+          // written as `.tsx` and picked up by the browser project below. Listing the node files
+          // individually meant a new one silently ran nowhere.
+          include: ['src/**/*.test.ts'],
         },
       },
       {

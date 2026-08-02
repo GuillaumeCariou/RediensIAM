@@ -294,8 +294,9 @@ public sealed class RediensIamClient
         return "rediensiam:" + Convert.ToHexString(digest);
     }
 
+    // `user_id` is on the wire too; it is not bound because nothing here reads it, and an unread
+    // property is a getter nobody calls that still has to be maintained.
     private sealed record AuthorizeResponse(
         [property: JsonPropertyName("allowed")] bool Allowed,
-        [property: JsonPropertyName("user_id")] string? UserId,
         [property: JsonPropertyName("ver")] int Ver = 0);
 }

@@ -166,6 +166,93 @@ describe('apiFetch', () => {
   });
 });
 
+describe('the session lifecycle', () => {
+  it('has no token before anything has been signed in', async () => {
+    const { getToken, isAuthenticated } = await freshAuth();
+    expect(getToken()).toBeNull();
+    expect(isAuthenticated()).toBe(false);
+  });
+
+  it('holds the token once the redirect has been completed', async () => {
+    const { handleCallback, getToken, isAuthenticated } = await freshAuth();
+
+    await expect(handleCallback()).resolves.toBe(true);
+
+    expect(getToken()).toBe('token');
+    expect(isAuthenticated()).toBe(true);
+  });
+
+  it('reports failure, and stays signed out, when this is not a redirect', async () => {
+    handleRedirect.mockResolvedValueOnce(false);
+    const { handleCallback, isAuthenticated } = await freshAuth();
+
+    await expect(handleCallback()).resolves.toBe(false);
+
+    expect(isAuthenticated()).toBe(false);
+  });
+
+  it('reports failure rather than throwing when the exchange goes wrong', async () => {
+    // The caller's next step is startLogin either way; an exception here would take the boot
+    // sequence down instead and leave a blank page.
+    handleRedirect.mockRejectedValueOnce(new Error('invalid_grant'));
+    const { handleCallback } = await freshAuth();
+
+    await expect(handleCallback()).resolves.toBe(false);
+  });
+
+  it('reports failure when the exchange succeeds but yields no token', async () => {
+    getToken.mockResolvedValueOnce(null as unknown as string);
+    const { handleCallback, isAuthenticated } = await freshAuth();
+
+    await expect(handleCallback()).resolves.toBe(false);
+    expect(isAuthenticated()).toBe(false);
+  });
+
+  it('starts a login through the SDK', async () => {
+    const { startLogin } = await freshAuth();
+
+    await startLogin();
+
+    expect(login).toHaveBeenCalledOnce();
+  });
+
+  it('drops the token on the way out, before the redirect', async () => {
+    // Whatever the sign-out navigation does, this tab must not still be holding a bearer.
+    const auth = await freshAuth();
+    await auth.handleCallback();
+
+    await auth.logout();
+
+    expect(auth.getToken()).toBeNull();
+    expect(auth.isAuthenticated()).toBe(false);
+  });
+});
+
+describe('the server version', () => {
+  it('is unknown until /console/config has been read', async () => {
+    // The console must not invent a number, and must not report its own build: a SPA built
+    // against one release and served by another would show the wrong one.
+    const { getServerVersion } = await freshAuth();
+    expect(getServerVersion()).toBeNull();
+  });
+
+  it('is whatever the running server said', async () => {
+    fetchMock.mockImplementation(async (path: string) =>
+      path === '/console/config' ? respond(200, { ...CONFIG, version: '0.5.0' }) : respond(200, {}));
+    const { restoreSession, getServerVersion } = await freshAuth();
+
+    await restoreSession();
+
+    expect(getServerVersion()).toBe('0.5.0');
+  });
+
+  it('stays null when the server does not say', async () => {
+    const { restoreSession, getServerVersion } = await freshAuth();
+    await restoreSession();
+    expect(getServerVersion()).toBeNull();
+  });
+});
+
 describe('the OIDC redirect_uri from /console/config', () => {
   it('is refused when its origin is not this SPA', async () => {
     // A compromised config endpoint could otherwise hand the authorization code to another origin.

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useProjectContext } from '@/hooks/useOrgContext';
 import { IamDialog } from '@/components/iam';
@@ -31,8 +31,10 @@ export default function ProjectSettings() {
   const [active, setActive] = useState(true);
   const [requireRole, setRequireRole] = useState(false);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!projectId) { setLoading(false); return; }
+    setLoading(true);
+    setLoadError(false);
     getProjectInfo(projectId).then(p => {
       setProject(p);
       setName(p.name);
@@ -40,6 +42,8 @@ export default function ProjectSettings() {
       setRequireRole(p.require_role_to_login);
     }).catch(err => { console.error(err); setLoadError(true); }).finally(() => setLoading(false));
   }, [projectId]);
+
+  useEffect(load, [load]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -67,7 +71,9 @@ export default function ProjectSettings() {
       <div className="iam-page">
         <div className="iam-empty">
           <p>This configuration could not be loaded, so it is not safe to edit.</p>
-          <button type="button" className="iam-btn" onClick={() => globalThis.location.reload()}>Retry</button>
+          {/* Re-reads the project rather than reloading the page: the operator keeps their place,
+              and a transient 500 costs one request instead of a full boot. */}
+          <button type="button" className="iam-btn" onClick={load}>Retry</button>
         </div>
       </div>
     </div>

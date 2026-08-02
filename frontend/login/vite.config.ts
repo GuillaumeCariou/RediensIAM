@@ -14,6 +14,11 @@ export default defineConfig({
       // untested — the reporters defaulted to HTML and clover, neither of which it looks for.
       reporter: ['text-summary', 'lcov'],
       reportsDirectory: './coverage',
+      // Every source file, not only the ones a test happens to import. Without this v8 reports a
+      // percentage of what was loaded, so adding a file with no test at all *raises* the number —
+      // the measurement flatters exactly the gap it should expose.
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: ['src/**/*.test.{ts,tsx}', 'src/test/**', 'src/vite-env.d.ts', 'src/main.tsx'],
     },
   },
 })
