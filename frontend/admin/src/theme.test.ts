@@ -103,6 +103,15 @@ describe('the iam-* class names components use exist', () => {
     const unstyled = [...used].filter(c => !defined.has(c));
     expect(unstyled, `no rule in index.css: ${unstyled.join(', ')}`).toEqual([]);
   });
+
+  it('nothing uses a design-system class with its iam- prefix dropped', () => {
+    // `className="mono"` in two places, where the rule is `.iam-mono`. The check above only looks
+    // at names that already start with iam-, so a dropped prefix reads as an ordinary utility and
+    // silently does nothing — the role label under the sidebar lost its monospace and nobody saw.
+    const defined = [...new Set([...CSS.matchAll(/\.iam-([\w-]+)/g)].map(m => m[1]))];
+    const offenders = defined.filter(bare => new RegExp(`className="(?:[^"]*\\s)?${bare}(?:\\s[^"]*)?"`).test(SOURCES));
+    expect(offenders, `used without the iam- prefix: ${offenders.join(', ')}`).toEqual([]);
+  });
 });
 
 describe('nothing pins a colour that cannot follow the theme', () => {
@@ -118,5 +127,110 @@ describe('nothing pins a colour that cannot follow the theme', () => {
         .map(m => `${file.slice(SRC.length + 1)}: ${m[0]}`),
     );
     expect(offenders, offenders.join(' | ')).toEqual([]);
+  });
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Contrast
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/** oklch(L C H) → linear-sRGB. Björn Ottosson's matrices; no gamma step, luminance wants linear. */
+function oklchToLinearRgb(l: number, c: number, hDeg: number): [number, number, number] {
+  const h = (hDeg * Math.PI) / 180;
+  const a = c * Math.cos(h);
+  const b = c * Math.sin(h);
+  const L = (l + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const M = (l - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const S = (l - 0.0894841775 * a - 1.2914855480 * b) ** 3;
+  return [
+    4.0767416621 * L - 3.3077115913 * M + 0.2309699292 * S,
+    -1.2684380046 * L + 2.6097574011 * M - 0.3413193965 * S,
+    -0.0041960863 * L - 0.7034186147 * M + 1.7076147010 * S,
+  ];
+}
+
+function luminance(oklch: string): number {
+  const m = /oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)/.exec(oklch);
+  if (!m) throw new Error(`not an oklch() literal: ${oklch}`);
+  const [r, g, b] = oklchToLinearRgb(+m[1], +m[2], +m[3]).map(v => Math.min(1, Math.max(0, v)));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrast(fg: string, bg: string): number {
+  const [a, b] = [luminance(fg), luminance(bg)].sort((x, y) => y - x);
+  return (a + 0.05) / (b + 0.05);
+}
+
+/** The value of one custom property inside one theme block. */
+function value(selector: string, name: string): string {
+  const needle = `\n${selector} {`;
+  for (let at = CSS.indexOf(needle); at >= 0; at = CSS.indexOf(needle, at + 1)) {
+    const open = CSS.indexOf('{', at);
+    const body = CSS.slice(open + 1, CSS.indexOf('\n}', open));
+    const m = new RegExp(`^\\s*${name}\\s*:\\s*([^;]+);`, 'm').exec(body);
+    if (m) return m[1].trim();
+  }
+  throw new Error(`${name} is not declared under ${selector}`);
+}
+
+/**
+ * Every pair of tokens that ends up as text on a surface. "Or too dark, or nothing" is what an
+ * unchecked palette reads like: each of these was legible in the theme it was picked in and
+ * assumed to be legible in the other.
+ *
+ * 4.5:1 is WCAG AA for body text. The console has no text large enough to claim the 3:1 exception
+ * — the largest is a 20px heading, and AA calls that large only at 18.66px **bold**.
+ */
+const TEXT_ON_SURFACE: readonly (readonly [string, string])[] = [
+  ['--fg', '--bg'], ['--fg', '--bg-sunken'], ['--fg', '--surface'], ['--fg', '--surface-2'],
+  ['--fg-muted', '--bg'], ['--fg-muted', '--surface'], ['--fg-muted', '--surface-2'],
+  ['--fg-subtle', '--bg'], ['--fg-subtle', '--surface'], ['--fg-subtle', '--surface-2'],
+  ['--iam-sidebar-fg', '--iam-sidebar'], ['--iam-sidebar-fg', '--iam-sidebar-accent'],
+  ['--iam-sidebar-muted', '--iam-sidebar'], ['--iam-sidebar-muted', '--iam-sidebar-accent'],
+  ['--accent-fg', '--ia-accent'],
+  ['--danger-fg', '--danger'],
+  // Chips: 11px text, the smallest in the console, on their own tinted surface.
+  ['--success', '--success-soft'], ['--warn', '--warn-soft'],
+  ['--danger', '--danger-soft'], ['--ia-accent', '--accent-soft'],
+  ['--info', '--info-soft'],
+  // Links, trend arrows and the scope-kind badges print an accent or a status colour straight
+  // onto the page — the badges over a 15% tint of themselves, which barely moves the backdrop.
+  ['--ia-accent', '--bg'], ['--ia-accent', '--surface'], ['--ia-accent', '--iam-sidebar'],
+  ['--danger', '--bg'], ['--danger', '--surface'],
+  ['--success', '--bg'], ['--success', '--surface'],
+  // The relation tuple prints a namespace and a relation on the sunken surface, and the toast
+  // inverts the page outright.
+  ['--ia-accent', '--surface-2'], ['--success', '--surface-2'],
+  ['--bg', '--fg'],
+  // …and the neutral chip, which is --fg-muted on --surface-2, already above.
+];
+
+describe('text is legible on the surface it sits on', () => {
+  for (const [selector, theme] of [[':root', 'light'], [':root[data-theme="dark"]', 'dark']] as const) {
+    it(`meets WCAG AA in the ${theme} theme`, () => {
+      const failures = TEXT_ON_SURFACE
+        .map(([fg, bg]) => [fg, bg, contrast(value(selector, fg), value(selector, bg))] as const)
+        .filter(([, , ratio]) => ratio < 4.5)
+        .map(([fg, bg, ratio]) => `${fg} on ${bg}: ${ratio.toFixed(2)}:1`);
+      expect(failures, `below 4.5:1 in ${theme}:\n${failures.join('\n')}`).toEqual([]);
+    });
+  }
+});
+
+describe('the sidebar belongs to the theme around it', () => {
+  it('is a light surface in light and a dark one in dark', () => {
+    // It was a fixed dark navy in both: the light theme drew a dark rail down the side of a light
+    // application, which is a palette from a different design, not a light theme.
+    const lightSidebar = luminance(value(':root', '--iam-sidebar'));
+    const lightPage    = luminance(value(':root', '--bg'));
+    const darkSidebar  = luminance(value(':root[data-theme="dark"]', '--iam-sidebar'));
+    const darkPage     = luminance(value(':root[data-theme="dark"]', '--bg'));
+
+    expect(contrast(value(':root', '--iam-sidebar'), value(':root', '--bg')),
+      'the light sidebar must sit near the light page, not invert it').toBeLessThan(2);
+    expect(contrast(value(':root[data-theme="dark"]', '--iam-sidebar'), value(':root[data-theme="dark"]', '--bg')),
+      'the dark sidebar must sit near the dark page').toBeLessThan(2);
+    expect(lightSidebar).toBeGreaterThan(darkPage);
+    expect(darkSidebar).toBeLessThan(lightPage);
   });
 });

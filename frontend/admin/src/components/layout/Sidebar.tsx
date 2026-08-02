@@ -325,7 +325,7 @@ export default function Sidebar() {
           <Icon path={ICONS.user} size={13} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="mono" style={{ fontSize: 10, color: 'var(--iam-sidebar-muted, var(--fg-subtle))' }}>
+          <div className="iam-mono" style={{ fontSize: 10, color: 'var(--iam-sidebar-muted, var(--fg-subtle))' }}>
             {roleLabel(isSuperAdmin, isOrgAdmin)}
           </div>
         </div>

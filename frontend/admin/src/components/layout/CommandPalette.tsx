@@ -157,7 +157,7 @@ export default function CommandPalette({ onClose }: Readonly<CommandPaletteProps
               >
                 {ICONS[c.kind]}
                 <span>{c.label}</span>
-                {c.sub && <span className="mono" style={{ color: 'var(--fg-subtle)', fontSize: 11 }}>{c.sub}</span>}
+                {c.sub && <span className="iam-mono" style={{ color: 'var(--fg-subtle)', fontSize: 11 }}>{c.sub}</span>}
                 <span className="iam-cmdk-kind">{c.kind}</span>
               </button>
             ))}

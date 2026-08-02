@@ -8,6 +8,33 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.2.6] — 2026-08-02
+
+### Fixed — the light theme was only half a theme
+
+- **The sidebar stayed dark in the light theme.** `--iam-sidebar` and its four companions were a
+  fixed dark navy in both palettes, so switching to light drew a dark rail down the side of a light
+  application. The rail is now a surface of whichever theme is active: one step under the page in
+  light, as it already was in dark.
+- **Three status colours failed contrast on their own chips.** `--success`, `--warn` and `--info`
+  were chosen against white and landed at 3.67:1, 2.91:1 and 3.83:1 once their `--*-soft` tint sat
+  behind them — below the 4.5:1 floor for the 11px text chips use. Darkened in the light theme; the
+  dark values already cleared it.
+- `.iam-nav-icon` carried `opacity: 0.8`, which is a colour nobody chose and put the sidebar icons
+  under the 3:1 floor for non-text contrast.
+- Two components spelled `className="mono"` where the rule is `.iam-mono`, so the role label under
+  the sidebar and the command-palette subtitles silently lost their monospace.
+
+### Testing
+
+- `theme.test.ts` converts every palette token from oklch to relative luminance and asserts WCAG AA
+  on 30 foreground/background pairs, per theme — text on every surface, chips on their tints, the
+  accent on the page and on the rail, the inverted toast. It also asserts the sidebar sits with the
+  theme rather than against it, and that no component drops the `iam-` prefix off a class that has
+  a rule only with it.
+
+---
+
 ## [0.2.5] — 2026-08-02
 
 ### Fixed

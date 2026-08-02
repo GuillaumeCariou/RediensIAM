@@ -53,20 +53,26 @@
   --accent-2:    oklch(0.550 0.180 310);
   --accent-fg:   oklch(0.99  0.005 270);
   --accent-soft: oklch(0.940 0.045 270);
-  --success:     oklch(0.560 0.145 155);
+  /* Chips print these on their own --*-soft surface at 11px. The lighter values they had were
+     picked against white and fell to 3.7:1, 2.9:1 and 3.8:1 once the tint was behind them. */
+  --success:     oklch(0.500 0.145 155);
   --success-soft:oklch(0.940 0.040 155);
-  --warn:        oklch(0.650 0.160 65);
+  --warn:        oklch(0.535 0.160 65);
   --warn-soft:   oklch(0.960 0.045 65);
   --danger:      oklch(0.550 0.210 25);
   --danger-fg:   oklch(0.99 0.005 25);
   --danger-soft: oklch(0.960 0.040 25);
-  --info:        oklch(0.540 0.160 225);
+  --info:        oklch(0.490 0.160 225);
   --info-soft:   oklch(0.940 0.040 225);
-  --iam-sidebar:         oklch(0.155 0.040 270);
-  --iam-sidebar-border:  oklch(0.230 0.040 270);
-  --iam-sidebar-accent:  oklch(0.230 0.040 270);
-  --iam-sidebar-fg:      oklch(0.960 0.006 270);
-  --iam-sidebar-muted:   oklch(0.580 0.030 270);
+  /* The rail is a surface of this theme, not a fixed one. These were a dark navy in both themes,
+     so the light theme drew a dark bar down the side of a light application. It now sits one step
+     under the page — the same relationship the dark theme already had — and its text tokens are
+     the page's own, which is what keeps them legible when the palette moves. */
+  --iam-sidebar:         oklch(0.968 0.004 260);
+  --iam-sidebar-border:  oklch(0.900 0.006 260);
+  --iam-sidebar-accent:  oklch(0.925 0.008 260);
+  --iam-sidebar-fg:      oklch(0.175 0.025 270);
+  --iam-sidebar-muted:   oklch(0.420 0.020 270);
 }
 
 :root[data-theme="dark"] {
@@ -317,7 +323,7 @@
   content: ''; position: absolute; left: -3px; top: 6px; bottom: 6px; width: 2px;
   background: var(--ia-accent); border-radius: 0 2px 2px 0;
 }
-.iam-nav-icon { width: 16px; height: 16px; flex-shrink: 0; opacity: 0.8; }
+.iam-nav-icon { width: 16px; height: 16px; flex-shrink: 0; }
 
 .iam-sidebar-footer {
   padding: 10px 12px;
