@@ -221,32 +221,56 @@ else
        "without the default, an existing install would be pointed somewhere else by an upgrade"
 fi
 
-# ── the chart must fail on its own defaults with a message, not a Go type error ──
-# publicUrl and adminUrl have no default: they exist only in values.<env>.yaml. `helm template`
-# with no -f therefore reached `urlParse` with a nil and died on "wrong type for value; expected
-# string; got interface {}" — an error that names neither the key nor the file to put it in. The
-# chart is meant to be publishable and generic, so a bare render has to say what is missing.
-RENDER_ERR="$(helm template "${DIR}/rediensiam" 2>&1 || true)"
-# The Go error already contained the string ".Values.rediensiam.publicUrl", so matching the key
-# alone would have passed against the bug. What has to be there is the guidance text.
-if [[ "${RENDER_ERR}" == *'rediensiam.publicUrl is required'* ]]; then
-  pass "a bare helm template names the value it needs"
+# ── the chart must render on its own defaults ────────────────────────────────
+# A publishable chart has to render with no -f at all: that is what an offline validator does,
+# what `helm lint` does, and what anyone reading it for the first time does. publicUrl and adminUrl
+# had no default, so a bare render reached urlParse with a nil and died on "wrong type for value;
+# expected string; got interface {}". They now carry placeholders — and emptying either on purpose
+# still fails naming the key, which is the half worth keeping.
+if helm template "${DIR}/rediensiam" >/dev/null 2>&1; then
+  pass "helm template renders on the chart's own defaults"
 else
-  fail "a bare helm template names the value it needs" \
-       "${RENDER_ERR%%$'\n'*}"
+  fail "helm template renders on the chart's own defaults" \
+       "$(helm template "${DIR}/rediensiam" 2>&1 | head -1)"
 fi
-if [[ "${RENDER_ERR}" == *'wrong type for value'* ]]; then
-  fail "a bare helm template does not die on a Go type error" "${RENDER_ERR%%$'\n'*}"
+EMPTIED="$(helm template "${DIR}/rediensiam" --set rediensiam.publicUrl="" 2>&1 || true)"
+if [[ "${EMPTIED}" == *'rediensiam.publicUrl is required'* ]]; then
+  pass "emptying a required value names the key"
 else
-  pass "a bare helm template does not die on a Go type error"
+  fail "emptying a required value names the key" "${EMPTIED%%$'\n'*}"
 fi
-# …and the environment files must still render, which is the whole point of the required guard.
+
+# The default render is what a validator scans for values belonging to one deployment: a hostname,
+# an IP or a registry address describes WHERE a service runs and belongs to the infrastructure
+# repository, not to the chart. Keeping the check here means the chart fails at home first.
+# The canonical RFC 1918 blocks are dropped before the search. A chart that denies egress to
+# 192.168.0.0/16, or lets Hydra accept TLS termination from it, is describing private address space
+# in general — the opposite of naming one network. Only a host inside such a range is a value that
+# belongs to an environment.
+DEFAULT_RENDER="$(helm template "${DIR}/rediensiam" 2>/dev/null \
+                    | sed -E 's#(10\.0\.0\.0/8|172\.16\.0\.0/12|192\.168\.0\.0/16|169\.254\.0\.0/16|100\.64\.0\.0/10|127\.0\.0\.0/8)##g')"
+ENV_SPECIFIC=""
+for pattern in 'rediens\.net' 'yandee\.fr' '192\.168\.[0-9]' '10\.14[23]\.' 'registry\.'; do
+  # Herestring, not a pipe: grep -q exits at the first match, the writer takes a SIGPIPE and
+  # pipefail turns the whole pipeline into a failure — which reads here as "pattern not found".
+  if grep -qiE "${pattern}" <<<"${DEFAULT_RENDER}"; then
+    ENV_SPECIFIC="${ENV_SPECIFIC} ${pattern}"
+  fi
+done
+if [ -z "${ENV_SPECIFIC}" ]; then
+  pass "the default render names no particular deployment"
+else
+  fail "the default render names no particular deployment" "found:${ENV_SPECIFIC}"
+fi
+
+# …and the environment files must still render, which is what the placeholders are there to be
+# replaced by.
 for env in dev prod; do
   if helm template "${DIR}/rediensiam" -f "${DIR}/rediensiam/values.${env}.yaml" >/dev/null 2>&1; then
     pass "helm template renders with values.${env}.yaml"
   else
     fail "helm template renders with values.${env}.yaml" \
-         "$(helm template "${DIR}/rediensiam" -f "${DIR}/rediensiam/values.${env}.yaml" 2>&1 | head -2)"
+         "$(helm template "${DIR}/rediensiam" -f "${DIR}/rediensiam/values.${env}.yaml" 2>&1 | head -1)"
   fi
 done
 

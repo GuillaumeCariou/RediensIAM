@@ -9,11 +9,16 @@ rediensiam:
   # adminUrl  — the origin the admin console is served from. May be the same host, and in a
   #             Tailscale-only or otherwise restricted setup usually is not.
   #
-  # A render without them fails naming the key. It used to reach urlParse with a nil and die on
-  # "wrong type for value; expected string; got interface {}", which names neither the key nor the
-  # file to put it in.
-  publicUrl: ""
-  adminUrl: ""
+  # The values below are placeholders, and deliberately so: a chart has to render on its own
+  # defaults — that is what an offline validator, a `helm lint` and anyone reading the chart for
+  # the first time all do — and these two are the only values without a sensible generic answer.
+  # They name no real deployment. Override both.
+  #
+  # Emptying either on purpose still fails naming the key, which is the case that used to reach
+  # urlParse with a nil and die on "wrong type for value; expected string; got interface {}" —
+  # an error naming neither the key nor the file to put it in.
+  publicUrl: "https://iam.example.com"
+  adminUrl: "https://admin.iam.example.com"
 
   # ── App image ─────────────────────────────────────────────────────────────────
   image:
