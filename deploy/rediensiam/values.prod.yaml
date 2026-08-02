@@ -12,10 +12,6 @@ rediensiam:
   # pinned to one pod — sessions live in Dragonfly and state in Postgres.
   replicaCount: 2
 
-  security:
-    # Explicit even though the chart now defaults to it: this is the file an operator reads to see
-    # what production turns on.
-    requireAdminMfa: true
 
   # R-05. No NodePort in prod: the admin surface is reached only through the Tailscale-only
   # admin ingress below. This is what the values.yaml comment used to claim NodePort provided.
@@ -34,11 +30,13 @@ rediensiam:
     admin:
       enabled: true
       host: "auth.ts.rediens.net"
-      # Still self-signed: nothing here can certify a headscale-issued name. Empty means the
-      # chart's own Issuer. The runbook in SECURITY-AUDIT-LOG.md step 09 gives the
-      # two ways to fix that; until one is done, this is a known click-through warning on the
-      # most privileged UI.
-      clusterIssuer: ""
+      tls:
+        enabled: true
+        # Still self-signed: nothing here can certify a headscale-issued name. Empty means the
+        # chart's own Issuer. The runbook in SECURITY-AUDIT-LOG.md step 09 gives the
+        # two ways to fix that; until one is done, this is a known click-through warning on the
+        # most privileged UI.
+        clusterIssuer: ""
 
   # R-15. Prod already requires cert-manager for the two ingress certs above, so the
   # database certificate costs no new dependency. requireSsl makes pg_hba.conf admit
@@ -123,8 +121,12 @@ hydra:
           issuer:              "https://auth.rediens.net"
         login:                 "https://auth.rediens.net/login"
         consent:               "https://auth.rediens.net/auth/consent"
-        logout:                "https://auth.rediens.net/auth/logout"
+        # A browser redirect target, so it must be a page. It pointed at /auth/logout, which is
+        # the JSON controller behind this page — the browser landed on the raw challenge body and
+        # nothing ever accepted the request, so the session outlived the sign-out.
+        logout:                "https://auth.rediens.net/logout"
         post_logout_redirect:  "https://auth.ts.rediens.net/admin/"
+        error:                 "https://auth.rediens.net/auth/oauth2/error"
       serve:
         public:
           cors:

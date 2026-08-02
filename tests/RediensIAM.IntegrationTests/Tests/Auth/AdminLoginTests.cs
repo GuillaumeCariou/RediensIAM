@@ -62,14 +62,24 @@ public class AdminLoginTests(TestFixture fixture)
     // ── Success as super_admin (lines 926-933) ───────────────────────────────
 
     /// <summary>
-    /// `Security:RequireAdminMfa` defaults on, so credentials alone never complete an admin login:
-    /// an account with no factor is sent through enrolment, and one with a factor is challenged.
-    /// Neither answers `redirect_to` — the login is accepted at the far side of the factor.
+    /// Once the deployment has left its bootstrap, credentials alone never complete an admin
+    /// login: an account with no factor is sent through enrolment, and one with a factor is
+    /// challenged. Neither answers `redirect_to` — the login is accepted at the far side of it.
+    ///
+    /// <para>
+    /// This used to depend on `Security:RequireAdminMfa` being on in the fixture. The flag is
+    /// gone; what makes enrolment mandatory now is that some other administrator already has a
+    /// factor, so the test sets one up rather than setting a key. The first-administrator case it
+    /// used to hide is covered in <c>AdminMfaBootstrapTests</c>.
+    /// </para>
     /// </summary>
     [Fact]
     public async Task AdminLogin_SuperAdmin_WithNoFactor_RequiresEnrolment()
     {
-        var (_, user) = await CreateSystemUserAsync();
+        var (list, user) = await CreateSystemUserAsync();
+        var enrolled = await fixture.Seed.CreateUserAsync(list.Id, password: AdminPassword);
+        enrolled.TotpEnabled = true;
+        await fixture.Db.SaveChangesAsync();
         var challenge = NewAdminChallenge();
         fixture.Keto.AllowAll();  // super_admin check → true
 
@@ -132,9 +142,13 @@ public class AdminLoginTests(TestFixture fixture)
         });
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
-        // Past the insufficient_role gate; the second factor is what remains, not the role.
+        // Past the insufficient_role gate — which is the whole subject here. Which branch the login
+        // lands in afterwards is the MFA rule's business, and pinning it made this test fail when
+        // that rule changed even though the role check was untouched. AdminMfaBootstrapTests owns
+        // that behaviour.
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
-        body.GetProperty("requires_mfa_setup").GetBoolean().Should().BeTrue();
+        body.TryGetProperty("error", out var error).Should().BeFalse(
+            error.ValueKind == JsonValueKind.String ? error.GetString()! : "the role check refused an org admin");
     }
 
     // ── No roles at all (lines 923-924) ─────────────────────────────────────

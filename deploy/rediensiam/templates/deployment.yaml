@@ -35,7 +35,7 @@ spec:
           {{- if .Values.rediensiam.image.digest }}
           image: {{ .Values.rediensiam.image.repository }}@{{ .Values.rediensiam.image.digest }}
           {{- else }}
-          image: {{ .Values.rediensiam.image.repository }}:{{ .Values.rediensiam.image.tag }}
+          image: {{ .Values.rediensiam.image.repository }}:{{ .Values.rediensiam.image.tag | default .Chart.AppVersion }}
           {{- end }}
           imagePullPolicy: {{ .Values.rediensiam.image.pullPolicy }}
           securityContext:
@@ -109,8 +109,6 @@ spec:
               value: {{ .Values.rediensiam.service.public.port | quote }}
             - name: IAM_ADMIN_PORT
               value: {{ .Values.rediensiam.service.admin.port | quote }}
-            - name: Security__RequireAdminMfa
-              value: {{ .Values.rediensiam.security.requireAdminMfa | default false | quote }}
             - name: Security__TotpSecretEncryptionKey
               valueFrom:
                 secretKeyRef:

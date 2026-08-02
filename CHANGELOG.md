@@ -8,6 +8,69 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.3.0] — 2026-08-02
+
+**Two breaking changes for operators**, both in the list below: `Security:RequireAdminMfa` is gone,
+and the admin ingress issuer moved from `rediensiam.ingress.admin.clusterIssuer` to
+`rediensiam.ingress.admin.tls.clusterIssuer`.
+
+### Removed — a setting whose correct value changed by itself
+
+- **`Security:RequireAdminMfa`.** Its own documentation admitted the problem: off is right for the
+  first ten minutes of a deployment's life and wrong for the rest of it. It was dangerous in both
+  directions — left false it leaves a `super_admin` on a password forever; set true too early it
+  locks the operator out of the console they need in order to configure the SMTP or SMS that makes
+  a factor deliverable at all. It is replaced by a derived rule that closes itself: **the first
+  administrator of a deployment signs in without a factor, every one after that must enrol.** An
+  administrator who already has a factor is challenged for it, exactly as before. The standing
+  reminder in the console is unchanged and still cannot be dismissed — it is now the only thing
+  between exactly one account and a password on its own.
+
+### Fixed — signing out never worked
+
+- **Hydra refused every logout.** No client this application registers declared
+  `post_logout_redirect_uris`, and the browser SDK always sends one, so signing out of the console
+  ended on Hydra's error page with the session still open. The console's client now registers its
+  own base path, tenant projects accept the field at creation, and the console asks for it in both
+  project forms.
+- **`hydra.urls.logout` pointed at an API.** `/auth/logout` is a controller that answers JSON, so
+  the browser landed on a raw `{"logout_challenge":"…"}` body, nothing ever accepted the request,
+  and the session outlived the sign-out. The login SPA now serves a `/logout` page that confirms
+  the challenge, accepts it, and follows the target through the same open-redirect guard as every
+  other redirect it takes.
+- **`hydra.urls.error` was never set**, so an OAuth2 failure rendered Hydra's own "configuration
+  key urls.error is not set" page. The login SPA has had an error route all along.
+
+### Fixed — the chart could not be published
+
+- **`helm template` failed on the chart's own defaults.** `publicUrl` and `adminUrl` existed only
+  in the environment files, so a bare render reached `urlParse` with a nil and died on "wrong type
+  for value; expected string; got interface {}" — an error naming neither the key nor the file to
+  put it in. Both are now declared and guarded by `required`, so the message names what is missing.
+- **The two Ingresses pinned Traefik's entrypoint names**, and the admin one emitted its `tls:`
+  block with no guard at all. `ingress.public.entrypoints`, `ingress.admin.entrypoints` and
+  `ingress.admin.tls.enabled` now carry those decisions. Defaults render identically, and the P-04
+  deny router — the control that keeps `/admin`, `/org`, `/project` and `/service-accounts` off the
+  public host — is asserted present in every variation.
+- **The default image tag had drifted** to 0.2.3 while the chart said 0.3.0. Only `deploy.sh`
+  passing `--set image.digest` hid it; a plain `helm install` pulled an image four releases old.
+  The tag now defaults to the chart's own `appVersion`.
+- **`deploy.sh` hardcoded the Postgres host** in all three generated DSNs. `PG_HOST` overrides it —
+  under CloudNativePG that is `<cluster>-rw.<namespace>.svc` — and defaults to the StatefulSet the
+  chart installs, so an existing install is untouched.
+
+### Fixed — tests that could not fail
+
+- The two registration tests asserted only that the call did not throw, which is true of a payload
+  missing every field that matters. The Hydra stub can read request bodies now, and they assert on
+  what was sent.
+- `deploy/tests.sh` compared YAML *values* where it meant to compare key names, so two keys sharing
+  a value read as a duplicate and two genuinely duplicated keys did not. Several checks piped into
+  `grep -q` under `set -o pipefail`, where grep exiting at the first match gives the writer a
+  SIGPIPE and the pipeline reports failure — which is why a different check failed on each run.
+
+---
+
 ## [0.2.6] — 2026-08-02
 
 ### Fixed — the light theme was only half a theme

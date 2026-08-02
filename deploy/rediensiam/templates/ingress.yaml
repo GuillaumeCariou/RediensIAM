@@ -59,7 +59,7 @@ metadata:
   name: {{ .Release.Name }}-public
   namespace: {{ .Release.Namespace }}
   annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.rediensiam.ingress.public.entrypoints }}
     {{- if $mw }}
     traefik.ingress.kubernetes.io/router.middlewares: {{ join "," $mw }}
     {{- end }}
@@ -139,7 +139,9 @@ metadata:
   name: {{ $.Release.Name }}-public-admin-deny
   namespace: {{ $.Release.Namespace }}
   annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    # $ and not . — this router is rendered inside a range over adminOnlyPaths, where the dot is
+    # the path being denied. Every other reference in this block already uses $ for that reason.
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ $.Values.rediensiam.ingress.public.entrypoints }}
     # Longer PathPrefix wins in Traefik, so these routers outrank the `/` catch-all above.
     traefik.ingress.kubernetes.io/router.middlewares: {{ printf "%s-%s-deny@kubernetescrd" $.Release.Namespace $.Release.Name }}
 spec:

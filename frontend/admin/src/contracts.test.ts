@@ -258,3 +258,39 @@ describe('a row you can click is a row you can reach', () => {
     expect(offenders, `rows reachable by mouse only:\n${offenders.join('\n')}`).toEqual([]);
   });
 });
+
+describe('signing out lands somewhere the console actually serves', () => {
+  it('names its post-logout target instead of letting the SDK guess', () => {
+    // The SDK defaults post_logout_redirect_uri to location.origin. The console is served under
+    // /admin/, so the bare origin is the API host, not the console — and Hydra refuses any value
+    // the client has not whitelisted, which is the error the operator saw. The value here and the
+    // one registered on the Hydra client have to be the same string.
+    // FILES holds .tsx only — the markup the other contracts here are about. auth.ts is read
+    // directly rather than widening that scan, which would feed non-markup files to every rule.
+    const auth = readFileSync(join(SRC, 'auth.ts'), 'utf8');
+    expect(auth, 'auth.ts must pass postLogoutRedirectUri to createRediensIam')
+      .toMatch(/postLogoutRedirectUri\s*:/);
+  });
+});
+
+describe('the standing MFA reminder cannot be got rid of', () => {
+  it('is mounted in the shell and has no dismiss control', () => {
+    // It is the only thing between the first administrator of a deployment — the one account that
+    // may sign in without a second factor — and a password on its own. Mounting it per page would
+    // eventually miss one, and a reminder with a close button is silenced on day one.
+    const shell = FILES.find(([file]) => file.endsWith('components/layout/Shell.tsx'));
+    expect(shell, 'Shell.tsx not found').toBeDefined();
+    expect(shell![1], 'the reminder belongs to the shell, not to individual pages')
+      .toMatch(/<MfaReminder\s*\/>/);
+
+    const banner = FILES.find(([file]) => file.endsWith('components/MfaReminder.tsx'));
+    expect(banner, 'MfaReminder.tsx not found').toBeDefined();
+    // Comments stripped first: the file's own doc block says there is no dismiss button on
+    // purpose, and a rule that reads its own justification as a violation is useless.
+    const code = banner![1]
+      .replaceAll(/\/\*[\s\S]*?\*\//g, '')
+      .replaceAll(/\/\/[^\n]*/g, '');
+    expect(code, 'a reminder that can be dismissed is dismissed once and never seen again')
+      .not.toMatch(/dismiss|onClose|setHidden|localStorage/i);
+  });
+});

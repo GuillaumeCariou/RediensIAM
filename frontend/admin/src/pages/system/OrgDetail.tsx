@@ -59,7 +59,7 @@ export default function OrgDetail() {
   const [createListSaving, setCreateListSaving] = useState(false);
 
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
-  const [newProject, setNewProject] = useState({ name: '', slug: '', redirect_uri: '' });
+  const [newProject, setNewProject] = useState({ name: '', slug: '', redirect_uri: '', post_logout_redirect_uri: '' });
   const [createProjectSaving, setCreateProjectSaving] = useState(false);
   const [createProjectError, setCreateProjectError] = useState('');
 
@@ -171,9 +171,10 @@ export default function OrgDetail() {
         name: newProject.name,
         slug: newProject.slug,
         redirect_uris: newProject.redirect_uri ? [newProject.redirect_uri] : [],
+        post_logout_redirect_uris: newProject.post_logout_redirect_uri ? [newProject.post_logout_redirect_uri] : [],
       });
       setCreateProjectOpen(false);
-      setNewProject({ name: '', slug: '', redirect_uri: '' });
+      setNewProject({ name: '', slug: '', redirect_uri: '', post_logout_redirect_uri: '' });
       load();
     } catch (err) {
       const body = err instanceof ApiError ? (err.body as Record<string, string> | null) : null;
@@ -536,6 +537,11 @@ export default function OrgDetail() {
             <div className="space-y-2">
               <label className="iam-label">Redirect URI</label>
               <input className="iam-input" value={newProject.redirect_uri} onChange={e => setNewProject(p => ({ ...p, redirect_uri: e.target.value }))} placeholder="https://app.example.com/callback" />
+            </div>
+            <div>
+              <label className="iam-label" htmlFor="org-proj-logout-uri">Post-logout redirect URI</label>
+              <input id="org-proj-logout-uri" className="iam-input" value={newProject.post_logout_redirect_uri} onChange={e => setNewProject(p => ({ ...p, post_logout_redirect_uri: e.target.value }))} placeholder="https://app.example.com/" />
+              <p className="iam-help">Where sign-out may return the user. A target not listed here is refused, and the sign-out fails.</p>
             </div>
             
           </form>

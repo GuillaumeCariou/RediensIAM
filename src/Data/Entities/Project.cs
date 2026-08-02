@@ -13,8 +13,9 @@ public class Project
     public bool RequireRoleToLogin { get; set; }
     public bool AllowSelfRegistration { get; set; }
     // Opt-in, by product decision: forcing a second factor on every new tenant is a UX call that
-    // belongs to whoever owns the tenant. RediensIAM's own admin surface is separate and still
-    // defaults on (Security:RequireAdminMfa) — that one guards super_admin, so it is ours to set.
+    // belongs to whoever owns the tenant. RediensIAM's own admin surface is governed separately
+    // and not by this flag: the first administrator signs in without a factor and every one after
+    // that must enrol, which is derived from the deployment's state rather than configured.
     // Breached-password checking below stays on by default: it costs the user nothing.
     public bool RequireMfa { get; set; }
     public string[] AllowedEmailDomains { get; set; } = [];

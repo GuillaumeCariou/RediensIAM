@@ -124,7 +124,7 @@ Uses rediensiam.ingress.public.host if set; otherwise parses host from rediensia
 {{- if .Values.rediensiam.ingress.public.host -}}
 {{ .Values.rediensiam.ingress.public.host }}
 {{- else -}}
-{{ index (urlParse .Values.rediensiam.publicUrl) "host" }}
+{{ index (urlParse (required "rediensiam.publicUrl is required: set it in your environment values file (values.dev.yaml, values.prod.yaml or your own -f overlay)" .Values.rediensiam.publicUrl)) "host" }}
 {{- end -}}
 {{- end -}}
 
@@ -137,7 +137,7 @@ Uses rediensiam.ingress.admin.host if set; otherwise parses host from rediensiam
 {{- if .Values.rediensiam.ingress.admin.host -}}
 {{ .Values.rediensiam.ingress.admin.host }}
 {{- else -}}
-{{ index (urlParse .Values.rediensiam.adminUrl) "host" }}
+{{ index (urlParse (required "rediensiam.adminUrl is required: set it in your environment values file (values.dev.yaml, values.prod.yaml or your own -f overlay)" .Values.rediensiam.adminUrl)) "host" }}
 {{- end -}}
 {{- end -}}
 

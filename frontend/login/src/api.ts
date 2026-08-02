@@ -50,6 +50,21 @@ export async function submitLogin(body: {
   return parseJson(r);
 }
 
+export async function getLogoutChallenge(challenge: string) {
+  const r = await apiFetch(`/auth/logout?logout_challenge=${enc(challenge)}`, { credentials: 'omit' });
+  if (!r.ok) throw new Error('Failed to load logout challenge');
+  return parseJson(r);
+}
+
+export async function acceptLogout(challenge: string) {
+  const r = await apiFetch('/auth/logout', {
+    method: 'POST',
+    body: JSON.stringify({ logout_challenge: challenge }),
+  });
+  if (!r.ok) throw new Error('Failed to complete sign-out');
+  return parseJson(r);
+}
+
 export async function verifyTotp(code: string) {
   const r = await apiFetch('/auth/mfa/totp/verify', { method: 'POST', body: JSON.stringify({ code }) });
   return parseJson(r);

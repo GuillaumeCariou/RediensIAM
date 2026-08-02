@@ -1,9 +1,26 @@
 rediensiam:
 
+  # ── Where this deployment lives ───────────────────────────────────────────────
+  # Both are REQUIRED and deliberately empty here: they are the two values that make a chart
+  # specific to one deployment, and this chart is meant to stay generic and publishable. Set them
+  # in your environment file (values.dev.yaml / values.prod.yaml) or in your own -f overlay.
+  #
+  # publicUrl — the origin end users reach: the login pages, the OIDC endpoints, the API.
+  # adminUrl  — the origin the admin console is served from. May be the same host, and in a
+  #             Tailscale-only or otherwise restricted setup usually is not.
+  #
+  # A render without them fails naming the key. It used to reach urlParse with a nil and die on
+  # "wrong type for value; expected string; got interface {}", which names neither the key nor the
+  # file to put it in.
+  publicUrl: ""
+  adminUrl: ""
+
   # ── App image ─────────────────────────────────────────────────────────────────
   image:
     repository: rediensiam
-    tag: "0.2.3"
+    # Empty means the chart's own appVersion, which is what keeps the two from drifting: this
+    # said 0.2.3 while Chart.yaml said 0.3.0, and only deploy.sh's --set image.digest hid it.
+    tag: ""
     # Digest pin (R-16). When set it replaces `tag`, so a pod restart re-runs the exact
     # bytes that were deployed instead of whatever the registry currently answers with.
     # deploy.sh resolves this from `docker push` output and passes it with --set.
@@ -50,18 +67,6 @@ rediensiam:
     argon2Pepper: ""
     argon2Peppers: ""
 
-    # Require a second factor to reach the management console.
-    #
-    # On here, because an operator who installs this chart without layering another values file
-    # should not end up with a password-only super_admin on a publicly reachable /auth/login.
-    #
-    # The first-launch problem is real — enrolment needs a delivery channel, and configuring one
-    # needs the console — but it belongs to the first boot, not to the chart. `AppConfig` defaults
-    # this to false so a deployment that sets nothing at all can still reach the console, and the
-    # console carries a standing reminder (MfaReminder) for an admin with no factor. The chart said
-    # true anyway, which overrode that default and locked the first admin out of the console they
-    # needed in order to configure a delivery channel. values.prod.yaml turns it on explicitly.
-    requireAdminMfa: false
 
   # ── Networking ────────────────────────────────────────────────────────────────
   service:
@@ -83,6 +88,10 @@ rediensiam:
     public:
       enabled: true
       host: ""    # set in values.dev.yaml / values.prod.yaml
+      # Traefik entrypoint names for the router that serves this host. They are names a controller
+      # chooses, not a protocol: a deployment running more than one Traefik can have them called
+      # anything, and the chart pinned "web,websecure" with no way to say otherwise.
+      entrypoints: "web,websecure"
       # R-02: TLS on the public auth surface. Off here because dev serves `iam.localhost`,
       # which no CA will certify; values.prod.yaml turns it on. When enabled the router
       # drops the `web` entrypoint and a redirectScheme middleware sends :80 → :443.
@@ -111,12 +120,17 @@ rediensiam:
     admin:
       enabled: false    # prod enables this; dev uses the NodePort
       host: ""
-      # Issuer for the admin ingress cert: the name of a ClusterIssuer you already run.
-      # Empty falls back to the chart's own self-signed Issuer (<release>-selfsigned, in this
-      # namespace), which trains operators to click through a warning on the most privileged
-      # UI here — see the runbook in SECURITY-AUDIT-LOG.md step 09 for the two ways out (internal CA,
-      # or ACME DNS-01 on the Tailscale domain).
-      clusterIssuer: ""
+      entrypoints: "websecure"
+      # The public ingress has had a tls toggle all along; this one emitted its tls: block
+      # unconditionally, so a deployment terminating TLS upstream could not turn it off.
+      tls:
+        enabled: true
+        # Issuer for the admin ingress cert: the name of a ClusterIssuer you already run.
+        # Empty falls back to the chart's own self-signed Issuer (<release>-selfsigned, in this
+        # namespace), which trains operators to click through a warning on the most privileged
+        # UI here — see the runbook in SECURITY-AUDIT-LOG.md step 09 for the two ways out
+        # (internal CA, or ACME DNS-01 on the Tailscale domain).
+        clusterIssuer: ""
 
   # ── cert-manager ──────────────────────────────────────────────────────────────
   # The chart renders its own self-signed Issuer whenever the admin ingress, Postgres TLS or

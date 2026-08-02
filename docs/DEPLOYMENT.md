@@ -172,6 +172,19 @@ as a starting point to verify.
 Note that `verify-deployment.sh` V-20, V-21 and V-23 **skip** under CNPG: they read
 `rediensiam-postgres-0` directly. Making them CNPG-aware is about an hour and is not done.
 
+**`PG_HOST` is yours to set under CNPG.** The three connection strings the script generates — the
+application's, Hydra's and Keto's — default to `rediensiam-postgres`, the StatefulSet the chart
+installs. An external Cluster answers on its read-write service instead, so export the host before
+running the script:
+
+```bash
+PG_HOST="<cluster-name>-rw.<namespace>.svc" ./deploy/setup.sh --prod
+```
+
+Leaving it unset against a CNPG Cluster generates DSNs pointing at a Service that does not exist,
+and the failure surfaces as a pod that cannot reach its database rather than as a configuration
+error.
+
 **Backups.** With `builtin` you choose the schedule, the volume size and how many dumps to keep —
 and then the script asks where the **off-node** copy goes and will not accept a blank answer. The
 nightly `pg_dumpall` lands on a PVC on the same node and the same disk as the database it

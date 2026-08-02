@@ -6,10 +6,12 @@ import { getMfaStatus, listWebAuthnCredentials } from '@/api';
 /**
  * Standing reminder for an admin with no second factor.
  *
- * `Security:RequireAdminMfa` is off by default, because a first launch has to be able to reach
- * this console in order to configure the SMTP and SMS providers that make a factor deliverable —
- * gating the bootstrap admin's first login on enrolment locks the operator out of the fix. This
- * is the other half of that decision: not blocked on the first page, told on every page.
+ * The first administrator of a deployment signs in without one, because a first launch has to be
+ * able to reach this console in order to configure the SMTP and SMS providers that make a factor
+ * deliverable — gating that login on enrolment locks the operator out of the fix. Every
+ * administrator after the first is sent through enrolment instead, so this banner is what stands
+ * between exactly one account and a password on its own: not blocked on the first page, told on
+ * every page.
  *
  * It stays until a factor exists. There is no dismiss button on purpose — a reminder you can
  * silence is one you silence on day one and never see again.

@@ -77,8 +77,12 @@ hydra:
           issuer:              "http://iam.localhost"
         login:                 "http://iam.localhost/login"
         consent:               "http://iam.localhost/auth/consent"
-        logout:                "http://iam.localhost/auth/logout"
+        # A browser redirect target, so it must be a page. It pointed at /auth/logout, which is
+        # the JSON controller behind this page — the browser landed on the raw challenge body and
+        # nothing ever accepted the request, so the session outlived the sign-out.
+        logout:                "http://iam.localhost/logout"
         post_logout_redirect:  "http://localhost:30501/admin/"
+        error:                 "http://iam.localhost/auth/oauth2/error"
       serve:
         public:
           cors:

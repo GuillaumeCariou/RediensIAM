@@ -179,6 +179,13 @@
   display: block; margin-bottom: 6px; letter-spacing: 0.01em;
 }
 
+/* The line under a field that explains what it is for. --fg-subtle rather than --fg-muted so it
+   reads as secondary to the label above it; both clear AA on every surface (theme.test.ts). */
+.iam-help {
+  font-size: 11px; color: var(--fg-subtle);
+  margin-top: 5px; line-height: 1.45;
+}
+
 /* Chips */
 .iam-chip {
   display: inline-flex; align-items: center; gap: 4px;

@@ -21,6 +21,29 @@ public sealed class HydraStub : IDisposable
         SetupDefaults();
     }
 
+    /// <summary>
+    /// The body of the last request this stub received whose path contains <paramref name="pathFragment"/>,
+    /// optionally narrowed to one HTTP method.
+    ///
+    /// <para>
+    /// The registration tests used to assert only that the call did not throw, which is true of a
+    /// payload missing every field that matters — <c>post_logout_redirect_uris</c> went unregistered
+    /// for as long as the client existed and no test noticed, because nothing ever read the body.
+    /// </para>
+    /// </summary>
+    public string? LastRequestBody(string pathFragment, string? method = null)
+    {
+        for (var i = _server.LogEntries.Count - 1; i >= 0; i--)
+        {
+            var entry = _server.LogEntries.ElementAt(i);
+            var req = entry?.RequestMessage;
+            if (req?.Path is null || !req.Path.Contains(pathFragment, StringComparison.Ordinal)) continue;
+            if (method != null && !string.Equals(req.Method, method, StringComparison.OrdinalIgnoreCase)) continue;
+            return req.Body;
+        }
+        return null;
+    }
+
     /// <summary>Resets all stubs back to the default safe no-ops.</summary>
     public void ResetDefaults()
     {

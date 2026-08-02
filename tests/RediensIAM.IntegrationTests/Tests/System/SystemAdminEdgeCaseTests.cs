@@ -1643,7 +1643,9 @@ public class SystemAdminMiscTests(TestFixture fixture)
             fixture.Db.AuditLogs.Add(new AuditLog
             {
                 Action = action, ActorId = user.Id, UserId = user.Id,
-                TargetType = "user", TargetId = user.Id.ToString(), CreatedAt = now.AddMinutes(-5),
+                // `now`, not `now - 5min`: at 10:02 five minutes ago is 09:57, which belongs to the
+                // 09:00 bucket, and the assertion below names the current hour.
+                TargetType = "user", TargetId = user.Id.ToString(), CreatedAt = now,
             });
         }
         await fixture.Db.SaveChangesAsync();

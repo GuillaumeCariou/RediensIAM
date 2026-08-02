@@ -108,8 +108,14 @@ fi
 # YAML takes the last one and drops the first without a word. That is how an `rls.enabled: true`
 # added to prod rendered nothing at all.
 for f in "${DIR}"/rediensiam/values*.yaml; do
-  dupes="$(grep -nE '^  [a-zA-Z][a-zA-Z0-9_]*:' "${f}" | sed 's/.*: *//; s/:$//' | awk '{print $1}' \
-             | sort | uniq -d)"
+  # Key names, within one root block. Two earlier versions of this were wrong in opposite ways:
+  # comparing the text after the colon reported two keys sharing a value as a duplicate key, and
+  # comparing names across the whole file reported ingress and hydra, which legitimately appear
+  # once under rediensiam and once under a root block of their own.
+  dupes="$(awk '
+    /^[a-zA-Z]/            { section = $0; next }
+    /^  [a-zA-Z][a-zA-Z0-9_]*:/ { key = $1; sub(/:.*/, "", key); print section "/" key }
+  ' "${f}" | sort | uniq -d | sed 's#.*/##')"
   if [ -n "${dupes}" ]; then
     fail "no duplicate top-level key in $(basename "${f}")" "${dupes}"
   else
@@ -140,19 +146,141 @@ else
   pass "preflight.sh validates the rendered values, not just values.yaml"
 fi
 
-# ── the chart must not lock the first admin out ──────────────────────────────
-# AppConfig defaults RequireAdminMfa to false on purpose: enrolment needs SMTP or SMS, configuring
-# either needs the console, and the console carries a standing reminder instead. The chart set it
-# true anyway, so a fresh deployment demanded a factor the admin had no way to enrol. Prod turns it
-# on explicitly, which is where that decision belongs.
-DEFAULT_MFA="$(grep -E '^\s+requireAdminMfa:' "${DIR}/rediensiam/values.yaml" | head -1 | sed 's/.*requireAdminMfa:[[:space:]]*//' | tr -d ' ')"
-PROD_MFA="$(grep -E '^\s+requireAdminMfa:' "${DIR}/rediensiam/values.prod.yaml" | head -1 | sed 's/.*requireAdminMfa:[[:space:]]*//' | tr -d ' ')"
-if [ "${DEFAULT_MFA}" = "false" ] && [ "${PROD_MFA}" = "true" ]; then
-  pass "requireAdminMfa is off by default and on in prod"
+# ── the default image tag must not drift from the chart ──────────────────────
+# values.yaml pinned tag: "0.2.3" while Chart.yaml said appVersion 0.3.0. deploy.sh always passes
+# --set image.digest, so nothing here noticed — but a plain `helm install` of the published chart
+# pulls an image four releases old, which is the one case a published chart exists for.
+APPVERSION="$(grep -E '^appVersion:' "${DIR}/rediensiam/Chart.yaml" | sed 's/.*: *//' | tr -d '"')"
+RENDERED_TAG="$(helm template rel "${DIR}/rediensiam" -f "${DIR}/rediensiam/values.dev.yaml" 2>/dev/null \
+                  | grep -oE 'image: rediensiam:[^ ]+' | head -1 | sed 's/.*://')"
+if [ "${RENDERED_TAG}" = "${APPVERSION}" ]; then
+  pass "the default image tag follows the chart's appVersion"
 else
-  fail "requireAdminMfa is off by default and on in prod" \
-       "values.yaml says '${DEFAULT_MFA}', values.prod.yaml says '${PROD_MFA}'"
+  fail "the default image tag follows the chart's appVersion" \
+       "chart says ${APPVERSION}, the render asks for ${RENDERED_TAG:-<nothing>}"
 fi
+
+# ── the ingress must not pin the controller's entrypoints or force TLS ───────
+# Both Ingresses hardcoded Traefik entrypoint names, and the admin one emitted its tls: block with
+# no guard at all. A deployment running two Traefik controllers, or terminating TLS upstream, could
+# not express either. The P-04 deny router must survive every variation of this: it is the control
+# that keeps /admin, /org, /project and /service-accounts off the public host.
+CHART="${DIR}/rediensiam"
+BASE=(-f "${CHART}/values.prod.yaml")   # prod is the environment where the admin ingress renders
+
+r_default="$(helm template rel "${CHART}" "${BASE[@]}" 2>&1)"
+r_notls="$(helm template rel "${CHART}" "${BASE[@]}" --set rediensiam.ingress.admin.tls.enabled=false 2>&1)"
+r_web="$(helm template rel "${CHART}" "${BASE[@]}" --set rediensiam.ingress.public.entrypoints=web 2>&1)"
+
+# The admin Ingress is the one named <release>-admin-internal; read only its own block.
+admin_block() { printf '%s' "$1" | awk '/name: rel-admin-internal/,/^---/'; }
+
+if [[ "$(admin_block "${r_default}")" == *'tls:'* ]]; then
+  pass "the admin ingress still asks for TLS by default"
+else
+  fail "the admin ingress still asks for TLS by default" "the default render lost its tls: block"
+fi
+if [[ "$(admin_block "${r_notls}")" == *'tls:'* ]]; then
+  fail "admin.tls.enabled=false drops the tls block" "the block rendered anyway"
+else
+  pass "admin.tls.enabled=false drops the tls block"
+fi
+if [[ "${r_web}" == *$'router.entrypoints: web\n'* ]]; then
+  pass "public.entrypoints reaches the annotation"
+else
+  fail "public.entrypoints reaches the annotation" \
+       "$(printf '%s' "${r_web}" | grep 'router.entrypoints' | head -2)"
+fi
+for variant in default notls web; do
+  # Indirect expansion, not eval: the value is a whole rendered chart, and eval re-parses every
+  # quote and backtick in it.
+  name="r_${variant}"; body="${!name}"
+  if [[ "${body}" == *'rel-public-admin-deny'* ]]; then
+    pass "the P-04 deny router survives the ${variant} render"
+  else
+    fail "the P-04 deny router survives the ${variant} render" \
+         "the deny router keeps the management API off the public host"
+  fi
+done
+
+# ── the Postgres host must be overridable ────────────────────────────────────
+# The generated secrets file hardcoded rediensiam-postgres in all three DSNs. Under CloudNativePG
+# the service is <cluster>-rw.<namespace>.svc, and the chart already knows how to talk to an
+# external Postgres (postgres.external.podSelector / .namespace) — only the script was behind, with
+# no variable to set and no way to reach the value.
+HARDCODED="$(grep -nE '(Host=|@)rediensiam-postgres' "${DIR}/deploy.sh" | head -3)"
+if [ -n "${HARDCODED}" ]; then
+  fail "deploy.sh reads the Postgres host from a variable" "${HARDCODED}"
+else
+  pass "deploy.sh reads the Postgres host from a variable"
+fi
+if grep -qE '^PG_HOST="\$\{PG_HOST:-rediensiam-postgres\}"' "${DIR}/deploy.sh"; then
+  pass "PG_HOST defaults to the name the chart installs"
+else
+  fail "PG_HOST defaults to the name the chart installs" \
+       "without the default, an existing install would be pointed somewhere else by an upgrade"
+fi
+
+# ── the chart must fail on its own defaults with a message, not a Go type error ──
+# publicUrl and adminUrl have no default: they exist only in values.<env>.yaml. `helm template`
+# with no -f therefore reached `urlParse` with a nil and died on "wrong type for value; expected
+# string; got interface {}" — an error that names neither the key nor the file to put it in. The
+# chart is meant to be publishable and generic, so a bare render has to say what is missing.
+RENDER_ERR="$(helm template "${DIR}/rediensiam" 2>&1 || true)"
+# The Go error already contained the string ".Values.rediensiam.publicUrl", so matching the key
+# alone would have passed against the bug. What has to be there is the guidance text.
+if [[ "${RENDER_ERR}" == *'rediensiam.publicUrl is required'* ]]; then
+  pass "a bare helm template names the value it needs"
+else
+  fail "a bare helm template names the value it needs" \
+       "${RENDER_ERR%%$'\n'*}"
+fi
+if [[ "${RENDER_ERR}" == *'wrong type for value'* ]]; then
+  fail "a bare helm template does not die on a Go type error" "${RENDER_ERR%%$'\n'*}"
+else
+  pass "a bare helm template does not die on a Go type error"
+fi
+# …and the environment files must still render, which is the whole point of the required guard.
+for env in dev prod; do
+  if helm template "${DIR}/rediensiam" -f "${DIR}/rediensiam/values.${env}.yaml" >/dev/null 2>&1; then
+    pass "helm template renders with values.${env}.yaml"
+  else
+    fail "helm template renders with values.${env}.yaml" \
+         "$(helm template "${DIR}/rediensiam" -f "${DIR}/rediensiam/values.${env}.yaml" 2>&1 | head -2)"
+  fi
+done
+
+# ── Hydra must send the browser to a page, not to an API ─────────────────────
+# hydra.urls.* are browser redirect targets. `logout` pointed at http://<host>/auth/logout, which
+# is a controller returning JSON — the same mistake the invite mail made when it linked at the POST
+# endpoint instead of the /set-password page. And `error` was never set at all, which is why an
+# OAuth2 failure rendered Hydra's own "configuration key urls.error is not set" page.
+#
+# `login` and `consent` are deliberately not in this loop. /login is an SPA route already, and
+# /auth/consent is an API endpoint on purpose: it decides and answers 302 without ever rendering,
+# so there is nothing for the browser to display. Adding it here would be a "fix" that breaks it.
+#
+# The routes the login SPA actually serves are the list in frontend/login/src/App.tsx.
+SPA_ROUTES="$(grep -oE '<Route path="[^"]+"' "${ROOT}/frontend/login/src/App.tsx" | sed 's/.*path="//;s/"//')"
+for env in dev prod; do
+  VALUES="${DIR}/rediensiam/values.${env}.yaml"
+  for key in logout error; do
+    URL="$(grep -E "^\s+${key}:" "${VALUES}" | head -1 | sed "s/.*${key}:[[:space:]]*//" | tr -d '"' | tr -d ' ')"
+    if [ -z "${URL}" ]; then
+      fail "hydra.urls.${key} is set in values.${env}.yaml" \
+           "unset means Hydra renders its own page instead of ${ROOT##*/}'s"
+      continue
+    fi
+    # Everything after the origin. `logout` and `error` must name a route the SPA renders.
+    URL_PATH="/$(printf '%s' "${URL}" | sed -E 's#^[a-z]+://[^/]+/?##')"
+    if printf '%s\n' ${SPA_ROUTES} | grep -Fxq "${URL_PATH}"; then
+      pass "hydra.urls.${key} (${env}) points at a page the login SPA renders"
+    else
+      fail "hydra.urls.${key} (${env}) points at a page the login SPA renders" \
+           "${URL_PATH} is not a route in frontend/login/src/App.tsx — the browser lands on the API"
+    fi
+  done
+done
 
 # ── a tracked path with a backslash breaks the image build ───────────────────
 # `src/bin\Debug` — one directory, literally named with a backslash, left by a Windows-style

@@ -10,18 +10,22 @@ metadata:
   name: {{ .Release.Name }}-admin-internal
   namespace: {{ .Release.Namespace }}
   annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    {{- if .Values.rediensiam.ingress.admin.clusterIssuer }}
-    cert-manager.io/cluster-issuer: {{ .Values.rediensiam.ingress.admin.clusterIssuer }}
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.rediensiam.ingress.admin.entrypoints }}
+    {{- if .Values.rediensiam.ingress.admin.tls.enabled }}
+    {{- if .Values.rediensiam.ingress.admin.tls.clusterIssuer }}
+    cert-manager.io/cluster-issuer: {{ .Values.rediensiam.ingress.admin.tls.clusterIssuer }}
     {{- else }}
     cert-manager.io/issuer: {{ include "rediensiam.selfSignedIssuer" . }}
     {{- end }}
+    {{- end }}
 spec:
   ingressClassName: {{ .Values.rediensiam.ingress.className }}
+  {{- if .Values.rediensiam.ingress.admin.tls.enabled }}
   tls:
     - hosts:
         - {{ include "rediensiam.ingressAdminHost" . }}
       secretName: {{ .Release.Name }}-admin-tls
+  {{- end }}
   rules:
     - host: {{ include "rediensiam.ingressAdminHost" . }}
       http:

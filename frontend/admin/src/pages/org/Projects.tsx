@@ -59,7 +59,7 @@ export default function Projects() {
   // '__none__' is the option that means "no user list"; '' matches no option at all, so it would
   // paint the first entry as chosen while state said otherwise.
   const [selectedList, setSelectedList] = useState('__none__');
-  const [form, setForm] = useState({ name: '', slug: '', redirect_uris: '', require_role_to_login: false });
+  const [form, setForm] = useState({ name: '', slug: '', redirect_uris: '', post_logout_redirect_uris: '', require_role_to_login: false });
   const [saving, setSaving] = useState(false);
   const [createError, setCreateError] = useState('');
 
@@ -81,8 +81,9 @@ export default function Projects() {
         org_id: orgId, name: form.name, slug: form.slug,
         require_role_to_login: form.require_role_to_login,
         redirect_uris: form.redirect_uris.split('\n').map(s => s.trim()).filter(Boolean),
+        post_logout_redirect_uris: form.post_logout_redirect_uris.split('\n').map(s => s.trim()).filter(Boolean),
       });
-      setCreateOpen(false); setForm({ name: '', slug: '', redirect_uris: '', require_role_to_login: false }); load();
+      setCreateOpen(false); setForm({ name: '', slug: '', redirect_uris: '', post_logout_redirect_uris: '', require_role_to_login: false }); load();
     } catch (err) {
       const body = err instanceof ApiError ? (err.body as Record<string, string> | null) : null;
       setCreateError(body?.detail ?? body?.error ?? 'Failed to create project.');
@@ -196,6 +197,11 @@ export default function Projects() {
           <div>
             <label className="iam-label" htmlFor="proj-create-uris">Redirect URIs (one per line)</label>
             <textarea id="proj-create-uris" className="iam-input" style={{ minHeight: 80, resize: 'vertical' }} value={form.redirect_uris} onChange={e => setForm(f => ({ ...f, redirect_uris: e.target.value }))} placeholder="https://dashboard.example.com/callback" />
+          </div>
+          <div>
+            <label className="iam-label" htmlFor="proj-create-logout-uris">Post-logout redirect URIs (one per line)</label>
+            <textarea id="proj-create-logout-uris" className="iam-input" style={{ minHeight: 60, resize: 'vertical' }} value={form.post_logout_redirect_uris} onChange={e => setForm(f => ({ ...f, post_logout_redirect_uris: e.target.value }))} placeholder="https://dashboard.example.com/" />
+            <p className="iam-help">Where sign-out may return the user. A target not listed here is refused, and the sign-out fails.</p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <Toggle checked={form.require_role_to_login} onChange={v => setForm(f => ({ ...f, require_role_to_login: v }))} />

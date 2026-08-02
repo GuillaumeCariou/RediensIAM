@@ -214,6 +214,11 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
     public async Task EnsureAdminSpaClientAsync(string adminSpaOrigin)
     {
         var redirectUris = new[] { $"{adminSpaOrigin}/admin/callback" };
+        // Hydra refuses a post_logout_redirect_uri the client has not whitelisted, and the SDK the
+        // console runs on always sends one. Without this field every sign-out ended on Hydra's error
+        // page with the session still open. The console is served under /admin/, so that — not the
+        // bare origin — is where a logout lands.
+        var postLogoutUris = new[] { $"{adminSpaOrigin}/admin/" };
         var body = new
         {
             client_id                  = Roles.AdminClientId,
@@ -222,6 +227,7 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
             response_types             = new[] { "code" },
             scope                      = "openid offline",
             redirect_uris              = redirectUris,
+            post_logout_redirect_uris  = postLogoutUris,
             token_endpoint_auth_method = "none",
             subject_type               = "public"
         };

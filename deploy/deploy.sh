@@ -31,6 +31,11 @@ fi
 # Overridable so that decision is available without editing this file:  NAMESPACE=rediensiam ./deploy/setup.sh --prod
 NAMESPACE="${NAMESPACE:-default}"
 RELEASE="${RELEASE:-rediensiam}"
+# The Postgres host written into the three generated DSNs. The default is the StatefulSet this
+# chart installs, so an existing install is untouched. Point it elsewhere for an external database:
+# under CloudNativePG that is <cluster>-rw.<namespace>.svc, and the chart already knows how to
+# reach one (postgres.external.podSelector / postgres.external.namespace).
+PG_HOST="${PG_HOST:-rediensiam-postgres}"
 REGISTRY="localhost:5000"
 # R-16: the registry listens on loopback only. Anyone who could reach TCP/5000 on this host
 # could previously push a replacement rediensiam:prod and own the next pod restart.
@@ -281,7 +286,7 @@ write_secrets_file() {
     cat > "${file}" <<EOF
 rediensiam:
   secrets:
-    databaseUrl: "Host=rediensiam-postgres;Database=rediensiam;Username=iam_app;Password=${db_app}${app_ssl}"
+    databaseUrl: "Host=${PG_HOST};Database=rediensiam;Username=iam_app;Password=${db_app}${app_ssl}"
     cacheUrl: "rediensiam-dragonfly:6379${cache_ssl},abortConnect=false,password=${dfly}"
     encryptionKey: "${enc_key}"
     smtpPassword: ""
@@ -304,7 +309,7 @@ rediensiam:
 hydra:
   hydra:
     config:
-      dsn: "postgres://iam_hydra:${db_hydra}@rediensiam-postgres:5432/hydra?sslmode=${ory_ssl}"
+      dsn: "postgres://iam_hydra:${db_hydra}@${PG_HOST}:5432/hydra?sslmode=${ory_ssl}"
       secrets:
         # Hydra reads this list newest-first: element 0 encrypts, the rest only decrypt. That is
         # what makes a rotation non-destructive — prepend, upgrade, then drop the tail once the
@@ -315,7 +320,7 @@ hydra:
 keto:
   keto:
     config:
-      dsn: "postgres://iam_keto:${db_keto}@rediensiam-postgres:5432/keto?sslmode=${ory_ssl}"
+      dsn: "postgres://iam_keto:${db_keto}@${PG_HOST}:5432/keto?sslmode=${ory_ssl}"
 EOF
   )
   chmod 600 "${file}"

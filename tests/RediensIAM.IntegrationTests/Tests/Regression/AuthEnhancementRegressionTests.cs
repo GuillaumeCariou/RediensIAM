@@ -163,6 +163,13 @@ public class AuthEnhancementRegressionTests(TestFixture fixture)
         await fixture.FlushCacheAsync();
         var list = await CreateSystemListAsync();
         var user = await fixture.Seed.CreateUserAsync(list.Id, password: Password);
+        // Enrolment is mandatory because another administrator of this deployment already holds a
+        // factor — it used to be because Security:RequireAdminMfa was on in the fixture. The flag
+        // is gone: the only account that may sign in without one is the first, and that case is
+        // covered in Tests/Auth/AdminMfaBootstrapTests.cs.
+        var enrolled = await fixture.Seed.CreateUserAsync(list.Id, password: Password);
+        enrolled.TotpEnabled = true;
+        await fixture.Db.SaveChangesAsync();
         var challenge = Guid.NewGuid().ToString("N");
         fixture.Hydra.SetupLoginChallenge(challenge, Roles.AdminClientId);
         fixture.Keto.AllowAll();
@@ -175,7 +182,8 @@ public class AuthEnhancementRegressionTests(TestFixture fixture)
         res.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("requires_mfa_setup").GetBoolean().Should().BeTrue(
-            "RediensIAM's own super_admin surface must not be password-only by default");
+            "once any administrator has a factor, RediensIAM's own super_admin surface must not "
+            + "be reachable on a password alone");
         body.TryGetProperty("redirect_to", out _).Should().BeFalse();
         fixture.Hydra.LoginWasAccepted(challenge).Should().BeFalse(
             "the login must not complete before a factor exists");

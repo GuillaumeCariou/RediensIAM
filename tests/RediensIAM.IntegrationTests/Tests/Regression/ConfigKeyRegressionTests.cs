@@ -17,29 +17,13 @@ public class ConfigKeyRegressionTests
             .AddInMemoryCollection(entries.ToDictionary(e => e.Key, e => (string?)e.Value))
             .Build());
 
-    // ── Security:RequireAdminMfa ──────────────────────────────────────────────
-
-    /// <summary>
-    /// Unset must mean "do not gate the login". The default used to be on, and on a first launch
-    /// that is a lockout: the only account is the bootstrap admin, and enrolment is what it cannot
-    /// finish until it reaches the console and configures SMTP or SMS. The console reminds instead
-    /// (<c>MfaReminder</c>), and <c>values.prod.yaml</c> turns enforcement back on.
-    /// </summary>
-    [Fact]
-    public void RequireAdminMfa_WhenUnset_DoesNotGateTheLogin()
-    {
-        Build().RequireAdminMfa.Should().BeFalse();
-    }
-
-    /// <summary>Off by default is only defensible while turning it on still works.</summary>
-    [Theory]
-    [InlineData("true", true)]
-    [InlineData("True", true)]
-    [InlineData("false", false)]
-    public void RequireAdminMfa_IsHonoured(string configured, bool expected)
-    {
-        Build(("Security:RequireAdminMfa", configured)).RequireAdminMfa.Should().Be(expected);
-    }
+    // ── Security:RequireAdminMfa — removed, deliberately ─────────────────────
+    //
+    // Two tests lived here: one pinned the default to false, the other pinned that setting it to
+    // true was honoured. Both described a key that no longer exists. It was removed rather than
+    // re-defaulted because its correct value was never a preference — it changed by itself once
+    // the deployment was configured, and it was dangerous in both directions. The behaviour it
+    // used to gate is now derived, and its tests live in Tests/Auth/AdminMfaBootstrapTests.cs.
 
     // ── Database:MigrateOnStartup ─────────────────────────────────────────────
 

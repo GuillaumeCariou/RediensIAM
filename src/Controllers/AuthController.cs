@@ -1307,10 +1307,26 @@ public class AuthController(
             return Ok(new { requires_mfa = true });
         }
 
-        // A tenant project can demand a second factor (Project.RequireMfa); the console could not,
-        // so a super_admin without a factor signed in on a password alone. Enrolment is the same
-        // flow the tenant path uses — the login SPA handles requires_mfa_setup generically.
-        if (appConfig.RequireAdminMfa)
+        // Whether enrolment is demanded is derived from the deployment's own state, not configured.
+        // `Security:RequireAdminMfa` used to decide it, and its correct value changed by itself:
+        // false is right while the only account is the bootstrap admin — gating that first login
+        // locks the operator out of the console they need in order to configure the SMTP or SMS
+        // that makes a factor deliverable — and wrong from the moment the deployment is set up.
+        //
+        // So: the first administrator signs in on a password, and the exception closes the instant
+        // anybody enrols. The population is this administrator's own system user list, which is
+        // the deployment's administrators (one immovable list with OrgId IS NULL). The query is
+        // bounded by that list rather than cached: a cached "nobody has a factor" would hold the
+        // exception open past the enrolment that was supposed to end it.
+        //
+        // This runs unscoped — see TenantScopeInterceptor.LegitimatelyUnscopedPaths, which already
+        // names AdminLogin because the system list is invisible under every tenant scope.
+        var anyAdminEnrolled = await db.Users
+            .Where(u => u.UserListId == user.UserListId && u.Id != user.Id)
+            .AnyAsync(u => u.TotpEnabled || u.PhoneVerified
+                           || db.WebAuthnCredentials.Any(w => w.UserId == u.Id));
+
+        if (anyAdminEnrolled)
         {
             HttpContext.Session.SetString(MfaSetupRequired, "true");
             SetMfaSession(user.Id.ToString(), body.LoginChallenge, null, null);

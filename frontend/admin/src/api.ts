@@ -91,6 +91,9 @@ export async function createProject(body: {
   org_id: string; name: string; slug: string;
   require_role_to_login?: boolean;
   redirect_uris: string[];
+  // Hydra refuses any post_logout_redirect_uri the client has not whitelisted, so a project
+  // created without one can be signed into and not out of.
+  post_logout_redirect_uris?: string[];
 }) {
   return (await apiFetch('/org/projects', { method: 'POST', body: JSON.stringify(body) })).json();
 }
@@ -373,7 +376,7 @@ export async function removeOrgAdmin(orgId: string, roleId: string) {
 export async function adminCreateUserList(body: { name: string; org_id: string }) {
   return (await apiFetch('/admin/userlists', { method: 'POST', body: JSON.stringify(body) })).json();
 }
-export async function adminCreateProject(orgId: string, body: { name: string; slug: string; redirect_uris?: string[]; require_role_to_login?: boolean }) {
+export async function adminCreateProject(orgId: string, body: { name: string; slug: string; redirect_uris?: string[]; post_logout_redirect_uris?: string[]; require_role_to_login?: boolean }) {
   return (await apiFetch(`/admin/organizations/${orgId}/projects`, { method: 'POST', body: JSON.stringify(body) })).json();
 }
 

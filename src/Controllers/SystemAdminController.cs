@@ -697,6 +697,7 @@ var actorId = GetActorId();
                 client_id    = $"client_{project.Id}",
                 client_name  = $"Project: {project.Name}",
                 redirect_uris = body.RedirectUris ?? [],
+                post_logout_redirect_uris = body.PostLogoutRedirectUris ?? [],
                 grant_types  = OAuth2GrantTypes,
                 response_types = OAuth2ResponseTypes,
                 scope        = "openid profile offline_access",
@@ -1164,6 +1165,7 @@ var clients = await hydra.ListOAuth2ClientsAsync();
             ["client_name"] = body.ClientName,
             ["grant_types"] = body.GrantTypes,
             ["redirect_uris"] = body.RedirectUris,
+            ["post_logout_redirect_uris"] = body.PostLogoutRedirectUris ?? [],
             ["scope"] = body.Scope ?? "openid profile offline_access",
             ["token_endpoint_auth_method"] = body.GrantTypes.Contains("client_credentials") ? "private_key_jwt" : "none",
         };
@@ -1414,7 +1416,8 @@ public record UpdateOrgRequest(string? Name, int? AuditRetentionDays);
 public record AdminCreateUserRequest(string Email, string? Password, string? Username, bool? EmailVerified);
 public record AssignOrgAdminRequest([property: System.Text.Json.Serialization.JsonRequired] Guid UserId, string Role, Guid? ScopeId);
 public record AdminCreateUserListRequest(string Name, [property: System.Text.Json.Serialization.JsonRequired] Guid OrgId);
-public record AdminCreateProjectRequest(string Name, string Slug, bool? RequireRoleToLogin, string[]? RedirectUris);
+public record AdminCreateProjectRequest(string Name, string Slug, bool? RequireRoleToLogin, string[]? RedirectUris,
+    string[]? PostLogoutRedirectUris = null);
 public record AdminUpdateProjectRequest(string? Name, bool? RequireRoleToLogin, bool? RequireMfa, bool? AllowSelfRegistration, bool? EmailVerificationEnabled,
     bool? SmsVerificationEnabled, bool? Active, Guid? DefaultRoleId, bool? ClearDefaultRole, string[]? AllowedEmailDomains, Dictionary<string, object>? LoginTheme,
     string[]? IpAllowlist, bool? CheckBreachedPasswords,
@@ -1423,7 +1426,7 @@ public record AdminUpdateProjectRequest(string? Name, bool? RequireRoleToLogin, 
 public record AdminAssignUserListRequest([property: System.Text.Json.Serialization.JsonRequired] Guid UserListId);
 public record AdminCreateRoleRequest(string Name, string? Description, int? Rank);
 public record CreateHydraClientRequest(string ClientName, string[] GrantTypes, string[] RedirectUris, string? Scope,
-    string? ClientId = null);
+    string? ClientId = null, string[]? PostLogoutRedirectUris = null);
 public record AdminUpsertSmtpRequest(string Host, [property: System.Text.Json.Serialization.JsonRequired] int Port, [property: System.Text.Json.Serialization.JsonRequired] bool StartTls, string? Username, string? Password, string FromAddress, string FromName);
 public record AdminCreateSamlProviderRequest(string EntityId, string? MetadataUrl, string? SsoUrl, string? CertificatePem, string? EmailAttributeName, string? DisplayNameAttributeName, bool? JitProvisioning, Guid? DefaultRoleId);
 public record AdminUpdateSamlProviderRequest(string? EntityId, string? MetadataUrl, string? SsoUrl, string? CertificatePem, string? EmailAttributeName, string? DisplayNameAttributeName, bool? JitProvisioning, Guid? DefaultRoleId, bool? Active);

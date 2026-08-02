@@ -117,6 +117,7 @@ public class OrgController(
                 client_id = $"client_{project.Id}",
                 client_name = $"Project: {project.Name}",
                 redirect_uris = body.RedirectUris ?? [],
+                post_logout_redirect_uris = body.PostLogoutRedirectUris ?? [],
                 grant_types = _hydraGrantTypes,
                 response_types = _hydraResponseTypes,
                 scope = "openid profile offline_access",
@@ -993,7 +994,11 @@ public class OrgController(
     private static string CsvEscape(string? value) => CsvWriter.Escape(value);
 }
 
-public record CreateProjectRequest(string Name, string Slug, bool? RequireRoleToLogin, string[]? RedirectUris);
+    // post_logout_redirect_uris is not optional decoration: Hydra rejects any logout whose
+    // target the client has not whitelisted, and the browser SDK this repo ships always sends
+    // one. A project registered without it can be signed into and not out of.
+public record CreateProjectRequest(string Name, string Slug, bool? RequireRoleToLogin, string[]? RedirectUris,
+    string[]? PostLogoutRedirectUris = null);
 public record UpdateProjectRequest(
     string? Name,
     bool? RequireRoleToLogin,

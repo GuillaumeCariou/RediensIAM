@@ -51,6 +51,11 @@ async function getClient(): Promise<RediensIam> {
     issuer: cfg.hydra_url,
     clientId: cfg.client_id,
     redirectUri: cfg.redirect_uri,
+    // The SDK would otherwise default this to location.origin, which is the API host rather than
+    // the console — and Hydra refuses any value the client has not whitelisted, so a sign-out ended
+    // on its error page with the session still open. This string must stay equal to the one
+    // HydraService.EnsureAdminSpaClientAsync registers.
+    postLogoutRedirectUri: `${globalThis.location.origin}/admin/`,
     scope: 'openid offline',
   });
   return client;
