@@ -61,15 +61,19 @@ const DEFAULT_THEME: Theme = {
 
 function nanoid() { return crypto.randomUUID().replaceAll('-', '').slice(0, 8); }
 
-function Toggle({ checked, onChange }: Readonly<{ checked: boolean; onChange: (v: boolean) => void }>) {
+function Toggle({ checked, onChange, label }: Readonly<{ checked: boolean; onChange: (v: boolean) => void; label?: string }>) {
+  // A styled checkbox rather than a bare <button>: it carries the role, the checked state and the
+  // accessible name for free. The button version announced itself as "button", fifteen times on
+  // this page, with no name and no state — "Require MFA" was indistinguishable from "Reject
+  // breached passwords".
   return (
-    <button type="button" onClick={() => onChange(!checked)} style={{
-      width: 36, height: 20, borderRadius: 10,
-      background: checked ? 'var(--ia-accent)' : 'var(--border-strong)',
-      position: 'relative', border: 'none', cursor: 'pointer', flexShrink: 0, transition: 'background 150ms',
-    }}>
-      <span style={{ position: 'absolute', top: 2, left: checked ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 150ms' }} />
-    </button>
+    <input
+      type="checkbox"
+      className="iam-switch"
+      checked={checked}
+      aria-label={label}
+      onChange={e => onChange(e.target.checked)}
+    />
   );
 }
 
@@ -226,6 +230,7 @@ export default function Authentication() {
   const [theme, setTheme] = useState<Theme>(DEFAULT_THEME);
   const [customFont, setCustomFont] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [previewDark, setPreviewDark] = useState(false);
@@ -296,7 +301,7 @@ export default function Authentication() {
       }),
       listRoles(projectId).then(r => setRoles((r.roles ?? r ?? []).sort((a: Role, b: Role) => a.rank - b.rank))),
       listSamlProviders(projectId).then(r => setSamlProviders(r.providers ?? r ?? [])).catch(() => {}),
-    ]).catch(console.error).finally(() => setLoading(false));
+    ]).catch(err => { console.error(err); setLoadError(true); }).finally(() => setLoading(false));
   }, [projectId]);
 
   const set = <K extends keyof Theme>(k: K, v: Theme[K]) => setTheme(t => ({ ...t, [k]: v }));
@@ -440,6 +445,21 @@ export default function Authentication() {
     await deleteSamlProvider(projectId, idpId);
     setSamlProviders(prev => prev.filter(p => p.id !== idpId));
   };
+
+  // A load that failed leaves every field at its useState default. Rendering the form anyway means
+  // the next Save PATCHes those defaults over the tenant's real configuration — MFA off, allowlist
+  // empty — and reports success. Refusing to render is the whole fix.
+  if (loadError) return (
+    <div>
+      <PageHeader title="Authentication" />
+      <div className="iam-page">
+        <div className="iam-empty">
+          <p>This configuration could not be loaded, so it is not safe to edit.</p>
+          <button type="button" className="iam-btn" onClick={() => window.location.reload()}>Retry</button>
+        </div>
+      </div>
+    </div>
+  );
 
   if (loading) return (
     <div>
@@ -890,7 +910,7 @@ export default function Authentication() {
               </button>
             </div>
             <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-              <iframe key={previewUrl} src={previewUrl} sandbox="allow-same-origin" style={{ width: '100%', height: 620, border: 'none', pointerEvents: 'none', display: 'block' }} title="Login page preview" />
+              <iframe key={previewUrl} src={previewUrl} sandbox="allow-scripts allow-same-origin" style={{ width: '100%', height: 620, border: 'none', pointerEvents: 'none', display: 'block' }} title="Login page preview" />
             </div>
           </div>
         </div>

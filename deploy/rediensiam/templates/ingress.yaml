@@ -1,3 +1,4 @@
+{{- include "rediensiam.checkIssuer" . -}}
 {{- if .Values.rediensiam.ingress.public.enabled }}
 {{- $tls  := .Values.rediensiam.ingress.public.tls }}
 {{- $rl   := .Values.rediensiam.ingress.public.rateLimit }}

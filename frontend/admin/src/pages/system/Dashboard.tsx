@@ -14,6 +14,8 @@ interface Metrics {
   recent_logins: number;
   audit_events_today: number;
   uptime_since?: string;
+  /** Hourly sign-in outcomes for the last 24h; see /admin/metrics. */
+  logins_by_hour?: { hour: string; succeeded: number; failed: number }[];
 }
 
 export default function SystemDashboard() {
@@ -57,7 +59,7 @@ export default function SystemDashboard() {
                 {loading ? '—' : metrics?.recent_logins ?? 0} logins
               </span>
             </div>
-            <ActivityChart height={120} />
+            <ActivityChart height={120} data={metrics?.logins_by_hour} />
           </div>
 
           <div className="iam-card iam-card-pad" style={{ minWidth: 200 }}>

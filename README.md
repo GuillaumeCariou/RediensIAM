@@ -193,7 +193,7 @@ Everything is under the top-level `rediensiam:` key unless noted.
 | `postgres.local.roles.{app,hydra,keto,backup}Password` | `""` | the four least-privilege roles. `deploy.sh` generates all four. **Created only on a first-ever start** — an existing installation needs the migration in `SECURITY-AUDIT-LOG.md` step 15c |
 | `postgres.local.tls.enabled` | `false` | **on in both shipped environments.** Needs cert-manager |
 | `postgres.local.tls.requireSsl` | `false` | **on in both shipped environments.** Rewrites `pg_hba.conf` to `hostssl`, so the *server* refuses cleartext. Takes effect only at initdb |
-| `postgres.rls.enabled` | `false` | Row-level security. **Off everywhere.** Fail-closed policies — enabling it before verifying the application half on a live connection is a total outage. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#turning-rls-on) |
+| `postgres.rls.enabled` | `false` | Row-level security. **On in both dev and prod** — the chart default is off so an existing install is never switched by an upgrade alone. Fail-closed policies: enabling it before verifying the application half on a live connection is a total outage. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#turning-rls-on) |
 | `postgres.external.podSelector` | `cnpg.io/cluster: rediensiam-db` | which pods the NetworkPolicies should target in CNPG mode |
 | `backup.enabled` / `.schedule` / `.retainCopies` | `true` · `0 3 * * *` · `14` | nightly `pg_dumpall` to a PVC **on the same node as the data**. Copy it off-node yourself |
 
@@ -203,7 +203,7 @@ Everything is under the top-level `rediensiam:` key unless noted.
 |---|---|---|
 | `dragonfly.local.enabled` | `true` | |
 | `dragonfly.local.password` | `""` | required when TLS is on |
-| `dragonfly.local.tls.enabled` | `false` | on in dev, **off in prod**. A hard cutover — `--tls` makes Dragonfly stop answering cleartext, so `cacheUrl` must gain `ssl=true` in the same `helm upgrade` |
+| `dragonfly.local.tls.enabled` | `false` | **on in both dev and prod**; the chart default stays off for the same reason as RLS. A hard cutover — `--tls` makes Dragonfly stop answering cleartext, so `cacheUrl` must gain `ssl=true` in the same `helm upgrade` |
 
 #### Hydra and Keto
 
@@ -227,7 +227,7 @@ themselves are configured at the **top level**, outside `rediensiam:`:
 dotnet test tests/RediensIAM.IntegrationTests -p:SonarQubeTargetsImported=true
 ```
 
-**1345 tests** against real Postgres and Dragonfly containers (Testcontainers) with WireMock Hydra
+**1460 tests** against real Postgres and Dragonfly containers (Testcontainers) with WireMock Hydra
 and Keto stubs. The `-p:SonarQubeTargetsImported=true` flag suppresses a user-global MSBuild hook
 that a stale `.sonarqube/` directory at the repository root arms — pass it whenever you run `dotnet`
 from the repository root.

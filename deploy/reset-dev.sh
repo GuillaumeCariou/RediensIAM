@@ -167,7 +167,7 @@ if [ -n "${PVCS}" ]; then
   # bind a half-deleted volume.
   for i in $(seq 1 30); do
     LEFT=$(kubectl get pvc -n "${NS}" --no-headers -o custom-columns=':metadata.name' 2>/dev/null \
-             | awk -v r="${RELEASE}" '$1 ~ "^(data-)?" r' | wc -l)
+             | awk -v r="${RELEASE}" '$1 == r "-backup" || $1 ~ "^data-" r "-"' | wc -l)
     [ "${LEFT}" -eq 0 ] && break
     sleep 2
   done

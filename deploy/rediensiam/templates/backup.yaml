@@ -36,6 +36,14 @@ metadata:
   namespace: {{ .Release.Namespace }}
 spec:
   schedule: {{ .Values.rediensiam.backup.schedule | quote }}
+  {{- with .Values.rediensiam.backup.timeZone }}
+  # Without this the cron expression is UTC, so "0 3 * * *" is 03:00 UTC and not the operator's
+  # 03:00 — which is the one thing a backup window is chosen for.
+  timeZone: {{ . | quote }}
+  {{- end }}
+  # A CronJob that misses more than 100 schedules stops permanently, and says so only in an event
+  # that ages out within the hour. One hour of slack is enough to survive a node restart.
+  startingDeadlineSeconds: 3600
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3

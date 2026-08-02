@@ -140,3 +140,20 @@ Uses rediensiam.ingress.admin.host if set; otherwise parses host from rediensiam
 {{ index (urlParse .Values.rediensiam.adminUrl) "host" }}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Refuses to render an Ingress that names a ClusterIssuer nothing will create.
+
+values.prod.yaml asks for `letsencrypt` while certManager.acme.enabled is false, so the annotation
+pointed at an issuer the chart does not render and the operator may not have: the certificate never
+issues and Traefik serves its own self-signed one on the auth surface, which looks like a TLS
+misconfiguration rather than a missing prerequisite.
+*/}}
+{{- define "rediensiam.checkIssuer" -}}
+{{- $tls := .Values.rediensiam.ingress.public.tls -}}
+{{- if and $tls.enabled $tls.clusterIssuer (not .Values.rediensiam.certManager.acme.enabled) (not .Values.rediensiam.certManager.assumeExternalIssuer) -}}
+{{- if ne $tls.clusterIssuer "selfsigned" -}}
+{{- fail (printf "ingress.public.tls.clusterIssuer is %q but certManager.acme.enabled is false — this chart will not create that ClusterIssuer. Either enable ACME (and set an email), or confirm the issuer exists and set rediensiam.certManager.assumeExternalIssuer=true." $tls.clusterIssuer) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

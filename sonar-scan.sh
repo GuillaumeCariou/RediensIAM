@@ -67,11 +67,11 @@ rm -rf .sonarqube src/bin src/obj
 # Recreate Debug stub so MSBuild glob expansion (bin/Debug) doesn't fail before Release build
 mkdir -p src/bin/Debug/net10.0
 
-dotnet sonarscanner begin \
+SONAR_TOKEN="${SONAR_TOKEN}" dotnet sonarscanner begin \
   /k:"RediensIAM" \
   /n:"RediensIAM" \
   /d:sonar.host.url="$SONAR_HOST" \
-  /d:sonar.token="$SONAR_TOKEN" \
+  \
   /d:sonar.projectBaseDir="$ROOT" \
   /d:sonar.exclusions="**/obj/**,**/bin/**,**/Migrations/**,**/node_modules/**,**/dist/**,**/coverage/**,**/playwright-report/**,**/test-results/**,**/.sonarqube/**,**/*.min.js,**/package-lock.json" \
   /d:sonar.cs.opencover.reportsPaths="tests/**/TestResults/**/coverage.opencover.xml" \
@@ -84,7 +84,7 @@ dotnet test tests/RediensIAM.IntegrationTests/RediensIAM.IntegrationTests.csproj
   --results-directory ./tests/RediensIAM.IntegrationTests/TestResults \
   -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover || true
 
-dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
+SONAR_TOKEN="${SONAR_TOKEN}" dotnet sonarscanner end
 
 echo ""
 echo "Done. Results: $SONAR_HOST/dashboard?id=RediensIAM"

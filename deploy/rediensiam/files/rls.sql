@@ -196,7 +196,7 @@ BEGIN
   -- not cover and that nothing reports on.
   FOR stray IN
     SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname = 'public' AND c.relkind = 'r'
+    WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')  -- 'p' too: a partitioned table is exactly the case this gate exists to catch
       AND NOT (c.relname = ANY (scoped))
       AND NOT (c.relname = ANY (global_tables))
   LOOP
@@ -218,7 +218,7 @@ SELECT c.relname                AS table_name,
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 LEFT JOIN pg_policy p ON p.polrelid = c.oid
-WHERE n.nspname = 'public' AND c.relkind = 'r'
+WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')  -- 'p' too: a partitioned table is exactly the case this gate exists to catch
   AND c.relname NOT IN ('Instances', '__EFMigrationsHistory')
 GROUP BY 1, 2, 3
 ORDER BY rls_enabled, rls_forced, 1;

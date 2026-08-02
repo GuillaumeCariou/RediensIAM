@@ -8,10 +8,62 @@ all three SDKs and both SPAs share one number.
 
 ---
 
-## [0.2.3] — unreleased
+## [0.2.4] — 2026-08-02
 
 No wire-contract change. **Contains a fix for a full second-factor bypass — upgrade before anything
 else in this series.**
+
+0.2.3 was built and deployed to dev but never tagged; everything it carried ships here.
+
+### Fixed — the console showed things that were not true
+
+- **The login-activity chart drew a sine wave.** `logins_by_hour` was declared in the console's
+  `Metrics` interface and never sent, so `ActivityChart` generated its own bars from `Math.sin()`
+  and rendered them, identical on every deployment and every reload, beside real counts.
+  `GET /admin/metrics` now returns 24 hour-aligned buckets counted from the audit log, and the
+  component renders "No sign-ins recorded in this window" when there are none.
+- **A failed load looked like a real configuration.** `Authentication` and `ProjectSettings`
+  swallowed the initial GET's error and rendered their `useState` defaults; Save then wrote every
+  field back, so one transient 500 plus one Save replaced a tenant's theme, providers, verification
+  flags, allowed domains, IP allowlist and scopes with defaults — and reported success. Both now
+  refuse to render the form after a failed load.
+- **An emptied "inactive for … days" field meant every user.** Clearing a `type="number"` input
+  yields `''`, and `Number('')` is `0`, so the cleanup dialog offered to act on the whole list.
+
+### Fixed — accessibility
+
+- **Nine table rows were reachable by mouse only.** Organisations, projects, user lists, users,
+  service accounts and user-list members navigate on a whole-row `onClick` with no tabindex and no
+  key handler; a keyboard user tabbed past every one. A shared `rowActivation` helper gives them
+  focus and Enter/Space.
+- **Fifteen toggles announced themselves as unlabelled buttons.** The Authentication page built
+  each switch from a bare `<button>` with no role, no state and no accessible name — "Require MFA"
+  was indistinguishable from "Reject breached passwords". Now a labelled checkbox.
+- **The login preview iframe could not run scripts**, so the preview it existed to show never
+  rendered.
+
+### Fixed — stale effects
+
+- `ProjectUsers` read `isOrgAdmin`/`orgId` from context but depended only on `projectId`, so an org
+  admin opening the page directly got an empty user-list dropdown until a manual refresh.
+  `OrgAuditLog` had the same shape against the scope switcher.
+
+### Deployment
+
+- **The production PodDisruptionBudget protected nothing.** `maxUnavailable: 1` against
+  `replicaCount: 1` lets a node drain take the last pod. Prod now runs two replicas.
+- **`preflight.sh` validated the committed defaults, not the deploy.** Three checks — ingress
+  class, trusted proxies, default-deny scope — grepped `values.yaml` directly and ignored
+  `values.<env>.override.yaml`. They now read the rendered chart.
+- `deploy/tests.sh`: 36 static checks over the deploy layer, which had no test harness at all.
+
+### Documentation
+
+- `docs/TESTING.md` claimed 1345 backend tests and said twice that neither SPA has any, while 169
+  frontend tests run in seconds. `docs/API.md` undercounted the routes it lists (184 → 187).
+  `frontend/admin/README.md` described Radix, shadcn, `oidc-client-ts` and `recharts`, none of
+  which the SPA still uses. The root README had RLS and cache TLS as off in both environments; both
+  are on in dev and prod.
 
 ### Security
 
@@ -103,7 +155,7 @@ else in this series.**
 
 ---
 
-## [0.2.2] — unreleased
+## [0.2.2] — 2026-08-01
 
 No wire-contract change. **But one behaviour change for existing SAML integrations, and an upgrade
 of an existing deployment now needs manual steps for the first time in this series — read "Before
@@ -265,7 +317,7 @@ tenant from the login challenge before any user lookup.)*
 
 ---
 
-## [0.2.0] — unreleased
+## [0.2.0] — 2026-07-31
 
 The security-hardening release. It is a **breaking** release for anyone who integrates against
 `/api/introspect`, `/api/authorize` or the `ext.roles` claim, and it changes how the deployment

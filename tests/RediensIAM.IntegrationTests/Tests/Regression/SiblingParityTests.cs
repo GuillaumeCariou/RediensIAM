@@ -101,4 +101,32 @@ public class SiblingParityTests(TestFixture fixture)
         (await fixture.Db.AuditLogs.CountAsync()).Should().BeGreaterThan(before,
             "granting deployment-wide administration is the last thing that should be silent");
     }
+
+    /// <summary>
+    /// A display name can be removed again.
+    ///
+    /// <para>
+    /// The console sent <c>display_name: undefined</c> when the field was cleared, which
+    /// System.Text.Json omits, and the handler only assigns when the property is non-null — so the
+    /// old value survived and the save reported success. Sending an empty string is the console's
+    /// half; accepting it is this one.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task AccountDisplayName_CanBeClearedAgain()
+    {
+        var (org, list) = await fixture.Seed.CreateOrgAsync();
+        var user = await fixture.Seed.CreateUserAsync(list.Id);
+        user.DisplayName = "Original Name";
+        await fixture.Db.SaveChangesAsync();
+        fixture.Keto.AllowAll();
+
+        var client = fixture.ClientWithToken(fixture.Seed.OrgAdminToken(user.Id, org.Id));
+        var res = await client.PatchAsJsonAsync("/account/me", new { display_name = "" });
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        await fixture.RefreshDbAsync();
+        var after = await fixture.Db.Users.FindAsync(user.Id);
+        after!.DisplayName.Should().BeNullOrEmpty("an empty display name is a value, not an absent field");
+    }
 }

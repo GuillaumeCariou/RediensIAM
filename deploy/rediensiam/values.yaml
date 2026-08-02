@@ -21,7 +21,10 @@ rediensiam:
       ephemeral-storage: 1Gi
     limits:
       cpu: 500m
-      memory: 512Mi
+      # Argon2id is configured at 64 MiB with parallelism 4 (see AppConfig), so a handful of
+      # concurrent logins allocates hundreds of MiB in hashing arenas alone. At 512Mi the pod was
+      # OOM-killable by unauthenticated traffic hitting /auth/login.
+      memory: 1Gi
       ephemeral-storage: 2Gi
 
   # ── App config ────────────────────────────────────────────────────────────────
@@ -121,6 +124,9 @@ rediensiam:
   # acme.email, and make sure port 80 reaches Traefik for the HTTP-01 challenge.
   # cert-manager itself is NOT installed by this chart.
   certManager:
+    # Set when the named ClusterIssuer is one you already run — it turns off the render-time guard
+    # that otherwise refuses to annotate an Ingress with an issuer nothing will create.
+    assumeExternalIssuer: false
     acme:
       enabled: false
       email: ""
@@ -195,6 +201,8 @@ rediensiam:
   # backups with different recovery points and no statement about which one is
   # authoritative. See postgres.external below.
   backup:
+    # IANA name, e.g. "Europe/Paris". Empty keeps the Kubernetes default, which is UTC.
+    timeZone: ""
     enabled: true
     schedule: "0 3 * * *"
     storage: 5Gi

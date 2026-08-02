@@ -120,7 +120,7 @@ export default function UserListDetail() {
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={cleanupInactive} onChange={e => setCleanupInactive(e.target.checked)} />
               {' '}Remove users inactive for more than{' '}
-              <input type="number" min={1} max={3650} value={cleanupDays} onChange={e => setCleanupDays(Number(e.target.value))} className="w-16 border rounded px-2 py-0.5 text-sm" />
+              <input type="number" min={1} max={3650} value={cleanupDays} onChange={e => setCleanupDays(Math.max(1, Number(e.target.value) || 90))} className="w-16 border rounded px-2 py-0.5 text-sm" />
               {' days'}
             </label>
             <label className="flex items-center gap-2 text-sm">

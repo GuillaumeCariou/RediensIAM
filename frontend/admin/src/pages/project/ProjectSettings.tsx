@@ -21,6 +21,7 @@ export default function ProjectSettings() {
   const navigate = useNavigate();
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -37,7 +38,7 @@ export default function ProjectSettings() {
       setName(p.name);
       setActive(p.active);
       setRequireRole(p.require_role_to_login);
-    }).catch(console.error).finally(() => setLoading(false));
+    }).catch(err => { console.error(err); setLoadError(true); }).finally(() => setLoading(false));
   }, [projectId]);
 
   const handleSave = async () => {
@@ -56,6 +57,21 @@ export default function ProjectSettings() {
       navigate('/org/projects');
     } finally { setDeleting(false); }
   };
+
+  // A load that failed leaves every field at its useState default. Rendering the form anyway means
+  // the next Save PATCHes those defaults over the tenant's real configuration — MFA off, allowlist
+  // empty — and reports success. Refusing to render is the whole fix.
+  if (loadError) return (
+    <div>
+      <PageHeader title="Settings" />
+      <div className="iam-page">
+        <div className="iam-empty">
+          <p>This configuration could not be loaded, so it is not safe to edit.</p>
+          <button type="button" className="iam-btn" onClick={() => window.location.reload()}>Retry</button>
+        </div>
+      </div>
+    </div>
+  );
 
   if (loading) return (
     <div>

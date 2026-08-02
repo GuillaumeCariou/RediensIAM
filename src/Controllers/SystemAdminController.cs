@@ -1098,11 +1098,44 @@ var role = await db.Roles
     [HttpGet("metrics")]
     public async Task<IActionResult> GetMetrics()
     {
-return Ok(new
+        // logins_by_hour has been declared in the console's Metrics interface all along, and nothing
+        // ever sent it: the chart under "Login activity · last 24h" drew a sine wave, identical on
+        // every deployment and every reload, beside a real count. The audit log already records
+        // every outcome, so the panel can simply be told the truth.
+        // Aligned to the hour, or the label lies a second time: a bucket starting at 13:35 that
+        // prints "13:00" puts a 13:10 login in yesterday's bar.
+        var now       = DateTimeOffset.UtcNow;
+        var thisHour  = new DateTimeOffset(now.Year, now.Month, now.Day, now.Hour, 0, 0, TimeSpan.Zero);
+        var since     = thisHour.AddHours(-23);
+        var loginEvents = await db.AuditLogs
+            .Where(l => l.CreatedAt >= since
+                        && (l.Action == "user.login.success" || l.Action == "user.login.failure"))
+            .Select(l => new { l.CreatedAt, Success = l.Action == "user.login.success" })
+            .ToListAsync();
+
+        // Buckets run [start, start+1h) and carry the label of their own start. Labelling a bucket
+        // with the hour it ends in put every event one bar to the right of when it happened.
+        var loginsByHour = Enumerable.Range(0, 24)
+            .Select(offset =>
+            {
+                var start = since.AddHours(offset);
+                var end   = start.AddHours(1);
+                var bucket = loginEvents.Where(e => e.CreatedAt >= start && e.CreatedAt < end);
+                return new
+                {
+                    hour      = start.ToString("yyyy-MM-ddTHH:00:00Z"),
+                    succeeded = bucket.Count(e => e.Success),
+                    failed    = bucket.Count(e => !e.Success),
+                };
+            })
+            .ToList();
+
+        return Ok(new
         {
             org_count    = await db.Organisations.CountAsync(),
             active_users = await db.Users.CountAsync(u => u.Active),
-            project_count = await db.Projects.CountAsync()
+            project_count = await db.Projects.CountAsync(),
+            logins_by_hour = loginsByHour,
         });
     }
 

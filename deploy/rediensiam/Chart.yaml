@@ -2,8 +2,8 @@ apiVersion: v2
 name: rediensiam
 description: RediensIAM — Multi-tenant IAM on Ory stack
 type: application
-version: 0.2.3
-appVersion: "0.2.3"
+version: 0.2.4
+appVersion: "0.2.4"
 dependencies:
   - name: hydra
     version: "0.60.1"

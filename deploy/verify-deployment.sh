@@ -221,8 +221,14 @@ if [ "${ENVIRONMENT}" = prod ]; then
   [ "${ADMIN_TYPE}" = "ClusterIP" ] && pass V-16 "admin service is ClusterIP" \
                                     || fail V-16 "admin service is ${ADMIN_TYPE} in prod — bound on every node interface"
 else
-  [ "${ADMIN_TYPE}" = "NodePort" ] && pass V-16 "admin service is NodePort (dev, expected)" \
-                                   || pass V-16 "admin service is ${ADMIN_TYPE}"
+  # Both arms used to pass, including when ADMIN_TYPE was empty because the Service did not
+  # exist — a green check asserting nothing, which is the failure this script's own header warns
+  # about.
+  if [ "${ADMIN_TYPE}" = "NodePort" ] || [ "${ADMIN_TYPE}" = "ClusterIP" ]; then
+    pass V-16 "admin service is ${ADMIN_TYPE}"
+  else
+    fail V-16 "admin service ${RELEASE}-admin is missing or has an unexpected type: '${ADMIN_TYPE}'"
+  fi
 fi
 
 # ── V-17 · R-26 / step 6 — the deployed CSP is the hardened one ─────────────
@@ -248,7 +254,11 @@ else
 fi
 
 # ── V-19 · drift — is the running image the one the chart would deploy? ─────
-CHART_DIGEST=$(grep -A6 '^\s*image:' "${CHART}/values.yaml" | grep '^\s*digest:' | head -1 | sed 's/.*digest:[[:space:]]*//' | tr -d '"' | cut -d'#' -f1 | tr -d ' ')
+# Read from the release, not from values.yaml. The chart ships digest: "" and deploy.sh supplies
+# the real one with --set, so grepping the file always produced an empty string and the one drift
+# check this script has silently SKIPped on every run it has ever made.
+CHART_DIGEST=$(helm get values "${RELEASE}" -n "${NS}" -a -o json 2>/dev/null \
+  | grep -oE '"digest":[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4)
 if [ -n "${CHART_DIGEST}" ] && [ -n "${POD:-}" ]; then
   RUNNING_DIGEST=$(kubectl get pod -n "${NS}" "${POD}" -o jsonpath='{.status.containerStatuses[0].imageID}' 2>/dev/null | sed 's/.*@//')
   [ "${RUNNING_DIGEST}" = "${CHART_DIGEST}" ] \

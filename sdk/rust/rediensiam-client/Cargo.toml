@@ -1,6 +1,6 @@
 [package]
 name = "rediensiam-client"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 description = "Resource-server client for RediensIAM: live token introspection (RFC 7662) and permission checks."
 license = "MIT"

@@ -102,6 +102,13 @@ spec:
                   key: cache-url
             # Off by default (see values.yaml): a first launch must not gate the bootstrap admin's
             # own login on a factor it has no way to deliver yet.
+            # The chart drives containerPort, the Services and all three probes from these, but
+            # never told the app about them: changing either produced a Deployment whose probes and
+            # Services pointed at ports nothing was listening on, with no template error.
+            - name: IAM_PUBLIC_PORT
+              value: {{ .Values.rediensiam.service.public.port | quote }}
+            - name: IAM_ADMIN_PORT
+              value: {{ .Values.rediensiam.service.admin.port | quote }}
             - name: Security__RequireAdminMfa
               value: {{ .Values.rediensiam.security.requireAdminMfa | default false | quote }}
             - name: Security__TotpSecretEncryptionKey
@@ -153,11 +160,19 @@ spec:
               httpHeaders:
                 - name: Host
                   value: {{ index (urlParse .Values.rediensiam.publicUrl) "host" | quote }}
-            failureThreshold: 30
+            # 60 x 5s = 300s. Startup runs three serial retry loops — migrations, the bootstrap
+            # admin, then the Hydra admin client — each up to 12 attempts at 5s, so the worst case
+            # is 180s before the app ever listens. A 150s budget killed the container mid-startup
+            # and CrashLoopBackOff'd on a self-repeating cycle, most likely on a first install where
+            # Postgres and Hydra are coming up in parallel.
+            failureThreshold: 60
             periodSeconds: 5
           readinessProbe:
             httpGet:
-              path: /health
+              # /health/ready also checks the database and the cache. /health stays process-only,
+              # because a liveness probe that fails on a database blip restarts every replica at
+              # once and turns an outage into a crash loop.
+              path: /health/ready
               port: {{ .Values.rediensiam.service.public.port }}
               httpHeaders:
                 - name: Host

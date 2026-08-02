@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router';
 import { useProjectContext } from '@/hooks/useOrgContext';
 import { useAuth } from '@/context/AuthContext';
@@ -36,7 +36,7 @@ export default function ProjectUsers() {
   const movableLists = userLists.filter(ul => !ul.immovable);
 
   /** The fetch alone. Sets no state synchronously, so an effect may call it directly. */
-  const fetchAll = () => {
+  const fetchAll = useCallback(() => {
     if (!projectId) return;
     const fetches: Promise<unknown>[] = [
       getProjectInfo(projectId).then(p => setProject(p)).catch(() => null),
@@ -45,12 +45,15 @@ export default function ProjectUsers() {
       fetches.push(listUserLists(orgId).then(r => setUserLists(r.user_lists ?? r ?? [])).catch(() => null));
     }
     Promise.all(fetches).catch(console.error).finally(() => setLoading(false));
-  };
+    // isOrgAdmin and orgId come from context and are not both known on the first render. With
+    // [projectId] alone the effect never re-ran once they arrived, so an org admin opening the
+    // page directly got an empty "assign a user list" dropdown until a manual refresh.
+  }, [projectId, isOrgAdmin, orgId]);
 
   /** What a user-triggered refresh calls: the spinner comes back, then the fetch. */
   const load = () => { setLoading(true); fetchAll(); };
 
-  useEffect(fetchAll, [projectId]);
+  useEffect(fetchAll, [fetchAll]);
 
   const handleAssignList = async (ulId: string) => {
     if (!projectId) return;

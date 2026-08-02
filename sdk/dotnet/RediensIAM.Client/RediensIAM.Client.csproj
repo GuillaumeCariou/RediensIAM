@@ -8,7 +8,7 @@
     <NoWarn>$(NoWarn);1591</NoWarn>
 
     <PackageId>RediensIAM.Client</PackageId>
-    <Version>0.2.3</Version>
+    <Version>0.2.4</Version>
     <Description>Resource-server client for RediensIAM: live token introspection (RFC 7662) and permission checks, plus an ASP.NET Core authentication handler.</Description>
     <PackageTags>iam;oauth2;oidc;authentication;authorization</PackageTags>
   </PropertyGroup>

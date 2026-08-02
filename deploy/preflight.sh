@@ -48,6 +48,20 @@ else
   SECRETS_FILE="${CHART}/values.secret.yaml"
 fi
 
+# The three checks below used to grep values.yaml. An operator with a
+# values.<env>.override.yaml changing the ingress class or the trusted proxies had those
+# overrides checked against the committed defaults — the check passed for a value the deploy
+# would not use. Render the chart through the same file chain instead and read the manifests
+# that will actually be applied. No secrets are needed: nothing read here comes from them.
+RENDERED="$(mktemp)"
+trap 'rm -f "${RENDERED}"' EXIT
+RENDER_ARGS=(-f "${CHART}/values.yaml" -f "${ENV_FILE}")
+[ -f "${SECRETS_FILE}" ]  && RENDER_ARGS+=(-f "${SECRETS_FILE}")
+[ -f "${OVERRIDE_FILE}" ] && RENDER_ARGS+=(-f "${OVERRIDE_FILE}")
+if ! helm template "${RELEASE}" "${CHART}" --namespace "${NS}" "${RENDER_ARGS[@]}" >"${RENDERED}" 2>/dev/null; then
+  : >"${RENDERED}"   # unrenderable chart is its own check further down; do not abort here
+fi
+
 PASS=0; FAIL=0; WARN=0
 FAILED_LIST=""
 
@@ -138,7 +152,7 @@ else
   fi
 
   # Ingress controller. The chart hardcodes ingressClassName from values.
-  ING_CLASS=$(grep -E '^\s+className:' "${CHART}/values.yaml" | head -1 | sed 's/.*className:[[:space:]]*//' | tr -d '"' | tr -d ' ')
+  ING_CLASS=$(grep -E '^\s+ingressClassName:' "${RENDERED}" | head -1 | sed 's/.*ingressClassName:[[:space:]]*//' | tr -d '"' | tr -d ' ')
   if kubectl get ingressclass "${ING_CLASS}" >/dev/null 2>&1; then
     ok "IngressClass ${ING_CLASS} exists"
   else
@@ -159,7 +173,7 @@ else
   # App__TrustedProxies must contain the pod network or Program.cs refuses to
   # start (empty) / the app trusts the wrong hop (wrong CIDR). The default is
   # the k3s pod+service CIDR; any other cluster needs it changed.
-  TP=$(grep -E '^\s+trustedProxies:' "${CHART}/values.yaml" | head -1 | sed 's/.*trustedProxies:[[:space:]]*//' | tr -d '"' | cut -d'#' -f1 | tr -d ' ')
+  TP=$(grep -A1 -E 'name: App__TrustedProxies' "${RENDERED}" | grep -E '^\s+value:' | head -1 | sed 's/.*value:[[:space:]]*//' | tr -d '"' | tr -d ' ')
   POD_CIDRS=$(kubectl get nodes -o jsonpath='{range .items[*]}{.spec.podCIDR}{"\n"}{end}' 2>/dev/null | grep -v '^$')
   if [ -z "${TP}" ]; then
     bad "rediensiam.app.trustedProxies is empty" "Program.cs refuses to start rather than silently trusting RFC1918"
@@ -181,7 +195,8 @@ else
 
   # defaultDenyScope: namespace cuts off every pod in the namespace that has no
   # policy of its own — including neighbours this release did not install.
-  SCOPE=$(grep -E '^\s+defaultDenyScope:' "${CHART}/values.yaml" | head -1 | sed 's/.*defaultDenyScope:[[:space:]]*//' | tr -d '"' | cut -d'#' -f1 | tr -d ' ')
+  SCOPE=release
+grep -A3 -E 'name: .*-default-deny-ingress' "${RENDERED}" | grep -qE '^\s+\{\}\s*$' && SCOPE=namespace
   if [ "${SCOPE}" = "namespace" ]; then
     FOREIGN=$(kubectl get pods -n "${NS}" --no-headers -o custom-columns=':metadata.name' 2>/dev/null \
                 | grep -v "^${RELEASE}" | tr '\n' ' ' | sed 's/ *$//')

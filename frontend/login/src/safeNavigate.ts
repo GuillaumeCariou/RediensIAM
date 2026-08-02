@@ -43,13 +43,12 @@ export function isSafeRedirect(target: string | null | undefined): boolean {
  * Navigates only if {@link isSafeRedirect} accepts the target; returns false without navigating
  * otherwise, so the caller can tell the user sign-in could not be completed.
  *
- * The `no-console` suppression below is deliberate: a refused redirect is the one signal that an
+ * The `console.error` below is deliberate: a refused redirect is the one signal that an
  * open-redirect attempt reached the browser, and it has to be visible in the console of an
  * unauthenticated page where no error reporter is wired up. Do not silence it.
  */
 export function safeNavigate(target: string | null | undefined): boolean {
   if (!isSafeRedirect(target)) {
-    // eslint-disable-next-line no-console
     console.error('Refusing to navigate to untrusted redirect_to:', target);
     return false;
   }

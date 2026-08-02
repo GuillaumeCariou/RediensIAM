@@ -109,6 +109,20 @@ spec:
                   key: dragonfly-password
           ports:
             - containerPort: 6379
+          # Neither probe existed. During a rolling update the Service routed to a Dragonfly that
+          # was not yet serving, and this cache holds the DataProtection key ring — so the window
+          # is session-affecting rather than cosmetic. A wedged (rather than crashed) instance was
+          # never restarted either.
+          readinessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 15
+            periodSeconds: 20
           args:
             - --logtostderr
             - --requirepass=$(DRAGONFLY_PASSWORD)

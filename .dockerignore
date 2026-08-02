@@ -1,0 +1,31 @@
+# Keeps the build context to what the Dockerfile actually copies.
+#
+# Without this the context carried .git, every node_modules tree and both SPA dist folders — a few
+# hundred MB uploaded on every build, host node_modules COPY'd into the SPA stages only to be
+# discarded by `npm ci`, and a cache that missed on any git write.
+#
+# sdk/typescript/rediensiam-web is deliberately NOT excluded: the admin SPA imports it from source
+# through a Vite alias, and leaving it out of the context is what made the image build fail while
+# the deploy still reported success.
+
+.git
+.gitignore
+
+**/node_modules
+**/dist
+**/bin
+**/obj
+
+**/.vite
+**/TestResults
+**/coverage
+**/*.user
+**/*.suo
+
+# Local operator state and anything secret-shaped.
+deploy/rediensiam/charts
+deploy/rediensiam/values*.secret.yaml
+deploy/rediensiam/values*.override.yaml
+.sonar.env
+.sonarqube
+*.bak

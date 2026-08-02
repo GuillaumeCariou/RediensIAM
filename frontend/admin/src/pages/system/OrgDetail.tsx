@@ -1,3 +1,4 @@
+import { rowActivation } from '../../components/iam/rowActivation';
 import { useEffect, useState, useCallback } from 'react';
 import { ApiError } from '@/auth';
 import { useParams, useNavigate } from 'react-router';
@@ -376,7 +377,7 @@ export default function OrgDetail() {
                 );
                 return (
                   userLists.map(ul => (
-                      <tr className="cursor-pointer hover:bg-[var(--surface-2)]" key={ul.id} onClick={() => navigate(`/system/organisations/${id}/userlists/${ul.id}`)}>
+                      <tr key={ul.id} {...rowActivation(() => navigate(`/system/organisations/${id}/userlists/${ul.id}`))}>
                         <td className="font-medium">{ul.name}</td>
                         <td className="text-sm text-muted-foreground">—</td>
                       </tr>
@@ -414,7 +415,7 @@ export default function OrgDetail() {
                 );
                 return (
                   projects.map(p => (
-                      <tr className="cursor-pointer hover:bg-[var(--surface-2)]" key={p.id} onClick={() => navigate(`/system/organisations/${id}/projects/${p.id}`)}>
+                      <tr key={p.id} {...rowActivation(() => navigate(`/system/organisations/${id}/projects/${p.id}`))}>
                         <td className="font-medium">{p.name}</td>
                         <td className="text-sm text-muted-foreground">
                           {p.assigned_user_list_id

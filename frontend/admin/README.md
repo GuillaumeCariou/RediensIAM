@@ -4,10 +4,9 @@ The operator SPA. Everything an administrator does to RediensIAM itself happens 
 organisations, projects, user lists, users, roles, service accounts and their PATs, webhooks,
 SMTP, the audit log, metrics and health.
 
-React 19 + TypeScript + Vite, Tailwind and Radix (shadcn-style `src/components/ui`),
-`oidc-client-ts` for login, `recharts` for the dashboards.
-
-> **This SPA has no tests.** See [Testing](#testing) — the tooling is installed and unused.
+React 19 + TypeScript + Vite and Tailwind. Login runs on `rediensiam-web`, the browser SDK this
+repo ships. There is no component library and no charting library: the shared pieces live in
+`src/components/iam/` and are styled with the `iam-*` classes in `src/index.css`.
 
 ---
 
@@ -30,15 +29,17 @@ controllers is `/api/manage/*`, which is deliberately **not** in `adminOnlyPaths
 
 ## Authentication
 
-`src/auth.ts`. Authorization code + PKCE against the RediensIAM-managed Hydra, via
-`oidc-client-ts`.
+`src/auth.ts`. Authorization code + PKCE against the RediensIAM-managed Hydra, through
+`rediensiam-web` — the console runs on the SDK it ships to integrators, so a defect in that login
+fails here first.
 
 - Configuration comes from `GET /admin/config` at runtime (`hydra_url`, `client_id`,
   `redirect_uri`) — the bundle is built once and carries no deployment values.
 - The `redirect_uri` the server returns is checked against `location.origin` before it is used.
   Hydra validates its registered list too; this is the second lock, so a compromised config
   endpoint cannot hand the authorization code to another origin.
-- Tokens live in `InMemoryWebStorage` — nothing in `localStorage`, nothing that outlives the tab.
+- Tokens live in the SDK's private field and a module-level variable — nothing in `localStorage`
+  or `sessionStorage`, nothing that outlives the tab.
 - A single `signinRedirectInFlight` guard means concurrent 401s fire one redirect, not several
   racing ones that would each overwrite the stored PKCE state.
 
@@ -62,9 +63,9 @@ once, so a meta policy that named one would be wrong everywhere else. The header
 meta tag deliberately omits `frame-ancestors`, because browsers ignore that directive in a meta
 tag — the header carries it, along with `X-Frame-Options: DENY`.
 
-`style-src` carries `'unsafe-inline'` on both copies and cannot do without it: Radix injects a
-`<style>` element on every dialog open. `script-src` stays `'self'` with no inline escape, so
-script injection is still refused.
+`style-src` carries `'unsafe-inline'` on both copies and cannot do without it: the pages use
+React `style={{…}}` props, which browsers govern under `style-src`. `script-src` stays `'self'`
+with no inline escape, so script injection is still refused.
 
 Fonts are self-hosted (`@fontsource-variable/geist`) — there is no external font origin to allow.
 
@@ -131,7 +132,6 @@ redeploy an existing one.
 | `src/auth.ts` | OIDC session, `apiFetch`, `ApiError`, re-auth types |
 | `src/api.ts` | every backend call, one function each |
 | `src/context/` | `AuthContext`, `ScopeContext` (system / org / project scope), `ThemeContext` |
-| `src/components/ui/` | shadcn-style Radix primitives — generated, edit sparingly |
 | `src/components/iam/` | the project's own presentational pieces (`StatCard`, `IamTuple`, `Spark`, …) |
 | `src/components/layout/` | `Shell`, `Sidebar`, `Topbar`, `CommandPalette`, the tweaks panel |
 | `src/pages/system/` | super-admin scope |
@@ -147,7 +147,7 @@ which API prefix a page uses.
 ## Testing
 
 ```bash
-npm test         # vitest run — 71 tests, ~3s
+npm test         # vitest run — 88 tests, ~3s
 npm run test:watch
 ```
 
@@ -161,6 +161,8 @@ setup is `src/test/setup.ts`. Tests sit next to the code they cover and are type
 | `src/components/layout/CommandPalette.test.tsx` | 19 | Opens via `showModal()` (not `show()`), Escape closes, combobox/listbox keyboard behaviour — `aria-activedescendant`, arrows, Enter — and role gating |
 | `src/pages/org/OrgEmail.test.tsx` | 17 | The five SMTP 400 codes and their fallback, plus the assertion that no server-supplied text reaches the screen (the port-scanner defence) |
 | `src/auth.test.ts` | 12 | The 401 split — a re-auth 401 must not destroy the session — the one-shot signin-redirect guard, and the `/admin/config` `redirect_uri` origin check |
+| `src/contracts.test.ts` | 11 | Markup defects no type checker sees: fabricated chart data, toggles with no switch semantics, an editor that PATCHes defaults after a failed load, unguarded `Number(e.target.value)` |
+| `src/theme.test.ts` | 6 | Light and dark declare the same variables, `color-scheme` is set, no colour is pinned outside the two blocks |
 
 Two constraints these tests exist to hold, both from the backend:
 

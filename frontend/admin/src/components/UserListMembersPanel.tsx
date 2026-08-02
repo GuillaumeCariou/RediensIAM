@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { rowActivation } from './iam/rowActivation';
+import { useCallback, useEffect, useState } from 'react';
 import { UserPlus, Trash2, Plus, MoreHorizontal } from 'lucide-react';
 import {
   listSystemUserListMembers, listUserListMembers,
@@ -94,12 +95,14 @@ export default function UserListMembersPanel({
     setAvailableRoles(rolesRes.roles ?? rolesRes ?? []);
   };
 
-  const load = async () => { await Promise.all([loadMembers(), loadRoles()]); };
+  const load = useCallback(async () => { await Promise.all([loadMembers(), loadRoles()]); },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadMembers/loadRoles read only these two
+    [listId, projectId]);
 
   useEffect(() => {
     setLoading(true);
     load().catch(console.error).finally(() => setLoading(false));
-  }, [listId, projectId]);
+  }, [load]);
 
   const handleAdd = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -236,7 +239,7 @@ export default function UserListMembersPanel({
                     </tr>
                   ))
                 : members.map(m => (
-                    <tr className="cursor-pointer" key={m.id} onClick={() => openEdit(m)}>
+                    <tr key={m.id} {...rowActivation(() => openEdit(m))}>
                       <td>
                         <p className="text-sm font-medium">{m.username}#{m.discriminator}</p>
                         <p className="text-xs text-muted-foreground">{m.email}</p>

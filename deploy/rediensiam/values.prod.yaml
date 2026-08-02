@@ -6,6 +6,12 @@ rediensiam:
   publicUrl: "https://auth.rediens.net"
   adminUrl:  "https://auth.ts.rediens.net"    # Tailscale MagicDNS — Tailscale-only
 
+  # Two replicas is what makes the PodDisruptionBudget mean anything: maxUnavailable: 1 against a
+  # single pod lets a node drain take the last one, so the object that looks like it prevents
+  # downtime prevents nothing and every rollout is a full auth outage. Nothing in the app is
+  # pinned to one pod — sessions live in Dragonfly and state in Postgres.
+  replicaCount: 2
+
   security:
     # Explicit even though the chart now defaults to it: this is the file an operator reads to see
     # what production turns on.
@@ -89,6 +95,12 @@ rediensiam:
 
   # cert-manager must already be installed in the cluster; this chart does not install it.
   certManager:
+    # This file names `letsencrypt` on the public ingress while ACME is off, which means the
+    # ClusterIssuer must already exist in the cluster — the chart does not create it. Saying so
+    # here is what satisfies the render-time guard; leaving it unsaid used to produce an Ingress
+    # whose certificate never issued, with Traefik's own self-signed cert on the auth surface.
+    # If you do not run an issuer, set acme.enabled and acme.email instead.
+    assumeExternalIssuer: true
     acme:
       enabled: false          # set true + email to issue a real cert for auth.rediens.net
       email: ""

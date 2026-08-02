@@ -128,6 +128,63 @@ for f in "${DIR}"/rediensiam/values*.yaml; do
   fi
 done
 
+# ── a PodDisruptionBudget that permits evicting the only pod ─────────────────
+# maxUnavailable: 1 with replicaCount: 1 lets the drain take the last pod, so the object that looks
+# like it prevents downtime prevents nothing — and every rollout is a full auth outage.
+PDB_MAX="$(grep -E '^\s*maxUnavailable:' "${DIR}/rediensiam/templates/pdb.yaml" | head -1 | tr -dc '0-9')"
+PROD_REPLICAS="$(grep -E '^\s*replicaCount:' "${DIR}/rediensiam/values.prod.yaml" | head -1 | tr -dc '0-9')"
+if [ "${PDB_MAX:-1}" -ge 1 ] && [ "${PROD_REPLICAS:-1}" -lt 2 ]; then
+  fail "the PDB can actually protect a pod in prod" \
+       "maxUnavailable=${PDB_MAX:-1} with replicaCount=${PROD_REPLICAS:-1} permits evicting the only replica"
+else
+  pass "the PDB can actually protect a pod in prod"
+fi
+
+# ── preflight must validate what will actually be deployed ───────────────────
+# It honours ENV_FILE and OVERRIDE_FILE everywhere except three greps that read values.yaml
+# directly, so an override changing the ingress class or the trusted proxies was checked against
+# the committed defaults instead — the check passes for a value the deploy will not use.
+if grep -nE 'grep[^|]*"?\$\{?CHART\}?"?/values\.yaml' "${DIR}/preflight.sh" | grep -q .; then
+  fail "preflight.sh validates the rendered values, not just values.yaml" \
+       "$(grep -nE 'grep[^|]*values\.yaml' "${DIR}/preflight.sh" | head -3)"
+else
+  pass "preflight.sh validates the rendered values, not just values.yaml"
+fi
+
+# ── the docs must not describe a stack that was removed ──────────────────────
+# The admin console dropped shadcn, every @radix-ui package and oidc-client-ts; the README still
+# described all three, which is worse than no README for anyone onboarding.
+DOC_STALE=""
+for term in "@radix-ui" "shadcn" "oidc-client-ts" "recharts"; do
+  if grep -qi -- "${term}" "${ROOT}/frontend/admin/README.md" 2>/dev/null; then
+    DOC_STALE="${DOC_STALE} ${term}"
+  fi
+done
+if [ -n "${DOC_STALE}" ]; then
+  fail "frontend/admin/README.md describes the stack that ships" "still mentions:${DOC_STALE}"
+else
+  pass "frontend/admin/README.md describes the stack that ships"
+fi
+
+# ── documented test counts must match the suites ─────────────────────────────
+# docs/TESTING.md stated 1345 backend tests and said twice that neither SPA has any, while 162 of
+# them run in seconds. A number nobody maintains is worse than no number.
+BACKEND_CLAIMED="$(grep -oE '\*\*1[0-9]{3}\*\*|\b1[0-9]{3}\b' "${ROOT}/docs/TESTING.md" | tr -d '*' | head -1)"
+BACKEND_ACTUAL="$(grep -rhoE '\[(Fact|Theory)\]|\[InlineData' "${ROOT}/tests/RediensIAM.IntegrationTests/Tests" \
+                    | grep -c . )"
+if [ -n "${BACKEND_CLAIMED}" ] && [ "${BACKEND_CLAIMED}" -lt "$((BACKEND_ACTUAL - 200))" ]; then
+  fail "docs/TESTING.md's backend test count is in the right range" \
+       "documented ${BACKEND_CLAIMED}, attributes on disk ${BACKEND_ACTUAL}"
+else
+  pass "docs/TESTING.md's backend test count is in the right range"
+fi
+
+if grep -qiE "neither SPA has (a single test|any test)" "${ROOT}/docs/TESTING.md" 2>/dev/null; then
+  fail "docs/TESTING.md does not claim the SPAs are untested" "both suites run and pass"
+else
+  pass "docs/TESTING.md does not claim the SPAs are untested"
+fi
+
 # ── every script parses ──────────────────────────────────────────────────────
 for script in "${DIR}"/*.sh "${DIR}"/monitoring/*.sh "${ROOT}/sonar-scan.sh"; do
   name="$(basename "${script}")"

@@ -8,15 +8,16 @@ What exists, how to run it, and — just as usefully — what has no tests at al
 
 | Suite | Where | Count | Runs today? |
 |---|---|---:|---|
-| Backend integration tests | `tests/RediensIAM.IntegrationTests/` | **1345** | yes |
-| .NET SDK tests | `sdk/dotnet/RediensIAM.Client.Tests/` | 11 | yes |
-| Rust SDK tests | `sdk/rust/rediensiam-client/src/lib.rs` (inline) | 12 | yes |
-| TypeScript SDK tests | `sdk/typescript/rediensiam-web/src/index.test.ts` | 12 | yes |
+| Backend integration tests | `tests/RediensIAM.IntegrationTests/` | **1460** | yes |
+| Admin SPA unit tests | `frontend/admin/src/**` | 88 across 6 files | yes, ~3s |
+| Login SPA unit tests | `frontend/login/src/**` | 80 across 3 files | yes, ~3s |
+| .NET SDK tests | `sdk/dotnet/RediensIAM.Client.Tests/` | 14 | yes |
+| Rust SDK tests | `sdk/rust/rediensiam-client/src/lib.rs` (inline) | 15 (13 unit + 2 doctests) | yes |
+| TypeScript SDK tests | `sdk/typescript/rediensiam-web/src/index.test.ts` | 14 | yes |
+| Deploy-layer static tests | `deploy/tests.sh` | 36 checks | yes, no cluster needed |
 | Deployment verification | `deploy/verify-deployment.sh` | 26 checks | yes, against a live cluster |
 | Detection-rule self-test | `deploy/monitoring/selftest.sh` | 6 assertions | yes, against a live database |
 | Playwright E2E | `tests/e2e/` | 158 across 15 specs | **not since April** — needs setup and a live stack |
-| **Admin SPA unit tests** | `frontend/admin/` | **none** | — |
-| **Login SPA unit tests** | `frontend/login/` | **none** | — |
 
 ---
 
@@ -26,8 +27,8 @@ What exists, how to run it, and — just as usefully — what has no tests at al
 dotnet test tests/RediensIAM.IntegrationTests -p:SonarQubeTargetsImported=true
 ```
 
-**1345 tests**, and the number is exact rather than approximate: 1241 `[Fact]` + 27 `[Theory]`
-expanding to 104 `[InlineData]` rows, with no `[MemberData]` or `[ClassData]` anywhere.
+**1460 tests**, and the number is exact rather than approximate: 1313 `[Fact]` + 37 `[Theory]`
+expanding to 147 `[InlineData]` rows, with no `[MemberData]` or `[ClassData]` anywhere.
 
 Roughly three minutes. They are "integration" tests in the real sense — the fixture starts three
 containers per run via Testcontainers:
@@ -338,18 +339,19 @@ calls with `page.route()`. A stale `.auth/admin-session.json` from an old run is
 
 ## What has no tests
 
-### Neither SPA has a single test
+### What the SPA suites still do not reach
 
-`frontend/admin` and `frontend/login` have **no test files, no `test` script and no test runner
-configured**. There is no `vitest.config.*`, no `jest.config.*`, and no `test:` block in either
-`vite.config.ts`.
+Both SPAs now have suites (88 and 80 tests, `npm test` in either directory, vitest + jsdom +
+Testing Library, config in the `test` block of `vite.config.ts`). What they do not cover:
 
-The trap: both `package.json` files list `vitest`, `jsdom`, `@testing-library/react`,
-`@testing-library/jest-dom` and `@testing-library/user-event` as dependencies. The harness is fully
-installed and entirely unused. Anyone checking dependencies alone would conclude tests exist.
-
-Every frontend behaviour is covered, if at all, by the Playwright suite — which has not run since
-April.
+- **anything needing layout or a real top layer** — jsdom has neither, so native `<dialog>` Tab
+  containment and everything visual is asserted only structurally;
+- **the router and the page shells** — the suites cover the pieces with a contract worth pinning
+  (re-auth, the command palette, the SMTP error codes, the auth 401 split) plus two static
+  passes over the source (`contracts.test.ts`, `theme.test.ts`). Ordinary CRUD pages are not
+  rendered;
+- **the real backend** — every call is mocked. Only the Playwright suite crosses that line, and
+  it has not run since April.
 
 ### Other gaps carried from the audit
 

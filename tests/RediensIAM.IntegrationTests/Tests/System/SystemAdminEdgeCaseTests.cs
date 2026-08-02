@@ -1623,6 +1623,45 @@ public class SystemAdminMiscTests(TestFixture fixture)
         body.GetProperty("active_users").GetInt32().Should().BeGreaterThanOrEqualTo(1);
     }
 
+    /// <summary>
+    /// The console's "Login activity · last 24h" chart drew a sine wave: the field was declared in
+    /// its Metrics interface and never sent, so the component invented its own bars. It now comes
+    /// from the audit log — 24 buckets, each labelled with the hour it actually contains.
+    /// </summary>
+    [Fact]
+    public async Task GetMetrics_LoginsByHour_CountsTheAuditLogIntoTheHourItHappened()
+    {
+        var client = await SuperAdminClientAsync();
+        var (_, list) = await fixture.Seed.CreateOrgAsync();
+        var user = await fixture.Seed.CreateUserAsync(list.Id);
+
+        var now = DateTimeOffset.UtcNow;
+        // Id is an identity column and Hash is written by SaveChangesAsync — setting either by
+        // hand would either collide or break the chain this row now takes part in.
+        foreach (var action in new[] { "user.login.success", "user.login.failure" })
+        {
+            fixture.Db.AuditLogs.Add(new AuditLog
+            {
+                Action = action, ActorId = user.Id, UserId = user.Id,
+                TargetType = "user", TargetId = user.Id.ToString(), CreatedAt = now.AddMinutes(-5),
+            });
+        }
+        await fixture.Db.SaveChangesAsync();
+
+        var res  = await client.GetAsync("/admin/metrics");
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+
+        var buckets = body.GetProperty("logins_by_hour");
+        buckets.GetArrayLength().Should().Be(24, "the panel is titled 'last 24h'");
+
+        var thisHour = now.ToString("yyyy-MM-ddTHH:00:00Z");
+        var hit = buckets.EnumerateArray().SingleOrDefault(b => b.GetProperty("hour").GetString() == thisHour);
+        hit.ValueKind.Should().Be(JsonValueKind.Object,
+            "an event five minutes ago belongs to a bucket labelled with the current hour, not the next one");
+        hit.GetProperty("succeeded").GetInt32().Should().BeGreaterThanOrEqualTo(1);
+        hit.GetProperty("failed").GetInt32().Should().BeGreaterThanOrEqualTo(1);
+    }
+
     [Fact]
     public async Task GetMetrics_Unauthenticated_Returns401Or403()
     {

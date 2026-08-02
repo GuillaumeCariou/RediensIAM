@@ -1,3 +1,4 @@
+import { rowActivation } from '../../components/iam/rowActivation';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { IamChip, IamDialog } from '@/components/iam';
@@ -97,7 +98,7 @@ export default function UserLists() {
                   </td></tr>
                 );
                 return filtered.map(list => (
-                  <tr key={list.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`${navigateBase}/${list.id}`)}>
+                  <tr key={list.id} {...rowActivation(() => navigate(`${navigateBase}/${list.id}`))}>
                     <td style={{ fontWeight: 500 }}>{list.name}</td>
                     {isGlobal
                       ? <td style={{ fontSize: 13, color: 'var(--fg-muted)' }}>{list.org_name ?? 'System (root)'}</td>

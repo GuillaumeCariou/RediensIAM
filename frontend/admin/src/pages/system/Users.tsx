@@ -1,3 +1,4 @@
+import { rowActivation } from '../../components/iam/rowActivation';
 import { useState } from 'react';
 import { IamChip, IamAvatar } from '@/components/iam';
 import { searchUsers, adminGetUser, adminUpdateUser, unlockUser, getUserSessions, revokeAllUserSessions } from '@/api';
@@ -205,7 +206,7 @@ export default function SystemUsers() {
                     </td></tr>
                   );
                   return users.map(user => (
-                    <tr key={user.id} style={{ cursor: 'pointer' }} onClick={() => openEdit(user)}>
+                    <tr key={user.id} {...rowActivation(() => openEdit(user))}>
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           <IamAvatar name={user.display_name ?? user.username} size="sm" />

@@ -1,3 +1,4 @@
+import { rowActivation } from '../../components/iam/rowActivation';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { IamChip, IamAvatar, IamDialog } from '@/components/iam';
@@ -156,7 +157,7 @@ export default function Organisations() {
                   if (org.suspended_at) statusChip = <IamChip tone="danger">Suspended</IamChip>;
                   else if (org.active) statusChip = <IamChip tone="success">Active</IamChip>;
                   return (
-                    <tr key={org.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/system/organisations/${org.id}`)}>
+                    <tr key={org.id} {...rowActivation(() => navigate(`/system/organisations/${org.id}`))}>
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           <IamAvatar name={org.name} size="sm" />

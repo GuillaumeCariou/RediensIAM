@@ -1,4 +1,6 @@
 using System.Reflection;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Mvc.Controllers;
@@ -143,7 +145,16 @@ builder.Services.AddControllers()
         o.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower;
         o.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
     });
-builder.Services.AddHealthChecks();
+// Two checks, deliberately split by probe.
+//
+// /health stayed a bare 200 as long as the process was listening, so liveness and readiness could
+// never notice a lost database or cache: a pod that 500s every request stayed Ready and in the
+// Service. The dependencies are checked on /health/ready — which readiness uses — while /health
+// remains process-only, because a liveness probe that fails on a database blip restarts every
+// replica at once and turns an outage into a crash loop.
+builder.Services.AddHealthChecks()
+    .AddCheck<DatabaseHealthCheck>("database", tags: ["ready"])
+    .AddCheck<CacheHealthCheck>("cache", tags: ["ready"]);
 
 // ── OpenAPI / Swagger (admin port only) ────────────────────────────────────
 builder.Services.AddEndpointsApiExplorer();
@@ -384,7 +395,11 @@ app.UseCors("AdminSpa");
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.UseRouting();
-app.MapHealthChecks("/health");
+app.MapHealthChecks("/health", new HealthCheckOptions { Predicate = _ => false });
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready"),
+});
 
 // Protect account/project/org/internal/manage/system routes — admin SPA loads without auth (handles PKCE itself)
 // /admin/system is always auth-gated (no browser SPA navigation hits it, only API calls)
@@ -618,4 +633,34 @@ static void AddDefaultTrustedNetworks(ForwardedHeadersOptions o)
 public partial class Program
 {
     protected Program() { }
+}
+
+
+/// <summary>Answers unhealthy when the application database cannot be reached.</summary>
+public sealed class DatabaseHealthCheck(RediensIamDbContext db) : IHealthCheck
+{
+    public async Task<HealthCheckResult> CheckHealthAsync(
+        HealthCheckContext context, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await db.Database.CanConnectAsync(cancellationToken)
+                ? HealthCheckResult.Healthy()
+                : HealthCheckResult.Unhealthy("database unreachable");
+        }
+        catch (Exception ex)
+        {
+            return HealthCheckResult.Unhealthy("database unreachable", ex);
+        }
+    }
+}
+
+/// <summary>Answers unhealthy when the cache multiplexer has lost its connection.</summary>
+public sealed class CacheHealthCheck(IConnectionMultiplexer cache) : IHealthCheck
+{
+    public Task<HealthCheckResult> CheckHealthAsync(
+        HealthCheckContext context, CancellationToken cancellationToken = default)
+        => Task.FromResult(cache.IsConnected
+            ? HealthCheckResult.Healthy()
+            : HealthCheckResult.Unhealthy("cache disconnected"));
 }

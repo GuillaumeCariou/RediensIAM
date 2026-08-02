@@ -1,3 +1,4 @@
+import { rowActivation } from '../../components/iam/rowActivation';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { IamChip, IamDialog } from '@/components/iam';
@@ -136,7 +137,7 @@ export default function Projects() {
                   </td></tr>
                 );
                 return projects.map(p => (
-                  <tr key={p.id} style={{ cursor: 'pointer' }} onClick={() => navigate(projectUrl(p.id))}>
+                  <tr key={p.id} {...rowActivation(() => navigate(projectUrl(p.id)))}>
                     <td style={{ fontWeight: 500 }}>{p.name}</td>
                     <td><span className="iam-mono" style={{ fontSize: 11, color: 'var(--fg-muted)' }}>{p.slug}</span></td>
                     <td>{p.active ? <IamChip tone="success">Active</IamChip> : <IamChip tone="default">Inactive</IamChip>}</td>

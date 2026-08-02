@@ -137,3 +137,124 @@ describe('the image can build what the console imports', () => {
     expect(missing, `not copied into the admin build stage: ${missing.join(', ')}`).toEqual([]);
   });
 });
+
+describe('nothing on screen is invented', () => {
+  it('the activity chart is fed by its caller, not by a generator', () => {
+    // ActivityChart drew bars from Math.sin(i / 4) and (i * 17 + 3) % 20 under a heading reading
+    // "Login activity · last 24h", with a Success/Failed legend and a real recent_logins count
+    // beside it. Identical on every deployment and every reload. Metrics.logins_by_hour was
+    // declared in the interface and never read.
+    const chart = FILES.find(([file]) => file.endsWith('components/iam/ActivityChart.tsx'));
+    expect(chart, 'ActivityChart.tsx not found').toBeDefined();
+    const [, text] = chart!;
+
+    expect(text).not.toMatch(/Math\.(sin|cos|random)/);
+    expect(text, 'the component must take its data as a prop').toMatch(/data\s*[?:]/);
+  });
+});
+
+describe('controls announce what they are', () => {
+  it('every toggle built from a bare button carries switch semantics', () => {
+    // ~15 settings toggles were <button> with no type, no role, no aria-pressed and no accessible
+    // name: a screen reader heard "button" fifteen times, and "Require MFA" was indistinguishable
+    // from "Reject breached passwords".
+    const offenders: string[] = [];
+    for (const [file, text] of FILES) {
+      const at = text.indexOf('function Toggle');
+      if (at < 0) continue;
+      // To the first closing brace in column 0. Parsing the parameter list is not worth it — the
+      // signature contains `)` inside an arrow type, which a naive `[^)]*` splits in the wrong
+      // place and then runs the "body" on into unrelated markup further down the file.
+      const end = text.indexOf('\n}', at);
+      const body = text
+        .slice(at, end < 0 ? text.length : end)
+        .replaceAll(/\/\/[^\n]*/g, '')          // a comment mentioning <button> is not a <button>
+        .replaceAll(/\/\*[\s\S]*?\*\//g, '');
+      if (!/<button/.test(body)) continue;      // already an <input type="checkbox">
+      if (/role="switch"/.test(body) && /aria-checked=/.test(body)) continue;
+      offenders.push(`${file}: Toggle renders a <button> with no switch semantics`);
+    }
+    expect(offenders, offenders.join('\n')).toEqual([]);
+  });
+
+  it('every row-action menu closes on Escape', () => {
+    // Four legacy dropdowns closed through a <div role="none" onClick onKeyDown> backdrop. A
+    // non-focusable div never receives keydown, so Escape did nothing and the handler was dead
+    // code. IamMenu listens on globalThis and gets this right.
+    const offenders: string[] = [];
+    for (const [file, text] of FILES) {
+      if (file.endsWith('components/iam/IamMenu.tsx')) continue;
+      if (/role="none"[^>]*onKeyDown=/.test(text.replace(/\s+/g, ' '))) {
+        offenders.push(`${file}: hand-rolled menu backdrop — use IamMenu`);
+      }
+    }
+    expect(offenders, offenders.join('\n')).toEqual([]);
+  });
+});
+
+describe('the branding preview can actually render', () => {
+  it('the preview iframe is allowed to run scripts', () => {
+    // sandbox="allow-same-origin" with no allow-scripts blocks all JavaScript, so the React
+    // preview could never paint — the panel was blank regardless of the CSP work done to let the
+    // console frame it at all.
+    const auth = FILES.find(([file]) => file.endsWith('pages/project/Authentication.tsx'));
+    expect(auth, 'Authentication.tsx not found').toBeDefined();
+    const [, text] = auth!;
+
+    const iframe = /<iframe[^>]*>/.exec(text.replace(/\s+/g, ' '));
+    expect(iframe, 'no iframe found').not.toBeNull();
+    if (/sandbox=/.test(iframe![0])) {
+      expect(iframe![0], 'a sandbox without allow-scripts renders nothing').toMatch(/allow-scripts/);
+    }
+  });
+});
+
+describe('numeric inputs cannot submit a value the user cleared', () => {
+  it('never converts an empty number field straight to 0', () => {
+    // Clearing a type="number" yields '', and Number('') is 0. The cleanup dialog sent
+    // inactive_threshold_days: 0 — which matches every user in the list — from a field the user
+    // had simply emptied.
+    const offenders: string[] = [];
+    for (const [file, text] of FILES) {
+      for (const m of text.matchAll(/onChange=\{[^}]*Number\(e\.target\.value\)[^}]*\}/g)) {
+        // An explicit empty-string branch is the same guard spelled differently.
+        if (/\|\||Math\.max|isNaN|Number\.isFinite|===\s*''\s*\?/.test(m[0])) continue;
+        offenders.push(`${file}: ${m[0].slice(0, 80)}`);
+      }
+    }
+    expect(offenders, `unguarded Number(e.target.value):\n${offenders.join('\n')}`).toEqual([]);
+  });
+});
+
+describe('a failed load is not mistaken for a real configuration', () => {
+  it('the editors that PATCH their whole form track a load error', () => {
+    // Authentication and ProjectSettings render hardcoded defaults when the initial GET fails, and
+    // Save writes every field back — so one transient 500 plus one Save replaced a tenant's theme,
+    // providers, verification flags, allowed domains, IP allowlist and scopes with the defaults.
+    for (const name of ['pages/project/Authentication.tsx', 'pages/project/ProjectSettings.tsx']) {
+      const entry = FILES.find(([file]) => file.endsWith(name));
+      expect(entry, `${name} not found`).toBeDefined();
+      const [, text] = entry!;
+      expect(text, `${name} must distinguish a failed load from a loaded config`)
+        .toMatch(/loadError|loadFailed/);
+    }
+  });
+});
+
+
+describe('a row you can click is a row you can reach', () => {
+  it('no table row carries a click handler and nothing else', () => {
+    // Eight tables navigate on a whole-row onClick. With no tabindex and no key handler the row is
+    // mouse-only: a keyboard user tabs straight past every organisation, project, user list and
+    // service account, and on the pages whose row action is not repeated in a menu there is no
+    // second way in at all.
+    const offenders: string[] = [];
+    for (const [file, text] of FILES) {
+      for (const m of text.matchAll(/<tr\b[^>]*onClick[^>]*>/g)) {
+        if (/onKeyDown|rowActivation/.test(m[0])) continue;
+        offenders.push(`${file}: ${m[0].slice(0, 90)}`);
+      }
+    }
+    expect(offenders, `rows reachable by mouse only:\n${offenders.join('\n')}`).toEqual([]);
+  });
+});
