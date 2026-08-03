@@ -60,6 +60,14 @@ public sealed class TestFixture : IAsyncLifetime
     /// <summary>Direct DB access for seeding and assertions.</summary>
     public RediensIamDbContext Db { get; private set; } = null!;
 
+    /// <summary>
+    /// Connection string of the test PostgreSQL container. Needed by tests that must run against
+    /// a database of their own rather than the shared one — the key-rotation sweep, for instance,
+    /// rewrites every encrypted row in the database it is pointed at, which would trample the
+    /// rows other tests in this collection depend on.
+    /// </summary>
+    public string PostgresConnectionString => _postgres.GetConnectionString();
+
     /// <summary>Root DI service provider from the test host.</summary>
     public IServiceProvider Services => _factory.Services;
 
@@ -68,19 +76,21 @@ public sealed class TestFixture : IAsyncLifetime
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Brings up the containers and the host. The config keys below go in as process environment
+    /// variables rather than through <c>WithWebHostBuilder</c>'s InMemoryCollection because
+    /// Program.cs's top-level statements read AppConfig (DB connection, cache multiplexer) before
+    /// <c>builder.Build()</c> runs, at which point the in-memory source has not been applied yet.
+    /// <c>WebApplication.CreateBuilder</c> auto-loads environment variables and maps the double
+    /// underscore onto the colon-separated key, so the two spellings mean the same setting.
+    /// </summary>
     public async Task InitializeAsync()
     {
-        // Start containers in parallel (MailHog for real SMTP coverage tests)
+        // MailHog is here for the tests that exercise real SMTP.
         await Task.WhenAll(_postgres.StartAsync(), _redis.StartAsync(), _mailhog.StartAsync());
 
         _mux = await ConnectionMultiplexer.ConnectAsync(_redis.GetConnectionString());
 
-        // Program.cs top-level statements read AppConfig values (DB connection, cache
-        // multiplexer) BEFORE builder.Build() runs, which means the InMemoryCollection
-        // added via WithWebHostBuilder is not yet applied. Set the critical keys as
-        // process env vars so they are visible to builder.Configuration at startup.
-        // WebApplication.CreateBuilder auto-loads env vars and double-underscore maps
-        // to the colon-separated config key.
         SetTestEnvVar("ConnectionStrings__Default",        _postgres.GetConnectionString());
         SetTestEnvVar("Cache__ConnectionString",           _redis.GetConnectionString());
         SetTestEnvVar("Hydra__AdminUrl",                   Hydra.Url);
@@ -125,6 +135,8 @@ public sealed class TestFixture : IAsyncLifetime
                         ["Security:MaxSmsPerWindow"]            = "3",
                         ["Security:SmsWindowMinutes"]           = "10",
                         ["Security:PatPrefix"]                  = "rediens_pat_",
+                        // Shipped default is now off so a first launch can reach the console;
+                        // the suite pins it on, because the enforced path is the one worth testing.
                         ["Security:ArgonTimeCost"]              = "1",  // fast in tests
                         ["Security:ArgonMemoryCost"]            = "8192",
                         ["Security:ArgonParallelism"]           = "1",
@@ -164,6 +176,9 @@ public sealed class TestFixture : IAsyncLifetime
                     // with a stub that can be configured per-test to return HIBP breach counts.
                     var hibp = HibpStub;
                     services.AddHttpClient(string.Empty).ConfigurePrimaryHttpMessageHandler(() => hibp);
+                    // SocialLoginService now uses a named, redirect-disabled client — stub it too.
+                    services.AddHttpClient(SocialLoginService.NoRedirectClient)
+                        .ConfigurePrimaryHttpMessageHandler(() => hibp);
 
                     // Allow session cookies over plain HTTP in tests (test server uses http://localhost)
                     services.Configure<SessionOptions>(opts =>
@@ -177,6 +192,11 @@ public sealed class TestFixture : IAsyncLifetime
                     var ssrfDesc = services.SingleOrDefault(d => d.ServiceType == typeof(IWebhookSsrfValidator));
                     if (ssrfDesc != null) services.Remove(ssrfDesc);
                     services.AddSingleton<IWebhookSsrfValidator, PassthroughSsrfValidator>();
+                    // ...and the same for the delivery client's handler, which now refuses to
+                    // dial a reserved address at connect time. The real handler is covered
+                    // directly by BackendHardeningRegressionTests.
+                    services.AddHttpClient("webhook").ConfigurePrimaryHttpMessageHandler(
+                        () => new HttpClientHandler { AllowAutoRedirect = false });
                 });
             });
 
@@ -185,7 +205,6 @@ public sealed class TestFixture : IAsyncLifetime
             AllowAutoRedirect = false,
         });
 
-        // Get a direct DB context for seeding
         var scope = _factory.Services.CreateScope();
         Db   = scope.ServiceProvider.GetRequiredService<RediensIamDbContext>();
         var pwd = scope.ServiceProvider.GetRequiredService<PasswordService>();
@@ -276,6 +295,8 @@ public sealed class TestFixture : IAsyncLifetime
                         ["Security:MaxSmsPerWindow"]            = "3",
                         ["Security:SmsWindowMinutes"]           = "10",
                         ["Security:PatPrefix"]                  = "rediens_pat_",
+                        // Shipped default is now off so a first launch can reach the console;
+                        // the suite pins it on, because the enforced path is the one worth testing.
                         ["Security:ArgonTimeCost"]              = "1",
                         ["Security:ArgonMemoryCost"]            = "8192",
                         ["Security:ArgonParallelism"]           = "1",
@@ -347,6 +368,8 @@ public sealed class TestFixture : IAsyncLifetime
                         ["Security:MaxSmsPerWindow"]            = "3",
                         ["Security:SmsWindowMinutes"]           = "10",
                         ["Security:PatPrefix"]                  = "rediens_pat_",
+                        // Shipped default is now off so a first launch can reach the console;
+                        // the suite pins it on, because the enforced path is the one worth testing.
                         ["Security:ArgonTimeCost"]              = "1",
                         ["Security:ArgonMemoryCost"]            = "8192",
                         ["Security:ArgonParallelism"]           = "1",
@@ -422,6 +445,8 @@ public sealed class TestFixture : IAsyncLifetime
                         ["Security:MaxSmsPerWindow"]            = "3",
                         ["Security:SmsWindowMinutes"]           = "10",
                         ["Security:PatPrefix"]                  = "rediens_pat_",
+                        // Shipped default is now off so a first launch can reach the console;
+                        // the suite pins it on, because the enforced path is the one worth testing.
                         ["Security:ArgonTimeCost"]              = "1",
                         ["Security:ArgonMemoryCost"]            = "8192",
                         ["Security:ArgonParallelism"]           = "1",
@@ -473,10 +498,13 @@ public sealed class TestFixture : IAsyncLifetime
         await Task.CompletedTask;
     }
 
-    // Polly's standard resilience handler includes a circuit breaker. Tests that simulate
-    // Hydra/Keto failures generate many 500s with retries, which can trip the circuit
-    // and cause all subsequent Hydra introspect calls to fail with BrokenCircuitException.
-    // Raise MinimumThroughput to int.MaxValue so the circuit never opens in tests.
+    /// <summary>
+    /// Polly's standard resilience handler includes a circuit breaker. Tests that simulate
+    /// Hydra/Keto failures generate many 500s with retries, which can trip the circuit and make
+    /// every later Hydra introspect call fail with <c>BrokenCircuitException</c> — failures that
+    /// look like bugs in whichever test happened to run next. Raising MinimumThroughput to
+    /// <c>int.MaxValue</c> keeps the circuit shut for the whole run.
+    /// </summary>
     private static void DisableCircuitBreakers(IServiceCollection services) =>
         services.PostConfigureAll<HttpStandardResilienceOptions>(opts =>
             opts.CircuitBreaker.MinimumThroughput = int.MaxValue);
@@ -532,6 +560,12 @@ public record SentNewDeviceAlert(string To, string IpAddress);
 /// <summary>Captures SMS OTP codes so tests can complete the MFA flow.</summary>
 public class StubSmsService : ISmsService
 {
+    /// <summary>
+    /// True by default: this stub records messages, so tests can complete SMS flows. Settable so
+    /// a test can reproduce the production <c>StubSmsService</c>, which delivers nothing.
+    /// </summary>
+    public bool IsConfigured { get; set; } = true;
+
     public List<SentSms> SentMessages { get; } = [];
 
     public Task SendOtpAsync(string to, string code, string purpose)

@@ -1,7 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Caching.Distributed;
 using RediensIAM.Config;
 
@@ -43,7 +42,6 @@ public class SocialLoginService(
     IWebHostEnvironment env,
     ILogger<SocialLoginService> logger)
 {
-    // Provider-specific hardcoded endpoints (builtin)
     private static readonly Dictionary<string, (string Auth, string Token, string UserInfo)> BuiltinEndpoints = new()
     {
         ["google"]   = ("https://accounts.google.com/o/oauth2/v2/auth",
@@ -72,14 +70,17 @@ public class SocialLoginService(
     };
 
     private const string Email = "email";
+    private const string UserInfoEndpoint = "userinfo_endpoint";
 
-    // In-process cache for OIDC discovery documents
     // ConcurrentDictionary: SocialLoginService is registered as Singleton and the cache
     // is read/written from every OIDC discovery call. A plain Dictionary races under
     // concurrent OIDC starts (bucket-array corruption + InvalidOperationException +
     // worst-case wrong-issuer metadata returned).
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, JsonDocument> _discoveryCache = new();
     private const int DiscoveryCacheMaxSize = 64;
+
+    /// <summary>Named client with AllowAutoRedirect disabled — see Program.cs registration.</summary>
+    public const string NoRedirectClient = "social-login";
 
     public string CallbackUrl => $"{appConfig.PublicUrl}/auth/oauth2/callback";
 
@@ -200,9 +201,8 @@ public class SocialLoginService(
         if (BuiltinEndpoints.TryGetValue(provider.Type, out var ep))
             return (ep.Auth, DefaultScopes.GetValueOrDefault(provider.Type, "openid email"));
 
-        // Generic OIDC — discover
         var disco = await GetDiscoveryAsync(provider.IssuerUrl!);
-        var authEndpoint = disco.RootElement.GetProperty("authorization_endpoint").GetString()!;
+        var authEndpoint = await EnsureSafeEndpointAsync(disco.RootElement.GetProperty("authorization_endpoint").GetString()!, "authorization_endpoint");
         return (authEndpoint, "openid email profile");
     }
 
@@ -222,7 +222,7 @@ public class SocialLoginService(
     private async Task<string?> ExchangeCodeAsync(ProviderConfig provider, string code, string? codeVerifier = null)
     {
         var tokenEndpoint = await GetTokenEndpointAsync(provider);
-        var http = httpClientFactory.CreateClient();
+        var http = httpClientFactory.CreateClient(NoRedirectClient);
 
         var fields = new Dictionary<string, string>
         {
@@ -245,12 +245,28 @@ public class SocialLoginService(
 
         if (!resp.IsSuccessStatusCode)
         {
-            logger.LogWarning("Token exchange failed for {Provider}: {Status} {Body}", provider.Type, resp.StatusCode, content);
+            // Status and the OAuth2 error code only. The full body is provider-controlled and
+            // has been observed to echo request parameters back — which on this request means
+            // the client_secret and the authorization code.
+            var errorCode = TryReadErrorCode(content);
+            logger.LogWarning("Token exchange failed for {Provider}: {Status} {Error}",
+                provider.Type, resp.StatusCode, errorCode);
             return null;
         }
 
         using var doc = JsonDocument.Parse(content);
         return doc.RootElement.TryGetProperty("access_token", out var at) ? at.GetString() : null;
+    }
+
+    /// <summary>RFC 6749 §5.2 <c>error</c>, or "unparseable" — never the raw body.</summary>
+    private static string TryReadErrorCode(string content)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(content);
+            return doc.RootElement.TryGetProperty("error", out var e) ? e.ToString() : "no_error_field";
+        }
+        catch (JsonException) { return "unparseable"; }
     }
 
     private async Task<SocialUserProfile?> GetUserProfileAsync(ProviderConfig provider, string accessToken)
@@ -266,7 +282,7 @@ public class SocialLoginService(
 
     private async Task<JsonDocument?> GetBearerJsonAsync(string url, string accessToken)
     {
-        var http = httpClientFactory.CreateClient();
+        var http = httpClientFactory.CreateClient(NoRedirectClient);
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, accessToken);
         using var resp = await http.SendAsync(req);
@@ -288,7 +304,7 @@ public class SocialLoginService(
 
     private async Task<SocialUserProfile?> GetGithubProfileAsync(string accessToken)
     {
-        var http = httpClientFactory.CreateClient();
+        var http = httpClientFactory.CreateClient(NoRedirectClient);
 
         async Task<JsonDocument?> CallAsync(string url)
         {
@@ -346,7 +362,7 @@ public class SocialLoginService(
     private async Task<SocialUserProfile?> GetOidcProfileAsync(ProviderConfig provider, string accessToken)
     {
         var disco       = await GetDiscoveryAsync(provider.IssuerUrl!);
-        var userInfoUrl = disco.RootElement.GetProperty("userinfo_endpoint").GetString()!;
+        var userInfoUrl = await EnsureSafeEndpointAsync(disco.RootElement.GetProperty(UserInfoEndpoint).GetString()!, UserInfoEndpoint);
         using var doc   = await GetBearerJsonAsync(userInfoUrl, accessToken);
         if (doc == null) return null;
         var sub           = TryGet(doc, "sub");
@@ -360,14 +376,37 @@ public class SocialLoginService(
     {
         if (BuiltinEndpoints.TryGetValue(provider.Type, out var ep)) return ep.Token;
         var disco = await GetDiscoveryAsync(provider.IssuerUrl!);
-        return disco.RootElement.GetProperty("token_endpoint").GetString()!;
+        return await EnsureSafeEndpointAsync(disco.RootElement.GetProperty("token_endpoint").GetString()!, "token_endpoint");
     }
 
     private async Task<string> GetUserInfoEndpointAsync(ProviderConfig provider)
     {
         if (BuiltinEndpoints.TryGetValue(provider.Type, out var ep)) return ep.UserInfo;
         var disco = await GetDiscoveryAsync(provider.IssuerUrl!);
-        return disco.RootElement.GetProperty("userinfo_endpoint").GetString()!;
+        return await EnsureSafeEndpointAsync(disco.RootElement.GetProperty(UserInfoEndpoint).GetString()!, UserInfoEndpoint);
+    }
+
+    /// <summary>
+    /// Validates a URL taken from a discovery document before it is called.
+    ///
+    /// The issuer is checked, but the endpoints the issuer *declares* were previously used
+    /// verbatim — so an attacker-hosted issuer could simply name an internal address. These
+    /// calls carry the provider client secret (token endpoint) and a bearer token (userinfo).
+    /// </summary>
+    private async Task<string> EnsureSafeEndpointAsync(string url, string what)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var parsed))
+            throw new ArgumentException($"OIDC {what} is not an absolute URL: {url}");
+
+        var httpsRequired = env.IsProduction() || parsed.Host != "localhost";
+        if (httpsRequired)
+        {
+            if (parsed.Scheme != Uri.UriSchemeHttps)
+                throw new ArgumentException($"OIDC {what} must be HTTPS: {url}");
+            if (await RediensIAM.Controllers.WebhookUrlValidator.IsPrivateOrReservedAsync(url))
+                throw new ArgumentException($"OIDC {what} must not resolve to a private or reserved address: {url}");
+        }
+        return url;
     }
 
     private async Task<JsonDocument> GetDiscoveryAsync(string issuerUrl)
@@ -377,6 +416,11 @@ public class SocialLoginService(
         var httpsRequired = env.IsProduction() || parsed.Host != "localhost";
         if (parsed.Scheme != "https" && httpsRequired)
             throw new ArgumentException($"OIDC issuer_url must be an absolute HTTPS URL: {issuerUrl}");
+
+        // Same SSRF policy as webhooks: HTTPS alone does not stop an org admin pointing the
+        // issuer at an internal host and having the server fetch it.
+        if (httpsRequired && await RediensIAM.Controllers.WebhookUrlValidator.IsPrivateOrReservedAsync(issuerUrl))
+            throw new ArgumentException($"OIDC issuer_url must not resolve to a private or reserved address: {issuerUrl}");
 
         if (_discoveryCache.TryGetValue(issuerUrl, out var cached)) return cached;
 
@@ -388,7 +432,7 @@ public class SocialLoginService(
         }
 
         var url  = issuerUrl.TrimEnd('/') + "/.well-known/openid-configuration";
-        var http = httpClientFactory.CreateClient();
+        var http = httpClientFactory.CreateClient(NoRedirectClient);
         var json = await http.GetStringAsync(url);
         var doc  = JsonDocument.Parse(json);
         _discoveryCache[issuerUrl] = doc;

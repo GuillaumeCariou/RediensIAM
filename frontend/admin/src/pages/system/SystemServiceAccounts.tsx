@@ -1,5 +1,6 @@
+import { rowActivation } from '../../components/iam/rowActivation';
 import { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { IamChip, IamDialog } from '@/components/iam';
 import { listServiceAccounts, createServiceAccount, deleteServiceAccount, listUserLists } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
@@ -102,7 +103,7 @@ export default function SystemServiceAccounts() {
                   </td></tr>
                 );
                 return accounts.map(sa => (
-                  <tr key={sa.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/system/service-accounts/${sa.id}`)}>
+                  <tr key={sa.id} {...rowActivation(() => navigate(`/system/service-accounts/${sa.id}`))}>
                     <td>
                       <div style={{ fontWeight: 500 }}>{sa.name}</div>
                       {sa.description && <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>{sa.description}</div>}

@@ -16,33 +16,39 @@ namespace RediensIAM.Controllers;
 
 [ApiController]
 [Route("auth")]
+#pragma warning disable S107 // what this controller depends on, listed; the bundle that hid the count only forwarded
 public class AuthController(
     RediensIamDbContext db,
-    AuthControllerServices svc,
+    HydraService hydra,
+    PasswordService passwords,
+    OtpCacheService otp,
+    LoginRateLimiter rateLimiter,
+    AuditLogService audit,
+    KetoService keto,
+    IEmailService emailService,
+    ISmsService smsService,
+    IFido2 fido2,
+    SocialLoginService socialLogin,
+    PasswordPolicyService passwordPolicy,
+    RediensIAM.Data.TenantScopeInterceptor tenantScope,
     AppConfig appConfig,
     Microsoft.Extensions.Caching.Distributed.IDistributedCache cache,
     ILogger<AuthController> logger) : ControllerBase
+#pragma warning restore S107
 {
-    // Unwrap bundle — keeps method bodies unchanged while satisfying S107
-    private HydraService hydra            => svc.Hydra;
-    private PasswordService passwords      => svc.Passwords;
-    private OtpCacheService otp            => svc.Otp;
-    private LoginRateLimiter rateLimiter   => svc.RateLimiter;
-    private AuditLogService audit          => svc.Audit;
-    private KetoService keto               => svc.Keto;
-    private IEmailService emailService     => svc.Email;
-    private ISmsService smsService         => svc.Sms;
-    private IFido2 fido2                   => svc.Fido2;
-    private SocialLoginService socialLogin  => svc.SocialLogin;
-    private BreachCheckService breachCheck  => svc.BreachCheck;
+    private const string MfaSetupRequired    = "mfa_setup_required";
     private const string MfaPendingUser      = "mfa_pending_user";
     private const string MfaPendingProject   = "mfa_pending_project";
+    private const string MfaPendingOrg       = "mfa_pending_org";
     private const string MfaPendingChallenge = "mfa_pending_challenge";
     private const string ErrRateLimited      = "rate_limited";
     private const string ErrMissingProjectId = "missing_project_id";
     private const string ErrInvalidChallenge = "invalid_challenge";
     private const string ErrAccessDenied     = "access_denied";
     private const string ErrProjectNotReady  = "project_not_ready";
+    // The challenge's client names one organisation and the project row another. Only reachable
+    // by editing Hydra's client store directly; refused rather than reconciled.
+    private const string ErrScopeMismatch    = "project_org_mismatch";
     private const string ErrInvalidCreds     = "invalid_credentials";
     private const string ErrNoMfaSession     = "no_mfa_session";
     private const string ErrInvalidCode      = "invalid_code";
@@ -51,8 +57,70 @@ public class AuthController(
     private const string CtxOrgId            = "org_id";
     private const string CtxProjectId        = "project_id";
     private const string CtxUserId           = "user_id";
+    private const string MfaSetupTotpPrefix  = "mfa_setup_totp";
 
     private string Ip => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+    // ── RLS scope ─────────────────────────────────────────────────────────────
+    //
+    // A login has no token, so the interceptor would otherwise run every query on this
+    // controller as 'system' — unscoped, with row-level security enforcing nothing. But the
+    // flow does know its tenant well before it knows its user: the login challenge names an
+    // OAuth2 client, the client's registered metadata names a project, and the project names an
+    // organisation. `grep PinScope` lists every point at which that becomes true.
+    //
+    // The argument is always a value the server read back (project.OrgId, the org half of a
+    // Hydra subject we minted, the org recorded in a server-side session) — never request
+    // input. PinToOrganisationAsync additionally refuses to run for a request that already
+    // carries claims.
+
+    /// <summary>Runs the rest of this request under <paramref name="orgId"/>'s RLS scope.</summary>
+    private Task PinScopeAsync(Guid orgId) =>
+        tenantScope.PinToOrganisationAsync(db, orgId, HttpContext.RequestAborted);
+
+    /// <summary>
+    /// Pins to the organisation the challenge's OAuth2 client is registered to, before anything
+    /// has been read — so even the <c>projects</c> row is fetched under the tenant's own scope.
+    /// A client with no registered organisation (the admin console, or a project client created
+    /// before <c>org_id</c> was recorded) leaves the request unscoped;
+    /// <see cref="EnsureScopedToProjectAsync"/> supplies the scope from the project row instead.
+    /// </summary>
+    private Task PinScopeToChallengeAsync(HydraLoginRequest req) =>
+        LoginChallengeProject.ResolveOrgOrNull(req) is { } orgId ? PinScopeAsync(orgId) : Task.CompletedTask;
+
+    /// <summary>
+    /// Confirms the request is running under <paramref name="project"/>'s organisation, pinning
+    /// it if the challenge could not. False means the client's registered organisation and the
+    /// project's disagree — impossible for a client this application minted, and refused rather
+    /// than reconciled.
+    ///
+    /// <para>
+    /// With RLS on, that disagreement already makes the project invisible and this never sees a
+    /// project to check. The check exists so the guarantee does not depend on a chart flag.
+    /// </para>
+    /// </summary>
+    private async Task<bool> EnsureScopedToProjectAsync(Project project)
+    {
+        var scope = tenantScope.CurrentScope();
+        if (scope != TenantScopeInterceptor.SystemScope) return scope == project.OrgId.ToString();
+        await PinScopeAsync(project.OrgId);
+        return true;
+    }
+
+    /// <summary>
+    /// Pins to the organisation recorded when the pending-MFA session was opened. Deliberately a
+    /// no-op for the admin console, whose users live in the <c>OrgId IS NULL</c> system list and
+    /// are invisible under any tenant scope.
+    /// </summary>
+    private Task PinScopeToMfaSessionAsync() =>
+        MfaSessionTenant() is ({ } orgId, _) ? PinScopeAsync(orgId) : Task.CompletedTask;
+
+    /// <summary>The tenant the pending-MFA session belongs to; both null for the admin console.</summary>
+    private (Guid? OrgId, Guid? ProjectId) MfaSessionTenant() =>
+        (Guid.TryParse(HttpContext.Session.GetString(MfaPendingOrg), out var orgId) && orgId != Guid.Empty
+            ? orgId : null,
+         Guid.TryParse(HttpContext.Session.GetString(MfaPendingProject), out var projectId) && projectId != Guid.Empty
+            ? projectId : null);
 
     /// <summary>
     /// Defence-in-depth wrapper around <see cref="ControllerBase.Redirect"/>: only forwards to
@@ -111,6 +179,10 @@ public class AuthController(
         var skipUserId = ParseSubjectUserId(req.Subject);
         if (skipUserId.HasValue)
         {
+            // The subject is "<org>:<user>", minted by CompleteLoginAsync — so this
+            // re-validation needs no unscoped read at all. An admin subject is a bare user id
+            // and yields no organisation, which is correct: it has none.
+            if (ParseSubjectOrgId(req.Subject) is { } skipOrgId) await PinScopeAsync(skipOrgId);
             var skipUser = await db.Users
                 .Include(u => u.UserList)
                     .ThenInclude(ul => ul!.Organisation)
@@ -120,6 +192,15 @@ public class AuthController(
         }
         var redirect = await hydra.AcceptLoginAsync(login_challenge, req.Subject ?? "", []);
         return SafeRedirect(redirect);
+    }
+
+    /// <summary>The organisation half of a "&lt;org&gt;:&lt;user&gt;" subject; null for a bare admin subject.</summary>
+    private static Guid? ParseSubjectOrgId(string? subject)
+    {
+        var parts = (subject ?? "").Split(':', 2);
+        return parts.Length == 2 && Guid.TryParse(parts[0], out var orgId) && orgId != Guid.Empty
+            ? orgId
+            : null;
     }
 
     private static Guid? ParseSubjectUserId(string? subject)
@@ -145,6 +226,7 @@ public class AuthController(
     {
         var projectId = ExtractProjectId(req);
         if (projectId == null) return BadRequest(new { error = ErrMissingProjectId });
+        await PinScopeToChallengeAsync(req);
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId) && p.Active);
         if (project == null) return BadRequest(new { error = "invalid_project" });
         return Ok(new
@@ -173,6 +255,7 @@ public class AuthController(
             var req = await hydra.GetLoginRequestAsync(login_challenge);
             var projectId = ExtractProjectId(req);
             if (projectId == null) return BadRequest();
+            await PinScopeToChallengeAsync(req);
 
             var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId));
             if (project == null) return NotFound();
@@ -208,26 +291,8 @@ public class AuthController(
         if (req.Client?.ClientId == Roles.AdminClientId)
             return await AdminLogin(body);
 
-        var projectId = ExtractProjectId(req);
-        if (projectId == null) return BadRequest(new { error = ErrMissingProjectId });
-
-        var registeredProjectId = req.Client?.Metadata?.GetValueOrDefault(CtxProjectId)?.ToString();
-        if (registeredProjectId != null && registeredProjectId != projectId)
-        {
-            var rejectUrl = await hydra.RejectLoginAsync(body.LoginChallenge, ErrAccessDenied, "project_id mismatch");
-            return Ok(new { redirect_to = rejectUrl, error = "project_id_mismatch" });
-        }
-
-        var project = await db.Projects
-            .Include(p => p.AssignedUserList)
-            .Include(p => p.Organisation)
-            .FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId) && p.Active);
-
-        if (project?.AssignedUserListId == null)
-            return BadRequest(new { error = ErrProjectNotReady });
-
-        if (project.Organisation == null || !project.Organisation.Active)
-            return Unauthorized(new { error = "organisation_suspended" });
+        var (project, projectId, projectErr) = await ResolveLoginProjectAsync(req, body.LoginChallenge);
+        if (project == null || projectId == null) return projectErr!;
 
         var user = await LookupUserByCredentialsAsync(project, body);
         if (user == null || !user.Active)
@@ -252,6 +317,44 @@ public class AuthController(
         return await CompleteLoginAsync(user, project, body.LoginChallenge);
     }
 
+    /// <summary>
+    /// Turns a login challenge into the active, login-ready project it names, or into the exact
+    /// response the caller must send instead. The checks stay in their original order: which one
+    /// fires first is what the login SPA distinguishes on.
+    /// </summary>
+    private async Task<(Project? Project, string? ProjectId, IActionResult? Error)> ResolveLoginProjectAsync(
+        HydraLoginRequest req, string loginChallenge)
+    {
+        var resolution = LoginChallengeProject.Resolve(req, out var projectId);
+        if (resolution == LoginChallengeProject.Resolution.Mismatch)
+        {
+            var rejectUrl = await hydra.RejectLoginAsync(loginChallenge, ErrAccessDenied, "project_id mismatch");
+            return (null, null, Ok(new { redirect_to = rejectUrl, error = "project_id_mismatch" }));
+        }
+        if (resolution != LoginChallengeProject.Resolution.Ok || projectId == null)
+            return (null, null, BadRequest(new { error = ErrMissingProjectId }));
+
+        // The organisation registered on the challenge's client scopes this request before it
+        // reads anything — including the project row below.
+        await PinScopeToChallengeAsync(req);
+
+        var project = await db.Projects
+            .Include(p => p.AssignedUserList)
+            .Include(p => p.Organisation)
+            .FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId) && p.Active);
+
+        if (project?.AssignedUserListId == null)
+            return (null, null, BadRequest(new { error = ErrProjectNotReady }));
+
+        if (!await EnsureScopedToProjectAsync(project))
+            return (null, null, BadRequest(new { error = ErrScopeMismatch }));
+
+        if (project.Organisation == null || !project.Organisation.Active)
+            return (null, null, Unauthorized(new { error = "organisation_suspended" }));
+
+        return (project, projectId, null);
+    }
+
     private async Task<User?> LookupUserByCredentialsAsync(Project project, LoginRequest body)
     {
         if (body.Email != null)
@@ -273,6 +376,12 @@ public class AuthController(
 
     private async Task<IActionResult?> CheckUserCredentialsAsync(User user, Project project, LoginRequest body)
     {
+        // The per-user counter is written on every failure here, in AdminLogin and at every MFA
+        // step, but the login path only ever read the per-IP one — so the budget an attacker
+        // actually faced was per source address, and rotating addresses reset it.
+        if (await rateLimiter.IsBlockedAsync(Ip, user.Id))
+            return StatusCode(429, new { error = ErrRateLimited });
+
         if (user.LockedUntil.HasValue && user.LockedUntil > DateTimeOffset.UtcNow)
         {
             IamMetrics.LoginAttempts.WithLabels("locked").Inc();
@@ -291,7 +400,23 @@ public class AuthController(
             await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.failure");
             return Unauthorized(new { error = ErrInvalidCreds });
         }
+
+        // S-10: the Argon2 pepper can only be rotated here — a password hash cannot be
+        // re-derived without the plaintext, and this is the one moment we hold it.
+        await RepepperIfNeededAsync(user, body.Password);
         return null;
+    }
+
+    /// <summary>
+    /// Re-hashes the password under the active pepper when the stored hash is under an older
+    /// one. Called only after a successful verify. Accounts that never sign in keep their old
+    /// pepper indefinitely — that tail is the reason a retired pepper cannot simply be dropped.
+    /// </summary>
+    private async Task RepepperIfNeededAsync(User user, string password)
+    {
+        if (user.PasswordHash == null || !passwords.NeedsRepepper(user.PasswordHash)) return;
+        user.PasswordHash = passwords.Hash(password);
+        await db.SaveChangesAsync();
     }
 
     private async Task<IActionResult?> CheckProjectAccessAsync(User user, Project project, string loginChallenge)
@@ -325,22 +450,23 @@ public class AuthController(
                          await db.WebAuthnCredentials.AnyAsync(w => w.UserId == user.Id);
             if (!hasMfa)
             {
-                HttpContext.Session.SetString("mfa_setup_required", "true");
-                SetMfaSession(user.Id.ToString(), loginChallenge, projectId);
-                IamMetrics.LoginAttempts.WithLabels("mfa_setup_required").Inc();
+                HttpContext.Session.SetString(MfaSetupRequired, "true");
+                SetMfaSession(user.Id.ToString(), loginChallenge, projectId, project.OrgId);
+                IamMetrics.LoginAttempts.WithLabels(MfaSetupRequired).Inc();
                 return Ok(new { requires_mfa_setup = true });
             }
         }
 
         if (user.TotpEnabled)
         {
-            SetMfaSession(user.Id.ToString(), loginChallenge, projectId);
+            SetMfaSession(user.Id.ToString(), loginChallenge, projectId, project.OrgId);
             return Ok(new { requires_mfa = true, mfa_type = "totp" });
         }
 
-        if (user.PhoneVerified && !string.IsNullOrEmpty(user.Phone))
+        // Only offer SMS when a real provider can actually deliver it (see ISmsService.IsConfigured).
+        if (user.PhoneVerified && !string.IsNullOrEmpty(user.Phone) && smsService.IsConfigured)
         {
-            SetMfaSession(user.Id.ToString(), loginChallenge, projectId);
+            SetMfaSession(user.Id.ToString(), loginChallenge, projectId, project.OrgId);
             var smsCode = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
             await otp.StoreSessionOtpAsync("sms_mfa", user.Id.ToString(), smsCode);
             await smsService.SendOtpAsync(user.Phone, smsCode, "login");
@@ -352,18 +478,24 @@ public class AuthController(
 
         if (user.WebAuthnEnabled)
         {
-            SetMfaSession(user.Id.ToString(), loginChallenge, projectId);
+            SetMfaSession(user.Id.ToString(), loginChallenge, projectId, project.OrgId);
             return Ok(new { requires_mfa = true, mfa_type = "webauthn" });
         }
 
         return null;
     }
 
-    private void SetMfaSession(string userId, string loginChallenge, string? projectId)
+    /// <summary>
+    /// <paramref name="orgId"/> is carried so the MFA steps that follow can pin their RLS scope
+    /// without re-reading the project. It is server-side session state; null means the admin
+    /// console, which has no organisation.
+    /// </summary>
+    private void SetMfaSession(string userId, string loginChallenge, string? projectId, Guid? orgId)
     {
         HttpContext.Session.SetString(MfaPendingUser, userId);
         HttpContext.Session.SetString(MfaPendingChallenge, loginChallenge);
         HttpContext.Session.SetString(MfaPendingProject, projectId ?? "");
+        HttpContext.Session.SetString(MfaPendingOrg, orgId?.ToString() ?? "");
     }
 
     private async Task<IActionResult> CompleteLoginAsync(User user, Project project, string loginChallenge)
@@ -384,7 +516,11 @@ public class AuthController(
         var redirectUrl = await hydra.AcceptLoginAsync(loginChallenge, subject, context);
         await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.success");
         IamMetrics.LoginAttempts.WithLabels("success").Inc();
-        _ = Task.Run(() => CheckNewDeviceAsync(user, project.OrgId, Ip, Request.Headers.UserAgent.ToString()));
+        // Snapshot before detaching, as the other two call sites already do: read inside the lambda
+        // these touch HttpContext after the response has completed, which throws into an unobserved
+        // task — so the busiest login path in the deployment sent no new-device alert at all.
+        var (newDeviceAgent, newDeviceIp) = (Request.Headers.UserAgent.ToString(), Ip);
+        _ = Task.Run(() => CheckNewDeviceAsync(user, project.OrgId, newDeviceIp, newDeviceAgent));
         return Ok(new { redirect_to = redirectUrl });
     }
 
@@ -402,6 +538,8 @@ public class AuthController(
 
         if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
             return StatusCode(429, new { error = ErrRateLimited });
+
+        await PinScopeToMfaSessionAsync();
 
         var submitted = body.Code.ToUpperInvariant();
         // Fast path: SHA256 codes are looked up by exact hash match — O(1) in DB, no per-row Argon2.
@@ -436,7 +574,10 @@ public class AuthController(
         var userGuid = Guid.Parse(userId);
         if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
             return StatusCode(429, new { error = ErrRateLimited });
+        await PinScopeToMfaSessionAsync();
         var user = await db.Users.FindAsync(userGuid);
+        if (!smsService.IsConfigured)
+            return BadRequest(new { error = "sms_provider_not_configured" });
         if (user == null || !user.PhoneVerified || string.IsNullOrEmpty(user.Phone))
             return BadRequest(new { error = "phone_not_configured" });
         await otp.EnforceSmsRateLimitAsync(userGuid);
@@ -460,10 +601,16 @@ public class AuthController(
         if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
             return StatusCode(429, new { error = ErrRateLimited });
 
+        await PinScopeToMfaSessionAsync();
+
         if (!await otp.VerifySessionOtpAsync("sms_mfa", userId, body.Code))
         {
             await rateLimiter.RecordFailureAsync(Ip, userGuid);
-            await audit.RecordAsync(null, null, userGuid, "user.mfa.sms.failed");
+            // Recorded against the tenant the MFA session belongs to. It used to be written with
+            // no org at all, which both hid the failure from the tenant's own audit view and —
+            // now that this request runs scoped — would be refused by the audit_log RLS policy.
+            var (smsOrgId, smsProjectId) = MfaSessionTenant();
+            await audit.RecordAsync(smsOrgId, smsProjectId, userGuid, "user.mfa.sms.failed");
             return Unauthorized(new { error = ErrInvalidCode });
         }
 
@@ -487,6 +634,8 @@ public class AuthController(
         if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
             return StatusCode(429, new { error = ErrRateLimited });
 
+        await PinScopeToMfaSessionAsync();
+
         var user = await db.Users.FindAsync(userGuid);
         if (user?.TotpSecret == null) return BadRequest(new { error = "totp_not_configured" });
 
@@ -501,7 +650,8 @@ public class AuthController(
         if (!totp.VerifyTotp(body.Code, out _, new VerificationWindow(1, 1)))
         {
             await rateLimiter.RecordFailureAsync(Ip, userGuid);
-            await audit.RecordAsync(null, null, userGuid, "user.mfa.totp.failed");
+            var (totpOrgId, totpProjectId) = MfaSessionTenant();
+            await audit.RecordAsync(totpOrgId, totpProjectId, userGuid, "user.mfa.totp.failed");
             return Unauthorized(new { error = "invalid_totp" });
         }
 
@@ -509,10 +659,156 @@ public class AuthController(
         return await CompleteMfaLoginAsync(user, userGuid, challenge, projectId, "user.login.mfa");
     }
 
+    // ── MFA enrolment during login ────────────────────────────────────────────
+    //
+    // Reached when a project sets RequireMfa and the user has no factor yet: Login returns
+    // { requires_mfa_setup: true } and the login SPA must enrol one before the login can finish.
+    // The SPA used to call /account/mfa/totp/*, which sits behind GatewayAuthMiddleware and
+    // needs a bearer token the user does not have yet — mid-login is exactly when they have no
+    // token. These endpoints authenticate off the pending-MFA session instead.
+
+    /// <summary>
+    /// True when the pending-MFA session is an <i>enrolment</i> session rather than a challenge.
+    ///
+    /// <para>
+    /// Both states set <c>mfa_pending_user</c>, and for a long time that was all these endpoints
+    /// checked — so a caller who had proved only the password could enrol a fresh authenticator
+    /// over the account's existing one, which also wiped and reissued the backup codes, and then
+    /// complete the login. The second factor was bypassable with the first. <c>mfa_setup_required</c>
+    /// was already written on the enrolment path and only there; it was simply never read.
+    /// </para>
+    ///
+    /// <para>
+    /// The factor re-check on top of the flag is deliberate belt-and-braces: the answer must not
+    /// depend on session bookkeeping being right in every branch. Re-enrolling over a factor you
+    /// already hold is a legitimate operation — it lives at <c>/account/mfa/totp/*</c>, which
+    /// demands re-authentication first.
+    /// </para>
+    /// </summary>
+    private async Task<bool> IsEnrolmentSessionAsync(Guid userId)
+    {
+        if (HttpContext.Session.GetString(MfaSetupRequired) != "true") return false;
+        return !await HasAnyFactorAsync(userId);
+    }
+
+    private async Task<bool> HasAnyFactorAsync(Guid userId)
+    {
+        var user = await db.Users.FindAsync(userId);
+        if (user == null) return false;
+        return user.TotpEnabled
+            || user.PhoneVerified
+            || await db.WebAuthnCredentials.AnyAsync(w => w.UserId == userId);
+    }
+
+    [HttpPost("mfa/setup/totp/start")]
+    public async Task<IActionResult> SetupTotpDuringLogin()
+    {
+        var userId = HttpContext.Session.GetString(MfaPendingUser);
+        if (userId == null || !Guid.TryParse(userId, out var userGuid))
+            return BadRequest(new { error = ErrNoMfaSession });
+
+        await PinScopeToMfaSessionAsync();
+
+        if (!await IsEnrolmentSessionAsync(userGuid))
+            return BadRequest(new { error = ErrNoMfaSession });
+
+        var user = await db.Users.FindAsync(userGuid);
+        if (user == null) return NotFound();
+
+        var secret    = OtpNet.KeyGeneration.GenerateRandomKey(20);
+        var encrypted = TotpEncryption.Encrypt(appConfig.TotpEncKey, secret);
+        await otp.StorePendingAsync(MfaSetupTotpPrefix, userId, encrypted, OtpCacheService.EnrolmentTtlSeconds);
+
+        var issuer = "RediensIAM";
+        var projectId = HttpContext.Session.GetString(MfaPendingProject);
+        if (Guid.TryParse(projectId, out var pid))
+        {
+            var org = await db.Projects.Where(p => p.Id == pid).Select(p => p.Organisation!.Name).FirstOrDefaultAsync();
+            if (!string.IsNullOrEmpty(org)) issuer = org;
+        }
+
+        var base32 = Base32Encoding.ToString(secret);
+        return Ok(new
+        {
+            otpauth_url = $"otpauth://totp/{Uri.EscapeDataString(issuer)}:{Uri.EscapeDataString(user.Email)}?secret={base32}&issuer={Uri.EscapeDataString(issuer)}",
+            secret      = base32,
+        });
+    }
+
+    [HttpPost("mfa/setup/totp/confirm")]
+    public async Task<IActionResult> ConfirmTotpDuringLogin([FromBody] TotpVerifyRequest body)
+    {
+        var userId    = HttpContext.Session.GetString(MfaPendingUser);
+        var challenge = HttpContext.Session.GetString(MfaPendingChallenge);
+        var projectId = HttpContext.Session.GetString(MfaPendingProject);
+        if (userId == null || challenge == null || projectId == null || !Guid.TryParse(userId, out var userGuid))
+            return BadRequest(new { error = ErrNoMfaSession });
+
+        if (await rateLimiter.IsBlockedAsync(Ip, userGuid))
+            return StatusCode(429, new { error = ErrRateLimited });
+
+        await PinScopeToMfaSessionAsync();
+
+        // Checked here too, not only on start: the pending secret outlives a single request, so a
+        // caller who obtained one before enrolling a factor must not be able to confirm it after.
+        if (!await IsEnrolmentSessionAsync(userGuid))
+            return BadRequest(new { error = ErrNoMfaSession });
+
+        var encrypted = await otp.PeekPendingAsync(MfaSetupTotpPrefix, userId);
+        if (encrypted == null) return BadRequest(new { error = "no_setup_session" });
+
+        var totp = new Totp(TotpEncryption.Decrypt(appConfig.TotpEncKey, encrypted));
+        if (!totp.VerifyTotp(body.Code, out _, new VerificationWindow(1, 1)))
+        {
+            await rateLimiter.RecordFailureAsync(Ip, userGuid);
+            return BadRequest(new { error = ErrInvalidCode });
+        }
+
+        var user = await db.Users.FindAsync(userGuid);
+        if (user == null) return NotFound();
+
+        await otp.DeletePendingAsync(MfaSetupTotpPrefix, userId);
+        user.TotpSecret  = encrypted;
+        user.TotpEnabled = true;
+        user.UpdatedAt   = DateTimeOffset.UtcNow;
+
+        var backupCodes = Enumerable.Range(0, 8).Select(_ =>
+        {
+            var code = Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToUpperInvariant();
+            return (code, hash: passwords.HashBackupCode(code));
+        }).ToList();
+        db.BackupCodes.RemoveRange(db.BackupCodes.Where(c => c.UserId == userGuid));
+        db.BackupCodes.AddRange(backupCodes.Select(c => new BackupCode
+        {
+            UserId = userGuid, CodeHash = c.hash, CreatedAt = DateTimeOffset.UtcNow,
+        }));
+        await db.SaveChangesAsync();
+
+        // Enrolment satisfies the factor for this login — the code was just proven.
+        var result = await CompleteMfaLoginAsync(user, userGuid, challenge, projectId, "user.mfa.enrolled");
+        return result is OkObjectResult ok
+            ? Ok(new { redirect_to = RedirectFrom(ok.Value), backup_codes = backupCodes.Select(c => c.code).ToList() })
+            : result;
+    }
+
+    private static string? RedirectFrom(object? payload) =>
+        payload?.GetType().GetProperty("redirect_to")?.GetValue(payload) as string;
+
     [HttpGet("consent")]
     public async Task<IActionResult> GetConsent([FromQuery] string consent_challenge)
     {
-        var req = await hydra.GetConsentRequestAsync(consent_challenge);
+        // Every sibling handler wraps this: GetConsentRequestAsync calls EnsureSuccessStatusCode, so
+        // an expired or already-used challenge threw HttpRequestException and surfaced as a 500,
+        // indistinguishable from a server fault to the login SPA.
+        HydraConsentRequest req;
+        try
+        {
+            req = await hydra.GetConsentRequestAsync(consent_challenge);
+        }
+        catch (HttpRequestException)
+        {
+            return BadRequest(new { error = ErrInvalidChallenge });
+        }
 
         var context = req.Context;
         var userIdStr = context?.GetValueOrDefault(CtxUserId)?.ToString();
@@ -521,57 +817,32 @@ public class AuthController(
         var userId = Guid.Parse(userIdStr);
 
         if (req.Client?.ClientId == Roles.AdminClientId)
-        {
-            var adminRoles = new List<string>();
-            if (await keto.CheckAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{userId}"))
-                adminRoles.Add(Roles.SuperAdmin);
-            if (await keto.HasAnyRelationAsync(Roles.KetoOrgsNamespace, Roles.KetoOrgAdminRelation, $"user:{userId}"))
-                adminRoles.Add(Roles.OrgAdmin);
-            if (await keto.HasAnyRelationAsync(Roles.KetoProjectsNamespace, Roles.KetoManagerRelation, $"user:{userId}"))
-                adminRoles.Add(Roles.ProjectAdmin);
-
-            if (adminRoles.Count == 0)
-            {
-                var rejectUrl = await hydra.RejectConsentAsync(consent_challenge, ErrAccessDenied, "insufficient_role");
-                return SafeRedirect(rejectUrl);
-            }
-
-            // Resolve the org and project scopes so the token carries them
-            var orgRole = await db.OrgRoles
-                .Where(r => r.UserId == userId && r.Role == Roles.OrgAdmin)
-                .OrderBy(r => r.GrantedAt)
-                .FirstOrDefaultAsync();
-            var projectRole = await db.OrgRoles
-                .Where(r => r.UserId == userId && r.Role == Roles.ProjectAdmin)
-                .OrderBy(r => r.GrantedAt)
-                .FirstOrDefaultAsync();
-
-            var adminSession = new
-            {
-                access_token = new
-                {
-                    user_id = userIdStr,
-                    roles = adminRoles,
-                    org_id = orgRole?.OrgId.ToString() ?? "",
-                    project_id = projectRole?.ScopeId?.ToString() ?? ""
-                }
-            };
-            var adminRedirect = await hydra.AcceptConsentAsync(consent_challenge, adminSession, req.RequestedScope);
-            return SafeRedirect(adminRedirect);
-        }
+            return await ConsentForAdminAsync(consent_challenge, req, userId, userIdStr);
 
         var projectIdStr = context?.GetValueOrDefault(CtxProjectId)?.ToString();
         var orgIdStr = context?.GetValueOrDefault(CtxOrgId)?.ToString();
 
         if (projectIdStr == null) return BadRequest(new { error = "missing_context" });
 
+        // The context is what CompleteLoginAsync handed Hydra at accept-login, so the tenant is
+        // known here without reading anything. (The admin branch above returns before this: its
+        // OrgRoles lookup is deliberately cross-organisation and must stay unscoped.)
+        if (Guid.TryParse(orgIdStr, out var consentOrgId) && consentOrgId != Guid.Empty)
+            await PinScopeAsync(consentOrgId);
+
         var projectId = Guid.Parse(projectIdStr);
 
-        var roles = await db.UserProjectRoles
+        // ext.roles is a published contract read by resource servers RediensIAM cannot inventory.
+        // Tenant role names are chosen by tenant admins, so they are emitted qualified by the
+        // project that defined them: two tenants' "admin" must not be the same string at a
+        // consumer, and no tenant name can ever collide with a management role.
+        var roles = (await db.UserProjectRoles
             .Include(r => r.Role)
             .Where(r => r.UserId == userId && r.ProjectId == projectId)
             .Select(r => r.Role.Name)
-            .ToListAsync();
+            .ToListAsync())
+            .Select(name => Roles.ProjectRoleClaim(projectIdStr, name))
+            .ToList();
 
         var session = new
         {
@@ -593,6 +864,61 @@ public class AuthController(
         var redirectUrl = await hydra.AcceptConsentAsync(consent_challenge, session, req.RequestedScope);
         return SafeRedirect(redirectUrl);
     }
+
+    /// <summary>
+    /// Consent for the admin console. Its OrgRoles lookups are deliberately cross-organisation,
+    /// which is why this branch returns before <see cref="GetConsent"/> pins a tenant scope.
+    /// </summary>
+    private async Task<IActionResult> ConsentForAdminAsync(
+        string consentChallenge, HydraConsentRequest req, Guid userId, string userIdStr)
+    {
+        var adminRoles = await ManagementRolesAsync(userId);
+        if (adminRoles.Count == 0)
+        {
+            var rejectUrl = await hydra.RejectConsentAsync(consentChallenge, ErrAccessDenied, "insufficient_role");
+            return SafeRedirect(rejectUrl);
+        }
+
+        var orgRole = await FirstGrantedOrgRoleAsync(userId, Roles.OrgAdmin);
+        var projectRole = await FirstGrantedOrgRoleAsync(userId, Roles.ProjectAdmin);
+
+        var adminSession = new
+        {
+            access_token = new
+            {
+                user_id = userIdStr,
+                roles = adminRoles,
+                org_id = orgRole?.OrgId.ToString() ?? "",
+                project_id = projectRole?.ScopeId?.ToString() ?? ""
+            }
+        };
+        var adminRedirect = await hydra.AcceptConsentAsync(consentChallenge, adminSession, req.RequestedScope);
+        return SafeRedirect(adminRedirect);
+    }
+
+    /// <summary>
+    /// Every management role this user holds, in the order the console expects. Unlike
+    /// <see cref="HasManagementRoleAsync"/> this asks Keto all three questions, because the answer
+    /// is the list rather than whether it is empty.
+    /// </summary>
+    private async Task<List<string>> ManagementRolesAsync(Guid userId)
+    {
+        var subject = $"user:{userId}";
+        var roles = new List<string>();
+        if (await keto.CheckAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, subject))
+            roles.Add(Roles.SuperAdmin);
+        if (await keto.HasAnyRelationAsync(Roles.KetoOrgsNamespace, Roles.KetoOrgAdminRelation, subject))
+            roles.Add(Roles.OrgAdmin);
+        if (await keto.HasAnyRelationAsync(Roles.KetoProjectsNamespace, Roles.KetoManagerRelation, subject))
+            roles.Add(Roles.ProjectAdmin);
+        return roles;
+    }
+
+    private Task<OrgRole?> FirstGrantedOrgRoleAsync(Guid userId, string role) =>
+        db.OrgRoles
+            .Where(r => r.UserId == userId && r.Role == role)
+            .OrderBy(r => r.GrantedAt)
+            .FirstOrDefaultAsync();
 
     [HttpGet("logout")]
     public async Task<IActionResult> GetLogout([FromQuery] string logout_challenge)
@@ -633,11 +959,14 @@ public class AuthController(
         var projectId = ExtractProjectId(req);
         if (projectId == null) return BadRequest(new { error = ErrMissingProjectId });
 
+        await PinScopeToChallengeAsync(req);
+
         var project = await db.Projects
             .Include(p => p.AssignedUserList)
             .FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId) && p.Active);
 
         if (project == null) return NotFound(new { error = "project_not_found" });
+        if (!await EnsureScopedToProjectAsync(project)) return BadRequest(new { error = ErrScopeMismatch });
         if (!project.AllowSelfRegistration) return StatusCode(403, new { error = "registration_not_allowed" });
         if (project.AssignedUserListId == null) return BadRequest(new { error = ErrProjectNotReady });
 
@@ -658,23 +987,21 @@ public class AuthController(
 
     private async Task<IActionResult?> ValidatePasswordPolicyAsync(Project project, string password)
     {
-        if (project.MinPasswordLength > 0 && password.Length < project.MinPasswordLength)
-            return BadRequest(new { error = "password_too_short", min_length = project.MinPasswordLength });
-        if (project.PasswordRequireUppercase && !password.Any(char.IsUpper))
-            return BadRequest(new { error = "password_requires_uppercase" });
-        if (project.PasswordRequireLowercase && !password.Any(char.IsLower))
-            return BadRequest(new { error = "password_requires_lowercase" });
-        if (project.PasswordRequireDigit && !password.Any(char.IsDigit))
-            return BadRequest(new { error = "password_requires_digit" });
-        if (project.PasswordRequireSpecial && !password.Any(c => !char.IsLetterOrDigit(c)))
-            return BadRequest(new { error = "password_requires_special" });
-
-        if (project.CheckBreachedPasswords)
+        var (result, breachCount) = await passwordPolicy.EvaluateAsync(project, password);
+        return result switch
         {
-            var count = await breachCheck.GetBreachCountAsync(password);
-            if (count > 0) return BadRequest(new { error = "password_breached", count });
-        }
-        return null;
+            PasswordPolicyResult.Ok       => null,
+            PasswordPolicyResult.TooShort => BadRequest(new
+            {
+                error = PasswordPolicyService.ErrorCode(result),
+                min_length = PasswordPolicyService.EffectiveMinimumLength(project),
+            }),
+            PasswordPolicyResult.Breached => BadRequest(new
+            {
+                error = PasswordPolicyService.ErrorCode(result), count = breachCount,
+            }),
+            _ => BadRequest(new { error = PasswordPolicyService.ErrorCode(result) }),
+        };
     }
 
     private async Task<IActionResult?> ValidateEmailForRegistrationAsync(Project project, string email)
@@ -719,6 +1046,11 @@ public class AuthController(
 
     private async Task<IActionResult> RegisterWithVerificationAsync(Project project, string projectId, string email, RegisterRequest body)
     {
+        // SMS-only verification with no real provider means the code is never delivered and the
+        // user can never finish registering. Refuse up front rather than stranding them.
+        if (!project.EmailVerificationEnabled && !smsService.IsConfigured)
+            return StatusCode(503, new { error = "sms_provider_not_configured" });
+
         var sessionId = Guid.NewGuid().ToString("N");
         var code = RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
         var pending = System.Text.Json.JsonSerializer.Serialize(new
@@ -763,7 +1095,10 @@ public class AuthController(
         var projId = Guid.Parse(root.GetProperty(CtxProjectId).GetString()!);
         var loginChallenge = root.GetProperty("login_challenge").GetString()!;
 
-        // Verify project is still active and configured before creating user
+        // orgId came out of the server-side pending-registration record written by Register,
+        // which had already resolved it from the challenge. No read is needed to scope this.
+        await PinScopeAsync(orgId);
+
         var regProject = await db.Projects.FindAsync(projId);
         if (regProject == null || !regProject.Active || regProject.AssignedUserListId == null)
             return BadRequest(new { error = "project_inactive" });
@@ -808,7 +1143,6 @@ public class AuthController(
         if (token == null || token.ExpiresAt < DateTimeOffset.UtcNow || token.UsedAt != null)
             return BadRequest(new { error = "invalid_or_expired_token" });
 
-        // Check project password policy
         var userList = await db.UserLists.Include(ul => ul.Projects).FirstOrDefaultAsync(ul => ul.Id == token.User.UserListId);
         var inviteProject = userList?.Projects.FirstOrDefault();
         if (inviteProject != null)
@@ -854,6 +1188,12 @@ public class AuthController(
         if (project?.AssignedUserListId == null || (!project.EmailVerificationEnabled && !project.SmsVerificationEnabled))
             return BadRequest(new { error = "verification_not_configured" });
 
+        // body.ProjectId is caller-supplied, but the organisation is read off the project row it
+        // names, so the scope is still server-decided. See the enumeration note in
+        // SECURITY-AUDIT-LOG.md step 32: the user lookup below is already keyed
+        // by this project's user list, so scoping it reveals nothing a caller could not observe.
+        await PinScopeAsync(project.OrgId);
+
         var emailLower = body.Email.ToLowerInvariant();
         var user = await db.Users.FirstOrDefaultAsync(u =>
             u.UserListId == project.AssignedUserListId && u.Email == emailLower);
@@ -875,11 +1215,14 @@ public class AuthController(
             return Ok(new { session_id = sessionId });
         }
 
-        // Constant-time: perform equivalent Redis writes to prevent timing-based email enumeration
+        // Unknown address: perform the equivalent Redis writes (constant time) AND return the
+        // same response shape. Returning a body without session_id was a plain enumeration
+        // oracle — the timing equalisation above was defeated by the JSON itself. The session
+        // is stored under the "reset:void" prefix, so the verify step can never resolve it.
         await otp.StorePendingAsync("reset:void", sessionId, "void");
         await otp.StoreSessionOtpAsync("reset:void", sessionId, code);
         await rateLimiter.RecordFailureAsync(Ip, null, ErrReset);
-        return Ok(new { });
+        return Ok(new { session_id = sessionId });
     }
 
     [HttpPost("password-reset/verify")]
@@ -962,10 +1305,69 @@ public class AuthController(
             return Unauthorized(new { error = ErrInvalidCreds });
         }
 
+        // Same per-user budget as the tenant login path, for the same reason.
+        if (await rateLimiter.IsBlockedAsync(Ip, user.Id))
+            return StatusCode(429, new { error = ErrRateLimited });
+
+        if (await CheckAdminPasswordAsync(user, body.Password) is { } passwordErr)
+            return passwordErr;
+
+        if (!await HasManagementRoleAsync(user.Id))
+            return Unauthorized(new { error = "insufficient_role" });
+
+        await RepepperIfNeededAsync(user, body.Password);
+        user.FailedLoginCount = 0;
+        user.LastLoginAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        await rateLimiter.ResetAsync(Ip, user.Id);
+
+        if (await HasEnrolledFactorAsync(user))
+        {
+            SetMfaSession(user.Id.ToString(), body.LoginChallenge, null, null);
+            return Ok(new { requires_mfa = true });
+        }
+
+        // Whether enrolment is demanded is derived from the deployment's own state, not configured.
+        // `Security:RequireAdminMfa` used to decide it, and its correct value changed by itself:
+        // false is right while the only account is the bootstrap admin — gating that first login
+        // locks the operator out of the console they need in order to configure the SMTP or SMS
+        // that makes a factor deliverable — and wrong from the moment the deployment is set up.
+        //
+        // So: the first administrator signs in on a password, and the exception closes the instant
+        // anybody enrols. The population is this administrator's own system user list, which is
+        // the deployment's administrators (one immovable list with OrgId IS NULL). The query is
+        // bounded by that list rather than cached: a cached "nobody has a factor" would hold the
+        // exception open past the enrolment that was supposed to end it.
+        //
+        // This runs unscoped — see TenantScopeInterceptor.LegitimatelyUnscopedPaths, which already
+        // names AdminLogin because the system list is invisible under every tenant scope.
+        if (await AnyOtherAdminEnrolledAsync(user))
+        {
+            HttpContext.Session.SetString(MfaSetupRequired, "true");
+            SetMfaSession(user.Id.ToString(), body.LoginChallenge, null, null);
+            IamMetrics.LoginAttempts.WithLabels(MfaSetupRequired).Inc();
+            return Ok(new { requires_mfa_setup = true });
+        }
+
+        var context = new Dictionary<string, object> { [CtxUserId] = user.Id.ToString() };
+        var redirectUrl = await hydra.AcceptLoginAsync(body.LoginChallenge, user.Id.ToString(), context);
+        // Snapshot the request values before detaching: HttpContext is not valid once the
+        // response completes.
+        var (userAgent, ip) = (Request.Headers.UserAgent.ToString(), Ip);
+        _ = Task.Run(() => CheckNewDeviceAsync(user, null, ip, userAgent));
+        return Ok(new { redirect_to = redirectUrl });
+    }
+
+    /// <summary>
+    /// Runs the admin lockout and password checks, recording the failure exactly as the tenant
+    /// login path does. Returns the response to send on refusal, or null when the password stands.
+    /// </summary>
+    private async Task<IActionResult?> CheckAdminPasswordAsync(User user, string password)
+    {
         if (user.LockedUntil.HasValue && user.LockedUntil > DateTimeOffset.UtcNow)
             return Unauthorized(new { error = "account_locked", locked_until = user.LockedUntil });
 
-        if (user.PasswordHash == null || !passwords.Verify(body.Password, user.PasswordHash))
+        if (user.PasswordHash == null || !passwords.Verify(password, user.PasswordHash))
         {
             user.FailedLoginCount++;
             user.LockedUntil = user.FailedLoginCount >= appConfig.MaxLoginAttempts
@@ -976,34 +1378,24 @@ public class AuthController(
             return Unauthorized(new { error = ErrInvalidCreds });
         }
 
-        if (!await HasManagementRoleAsync(user.Id))
-            return Unauthorized(new { error = "insufficient_role" });
-
-        user.FailedLoginCount = 0;
-        user.LastLoginAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync();
-        await rateLimiter.ResetAsync(Ip, user.Id);
-
-        // Require MFA if the user has any factor configured
-        var hasMfa = user.TotpEnabled || user.PhoneVerified ||
-                     await db.WebAuthnCredentials.AnyAsync(w => w.UserId == user.Id);
-        if (hasMfa)
-        {
-            SetMfaSession(user.Id.ToString(), body.LoginChallenge, null);
-            return Ok(new { requires_mfa = true });
-        }
-
-        var context = new Dictionary<string, object> { [CtxUserId] = user.Id.ToString() };
-        var redirectUrl = await hydra.AcceptLoginAsync(body.LoginChallenge, user.Id.ToString(), context);
-        return Ok(new { redirect_to = redirectUrl });
+        return null;
     }
+
+    private async Task<bool> HasEnrolledFactorAsync(User user) =>
+        user.TotpEnabled || user.PhoneVerified ||
+        await db.WebAuthnCredentials.AnyAsync(w => w.UserId == user.Id);
+
+    private Task<bool> AnyOtherAdminEnrolledAsync(User user) =>
+        db.Users
+            .Where(u => u.UserListId == user.UserListId && u.Id != user.Id)
+            .AnyAsync(u => u.TotpEnabled || u.PhoneVerified
+                           || db.WebAuthnCredentials.Any(w => w.UserId == u.Id));
 
     private async Task CheckNewDeviceAsync(User user, Guid? orgId, string ip, string userAgent)
     {
         if (!user.NewDeviceAlertsEnabled) return;
         try
         {
-            // Fingerprint: HMAC-SHA256 of "userAgent + /24 subnet"
             var subnet = ip.Contains('.') && System.Net.IPAddress.TryParse(ip, out var parsed)
                 ? string.Join(".", parsed.GetAddressBytes().Take(3)) + ".0"
                 : ip;
@@ -1111,9 +1503,11 @@ public class AuthController(
 
         var projectId = ExtractProjectId(req);
         if (projectId == null) return BadRequest(new { error = ErrMissingProjectId });
+        await PinScopeToChallengeAsync(req);
 
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == Guid.Parse(projectId) && p.Active);
         if (project?.AssignedUserListId == null) return BadRequest(new { error = ErrProjectNotReady });
+        if (!await EnsureScopedToProjectAsync(project)) return BadRequest(new { error = ErrScopeMismatch });
 
         var providerCfg = GetProviderConfig(project.LoginTheme, provider_id);
         if (providerCfg == null) return BadRequest(new { error = "provider_not_found" });
@@ -1142,7 +1536,6 @@ public class AuthController(
         if (providerCfg == null) return BadRequest(new { error = "provider_not_found" });
         if (string.IsNullOrEmpty(providerCfg.ClientId)) return BadRequest(new { error = "provider_not_configured" });
 
-        // Already linked?
         var alreadyLinked = await db.UserSocialAccounts.AnyAsync(s =>
             s.UserId == claims.ParsedUserId && s.Provider == provider_id);
         if (alreadyLinked) return BadRequest(new { error = "provider_already_linked" });
@@ -1173,11 +1566,14 @@ public class AuthController(
             return SafeRedirect(errorRedirect);
         }
 
+        // No challenge is in hand here — the caller came back from the provider — so the
+        // organisation comes from the project row and everything after it runs scoped.
         var project = await db.Projects
             .Include(p => p.AssignedUserList)
             .FirstOrDefaultAsync(p => p.Id == Guid.Parse(stateData.ProjectId) && p.Active);
 
         if (project?.AssignedUserListId == null) return SafeRedirect(errorRedirect);
+        await PinScopeAsync(project.OrgId);
 
         var providerCfg = GetProviderConfig(project.LoginTheme, stateData.ProviderId);
         if (providerCfg == null) return SafeRedirect(errorRedirect);
@@ -1191,18 +1587,15 @@ public class AuthController(
         var user = await FindOrCreateSocialUserAsync(profile, stateData.ProviderId, project);
         if (user == null) return SafeRedirect(errorRedirect);
 
-        if (project.RequireRoleToLogin)
-        {
-            var hasRole = await db.UserProjectRoles.AnyAsync(r => r.UserId == user.Id && r.ProjectId == project.Id);
-            if (!hasRole)
-            {
-                var rejectUrl = await hydra.RejectLoginAsync(stateData.LoginChallenge, ErrAccessDenied, "no_role_assigned");
-                return SafeRedirect(rejectUrl);
-            }
-        }
+        if (await CheckFederatedLoginAllowedAsync(project, user, stateData.LoginChallenge) is { } guardErr)
+            return guardErr;
 
         user.LastLoginAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
+
+        var (factorRequired, needsEnrolment) = await FederatedLoginGuard.RequiresFactorAsync(db, user, project);
+        if (factorRequired)
+            return StartFederatedMfa(project, user, stateData.LoginChallenge, needsEnrolment);
 
         var subject = $"{project.OrgId}:{user.Id}";
         var ctx = new Dictionary<string, object>
@@ -1215,6 +1608,44 @@ public class AuthController(
         var redirectTo = await hydra.AcceptLoginAsync(stateData.LoginChallenge, subject, ctx);
         await audit.RecordAsync(project.OrgId, project.Id, user.Id, $"user.login.social.{stateData.ProviderId}");
         return SafeRedirect(redirectTo);
+    }
+
+    /// <summary>
+    /// The tenant's own login controls apply however the user authenticated. This path used to
+    /// accept the login directly, so a project that switched on require_mfa or an IP allowlist
+    /// had both enforced for password users and bypassed by everyone who used the identity
+    /// provider the tenant had configured — which is the population those controls exist for.
+    /// </summary>
+    private async Task<IActionResult?> CheckFederatedLoginAllowedAsync(
+        Project project, User user, string loginChallenge)
+    {
+        if (!FederatedLoginGuard.IsIpAllowed(project, Ip))
+        {
+            await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.failure");
+            IamMetrics.LoginAttempts.WithLabels("ip_blocked").Inc();
+            return SafeRedirect(await hydra.RejectLoginAsync(
+                loginChallenge, ErrAccessDenied, "ip_not_allowed"));
+        }
+
+        if (project.RequireRoleToLogin)
+        {
+            var hasRole = await db.UserProjectRoles.AnyAsync(r => r.UserId == user.Id && r.ProjectId == project.Id);
+            if (!hasRole)
+            {
+                return SafeRedirect(await hydra.RejectLoginAsync(
+                    loginChallenge, ErrAccessDenied, "no_role_assigned"));
+            }
+        }
+
+        return null;
+    }
+
+    private IActionResult StartFederatedMfa(Project project, User user, string loginChallenge, bool needsEnrolment)
+    {
+        FederatedLoginGuard.SetMfaSession(
+            HttpContext.Session, user.Id, loginChallenge, project.Id, project.OrgId, needsEnrolment);
+        IamMetrics.LoginAttempts.WithLabels(needsEnrolment ? MfaSetupRequired : "mfa_required").Inc();
+        return SafeRedirect(FederatedLoginGuard.MfaRedirectPath(loginChallenge, needsEnrolment));
     }
 
     private async Task<IActionResult> HandleOAuthLinkModeAsync(OAuthStateData stateData, SocialUserProfile profile)
@@ -1248,7 +1679,6 @@ public class AuthController(
 
     private async Task<User?> FindOrCreateSocialUserAsync(SocialUserProfile profile, string provider, Project project)
     {
-        // Check allowed email domains before any provisioning
         if (project.AllowedEmailDomains.Length > 0 && !string.IsNullOrEmpty(profile.Email))
         {
             var domain = profile.Email.Split('@').LastOrDefault()?.ToLowerInvariant() ?? "";
@@ -1256,15 +1686,22 @@ public class AuthController(
                 return null;
         }
 
-        // 1. Check existing social link
+        // Constrained to this project's user list. The same provider subject can legitimately
+        // exist in two tenants — one person with one Google account, invited by two customers —
+        // and an unconstrained match returned the FIRST tenant's user, which this method's
+        // caller then signed in against THIS project. That is one tenant authenticating another
+        // tenant's account. The tenant scope pinned above already denies it; the predicate is
+        // here so the guarantee does not depend on row-level security being switched on.
         var social = await db.UserSocialAccounts
             .Include(s => s.User)
-            .FirstOrDefaultAsync(s => s.Provider == provider && s.ProviderUserId == profile.ProviderUserId);
+            .FirstOrDefaultAsync(s => s.Provider == provider
+                && s.ProviderUserId == profile.ProviderUserId
+                && s.User.UserListId == project.AssignedUserListId);
 
         if (social != null) return social.User;
 
-        // 2. Try to link to existing user by email — only when BOTH sides have verified the email.
-        // Linking on unverified email allows account takeover via attacker-controlled OAuth providers.
+        // Linking by email requires the address to be verified on BOTH sides. Linking on an
+        // unverified email is account takeover via an attacker-controlled OAuth provider.
         User? user = null;
         if (!string.IsNullOrEmpty(profile.Email) && profile.IsEmailVerified)
         {
@@ -1276,14 +1713,12 @@ public class AuthController(
                 u.Active);
         }
 
-        // 3. Create new user if not found
         if (user == null)
         {
             user = await CreateSocialUserAsync(profile, project);
             if (user == null) return null;
         }
 
-        // 4. Record the social link
         db.UserSocialAccounts.Add(new UserSocialAccount
         {
             UserId         = user.Id,
@@ -1360,7 +1795,7 @@ public class AuthController(
         return null;
     }
 
-    private static ProviderConfig? TryBuildProviderConfig(JsonElement p, string providerId, byte[] encKey)
+    private static ProviderConfig? TryBuildProviderConfig(JsonElement p, string providerId, KeyRing encKey)
     {
         if (!p.TryGetProperty("id", out var idProp) || idProp.GetString() != providerId) return null;
         if (p.TryGetProperty("enabled", out var enProp) && !enProp.GetBoolean()) return null;
@@ -1371,7 +1806,7 @@ public class AuthController(
         return new ProviderConfig(providerId, type, clientId, ResolveProviderSecret(p, encKey), issuerUrl);
     }
 
-    private static string ResolveProviderSecret(JsonElement p, byte[] encKey)
+    private static string ResolveProviderSecret(JsonElement p, KeyRing encKey)
     {
         if (p.TryGetProperty("client_secret_enc", out var csEnc) && !string.IsNullOrEmpty(csEnc.GetString()))
         {
@@ -1386,18 +1821,21 @@ public class AuthController(
     private static Dictionary<string, object>? StripSecretsFromTheme(Dictionary<string, object>? theme)
         => TotpEncryption.StripSecretsFromTheme(theme);
 
-    private static string? ExtractProjectId(HydraLoginRequest req)
-    {
-        var extra = req.OidcContext?.Extra;
-        if (extra?.TryGetValue(CtxProjectId, out var v) == true) return v?.ToString();
+    // ── Tenant resolution ─────────────────────────────────────────────────────
+    //
+    // The project a login flow belongs to is decided by the OAuth2 client that opened it,
+    // never by the request. `client.metadata.project_id` is written by RediensIAM when the
+    // client is created (OrgController/SystemAdminController) and is
+    // the only authority here.
+    //
+    // The project_id carried in oidc_context.extra / the authorize URL is caller-controlled:
+    // it is used solely to DETECT a mismatch, never as a source. Treating it as a source is
+    // what allowed a tenant to drive a login for another tenant's project onto its own
+    // login_challenge (theme disclosure, cross-tenant authorization code via social/SAML).
 
-        var url = req.RequestUrl;
-        var idx = url.IndexOf("project_id=", StringComparison.OrdinalIgnoreCase);
-        if (idx < 0) return null;
-        var start = idx + "project_id=".Length;
-        var end = url.IndexOf('&', start);
-        return end < 0 ? url[start..] : url[start..end];
-    }
+    /// <summary>See <see cref="LoginChallengeProject"/>. Null unless the challenge binds cleanly to a project.</summary>
+    private static string? ExtractProjectId(HydraLoginRequest req) =>
+        LoginChallengeProject.ResolveOrNull(req);
 
     // ── WebAuthn assertion ────────────────────────────────────────────────────
 
@@ -1409,6 +1847,8 @@ public class AuthController(
         if (!Guid.TryParse(userId, out var uid))
             return BadRequest(new { error = ErrNoMfaSession });
 
+        await PinScopeToMfaSessionAsync();
+
         var allowedCreds = await db.WebAuthnCredentials
             .Where(c => c.UserId == uid)
             .Select(c => new PublicKeyCredentialDescriptor(c.CredentialId))
@@ -1417,7 +1857,9 @@ public class AuthController(
         var options = fido2.GetAssertionOptions(new GetAssertionOptionsParams
         {
             AllowedCredentials = allowedCreds,
-            UserVerification   = UserVerificationRequirement.Preferred
+            // Required, not Preferred: as a second factor, mere possession of the authenticator
+            // is not enough — the user must be verified by it (PIN / biometric).
+            UserVerification   = UserVerificationRequirement.Required
         });
 
         HttpContext.Session.SetString("fido2.assertionOptions", options.ToJson());
@@ -1442,7 +1884,12 @@ public class AuthController(
         var options  = AssertionOptions.FromJson(json);
         var response = JsonSerializer.Deserialize<AuthenticatorAssertionRawResponse>(body.GetRawText())!;
 
-        var cred = await db.WebAuthnCredentials.FirstOrDefaultAsync(c => c.CredentialId == response.RawId);
+        // Scope the lookup to the user pending MFA. A global lookup makes ANY registered
+        // authenticator on the instance satisfy the second factor for ANY account whose
+        // password is already known: Fido2NetLib only consults the ownership callback when the
+        // assertion carries a userHandle, which non-discoverable credentials do not.
+        var cred = await db.WebAuthnCredentials
+            .FirstOrDefaultAsync(c => c.CredentialId == response.RawId && c.UserId == uid);
         if (cred == null) return Unauthorized(new { error = "unknown_credential" });
         IsUserHandleOwnerOfCredentialIdAsync isOwner = async (args, ct) =>
             await db.WebAuthnCredentials.AnyAsync(c => c.CredentialId == args.CredentialId && c.UserId == uid, ct);
@@ -1475,12 +1922,26 @@ public class AuthController(
     private async Task<IActionResult> CompleteMfaLoginAsync(User user, Guid userGuid, string challenge, string projectId, string auditEvent, bool resetRateLimit = true)
     {
         user.LastLoginAt = DateTimeOffset.UtcNow;
+        // Cleared here as well as on the password path. Without it a user with a second factor
+        // accumulated failed-password attempts for the life of the account: five mistyped
+        // passwords spread over a year reached MaxLoginAttempts, and from then on every single
+        // typo re-locked the account for the full lockout window until an admin intervened.
+        user.FailedLoginCount = 0;
+        user.LockedUntil      = null;
         await db.SaveChangesAsync();
         if (resetRateLimit) await rateLimiter.ResetAsync(Ip, userGuid);
+        // Only CompleteLoginAsync had this, so every login that passed a second factor — including
+        // every admin-console login — produced no new-device alert. Snapshot the request values
+        // before detaching: HttpContext is not valid once the response completes.
+        var (userAgent, ip) = (Request.Headers.UserAgent.ToString(), Ip);
 
         HttpContext.Session.Remove(MfaPendingUser);
         HttpContext.Session.Remove(MfaPendingChallenge);
         HttpContext.Session.Remove(MfaPendingProject);
+        HttpContext.Session.Remove(MfaPendingOrg);
+        // The login is finished, so the enrolment window closes with it — leaving this set would
+        // keep the setup endpoints reachable for the life of the session cookie.
+        HttpContext.Session.Remove(MfaSetupRequired);
         // Rotate session ID to prevent fixation: clear + delete the cookie so the next response
         // issues a fresh session identifier rather than reusing the pre-MFA one.
         HttpContext.Session.Clear();
@@ -1492,6 +1953,7 @@ public class AuthController(
             var ctx = new Dictionary<string, object> { [CtxUserId] = user.Id.ToString() };
             redirectUrl = await hydra.AcceptLoginAsync(challenge, user.Id.ToString(), ctx);
             await audit.RecordAsync(null, null, user.Id, auditEvent);
+            _ = Task.Run(() => CheckNewDeviceAsync(user, null, ip, userAgent));
         }
         else
         {
@@ -1503,6 +1965,7 @@ public class AuthController(
             };
             redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, context);
             await audit.RecordAsync(project.OrgId, project.Id, user.Id, auditEvent);
+            _ = Task.Run(() => CheckNewDeviceAsync(user, project.OrgId, ip, userAgent));
         }
         return Ok(new { redirect_to = redirectUrl });
     }

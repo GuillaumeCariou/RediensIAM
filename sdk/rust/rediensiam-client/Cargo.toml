@@ -1,0 +1,34 @@
+[package]
+name = "rediensiam-client"
+version = "0.5.0"
+edition = "2021"
+description = "Resource-server client for RediensIAM: live token introspection (RFC 7662) and permission checks."
+license = "MIT"
+keywords = ["iam", "oauth2", "authentication", "authorization"]
+
+[dependencies]
+# rustls-tls-native-roots is what makes a private-CA deployment work: reqwest's root store becomes
+# the webpki bundle *plus* whatever the host trusts, rather than the webpki bundle alone. Adding
+# roots, never removing verification — see the module docs on trust.
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+    "rustls-tls-native-roots",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Cache keys are a security boundary here — see cache_key(). Must be a cryptographic digest.
+sha2 = "0.11"
+tokio = { version = "1", features = ["sync", "time"] }
+thiserror = "2"
+
+[dev-dependencies]
+# net + io-util: the wire tests run a one-shot loopback listener, because the only proof that
+# `aud` is sent is reading the bytes the client actually wrote.
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util"] }
+# tests/tls_trust.rs runs a real handshake against a private CA. Nothing short of one proves the
+# root store changed, and nothing short of one proves an untrusted certificate is still refused.
+# `ring` on both, to match the provider reqwest already compiles in.
+rcgen = "0.14"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }

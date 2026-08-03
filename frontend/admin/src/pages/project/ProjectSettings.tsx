@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router';
 import { useProjectContext } from '@/hooks/useOrgContext';
 import { IamDialog } from '@/components/iam';
 import { getProjectInfo, updateProject, deleteProject } from '@/api';
@@ -12,13 +12,7 @@ interface Project {
 
 function Toggle({ checked, onChange }: Readonly<{ checked: boolean; onChange: (v: boolean) => void }>) {
   return (
-    <button onClick={() => onChange(!checked)} style={{
-      width: 36, height: 20, borderRadius: 10,
-      background: checked ? 'var(--ia-accent)' : 'var(--border-strong)',
-      position: 'relative', border: 'none', cursor: 'pointer', flexShrink: 0, transition: 'background 150ms',
-    }}>
-      <span style={{ position: 'absolute', top: 2, left: checked ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 150ms' }} />
-    </button>
+    <input type="checkbox" className="iam-switch" checked={checked} onChange={e => onChange(e.target.checked)} />
   );
 }
 
@@ -27,6 +21,7 @@ export default function ProjectSettings() {
   const navigate = useNavigate();
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -36,15 +31,19 @@ export default function ProjectSettings() {
   const [active, setActive] = useState(true);
   const [requireRole, setRequireRole] = useState(false);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!projectId) { setLoading(false); return; }
+    setLoading(true);
+    setLoadError(false);
     getProjectInfo(projectId).then(p => {
       setProject(p);
       setName(p.name);
       setActive(p.active);
       setRequireRole(p.require_role_to_login);
-    }).catch(console.error).finally(() => setLoading(false));
+    }).catch(err => { console.error(err); setLoadError(true); }).finally(() => setLoading(false));
   }, [projectId]);
+
+  useEffect(load, [load]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -62,6 +61,23 @@ export default function ProjectSettings() {
       navigate('/org/projects');
     } finally { setDeleting(false); }
   };
+
+  // A load that failed leaves every field at its useState default. Rendering the form anyway means
+  // the next Save PATCHes those defaults over the tenant's real configuration — MFA off, allowlist
+  // empty — and reports success. Refusing to render is the whole fix.
+  if (loadError) return (
+    <div>
+      <PageHeader title="Settings" />
+      <div className="iam-page">
+        <div className="iam-empty">
+          <p>This configuration could not be loaded, so it is not safe to edit.</p>
+          {/* Re-reads the project rather than reloading the page: the operator keeps their place,
+              and a transient 500 costs one request instead of a full boot. */}
+          <button type="button" className="iam-btn" onClick={load}>Retry</button>
+        </div>
+      </div>
+    </div>
+  );
 
   if (loading) return (
     <div>

@@ -43,6 +43,13 @@ namespace RediensIAM.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("now()");
 
+                    b.Property<string>("Hash")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasDefaultValue("");
+
                     b.Property<string>("IpAddress")
                         .HasColumnType("text");
 
@@ -52,6 +59,10 @@ namespace RediensIAM.Data.Migrations
 
                     b.Property<Guid?>("OrgId")
                         .HasColumnType("uuid");
+
+                    b.Property<string>("PrevHash")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
 
                     b.Property<Guid?>("ProjectId")
                         .HasColumnType("uuid");
@@ -76,6 +87,8 @@ namespace RediensIAM.Data.Migrations
                     b.HasIndex("ActorId", "CreatedAt");
 
                     b.HasIndex("OrgId", "CreatedAt");
+
+                    b.HasIndex("OrgId", "Id");
 
                     b.HasIndex("ProjectId", "CreatedAt");
 

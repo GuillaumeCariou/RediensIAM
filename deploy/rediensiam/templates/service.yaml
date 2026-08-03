@@ -18,11 +18,14 @@ metadata:
   name: {{ .Release.Name }}-admin
   namespace: {{ .Release.Namespace }}
 spec:
-  type: NodePort
+  # R-05: ClusterIP unless explicitly overridden (values.dev.yaml opts into NodePort).
+  type: {{ .Values.rediensiam.service.admin.type }}
   selector:
     app: {{ .Release.Name }}
   ports:
     - name: admin
       port: {{ .Values.rediensiam.service.admin.port }}
       targetPort: {{ .Values.rediensiam.service.admin.port }}
+      {{- if eq .Values.rediensiam.service.admin.type "NodePort" }}
       nodePort: {{ .Values.rediensiam.service.admin.nodePort }}
+      {{- end }}

@@ -1,5 +1,6 @@
+import { rowActivation } from '../../components/iam/rowActivation';
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { IamChip, IamAvatar, IamDialog } from '@/components/iam';
 import { listOrgs, createOrg, suspendOrg, unsuspendOrg, deleteOrg } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
@@ -19,6 +20,17 @@ function MoreMenu({ org, onSuspend, onDelete }: Readonly<{
   org: Org; onSuspend: () => void; onDelete: () => void;
 }>) {
   const [open, setOpen] = useState(false);
+
+  // On the document, not on the scrim below. A div with no tabindex never receives a key event,
+  // so the handler that used to sit there could not fire: the menu opened over the page and the
+  // only way out was the mouse.
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [open]);
+
   return (
     <div style={{ position: 'relative' }}>
       <button className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm"
@@ -27,7 +39,7 @@ function MoreMenu({ org, onSuspend, onDelete }: Readonly<{
       </button>
       {open && (
         <>
-          <div role="none" style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }} />
+          <div role="none" style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} />
           <div style={{ position: 'absolute', right: 0, top: '100%', zIndex: 50, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-md)', minWidth: 140, padding: 4 }}>
             <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }}
               onClick={() => { setOpen(false); onSuspend(); }}>
@@ -156,7 +168,7 @@ export default function Organisations() {
                   if (org.suspended_at) statusChip = <IamChip tone="danger">Suspended</IamChip>;
                   else if (org.active) statusChip = <IamChip tone="success">Active</IamChip>;
                   return (
-                    <tr key={org.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/system/organisations/${org.id}`)}>
+                    <tr key={org.id} {...rowActivation(() => navigate(`/system/organisations/${org.id}`))}>
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           <IamAvatar name={org.name} size="sm" />

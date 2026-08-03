@@ -1,0 +1,163 @@
+{{- if and .Values.rediensiam.backup.enabled .Values.rediensiam.postgres.local.enabled }}
+{{- /*
+  No backup existed anywhere in this chart. Step 12 found it; no earlier step did.
+  A disk failure destroyed every tenant permanently — the single largest gap in the
+  system, and not a security-control problem.
+
+  Deliberately a pg_dump to a PVC, not WAL archiving to object storage: this is a
+  single-node k3s cluster with local-path storage, so there is no second failure
+  domain to ship WAL to. A dump on the same node survives a dropped table, a bad
+  migration and a tenant deleting itself — not the disk dying. Copying the PVC
+  off-node is what actually closes that case; see the runbook in SECURITY-AUDIT-LOG.md step 13.
+
+  Gated on postgres.local.enabled as well as backup.enabled. With an external
+  CloudNativePG cluster the operator already has continuous WAL archiving to object
+  storage — a strictly better backup, off-node, with a recovery point measured in
+  seconds rather than a day. Running this alongside it produces a second backup with
+  a different recovery point and nothing that says which one is authoritative, and
+  it would need a CONNECT grant and a NetworkPolicy hole into someone else's
+  database to do it. It stands down instead. See values.yaml postgres.external.
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-backup
+  namespace: {{ .Release.Namespace }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.rediensiam.backup.storage }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-backup
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: {{ .Values.rediensiam.backup.schedule | quote }}
+  {{- with .Values.rediensiam.backup.timeZone }}
+  # Without this the cron expression is UTC, so "0 3 * * *" is 03:00 UTC and not the operator's
+  # 03:00 — which is the one thing a backup window is chosen for.
+  timeZone: {{ . | quote }}
+  {{- end }}
+  # A CronJob that misses more than 100 schedules stops permanently, and says so only in an event
+  # that ages out within the hour. One hour of slack is enough to survive a node restart.
+  startingDeadlineSeconds: 3600
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/instance: {{ .Release.Name }}
+            # T-03. `rediensiam-postgres-lockdown` admits :5432 from an explicit list of pod
+            # labels. This job carried none of them, so every run was refused at the network
+            # layer — verified on 2026-07-31: `pg_dumpall: connection to server at
+            # "rediensiam-postgres" (10.42.0.198), port 5432 failed: Connection refused`.
+            # The CronJob had never fired, so nothing had ever surfaced it.
+            app: {{ .Release.Name }}-backup
+        spec:
+          restartPolicy: OnFailure
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 70
+            runAsGroup: 70
+            fsGroup: 70
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: dump
+              image: {{ .Values.rediensiam.postgres.local.image }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              env:
+                - name: PGHOST
+                  value: {{ .Release.Name }}-postgres
+                # T-04. Was the SUPERUSER `iam`. A backup needs to read everything and write
+                # nothing, which is exactly `pg_read_all_data` — see postgres.yaml's init.sh.
+                - name: PGUSER
+                  value: iam_backup
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "rediensiam.secretName" . }}
+                      key: postgres-backup-password
+                - name: RETAIN
+                  value: {{ .Values.rediensiam.backup.retainCopies | quote }}
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  # pipefail: without it the exit status of `pg_dumpall | gzip` is gzip's, so a
+                  # refused connection produced a 20-byte "backup" and a zero exit from the
+                  # pipeline. The size guard below caught it, but only after the rename had
+                  # already published the corrupt file under a real backup name.
+                  set -o pipefail
+
+                  # NetworkPolicy is programmed asynchronously as a pod starts, so a dump that
+                  # dials Postgres immediately can be refused for the first second of its life.
+                  # Observed once on the 2026-07-31 11:39 run: attempt 1 failed, the OnFailure
+                  # restart succeeded. backoffLimit is 2, so two such races in a row would be a
+                  # silently missed nightly backup. Wait instead of spending a retry.
+                  for i in $(seq 1 30); do
+                    pg_isready -q && break
+                    echo "waiting for ${PGHOST} (${i}/30)"; sleep 2
+                  done
+                  pg_isready || { echo "FATAL: ${PGHOST} unreachable after 60s" >&2; exit 1; }
+
+                  # Dump every database in the cluster: the app, Hydra and Keto each own one,
+                  # and restoring the app alone would leave consent and permission state behind.
+                  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+                  tmp="/backup/.in-progress-${stamp}.sql.gz"
+                  out="/backup/rediensiam-${stamp}.sql.gz"
+
+                  # Write to a dot-prefixed name and rename only on success: a truncated dump
+                  # that looks like a backup is worse than an obvious gap.
+                  # --no-role-passwords: reading role password hashes out of pg_authid is the
+                  # one thing pg_dumpall needs superuser for. Dropping it is what lets this run
+                  # as iam_backup, AND it keeps every credential hash in the cluster out of a
+                  # file that sits on disk for 14 days. Roles are recreated by init.sh or by
+                  # the migration runbook, so the dump never needed to carry them.
+                  pg_dumpall --clean --if-exists --no-role-passwords | gzip -9 > "${tmp}"
+
+                  # A tiny dump means pg_dumpall failed while gzip still exited 0. Checked
+                  # BEFORE the rename — this guard used to run after it and so left a
+                  # 20-byte file named `rediensiam-<stamp>.sql.gz` behind on every failure.
+                  if [ "$(wc -c < "${tmp}")" -lt 1024 ]; then
+                    echo "FATAL: dump is implausibly small — treating as failure" >&2
+                    exit 1
+                  fi
+
+                  mv "${tmp}" "${out}"
+                  echo "wrote ${out} ($(wc -c < "${out}") bytes)"
+
+                  # Prune oldest first, keeping RETAIN copies. Never touches .in-progress files.
+                  ls -1t /backup/rediensiam-*.sql.gz 2>/dev/null | tail -n "+$((RETAIN + 1))" | \
+                    while read -r old; do echo "pruning ${old}"; rm -f "${old}"; done
+
+                  # Leftover in-progress files are failed runs; a day is well past any real dump.
+                  find /backup -name '.in-progress-*' -mtime +1 -delete 2>/dev/null || true
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+          volumes:
+            - name: backup
+              persistentVolumeClaim:
+                claimName: {{ .Release.Name }}-backup
+            - name: tmp
+              emptyDir: {}
+{{- end }}

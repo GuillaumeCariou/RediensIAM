@@ -1,22 +1,17 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext } from 'react';
 
-interface ScopeCtx {
+interface Scope {
   orgName: string;
   setOrgName: (n: string) => void;
   projectName: string;
   setProjectName: (n: string) => void;
 }
 
-const Ctx = createContext<ScopeCtx>({
+// The provider lives in ScopeProvider.tsx: a file that exports a component may export nothing
+// else, or Fast Refresh silently stops working for it (react-refresh/only-export-components).
+export const ScopeCtx = createContext<Scope>({
   orgName: '', setOrgName: () => {},
   projectName: '', setProjectName: () => {},
 });
 
-export function ScopeProvider({ children }: Readonly<{ children: ReactNode }>) {
-  const [orgName, setOrgName] = useState('');
-  const [projectName, setProjectName] = useState('');
-  const ctx = useMemo(() => ({ orgName, setOrgName, projectName, setProjectName }), [orgName, projectName]);
-  return <Ctx.Provider value={ctx}>{children}</Ctx.Provider>;
-}
-
-export const useScope = () => useContext(Ctx);
+export const useScope = () => useContext(ScopeCtx);

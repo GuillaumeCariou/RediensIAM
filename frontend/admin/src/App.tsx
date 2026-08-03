@@ -1,13 +1,14 @@
-import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
-import { AuthProvider, useAuth } from './context/AuthContext';
-import { ThemeProvider } from './context/ThemeContext';
-import { ScopeProvider } from './context/ScopeContext';
+import { useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useNavigate } from 'react-router';
+import { useAuth } from './context/AuthContext';
+import { AuthProvider } from './context/AuthProvider';
+import { consumeReturnTo } from './context/returnTo';
+import { ThemeProvider } from './context/ThemeProvider';
+import { ScopeProvider } from './context/ScopeProvider';
 import Shell from './components/layout/Shell';
 
-// Account page
 import AccountPage from './pages/account/AccountPage';
 
-// System pages
 import SystemDashboard from './pages/system/Dashboard';
 import Organisations from './pages/system/Organisations';
 import SystemUsers from './pages/system/Users';
@@ -20,11 +21,10 @@ import OrgDetail from './pages/system/OrgDetail';
 import SystemProjectDetail from './pages/system/SystemProjectDetail';
 import SystemProjects from './pages/system/SystemProjects';
 import SystemHealth from './pages/system/SystemHealth';
-import ServiceAccountDetail from './pages/ServiceAccountDetail';
-import OrgAdminsPage from './pages/OrgAdminsPage';
-import UserListDetail from './pages/UserListDetail';
+import ServiceAccountDetail from './pages/shared/ServiceAccountDetail';
+import OrgAdmins from './pages/shared/OrgAdmins';
+import UserListDetail from './pages/shared/UserListDetail';
 
-// Org pages
 import OrgDashboard from './pages/org/OrgDashboard';
 import UserLists from './pages/org/UserLists';
 import Projects from './pages/org/Projects';
@@ -34,7 +34,6 @@ import OrgEmail from './pages/org/OrgEmail';
 import OrgWebhooks from './pages/org/OrgWebhooks';
 import OrgSettings from './pages/org/OrgSettings';
 
-// Project pages
 import ProjectDashboard from './pages/project/ProjectDashboard';
 import ProjectUsers from './pages/project/ProjectUsers';
 import ProjectRoles from './pages/project/ProjectRoles';
@@ -69,15 +68,37 @@ function NoRolesError({ onLogout }: Readonly<{ onLogout: () => void }>) {
   );
 }
 
+/**
+ * The `account` route below sits outside every role guard on purpose: any authenticated user
+ * must be able to reach their own profile, MFA and sessions, including one whose only role was
+ * just revoked. Do not fold it into one of the guarded blocks.
+ *
+ * The `roles.length === 0` branch exists to break an infinite Navigate loop: defaultPath returns
+ * /project for a token with no roles, and the project guard would Navigate straight back to home
+ * (also /project). It renders an error page with a logout button instead.
+ */
 function AppRoutes() {
   const { ready, authenticated, isSuperAdmin, isOrgAdmin, isProjectManager, roles, logout } = useAuth();
+  const navigate = useNavigate();
+
+  /**
+   * Back to the page the sign-in interrupted, exactly once.
+   *
+   * Imperative rather than `<Navigate to={returnTo ?? home}>` in the catch-all: the callback path
+   * matches no route, so the catch-all is what renders, and feeding it the destination made the two
+   * take turns — it navigates to a path the router cannot match, which renders the catch-all again.
+   * An effect that runs once, after the value has been consumed, terminates: a destination the
+   * application cannot render falls through to the catch-all and lands on the scope home.
+   */
+  useEffect(() => {
+    if (!ready || !authenticated) return;
+    const target = consumeReturnTo(import.meta.env.BASE_URL.replace(/\/$/, ''), globalThis.location.pathname);
+    if (target) navigate(target, { replace: true });
+  }, [ready, authenticated, navigate]);
 
   if (!ready) return <Loading />;
   if (!authenticated) return <Loading />;
 
-  // Prevent infinite Navigate loop for tokens with empty roles: defaultPath returns /project,
-  // but the project guard would Navigate back to home (also /project) — render an error
-  // page with a logout button instead.
   if (roles.length === 0 || (!isSuperAdmin && !isOrgAdmin && !isProjectManager)) {
     return <NoRolesError onLogout={logout} />;
   }
@@ -89,10 +110,8 @@ function AppRoutes() {
       <Routes>
         <Route index element={<Navigate to={home} replace />} />
 
-        {/* Account — all authenticated users */}
         <Route path="account" element={<AccountPage />} />
 
-        {/* System — super_admin only */}
         <Route element={isSuperAdmin ? <Outlet /> : <Navigate to={home} replace />}>
           <Route path="system" element={<SystemDashboard />} />
           <Route path="system/admins" element={<SystemAdmins />} />
@@ -101,7 +120,7 @@ function AppRoutes() {
           <Route path="system/organisations/:id" element={<OrgDetail />} />
           <Route path="system/organisations/:id/userlists" element={<UserLists />} />
           <Route path="system/organisations/:id/projects" element={<Projects />} />
-          <Route path="system/organisations/:id/admins" element={<OrgAdminsPage />} />
+          <Route path="system/organisations/:id/admins" element={<OrgAdmins />} />
           <Route path="system/organisations/:id/service-accounts" element={<OrgServiceAccounts />} />
           <Route path="system/organisations/:id/service-accounts/:saId" element={<ServiceAccountDetail />} />
           <Route path="system/organisations/:id/audit-log" element={<OrgAuditLog />} />
@@ -116,7 +135,7 @@ function AppRoutes() {
           <Route path="system/organisations/:oid/projects/:pid/settings" element={<ProjectSettings />} />
           <Route path="system/users" element={<SystemUsers />} />
           <Route path="system/userlists" element={<UserLists />} />
-          <Route path="system/userlists/:id" element={<UserListDetail />} />
+          <Route path="system/userlists/:listId" element={<UserListDetail />} />
           <Route path="system/organisations/:id/userlists/:listId" element={<UserListDetail />} />
           <Route path="system/service-accounts" element={<SystemServiceAccounts />} />
           <Route path="system/service-accounts/:id" element={<ServiceAccountDetail />} />
@@ -126,13 +145,12 @@ function AppRoutes() {
           <Route path="system/health" element={<SystemHealth />} />
         </Route>
 
-        {/* Org — org_admin (and super_admin) */}
         <Route element={isOrgAdmin ? <Outlet /> : <Navigate to={home} replace />}>
           <Route path="org" element={<OrgDashboard />} />
           <Route path="org/userlists" element={<UserLists />} />
-          <Route path="org/userlists/:id" element={<UserListDetail />} />
+          <Route path="org/userlists/:listId" element={<UserListDetail />} />
           <Route path="org/projects" element={<Projects />} />
-          <Route path="org/admins" element={<OrgAdminsPage />} />
+          <Route path="org/admins" element={<OrgAdmins />} />
           <Route path="org/service-accounts" element={<OrgServiceAccounts />} />
           <Route path="org/service-accounts/:saId" element={<ServiceAccountDetail />} />
           <Route path="org/audit-log" element={<OrgAuditLog />} />
@@ -141,7 +159,6 @@ function AppRoutes() {
           <Route path="org/settings" element={<OrgSettings />} />
         </Route>
 
-        {/* Project — project_manager (and above) */}
         <Route element={isProjectManager ? <Outlet /> : <Navigate to={home} replace />}>
           <Route path="project" element={<ProjectDashboard />} />
           <Route path="project/users" element={<ProjectUsers />} />
@@ -158,8 +175,12 @@ function AppRoutes() {
 }
 
 export default function App() {
+  // basename comes from Vite, so the router, the bundle's asset paths and the server's fallback
+  // cannot drift apart — all three read the same `base`. Writing it here as a literal is how
+  // "/admin" survived the move to /console and left the router refusing to match any URL at all,
+  // with one console warning and a blank page as the only symptom.
   return (
-    <BrowserRouter basename="/admin">
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
       <ThemeProvider>
         <ScopeProvider>
           <AuthProvider>

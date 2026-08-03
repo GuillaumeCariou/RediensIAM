@@ -12,7 +12,7 @@ interface Metrics {
   service_accounts: number;
   recent_logins: number;
   audit_events_today: number;
-  logins_by_hour?: { hour: string; count: number }[];
+  logins_by_hour?: { hour: string; succeeded: number; failed: number }[];
   users_by_org?: { org: string; count: number }[];
 }
 
@@ -50,7 +50,7 @@ export default function SystemMetrics() {
                 </span>
               </span>
             </div>
-            <ActivityChart height={120} />
+            <ActivityChart height={120} data={metrics?.logins_by_hour} />
           </div>
 
           <div className="iam-card iam-card-pad">

@@ -13,16 +13,64 @@ namespace RediensIAM.Controllers;
 
 [ApiController]
 [Route("auth/saml")]
+// Eight dependencies, one over S107's threshold. The alternative is a DI aggregate for a single
+// added service, which relocates the count without lowering what this controller depends on.
+#pragma warning disable S107
 public class SamlController(
     RediensIamDbContext db,
     HydraService hydra,
     AuditLogService audit,
     SamlService saml,
+    KetoService keto,
     AppConfig appConfig,
+    OtpCacheService pending,
+    TenantScopeInterceptor tenantScope,
     ILogger<SamlController> logger) : ControllerBase
+#pragma warning restore S107
 {
+    // The ACS is a cross-site POST issued by the IdP, so the ASP.NET session cookie
+    // (SameSite=Strict) is never sent with it. Holding the pending AuthnRequest ID in the
+    // session meant InResponseTo could never be validated and every SAML login failed with
+    // saml_no_pending_request. It lives in Redis instead, keyed by the request ID itself —
+    // which is exactly what the response echoes back in InResponseTo.
+    private const string SamlRequestPrefix = "saml_req";
+
     private Uri AcsUrl      => new($"{appConfig.PublicUrl}/auth/saml/acs");
     private string SpEntity => $"{appConfig.PublicUrl}/auth/saml/metadata";
+
+    // ── RLS scope ─────────────────────────────────────────────────────────────
+    //
+    // Same mechanism and the same rule as AuthController (see the note above its PinScopeAsync):
+    // a SAML login carries no token, so without a pin every query here runs as 'system' and
+    // row-level security enforces nothing on it. The argument is always a value the server read
+    // back — the organisation on the challenge's registered client metadata, or the one on the
+    // IdP's own project row — never request input.
+    //
+    // The two entry points differ in what they can pin from, and the difference is real:
+    //   Start has the Hydra login challenge in hand before it reads anything, so it pins from
+    //   client.metadata.org_id at zero database reads, exactly as the password path does.
+    //   The ACS does not: its challenge arrives in RelayState, which is browser-controlled and
+    //   outside the assertion signature, so it is not a scope source. It pins from the project
+    //   row the IdP hangs off instead — one read, the same documented limit
+    //   EnsureScopedToProjectAsync carries. That read is what decides the scope, so it cannot
+    //   run under it.
+
+    private Task PinScopeAsync(Guid orgId) =>
+        tenantScope.PinToOrganisationAsync(db, orgId, HttpContext.RequestAborted);
+
+    /// <summary>
+    /// Confirms the request is running under <paramref name="project"/>'s organisation, pinning
+    /// it from the project row if the challenge could not. False means the challenge client's
+    /// registered organisation and the project's disagree — impossible for a client this
+    /// application minted, and refused rather than reconciled.
+    /// </summary>
+    private async Task<bool> EnsureScopedToProjectAsync(Project project)
+    {
+        var scope = tenantScope.CurrentScope();
+        if (scope != TenantScopeInterceptor.SystemScope) return scope == project.OrgId.ToString();
+        await PinScopeAsync(project.OrgId);
+        return true;
+    }
 
     // ── SP-initiated SSO: build AuthnRequest and redirect to IdP ─────────────
 
@@ -31,12 +79,26 @@ public class SamlController(
         [FromQuery] string login_challenge,
         [FromQuery] Guid idp_id)
     {
-        try { await hydra.GetLoginRequestAsync(login_challenge); }
+        HydraLoginRequest req;
+        try { req = await hydra.GetLoginRequestAsync(login_challenge); }
         catch { return BadRequest(new { error = "invalid_login_challenge" }); }
 
+        // Bind the IdP to the project the calling client is registered for. Without this any
+        // tenant could start a flow against another tenant's IdP on its own login_challenge and
+        // receive an authorization code for the victim's user (see SEC-02).
+        var projectId = LoginChallengeProject.ResolveOrNull(req);
+        if (projectId == null || !Guid.TryParse(projectId, out var challengeProjectId))
+            return BadRequest(new { error = "missing_project_id" });
+
+        if (LoginChallengeProject.ResolveOrgOrNull(req) is { } challengeOrgId)
+            await PinScopeAsync(challengeOrgId);
+
         var idp = await db.SamlIdpConfigs
-            .FirstOrDefaultAsync(x => x.Id == idp_id && x.Active);
+            .Include(x => x.Project)
+            .FirstOrDefaultAsync(x => x.Id == idp_id && x.Active && x.ProjectId == challengeProjectId);
         if (idp == null) return NotFound(new { error = "saml_idp_not_found" });
+        if (!await EnsureScopedToProjectAsync(idp.Project))
+            return BadRequest(new { error = "project_org_mismatch" });
 
         var config = await saml.BuildConfigAsync(idp, SpEntity, AcsUrl);
 
@@ -52,9 +114,12 @@ public class SamlController(
             AssertionConsumerServiceUrl = AcsUrl,
         };
 
-        // Store request ID in session to validate InResponseTo on ACS
         var result = binding.Bind(authnRequest);
-        HttpContext.Session.SetString($"saml_req:{idp_id}", authnRequest.Id.Value);
+        // Store the challenge with the IdP: ACS must confirm the response answers the request
+        // WE issued, for the project we issued it for. RelayState is browser-controlled and is
+        // not covered by the assertion signature, so it cannot be trusted for either.
+        await pending.StorePendingAsync(SamlRequestPrefix, authnRequest.Id.Value,
+            $"{idp_id}|{login_challenge}");
 
         return result.ToActionResult();
     }
@@ -82,10 +147,29 @@ public class SamlController(
             SamlService.ExtractDisplayName(identity, idp.DisplayNameAttributeName), loginChallenge);
         if (accessError != null) return Unauthorized(new { error = accessError });
 
+        if (string.IsNullOrEmpty(loginChallenge)) return BadRequest(new { error = "invalid_login_challenge" });
+
+        // The tenant's own login controls, which this path used to skip entirely — see
+        // FederatedLoginGuard. A project running an IdP is precisely the kind that turns these on.
+        var clientIp = HttpContext.Connection.RemoteIpAddress?.ToString();
+        if (!FederatedLoginGuard.IsIpAllowed(project, clientIp))
+        {
+            await audit.RecordAsync(project.OrgId, project.Id, user!.Id, "user.login.failure",
+                metadata: new Dictionary<string, object> { ["reason"] = "ip_not_allowed" });
+            var rejected = await hydra.RejectLoginAsync(loginChallenge, "access_denied", "ip_not_allowed");
+            return Redirect(rejected);
+        }
+
         user!.LastLoginAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
 
-        if (string.IsNullOrEmpty(loginChallenge)) return BadRequest(new { error = "invalid_login_challenge" });
+        var (factorRequired, needsEnrolment) = await FederatedLoginGuard.RequiresFactorAsync(db, user, project);
+        if (factorRequired)
+        {
+            FederatedLoginGuard.SetMfaSession(
+                HttpContext.Session, user.Id, loginChallenge, project.Id, project.OrgId, needsEnrolment);
+            return Redirect(FederatedLoginGuard.MfaRedirectPath(loginChallenge, needsEnrolment));
+        }
 
         var subject = $"{project.OrgId}:{user.Id}";
         var context = new Dictionary<string, object>
@@ -130,18 +214,81 @@ public class SamlController(
                 .FirstOrDefaultAsync(x => x.Id == idpId && x.Active);
             if (idp == null) return (null, "saml_idp_not_found");
 
+            // Everything from here on — the user lookup, JIT provisioning, the role check, the
+            // audit row — runs under the IdP's own tenant.
+            await PinScopeAsync(idp.Project.OrgId);
+
             var config = await saml.BuildConfigAsync(idp, SpEntity, AcsUrl);
-            var expectedReqId = HttpContext.Session.GetString($"saml_req:{idpId}");
-            HttpContext.Session.Remove($"saml_req:{idpId}");
-            if (string.IsNullOrEmpty(expectedReqId)) return (null, "saml_no_pending_request");
 
             var saml2AuthnResponse = new Saml2AuthnResponse(config);
             httpRequest.Binding.ReadSamlResponse(httpRequest, saml2AuthnResponse);
             if (saml2AuthnResponse.Status != Saml2StatusCodes.Success)
                 throw new AuthenticationException($"SAML status: {saml2AuthnResponse.Status}");
-            if (saml2AuthnResponse.InResponseTo?.Value != expectedReqId)
-                throw new AuthenticationException("InResponseTo mismatch");
+
+            // Endpoint binding. AllowedAudienceUris already refuses an assertion addressed to a
+            // different service provider and remains the primary control; this is the secondary
+            // one the spec asks for, refusing a response that was legitimately issued for some
+            // *other endpoint of this same SP* and then relayed here.
+            //
+            // Ordered before the pending record is consumed on purpose: GetAndDeletePendingAsync
+            // is single-use, so validating afterwards would let a misdirected response burn the
+            // InResponseTo of a legitimate login still in flight. Nothing is lost by checking
+            // pre-signature — Unbind below re-parses the identical document and still rejects any
+            // tampering, so an attacker who rewrites Destination to match only reaches a failed
+            // signature check.
+            var destination = saml2AuthnResponse.Destination;
+            if (destination == null)
+                // Optional per §3.2.2, so absence is not a failure — but it does mean this IdP's
+                // responses carry nothing to bind them to an endpoint, which is worth saying once
+                // per login rather than discovering during an incident.
+                logger.LogWarning(
+                    "SAML response from IdP {IdpId} has no Destination attribute; the endpoint-binding check does not apply to it",
+                    idp.Id);
+            else if (!SamlService.DestinationMatches(destination, AcsUrl))
+                throw new AuthenticationException(
+                    $"Destination '{destination}' does not name this ACS endpoint");
+
+            // Signature validation, ordered ahead of the consume for the same reason the
+            // Destination check above is (I-10). GetAndDeletePendingAsync is single use, so
+            // validating afterwards let any unauthenticated caller who could guess or replay a
+            // request id destroy a legitimate login still in flight by POSTing a garbage
+            // document at it. Unbind re-parses the identical bytes ReadSamlResponse already
+            // parsed — Destination and InResponseTo come out the same — so nothing downstream
+            // changes except that a forged response never reaches the record.
+            //
+            // The residue, stated rather than papered over: an attacker who controls *any*
+            // registered active IdP can still sign a response of their own, name that IdP in
+            // RelayState and burn a guessed request id, because the checks that bind the
+            // response to the IdP and challenge it was issued for need the record in hand. Only
+            // consuming atomically prevents a valid captured response being redeemed twice, and
+            // that is worth more than closing the rest of this.
             httpRequest.Binding.Unbind(httpRequest, saml2AuthnResponse);
+
+            // Consume the pending request: single use, so a captured response cannot be replayed.
+            var inResponseTo = saml2AuthnResponse.InResponseTo?.Value;
+            if (string.IsNullOrEmpty(inResponseTo)) return (null, "saml_no_pending_request");
+            var pendingRecord = await pending.GetAndDeletePendingAsync(SamlRequestPrefix, inResponseTo);
+            if (string.IsNullOrEmpty(pendingRecord)) return (null, "saml_no_pending_request");
+
+            var parts = pendingRecord.Split('|', 2);
+            var pendingIdpId = parts[0];
+            var pendingChallenge = parts.Length == 2 ? parts[1] : null;
+
+            // The response must come from the IdP the request was actually sent to.
+            if (!string.Equals(pendingIdpId, idpId.ToString(), StringComparison.OrdinalIgnoreCase))
+                throw new AuthenticationException("InResponseTo belongs to a different IdP");
+
+            // ...and must be redeemed against the challenge it was issued for. Without this a
+            // caller could complete a genuine flow at their own IdP and then swap the
+            // login_challenge in RelayState for one belonging to another tenant's client.
+            if (!string.Equals(pendingChallenge, loginChallenge, StringComparison.Ordinal))
+                throw new AuthenticationException("InResponseTo belongs to a different login challenge");
+
+            // Same binding Start enforces: the IdP must belong to the challenge's project.
+            var challengeProjectId = LoginChallengeProject.ResolveOrNull(
+                await hydra.GetLoginRequestAsync(loginChallenge));
+            if (challengeProjectId == null || idp.ProjectId.ToString() != challengeProjectId)
+                throw new AuthenticationException("IdP does not belong to the challenge's project");
 
             return (new SamlParsed(idp, loginChallenge, saml2AuthnResponse.ClaimsIdentity), null);
         }
@@ -248,6 +395,17 @@ public class SamlController(
 
         if (defaultRoleId.HasValue)
         {
+            // Written through Keto rather than straight into the table. A row with no matching
+            // tuple is exactly what GrantReconciler classifies as an orphan, so the first repair
+            // run deleted the role this provisioning had just granted — and on a project with
+            // require_role_to_login that locked the user out of the tenant they had just joined.
+            var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == defaultRoleId.Value);
+            if (role != null)
+            {
+                await keto.WriteRelationTupleAsync(
+                    Roles.KetoProjectsNamespace, project.Id.ToString(), role.Name, user.Id.ToString());
+            }
+
             db.UserProjectRoles.Add(new UserProjectRole
             {
                 UserId    = user.Id,

@@ -1,4 +1,4 @@
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { useAuth } from '@/context/AuthContext';
 import { useScope } from '@/context/ScopeContext';
 function Kbd({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -77,6 +77,7 @@ export default function Topbar({ onCmdK }: Readonly<TopbarProps>) {
           <Kbd>⌘</Kbd><Kbd>K</Kbd>
         </span>
       </button>
+
     </div>
   );
 }

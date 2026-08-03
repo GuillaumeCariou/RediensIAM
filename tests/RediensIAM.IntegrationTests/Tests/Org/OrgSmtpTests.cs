@@ -109,7 +109,6 @@ public class OrgSmtpTests(TestFixture fixture)
         await fixture.RefreshDbAsync();
         var config = fixture.Db.OrgSmtpConfigs.FirstOrDefault(c => c.OrgId == org.Id);
         config.Should().NotBeNull();
-        // Password should be stored encrypted — not plaintext
         config!.PasswordEnc.Should().NotBe("PlainTextP@ss!");
         config.PasswordEnc.Should().NotBeNullOrEmpty();
     }

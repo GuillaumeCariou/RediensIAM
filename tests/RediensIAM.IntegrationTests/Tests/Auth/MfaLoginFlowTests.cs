@@ -15,12 +15,12 @@ public class MfaLoginFlowTests(TestFixture fixture)
 {
     private static string NewChallenge() => Guid.NewGuid().ToString("N");
 
-    private static readonly byte[] TestEncKey =
-        HKDF.DeriveKey(
+    private static readonly KeyRing TestEncKey =
+        new(1, HKDF.DeriveKey(
             HashAlgorithmName.SHA256,
             Convert.FromHexString(new string('0', 64)),
             32,
-            info: Encoding.UTF8.GetBytes("rediensiam-totp-secret-v1"));
+            info: Encoding.UTF8.GetBytes("rediensiam-totp-secret-v1")));
 
     private string BackupHash(string raw) =>
         fixture.GetService<PasswordService>().Hash(raw.ToUpperInvariant());

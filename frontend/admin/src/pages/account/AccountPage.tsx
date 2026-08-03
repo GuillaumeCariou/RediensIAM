@@ -1,19 +1,10 @@
 import { useEffect, useState } from 'react';
 import { User, Shield, Key, Copy, Check, RefreshCw, Eye, EyeOff, MonitorSmartphone, LogOut, Fingerprint, Trash2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Alert } from '@/components/ui/alert';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Separator } from '@/components/ui/separator';
-import { Switch } from '@/components/ui/switch';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { getMe, updateMe, changePassword, getMfaStatus, setupTotp, confirmTotp, regenerateBackupCodes, getSessions, revokeSession, revokeAllSessions, setupPhone, verifyPhone, removePhone, beginWebAuthnRegistration, completeWebAuthnRegistration, listWebAuthnCredentials, deleteWebAuthnCredential, getSocialAccounts, unlinkSocialAccount } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
+import { useReauth } from '@/components/ReauthDialog';
 import { fmtDate } from '@/lib/utils';
+import { IamChip, IamDialog } from '@/components/iam';
 
 interface Me {
   id: string; username: string; discriminator: string; email: string;
@@ -26,9 +17,9 @@ interface MfaStatus { totp_enabled: boolean; backup_codes_remaining: number; pho
 function CopyButton({ text }: Readonly<{ text: string }>) {
   const [copied, setCopied] = useState(false);
   return (
-    <Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
+    <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
       {copied ? <><Check className="h-3 w-3" />Copied</> : <><Copy className="h-3 w-3" />Copy</>}
-    </Button>
+    </button>
   );
 }
 
@@ -62,69 +53,64 @@ function ProfileTab({ me, onUpdated }: Readonly<{ me: Me; onUpdated: () => void 
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Identity</CardTitle>
-          <CardDescription>Your account identifier — these cannot be changed.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <div className="iam-card">
+        <div className="iam-card-pad pb-0">
+          <h3 className="text-sm font-semibold text-base">Identity</h3>
+          <p className="text-xs text-[var(--fg-muted)]">Your account identifier — these cannot be changed.</p>
+        </div>
+        <div className="iam-card-pad space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Username</Label>
+              <p className="iam-label text-xs text-muted-foreground">Username</p>
               <p className="font-mono text-sm font-medium">{me.username}<span className="text-muted-foreground">#{me.discriminator}</span></p>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Email</Label>
+              <p className="iam-label text-xs text-muted-foreground">Email</p>
               <div className="flex items-center gap-2">
                 <p className="text-sm">{me.email}</p>
                 {me.email_verified
-                  ? <Badge variant="success" className="text-xs">Verified</Badge>
-                  : <Badge variant="secondary" className="text-xs">Unverified</Badge>
+                  ? <IamChip className="text-xs" tone="success">Verified</IamChip>
+                  : <IamChip className="text-xs" tone="default">Unverified</IamChip>
                 }
               </div>
             </div>
           </div>
-          <Separator />
+          <hr className="iam-sep" />
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Roles</Label>
+            <p className="iam-label text-xs text-muted-foreground">Roles</p>
             <div className="flex flex-wrap gap-1 mt-1">
               {me.roles.length === 0
                 ? <span className="text-sm text-muted-foreground">No roles</span>
-                : me.roles.map(r => <Badge key={r} variant="secondary" className="text-xs font-mono">{r}</Badge>)
+                : me.roles.map(r => <IamChip className="text-xs font-mono" tone="default" key={r}>{r}</IamChip>)
               }
             </div>
           </div>
           {me.last_login_at && (
             <>
-              <Separator />
+              <hr className="iam-sep" />
               <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Last login</Label>
+                <p className="iam-label text-xs text-muted-foreground">Last login</p>
                 <p className="text-sm">{new Date(me.last_login_at).toLocaleString()}</p>
               </div>
             </>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Display Name</CardTitle>
-          <CardDescription>Shown instead of your username in some views.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <div className="iam-card">
+        <div className="iam-card-pad pb-0">
+          <h3 className="text-sm font-semibold text-base">Display Name</h3>
+          <p className="text-xs text-[var(--fg-muted)]">Shown instead of your username in some views.</p>
+        </div>
+        <div className="iam-card-pad space-y-4">
           <form onSubmit={handleSave} className="flex gap-3 items-end">
             <div className="flex-1 space-y-2">
-              <Label htmlFor="display-name">Display name</Label>
-              <Input
-                id="display-name"
-                value={displayName}
-                onChange={e => setDisplayName(e.target.value)}
-                placeholder="e.g. John Doe"
-              />
+              <label className="iam-label" htmlFor="display-name">Display name</label>
+              <input className="iam-input" id="display-name" value={displayName} onChange={e => setDisplayName(e.target.value)} placeholder="e.g. John Doe" />
             </div>
-            <Button type="submit" disabled={saving}>
+            <button className="iam-btn iam-btn-primary" type="submit" disabled={saving}>
               {saveLabel}
-            </Button>
+            </button>
           </form>
           <div className="flex items-center justify-between pt-4 border-t">
             <div>
@@ -133,10 +119,10 @@ function ProfileTab({ me, onUpdated }: Readonly<{ me: Me; onUpdated: () => void 
                 Receive an email when you log in from a device or location not seen in the last 90 days.
               </p>
             </div>
-            <Switch checked={newDeviceAlerts} onCheckedChange={handleToggleNewDeviceAlerts} />
+            <input type="checkbox" className="iam-switch" checked={newDeviceAlerts} onChange={e => handleToggleNewDeviceAlerts(e.target.checked)} />
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }
@@ -156,7 +142,6 @@ function SecurityTab() {
   const [showCurrent, setShowCurrent] = useState(false);
   const [showNext, setShowNext] = useState(false);
 
-  // Linked accounts
   const [linked, setLinked] = useState<SocialAccount[]>([]);
   const [linkedLoading, setLinkedLoading] = useState(true);
   const [unlinkError, setUnlinkError] = useState('');
@@ -202,52 +187,52 @@ function SecurityTab() {
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Change Password</CardTitle>
-          <CardDescription>Your password must be at least 8 characters.</CardDescription>
-        </CardHeader>
-        <CardContent>
+      <div className="iam-card">
+        <div className="iam-card-pad pb-0">
+          <h3 className="text-sm font-semibold text-base">Change Password</h3>
+          <p className="text-xs text-[var(--fg-muted)]">Your password must be at least 8 characters.</p>
+        </div>
+        <div className="iam-card-pad">
           <form onSubmit={handleSubmit} className="space-y-4 max-w-sm">
-            {error && <Alert variant="destructive" className="text-sm py-2 px-3">{error}</Alert>}
-            {success && <Alert className="text-sm py-2 px-3 border-green-500 text-green-700">Password changed successfully.</Alert>}
+            {error && <div className="iam-alert iam-alert-danger text-sm py-2 px-3">{error}</div>}
+            {success && <div className="iam-alert text-sm py-2 px-3 border-green-500 text-green-700">Password changed successfully.</div>}
             <div className="space-y-2">
-              <Label>Current password</Label>
+              <label className="iam-label" htmlFor="current-password">Current password</label>
               <div className="relative">
-                <Input type={showCurrent ? 'text' : 'password'} value={form.current} onChange={e => setForm(f => ({ ...f, current: e.target.value }))} required />
-                <Button type="button" variant="ghost" size="icon" className="absolute right-0 top-0 h-full px-3" onClick={() => setShowCurrent(v => !v)}>
+                <input className="iam-input" id="current-password" autoComplete="current-password" type={showCurrent ? 'text' : 'password'} value={form.current} onChange={e => setForm(f => ({ ...f, current: e.target.value }))} required />
+                <button className="iam-btn iam-btn-ghost iam-btn-icon absolute right-0 top-0 h-full px-3" type="button" onClick={() => setShowCurrent(v => !v)}>
                   {showCurrent ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </Button>
+                </button>
               </div>
             </div>
             <div className="space-y-2">
-              <Label>New password</Label>
+              <label className="iam-label" htmlFor="new-password">New password</label>
               <div className="relative">
-                <Input type={showNext ? 'text' : 'password'} value={form.next} onChange={e => setForm(f => ({ ...f, next: e.target.value }))} required />
-                <Button type="button" variant="ghost" size="icon" className="absolute right-0 top-0 h-full px-3" onClick={() => setShowNext(v => !v)}>
+                <input className="iam-input" id="new-password" autoComplete="new-password" type={showNext ? 'text' : 'password'} value={form.next} onChange={e => setForm(f => ({ ...f, next: e.target.value }))} required />
+                <button className="iam-btn iam-btn-ghost iam-btn-icon absolute right-0 top-0 h-full px-3" type="button" onClick={() => setShowNext(v => !v)}>
                   {showNext ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </Button>
+                </button>
               </div>
             </div>
             <div className="space-y-2">
-              <Label>Confirm new password</Label>
-              <Input type="password" value={form.confirm} onChange={e => setForm(f => ({ ...f, confirm: e.target.value }))} required />
+              <label className="iam-label" htmlFor="confirm-new-password">Confirm new password</label>
+              <input className="iam-input" id="confirm-new-password" autoComplete="new-password" type="password" value={form.confirm} onChange={e => setForm(f => ({ ...f, confirm: e.target.value }))} required />
             </div>
-            <Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Change Password'}</Button>
+            <button className="iam-btn iam-btn-primary" type="submit" disabled={saving}>{saving ? 'Saving…' : 'Change Password'}</button>
           </form>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Linked Accounts</CardTitle>
-          <CardDescription>Social accounts connected to your profile for sign-in.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {unlinkError && <Alert variant="destructive" className="text-sm py-2 px-3">{unlinkError}</Alert>}
+      <div className="iam-card">
+        <div className="iam-card-pad pb-0">
+          <h3 className="text-sm font-semibold text-base">Linked Accounts</h3>
+          <p className="text-xs text-[var(--fg-muted)]">Social accounts connected to your profile for sign-in.</p>
+        </div>
+        <div className="iam-card-pad space-y-4">
+          {unlinkError && <div className="iam-alert iam-alert-danger text-sm py-2 px-3">{unlinkError}</div>}
           {(() => {
             if (linkedLoading) return (
-            <Skeleton className="h-12 w-full" />
+            <div className="iam-skeleton h-12 w-full" />
             );
             if (linked.length === 0) return (
             <p className="text-sm text-muted-foreground">No linked accounts.</p>
@@ -262,15 +247,10 @@ function SecurityTab() {
                       {acc.email ? `${acc.email} · ` : ''}Linked {fmtDate(acc.linked_at)}
                     </p>
                   </div>
-                  <Button
-                    variant="ghost" size="sm"
-                    className="text-destructive hover:text-destructive"
-                    disabled={unlinking === acc.id}
-                    onClick={() => handleUnlink(acc.id)}
-                  >
+                  <button className="iam-btn iam-btn-ghost iam-btn-sm text-destructive hover:text-destructive" disabled={unlinking === acc.id} onClick={() => handleUnlink(acc.id)}>
                     <Trash2 className="h-4 w-4" />
                     {unlinking === acc.id ? 'Unlinking…' : 'Unlink'}
-                  </Button>
+                  </button>
                 </div>
               ))}
             </div>
@@ -282,20 +262,15 @@ function SecurityTab() {
               <p className="text-sm text-muted-foreground">Connect a provider</p>
               <div className="flex flex-wrap gap-2">
                 {availableToConnect.map(provider => (
-                  <Button
-                    key={provider}
-                    variant="outline"
-                    size="sm"
-                    onClick={() => { globalThis.location.href = `/auth/oauth2/link/start?provider=${provider}`; }}
-                  >
+                  <button className="iam-btn iam-btn-secondary iam-btn-sm" key={provider} onClick={() => { globalThis.location.href = `/auth/oauth2/link/start?provider=${provider}`; }}>
                     {PROVIDER_LABELS[provider]}
-                  </Button>
+                  </button>
                 ))}
               </div>
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }
@@ -309,6 +284,7 @@ function PasskeysCard() {
   const [registering, setRegistering] = useState(false);
   const [deviceName, setDeviceName] = useState('');
   const [error, setError] = useState('');
+  const { guard, dialog } = useReauth();
 
   const load = () => {
     setLoading(true);
@@ -316,6 +292,12 @@ function PasskeysCard() {
   };
   useEffect(load, []);
 
+  /**
+   * The completion call goes through `guard`, not straight to the API: adding a passkey to an
+   * account that already has a factor needs a re-authentication proof, while the first one does
+   * not. `guard` only prompts if the backend asks. The retry is safe because the backend checks
+   * the proof before it consumes the pending registration, so it replays the same attestation.
+   */
   const handleRegister = async () => {
     setError('');
     setRegistering(true);
@@ -346,10 +328,12 @@ function PasskeysCard() {
         device_name: deviceName || null,
       };
 
-      const res = await completeWebAuthnRegistration(body);
-      if (res.error) { setError('Registration failed: ' + res.error); return; }
-      setDeviceName('');
-      load();
+      await guard(async proof => {
+        const res = await completeWebAuthnRegistration(body, proof);
+        if (res.error) { setError('Registration failed: ' + res.error); return; }
+        setDeviceName('');
+        load();
+      });
     } catch (e: unknown) {
       if (e instanceof Error && e.name === 'NotAllowedError') {
         setError('Passkey prompt was cancelled.');
@@ -362,27 +346,29 @@ function PasskeysCard() {
   };
 
   const handleDelete = async (id: string) => {
-    await deleteWebAuthnCredential(id);
-    load();
+    setError('');
+    try {
+      await guard(proof => deleteWebAuthnCredential(id, proof).then(load));
+    } catch { setError('Failed to remove the passkey.'); }
   };
 
   return (
-    <Card>
-      <CardHeader>
+    <div className="iam-card">
+      <div className="iam-card-pad pb-0">
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle className="text-base">Passkeys</CardTitle>
-            <CardDescription>Sign in with your device fingerprint, face, or security key.</CardDescription>
+            <h3 className="text-sm font-semibold text-base">Passkeys</h3>
+            <p className="text-xs text-[var(--fg-muted)]">Sign in with your device fingerprint, face, or security key.</p>
           </div>
-          <Badge variant={creds.length > 0 ? 'success' : 'secondary'}>
+          <IamChip tone={creds.length > 0 ? 'success' : 'default'}>
             {creds.length > 0 ? `${creds.length} registered` : 'None'}
-          </Badge>
+          </IamChip>
         </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
+      </div>
+      <div className="iam-card-pad space-y-4">
         {(() => {
           if (loading) return (
-          <Skeleton className="h-16 w-full" />
+          <div className="iam-skeleton h-16 w-full" />
           );
           if (creds.length > 0) return (
           <div className="space-y-2">
@@ -398,9 +384,9 @@ function PasskeysCard() {
                     </p>
                   </div>
                 </div>
-                <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => handleDelete(c.id)}>
+                <button className="iam-btn iam-btn-ghost iam-btn-sm text-destructive hover:text-destructive" onClick={() => handleDelete(c.id)}>
                   <Trash2 className="h-4 w-4" />
-                </Button>
+                </button>
               </div>
             ))}
           </div>
@@ -409,21 +395,17 @@ function PasskeysCard() {
         })()}
 
         <div className="flex gap-2 items-center">
-          <Input
-            placeholder="Passkey name (optional)"
-            value={deviceName}
-            onChange={e => setDeviceName(e.target.value)}
-            className="max-w-xs"
-          />
-          <Button onClick={handleRegister} disabled={registering}>
+          <input className="iam-input max-w-xs" placeholder="Passkey name (optional)" value={deviceName} onChange={e => setDeviceName(e.target.value)} />
+          <button className="iam-btn iam-btn-primary" onClick={handleRegister} disabled={registering}>
             <Fingerprint className="h-4 w-4" />
             {registering ? 'Waiting…' : 'Add passkey'}
-          </Button>
+          </button>
         </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}
-      </CardContent>
-    </Card>
+        {dialog}
+      </div>
+    </div>
   );
 }
 
@@ -445,24 +427,24 @@ function MfaTab() {
   const [status, setStatus] = useState<MfaStatus | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // TOTP setup flow
   const [setupData, setSetupData] = useState<{ otpauth_url: string; secret: string } | null>(null);
   const [setupCode, setSetupCode] = useState('');
   const [setupSaving, setSetupSaving] = useState(false);
   const [setupError, setSetupError] = useState('');
   const [backupCodes, setBackupCodes] = useState<string[]>([]);
 
-  // Backup code regen
   const [regenOpen, setRegenOpen] = useState(false);
   const [regenCodes, setRegenCodes] = useState<string[]>([]);
 
-  // Phone / SMS MFA setup
   const [phoneInput, setPhoneInput] = useState('');
   const [phoneOtp, setPhoneOtp]     = useState('');
   const [phoneSending, setPhoneSending] = useState(false);
   const [phoneCodeSent, setPhoneCodeSent] = useState(false);
   const [phoneError, setPhoneError] = useState('');
   const [phoneSuccess, setPhoneSuccess] = useState(false);
+
+  const [regenError, setRegenError] = useState('');
+  const { guard, dialog } = useReauth();
 
   const load = () => {
     setLoading(true);
@@ -476,25 +458,38 @@ function MfaTab() {
     setSetupData(data);
   };
 
+  /**
+   * Goes through `guard`: replacing an existing TOTP factor needs a re-authentication proof, a
+   * first enrolment does not. `guard` only prompts if the backend actually asks, so both cases
+   * go through this one call — do not add a separate unguarded path for first enrolment.
+   */
   const handleConfirmSetup = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSetupError('');
     setSetupSaving(true);
     try {
-      const res = await confirmTotp({ code: setupCode });
-      if (res.error) { setSetupError('Invalid code. Please try again.'); return; }
-      setBackupCodes(res.backup_codes ?? []);
-      setSetupData(null);
-      setSetupCode('');
-      load();
-    } finally { setSetupSaving(false); }
+      await guard(async proof => {
+        const res = await confirmTotp({ code: setupCode }, proof);
+        if (res.error) { setSetupError('Invalid code. Please try again.'); return; }
+        setBackupCodes(res.backup_codes ?? []);
+        setSetupData(null);
+        setSetupCode('');
+        load();
+      });
+    } catch { setSetupError('Could not confirm the code. Please try again.'); }
+    finally { setSetupSaving(false); }
   };
 
   const handleRegen = async () => {
-    const res = await regenerateBackupCodes();
-    setRegenCodes(res.backup_codes ?? []);
+    setRegenError('');
     setRegenOpen(false);
-    load();
+    try {
+      await guard(async proof => {
+        const res = await regenerateBackupCodes(proof);
+        setRegenCodes(res.backup_codes ?? []);
+        load();
+      });
+    } catch { setRegenError('Failed to regenerate backup codes.'); }
   };
 
   const handlePhoneSend = async (e: React.SyntheticEvent<HTMLFormElement>) => {
@@ -508,35 +503,43 @@ function MfaTab() {
     finally { setPhoneSending(false); }
   };
 
+  /**
+   * Same rule as the passkey and TOTP paths, hence the `guard`: adding a factor to an account
+   * that already has one needs a re-authentication proof, a first enrolment does not.
+   */
   const handlePhoneVerify = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setPhoneError('');
     setPhoneSending(true);
     try {
-      const res = await verifyPhone(phoneOtp);
-      if (res.error) { setPhoneError('Invalid code. Try again.'); return; }
-      setPhoneSuccess(true);
-      setPhoneCodeSent(false);
-      setPhoneInput('');
-      setPhoneOtp('');
-      load();
+      await guard(async proof => {
+        const res = await verifyPhone(phoneOtp, proof);
+        if (res.error) { setPhoneError('Invalid code. Try again.'); return; }
+        setPhoneSuccess(true);
+        setPhoneCodeSent(false);
+        setPhoneInput('');
+        setPhoneOtp('');
+        load();
+      });
     } catch { setPhoneError('Failed to verify code.'); }
     finally { setPhoneSending(false); }
   };
 
   const handleRemovePhone = async () => {
-    await removePhone();
-    load();
+    setPhoneError('');
+    try {
+      await guard(proof => removePhone(proof).then(load));
+    } catch { setPhoneError('Failed to remove the phone number.'); }
   };
 
-  if (loading) return <Skeleton className="h-40 rounded-xl" />;
+  if (loading) return <div className="iam-skeleton h-40 rounded-xl" />;
 
   const renderPhoneForm = () => {
     if (status?.phone_verified) {
       return (
         <div className="flex items-center gap-3">
           <p className="text-sm text-muted-foreground">Phone number verified and active.</p>
-          <Button variant="outline" size="sm" onClick={handleRemovePhone}>Remove</Button>
+          <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={handleRemovePhone}>Remove</button>
         </div>
       );
     }
@@ -545,17 +548,13 @@ function MfaTab() {
         <form onSubmit={handlePhoneVerify} className="space-y-3 max-w-sm">
           <p className="text-sm text-muted-foreground">Enter the 6-digit code sent to {phoneInput}.</p>
           <div className="flex gap-2 items-center">
-            <Input
-              value={phoneOtp} onChange={e => setPhoneOtp(e.target.value.replaceAll(/\D/g, '').slice(0, 6))}
-              placeholder="000000" maxLength={6} className="font-mono w-32 text-center text-lg tracking-widest"
-              required
-            />
-            <Button type="submit" disabled={phoneSending || phoneOtp.length !== 6}>
+            <input className="iam-input font-mono w-32 text-center text-lg tracking-widest" value={phoneOtp} onChange={e => setPhoneOtp(e.target.value.replaceAll(/\D/g, '').slice(0, 6))} placeholder="000000" maxLength={6} required />
+            <button className="iam-btn iam-btn-primary" type="submit" disabled={phoneSending || phoneOtp.length !== 6}>
               {phoneSending ? 'Verifying…' : 'Verify'}
-            </Button>
-            <Button type="button" variant="outline" onClick={() => { setPhoneCodeSent(false); setPhoneOtp(''); }}>
+            </button>
+            <button className="iam-btn iam-btn-secondary" type="button" onClick={() => { setPhoneCodeSent(false); setPhoneOtp(''); }}>
               Cancel
-            </Button>
+            </button>
           </div>
         </form>
       );
@@ -563,152 +562,139 @@ function MfaTab() {
     return (
       <form onSubmit={handlePhoneSend} className="flex gap-2 items-end max-w-sm">
         <div className="flex-1 space-y-2">
-          <Label>Phone number</Label>
-          <Input
-            type="tel" placeholder="+1234567890"
-            value={phoneInput} onChange={e => setPhoneInput(e.target.value)} required
-          />
+          <label className="iam-label" htmlFor="mfa-phone">Phone number</label>
+          <input className="iam-input" id="mfa-phone" type="tel" placeholder="+1234567890" value={phoneInput} onChange={e => setPhoneInput(e.target.value)} required />
         </div>
-        <Button type="submit" disabled={phoneSending}>{phoneSending ? 'Sending…' : 'Send code'}</Button>
+        <button className="iam-btn iam-btn-primary" type="submit" disabled={phoneSending}>{phoneSending ? 'Sending…' : 'Send code'}</button>
       </form>
     );
   };
 
   return (
     <div className="space-y-4">
-      {/* TOTP card */}
-      <Card>
-        <CardHeader>
+      <div className="iam-card">
+        <div className="iam-card-pad pb-0">
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="text-base">Authenticator App (TOTP)</CardTitle>
-              <CardDescription className="mt-1">Use an app like Google Authenticator or Authy.</CardDescription>
+              <h3 className="text-sm font-semibold text-base">Authenticator App (TOTP)</h3>
+              <p className="text-xs text-[var(--fg-muted)] mt-1">Use an app like Google Authenticator or Authy.</p>
             </div>
             {status?.totp_enabled
-              ? <Badge variant="success">Enabled</Badge>
-              : <Badge variant="secondary">Disabled</Badge>
+              ? <IamChip tone="success">Enabled</IamChip>
+              : <IamChip tone="default">Disabled</IamChip>
             }
           </div>
-        </CardHeader>
+        </div>
         {!status?.totp_enabled && (
-          <CardContent>
+          <div className="iam-card-pad">
             {setupData ? (
               <div className="space-y-4 max-w-sm">
                 <div className="rounded-lg bg-muted p-4 space-y-3">
                   <p className="text-sm font-medium">1. Open your authenticator app and add a new account manually.</p>
                   <div className="space-y-1">
-                    <Label className="text-xs text-muted-foreground">Secret key</Label>
+                    <p className="iam-label text-xs text-muted-foreground">Secret key</p>
                     <div className="flex items-center gap-2">
                       <code className="text-xs font-mono bg-background rounded px-2 py-1 break-all flex-1">{setupData.secret}</code>
                       <CopyButton text={setupData.secret} />
                     </div>
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs text-muted-foreground">Or open in authenticator app</Label>
+                    <p className="iam-label text-xs text-muted-foreground">Or open in authenticator app</p>
                     <a href={setupData.otpauth_url} className="text-xs text-primary underline break-all">Open authenticator link</a>
                   </div>
                 </div>
                 <p className="text-sm font-medium">2. Enter the 6-digit code from your app to confirm.</p>
                 <form onSubmit={handleConfirmSetup} className="flex gap-2">
-                  <Input
-                    value={setupCode}
-                    onChange={e => setSetupCode(e.target.value.replaceAll(/\D/g, '').slice(0, 6))}
-                    placeholder="000000"
-                    maxLength={6}
-                    className="font-mono w-32 text-center text-lg tracking-widest"
-                    required
-                  />
-                  <Button type="submit" disabled={setupSaving || setupCode.length !== 6}>
+                  <input className="iam-input font-mono w-32 text-center text-lg tracking-widest" value={setupCode} onChange={e => setSetupCode(e.target.value.replaceAll(/\D/g, '').slice(0, 6))} placeholder="000000" maxLength={6} required />
+                  <button className="iam-btn iam-btn-primary" type="submit" disabled={setupSaving || setupCode.length !== 6}>
                     {setupSaving ? 'Verifying…' : 'Confirm'}
-                  </Button>
-                  <Button type="button" variant="outline" onClick={() => { setSetupData(null); setSetupCode(''); }}>Cancel</Button>
+                  </button>
+                  <button className="iam-btn iam-btn-secondary" type="button" onClick={() => { setSetupData(null); setSetupCode(''); }}>Cancel</button>
                 </form>
                 {setupError && <p className="text-sm text-destructive">{setupError}</p>}
               </div>
             ) : (
-              <Button onClick={handleStartSetup}><Shield className="h-4 w-4" />Set up TOTP</Button>
+              <button className="iam-btn iam-btn-primary" onClick={handleStartSetup}><Shield className="h-4 w-4" />Set up TOTP</button>
             )}
-          </CardContent>
+          </div>
         )}
-      </Card>
+      </div>
 
-      {/* Backup codes shown after setup */}
       {backupCodes.length > 0 && (
-        <Card className="border-amber-500/50 bg-amber-50 dark:bg-amber-950/20">
-          <CardHeader>
-            <CardTitle className="text-base text-amber-700 dark:text-amber-400">Save your backup codes</CardTitle>
-            <CardDescription>Each code can be used once if you lose access to your authenticator. Store them somewhere safe.</CardDescription>
-          </CardHeader>
-          <CardContent>
+        <div className="iam-card border-amber-500/50 bg-amber-50 dark:bg-amber-950/20">
+          <div className="iam-card-pad pb-0">
+            <h3 className="text-sm font-semibold text-base text-amber-700 dark:text-amber-400">Save your backup codes</h3>
+            <p className="text-xs text-[var(--fg-muted)]">Each code can be used once if you lose access to your authenticator. Store them somewhere safe.</p>
+          </div>
+          <div className="iam-card-pad">
             <div className="grid grid-cols-4 gap-2 mb-3">
               {backupCodes.map(c => <code key={c} className="text-xs font-mono bg-background rounded px-2 py-1 text-center">{c}</code>)}
             </div>
             <CopyButton text={backupCodes.join('\n')} />
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
 
-      {/* Backup codes status (when TOTP enabled) */}
       {status?.totp_enabled && (
-        <Card>
-          <CardHeader>
+        <div className="iam-card">
+          <div className="iam-card-pad pb-0">
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle className="text-base">Backup Codes</CardTitle>
-                <CardDescription>{status.backup_codes_remaining} code{status.backup_codes_remaining === 1 ? '' : 's'} remaining.</CardDescription>
+                <h3 className="text-sm font-semibold text-base">Backup Codes</h3>
+                <p className="text-xs text-[var(--fg-muted)]">{status.backup_codes_remaining} code{status.backup_codes_remaining === 1 ? '' : 's'} remaining.</p>
               </div>
-              <Button variant="outline" size="sm" onClick={() => setRegenOpen(true)}>
+              <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={() => setRegenOpen(true)}>
                 <RefreshCw className="h-4 w-4" />Regenerate
-              </Button>
+              </button>
             </div>
-          </CardHeader>
-          {regenCodes.length > 0 && (
-            <CardContent>
-              <div className="grid grid-cols-4 gap-2 mb-3">
-                {regenCodes.map(c => <code key={c} className="text-xs font-mono bg-muted rounded px-2 py-1 text-center">{c}</code>)}
-              </div>
-              <CopyButton text={regenCodes.join('\n')} />
-            </CardContent>
+          </div>
+          {(regenCodes.length > 0 || regenError) && (
+            <div className="iam-card-pad">
+              {regenError && <p className="text-sm text-destructive mb-3">{regenError}</p>}
+              {regenCodes.length > 0 && (
+                <>
+                  <div className="grid grid-cols-4 gap-2 mb-3">
+                    {regenCodes.map(c => <code key={c} className="text-xs font-mono bg-muted rounded px-2 py-1 text-center">{c}</code>)}
+                  </div>
+                  <CopyButton text={regenCodes.join('\n')} />
+                </>
+              )}
+            </div>
           )}
-        </Card>
+        </div>
       )}
 
-      {/* Passkeys */}
       <PasskeysCard />
 
-      {/* Phone / SMS MFA */}
-      <Card>
-        <CardHeader>
+      <div className="iam-card">
+        <div className="iam-card-pad pb-0">
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="text-base">SMS Authentication</CardTitle>
-              <CardDescription>Use your phone number as a second factor at login.</CardDescription>
+              <h3 className="text-sm font-semibold text-base">SMS Authentication</h3>
+              <p className="text-xs text-[var(--fg-muted)]">Use your phone number as a second factor at login.</p>
             </div>
             {status?.phone_verified
-              ? <Badge variant="success">Verified</Badge>
-              : <Badge variant="secondary">Not set</Badge>
+              ? <IamChip tone="success">Verified</IamChip>
+              : <IamChip tone="default">Not set</IamChip>
             }
           </div>
-        </CardHeader>
-        <CardContent>
+        </div>
+        <div className="iam-card-pad">
           {renderPhoneForm()}
           {phoneError && <p className="text-sm text-destructive mt-2">{phoneError}</p>}
           {phoneSuccess && <p className="text-sm text-green-600 mt-2">Phone number verified successfully.</p>}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
-      <AlertDialog open={regenOpen} onOpenChange={setRegenOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Regenerate backup codes?</AlertDialogTitle>
-            <AlertDialogDescription>All existing backup codes will be invalidated. Make sure you save the new ones.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleRegen}>Regenerate</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <IamDialog open={regenOpen} onClose={() => setRegenOpen(false)}
+      title="Regenerate backup codes?"
+      desc="All existing backup codes will be invalidated. Make sure you save the new ones."
+      footer={<><button type="button" onClick={() => setRegenOpen(false)} className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-primary" onClick={handleRegen}>Regenerate</button></>}
+    >
+
+    </IamDialog>
+
+      {dialog}
     </div>
   );
 }
@@ -748,7 +734,7 @@ function SessionsTab() {
   };
 
   const renderSessionsList = () => {
-    if (loading) return <div className="space-y-2">{Array.from({ length: 3 }, (_, i) => `sk-${i}`).map(id => <Skeleton key={id} className="h-12 rounded-lg" />)}</div>;
+    if (loading) return <div className="space-y-2">{Array.from({ length: 3 }, (_, i) => `sk-${i}`).map(id => <div className="iam-skeleton h-12 rounded-lg" key={id} />)}</div>;
     if (sessions.length === 0) return <p className="text-sm text-muted-foreground py-4 text-center">No active sessions.</p>;
     return (
       <div className="space-y-2">
@@ -765,16 +751,10 @@ function SessionsTab() {
               </p>
             </div>
             {s.client_id && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-destructive hover:text-destructive"
-                disabled={revoking === s.client_id}
-                onClick={() => handleRevoke(s.client_id!)}
-              >
+              <button className="iam-btn iam-btn-ghost iam-btn-sm text-destructive hover:text-destructive" disabled={revoking === s.client_id} onClick={() => handleRevoke(s.client_id!)}>
                 <LogOut className="h-4 w-4" />
                 {revoking === s.client_id ? 'Revoking…' : 'Revoke'}
-              </Button>
+              </button>
             )}
           </div>
         ))}
@@ -784,45 +764,48 @@ function SessionsTab() {
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardHeader>
+      <div className="iam-card">
+        <div className="iam-card-pad pb-0">
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="text-base">Active Sessions</CardTitle>
-              <CardDescription>OAuth2 applications you have granted access to.</CardDescription>
+              <h3 className="text-sm font-semibold text-base">Active Sessions</h3>
+              <p className="text-xs text-[var(--fg-muted)]">OAuth2 applications you have granted access to.</p>
             </div>
             {sessions.length > 0 && (
-              <Button variant="destructive" size="sm" onClick={() => setRevokeAllOpen(true)}>
+              <button className="iam-btn iam-btn-danger iam-btn-sm" onClick={() => setRevokeAllOpen(true)}>
                 <LogOut className="h-4 w-4" />Revoke All
-              </Button>
+              </button>
             )}
           </div>
-        </CardHeader>
-        <CardContent>
+        </div>
+        <div className="iam-card-pad">
           {renderSessionsList()}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
-      <AlertDialog open={revokeAllOpen} onOpenChange={setRevokeAllOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Revoke all sessions?</AlertDialogTitle>
-            <AlertDialogDescription>All applications will be signed out. You may be asked to log in again.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleRevokeAll} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Revoke All</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <IamDialog open={revokeAllOpen} onClose={() => setRevokeAllOpen(false)}
+      title="Revoke all sessions?"
+      desc="All applications will be signed out. You may be asked to log in again."
+      footer={<><button type="button" onClick={() => setRevokeAllOpen(false)} className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleRevokeAll}>Revoke All</button></>}
+    >
+
+    </IamDialog>
     </div>
   );
 }
 
 // ── Page ──────────────────────────────────────────────────────────
+const TABS = [
+  { id: 'profile',  label: 'Profile',  icon: User },
+  { id: 'security', label: 'Security', icon: Key },
+  { id: 'mfa',      label: 'MFA',      icon: Shield },
+  { id: 'sessions', label: 'Sessions', icon: MonitorSmartphone },
+] as const;
+
 export default function AccountPage() {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<(typeof TABS)[number]['id']>('profile');
 
   const load = () => {
     getMe().then(setMe).catch(console.error).finally(() => setLoading(false));
@@ -833,25 +816,27 @@ export default function AccountPage() {
     if (loading) {
       return (
         <div className="space-y-4">
-          <Skeleton className="h-40 rounded-xl" />
-          <Skeleton className="h-32 rounded-xl" />
+          <div className="iam-skeleton h-40 rounded-xl" />
+          <div className="iam-skeleton h-32 rounded-xl" />
         </div>
       );
     }
     if (!me) return <p className="text-muted-foreground">Failed to load account.</p>;
     return (
-      <Tabs defaultValue="profile" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="profile"><User className="h-4 w-4" />Profile</TabsTrigger>
-          <TabsTrigger value="security"><Key className="h-4 w-4" />Security</TabsTrigger>
-          <TabsTrigger value="mfa"><Shield className="h-4 w-4" />MFA</TabsTrigger>
-          <TabsTrigger value="sessions"><MonitorSmartphone className="h-4 w-4" />Sessions</TabsTrigger>
-        </TabsList>
-        <TabsContent value="profile"><ProfileTab me={me} onUpdated={load} /></TabsContent>
-        <TabsContent value="security"><SecurityTab /></TabsContent>
-        <TabsContent value="mfa"><MfaTab /></TabsContent>
-        <TabsContent value="sessions"><SessionsTab /></TabsContent>
-      </Tabs>
+      <div className="space-y-4">
+        <div className="iam-tabs" role="tablist">
+          {TABS.map(t => (
+            <button key={t.id} type="button" role="tab" className="iam-tab"
+              aria-selected={tab === t.id} onClick={() => setTab(t.id)}>
+              <t.icon className="h-4 w-4" />{t.label}
+            </button>
+          ))}
+        </div>
+        {tab === 'profile'  && <ProfileTab me={me} onUpdated={load} />}
+        {tab === 'security' && <SecurityTab />}
+        {tab === 'mfa'      && <MfaTab />}
+        {tab === 'sessions' && <SessionsTab />}
+      </div>
     );
   };
 

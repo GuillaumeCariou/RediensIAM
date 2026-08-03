@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { getOrgInfo, updateOrgInfo } from '@/api';
+import { useCallback, useEffect, useState } from 'react';
+import { getOrg, getOrgInfo, updateOrg, updateOrgInfo } from '@/api';
+import { useOrgContext } from '@/hooks/useOrgContext';
 import PageHeader from '@/components/layout/PageHeader';
 
 const RETENTION_OPTIONS = [
@@ -12,26 +13,42 @@ const RETENTION_OPTIONS = [
 ];
 
 export default function OrgSettings() {
+  // This page is routed at both /org/settings and /system/organisations/:id/settings. It used to
+  // call the token-scoped /org routes in both cases, so a super admin opening another
+  // organisation's settings read and wrote their OWN org's retention while the URL said otherwise.
+  const { orgId, isSystemCtx } = useOrgContext();
+
   const [retentionDays, setRetentionDays] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    getOrgInfo()
-      .then((d: { audit_retention_days?: number | null }) => {
-        setRetentionDays(d.audit_retention_days ?? null);
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, []);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const d: { audit_retention_days?: number | null } =
+        isSystemCtx && orgId ? await getOrg(orgId) : await getOrgInfo();
+      setRetentionDays(d.audit_retention_days ?? null);
+      setError('');
+    } catch {
+      // Without this the page rendered "Forever" — the value null also means — so a failed load
+      // was indistinguishable from a configured setting, and saving anything wiped the real one.
+      setError('Could not load these settings. Reload before changing anything.');
+    } finally { setLoading(false); }
+  }, [orgId, isSystemCtx]);
+
+  useEffect(() => { void load(); }, [load]);
 
   const save = async () => {
     setSaving(true);
     try {
-      await updateOrgInfo({ audit_retention_days: retentionDays });
+      if (isSystemCtx && orgId) await updateOrg(orgId, { audit_retention_days: retentionDays });
+      else await updateOrgInfo({ audit_retention_days: retentionDays });
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
+    } catch {
+      setError('Could not save. Nothing was changed.');
     } finally { setSaving(false); }
   };
 
@@ -39,6 +56,9 @@ export default function OrgSettings() {
     <div>
       <PageHeader title="Settings" description="Organisation-level configuration" />
       <div className="iam-page" style={{ maxWidth: 600 }}>
+        {error && (
+          <div className="iam-alert iam-alert-danger" style={{ marginBottom: 12 }}>{error}</div>
+        )}
         {loading ? (
           <div style={{ height: 140, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }} />
         ) : (

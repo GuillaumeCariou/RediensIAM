@@ -2,8 +2,88 @@
 # Layered on top of values.yaml. Secrets in values.secret.yaml (gitignored).
 
 rediensiam:
-  publicUrl: "http://localhost"
-  adminUrl:  "http://localhost:30501"
+  publicUrl: "http://iam.localhost"
+  # A subdomain of the issuer's host, and that is the point. The console used to be reached at
+  # http://localhost:30501, which is a *different site* from iam.localhost as browsers count them:
+  # the registrable domain of iam.localhost is iam.localhost, and localhost is its own. Hydra's
+  # session cookie is SameSite=Strict, so it was never sent when the console started an
+  # authorization request — Hydra saw no session, could not skip, and asked for the password again
+  # on every reload. Ory's own documentation is explicit about this: "Ory APIs must be exposed on
+  # the same domain as your application. If you don't fulfill this requirement, HTTP Cookies are
+  # ignored by the browser." The production profile already satisfies it — its console host is a
+  # subdomain of the issuer's registrable domain — and dev now mirrors that shape.
+  adminUrl:  "http://admin.iam.localhost"
+
+  service:
+    admin:
+      # DEV ONLY, and now only a troubleshooting door. The console is reached at
+      # http://admin.iam.localhost/console/ through the admin ingress above. This NodePort still
+      # answers on :30501, but only to a request carrying `Host: admin.iam.localhost` — the app
+      # accepts the hosts this deployment declares and nothing else, so a bare
+      # http://localhost:30501 is refused with a 400. That is host filtering working.
+      # The chart default is ClusterIP (R-05): a NodePort binds on every node interface, so on a
+      # laptop this is loopback plus the LAN address — fine on a dev box, never on a deployed node.
+      # Prod does not set this.
+      type: NodePort
+
+  # R-15, live on this cluster since 2026-07-31. cert-manager v1.21.1 is installed
+  # (namespace `cert-manager`) and the bundled Postgres serves TLS 1.3 from a
+  # `selfsigned`-issued Certificate. requireSsl means pg_hba.conf admits `hostssl`
+  # only, so cleartext is refused by the server rather than merely unused.
+  #
+  # These are NOT chart defaults: an install without cert-manager cannot render the
+  # Certificate at all. They live here because this cluster has it and because the
+  # alternative — carrying the state only in `helm --set` — is exactly the
+  # "deployed ≠ repository" drift step 12 exists to catch. Turning them off on an
+  # already-migrated database is an outage: pg_hba.conf lives on the PVC and still
+  # says hostssl.
+  #
+  postgres:
+    local:
+      tls:
+        enabled: true
+        requireSsl: true
+
+    # S-5 phase 2, on since step 29. The application half shipped in step 21
+    # (src/Data/TenantScopeInterceptor.cs sets `rediensiam.org_id` on every
+    # connection open), which is what makes these fail-closed policies survivable.
+    #
+    # `ALTER ROLE iam_backup BYPASSRLS` is a hard prerequisite — pg_dump sets
+    # row_security=off, which ERRORS for a role that cannot bypass, so without it
+    # the nightly backup stops. init.sh grants it at initdb when this flag is set,
+    # and files/rls.sql refuses to apply a single policy without it, so neither a
+    # fresh install nor an existing database can miss it silently.
+    rls:
+      enabled: true
+
+  # Cache TLS, on since step 23. Step 18 stopped here because the client could not trust a
+  # cert-manager root; src/Config/CacheTls.cs now pins to the CA the app Deployment mounts at
+  # /etc/cache-tls/ca.crt, so the connection is both encrypted and authenticated.
+  #
+  # Unlike Postgres this is not a preference the DSN can decline: --tls makes Dragonfly stop
+  # answering cleartext, so deploy.sh writes `,ssl=true` into cacheUrl from this same flag and
+  # templates/dragonfly.yaml fails the render if the two ever disagree in either direction.
+  dragonfly:
+    local:
+      tls:
+        enabled: true
+
+  ingress:
+    public:
+      tls:
+        # `iam.localhost` cannot be certified by any CA and k3s Traefik would fall back to its
+        # own default cert, so dev stays on cleartext. This is the one place R-02 is not fixed,
+        # and it is gated to dev precisely so prod cannot inherit it.
+        enabled: false
+    admin:
+      # The console gets a host of its own under the issuer's domain — see adminUrl above for why
+      # a NodePort on localhost could not work. Prod already had this ingress; dev now has it too.
+      enabled: true
+      host: "admin.iam.localhost"
+      entrypoints: "web"        # dev serves plain http
+      tls:
+        enabled: false          # nothing can certify a .localhost name
+
   smtp:
     fromAddress: "noreply@localhost"
     fromName: "RediensIAM"
@@ -15,14 +95,22 @@ hydra:
     config:
       urls:
         self:
-          issuer:              "http://localhost"
-        login:                 "http://localhost/login"
-        consent:               "http://localhost/auth/consent"
-        logout:                "http://localhost/auth/logout"
-        post_logout_redirect:  "http://localhost:30501/admin/"
+          issuer:              "http://iam.localhost"
+        login:                 "http://iam.localhost/login"
+        consent:               "http://iam.localhost/auth/consent"
+        # A browser redirect target, so it must be a page. It pointed at /auth/logout, which is
+        # the JSON controller behind this page — the browser landed on the raw challenge body and
+        # nothing ever accepted the request, so the session outlived the sign-out.
+        logout:                "http://iam.localhost/logout"
+        post_logout_redirect:  "http://localhost:30501/console/"
+        error:                 "http://iam.localhost/auth/oauth2/error"
       serve:
         public:
           cors:
             enabled: true
             allowed_origins:
-              - "http://localhost:30501"
+              # The console's origin, which is where the SDK fetches /.well-known/openid-configuration
+              # from. It must track adminUrl: pointing it at the old NodePort origin left the
+              # console with a CORS failure on discovery and a blank page, the browser's only
+              # account of it being one console error.
+              - "http://admin.iam.localhost"

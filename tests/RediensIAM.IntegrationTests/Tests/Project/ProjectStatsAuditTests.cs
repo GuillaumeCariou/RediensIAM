@@ -22,6 +22,34 @@ public class ProjectStatsAuditTests(TestFixture fixture)
 
     // ── GET /project/stats ────────────────────────────────────────────────────
 
+    /// <summary>
+    /// A project with no user list assigned answered 404, so the console logged an API error on
+    /// every freshly created project — the state every project is in until somebody assigns one.
+    /// No user list means no users, which is a fact about the project, not a missing project.
+    /// 404 still means what it should: there is no such project.
+    /// </summary>
+    [Fact]
+    public async Task GetStats_ProjectWithNoUserList_ReturnsZeroesRatherThanNotFound()
+    {
+        var (org, _) = await fixture.Seed.CreateOrgAsync();
+        var project  = await fixture.Seed.CreateProjectAsync(org.Id);
+        project.AssignedUserListId = null;
+        await fixture.Db.SaveChangesAsync();
+        var list    = await fixture.Seed.CreateUserListAsync(org.Id);
+        var manager = await fixture.Seed.CreateUserAsync(list.Id);
+        fixture.Keto.AllowAll();
+        var client  = fixture.ClientWithToken(fixture.Seed.ProjectManagerToken(manager.Id, org.Id, project.Id));
+
+        var res = await client.GetAsync($"/project/stats?project_id={project.Id}");
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("total_users").GetInt32().Should().Be(0);
+        body.GetProperty("active_users").GetInt32().Should().Be(0);
+        body.GetProperty("users_by_role").GetArrayLength().Should().Be(0);
+    }
+
+
     [Fact]
     public async Task GetStats_ReturnsExpectedShape()
     {

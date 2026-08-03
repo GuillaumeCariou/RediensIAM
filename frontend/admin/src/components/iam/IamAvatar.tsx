@@ -1,5 +1,3 @@
-import type { ReactNode } from 'react';
-
 interface IamAvatarProps {
   name: string;
   size?: 'sm' | 'default' | 'lg';
@@ -30,21 +28,14 @@ export default function IamAvatar({ name, size = 'default', className = '' }: Re
   return (
     <div
       className={`${cls} ${className}`}
+      // Lightness comes from the theme, hue from the name: a fixed pair renders as a bright
+      // pastel disc on a dark table, which is the one thing an avatar should never be.
       style={{
-        background: `oklch(0.9 0.06 ${hue})`,
-        color: `oklch(0.35 0.14 ${hue})`,
+        background: `oklch(var(--iam-avatar-bg-l) var(--iam-avatar-bg-c) ${hue})`,
+        color: `oklch(var(--iam-avatar-fg-l) var(--iam-avatar-fg-c) ${hue})`,
       }}
     >
       {initials(name)}
     </div>
   );
-}
-
-interface IamAvatarStackProps {
-  children: ReactNode;
-  className?: string;
-}
-
-export function IamAvatarStack({ children, className = '' }: Readonly<IamAvatarStackProps>) {
-  return <div className={`iam-avatar-stack ${className}`}>{children}</div>;
 }

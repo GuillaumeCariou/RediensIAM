@@ -30,6 +30,10 @@ public static class RedirectValidator
     {
         safeUrl = "";
         if (string.IsNullOrWhiteSpace(url)) return false;
+        // Reject backslashes outright. Browsers normalise a leading "/\" to "//", i.e.
+        // protocol-relative, so "/\evil.com" would slip through the relative-path
+        // short-circuit below and redirect off-origin.
+        if (url.Contains('\\', StringComparison.Ordinal)) return false;
         // Relative path = same origin = always safe (covers Hydra reject-flow's "/" replies too).
         // Reconstruct it through Uri to drop fragments/CR-LF and apply percent-encoding rules.
         if (url.StartsWith('/') && !url.StartsWith("//", StringComparison.Ordinal))
@@ -41,17 +45,7 @@ public static class RedirectValidator
         if (!Uri.TryCreate(url, UriKind.Absolute, out var u)) return false;
         if (u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps) return false;
         var origin = $"{u.Scheme}://{u.Authority}";
-        var allowed = false;
-        foreach (var raw in trustedOrigins)
-        {
-            if (string.IsNullOrWhiteSpace(raw)) continue;
-            if (string.Equals(TrimOrigin(raw), origin, StringComparison.OrdinalIgnoreCase))
-            {
-                allowed = true;
-                break;
-            }
-        }
-        if (!allowed) return false;
+        if (!IsTrustedOrigin(origin, trustedOrigins)) return false;
         // Rebuild via UriBuilder so the final string is composed from already-parsed
         // (host, port, path, query) values rather than the raw input.
         var builder = new UriBuilder(u.Scheme, u.Host)
@@ -62,6 +56,21 @@ public static class RedirectValidator
         };
         safeUrl = builder.Uri.AbsoluteUri;
         return true;
+    }
+
+    /// <summary>
+    /// True when <paramref name="origin"/> equals one of the trusted origins. Blank entries are
+    /// skipped rather than matched — an unset config value must never make everything trusted.
+    /// </summary>
+    private static bool IsTrustedOrigin(string origin, IEnumerable<string> trustedOrigins)
+    {
+        foreach (var raw in trustedOrigins)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            if (string.Equals(TrimOrigin(raw), origin, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 
     public static string TrimOrigin(string s)

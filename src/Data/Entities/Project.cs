@@ -1,5 +1,3 @@
-using System.Text.Json;
-
 namespace RediensIAM.Data.Entities;
 
 public class Project
@@ -14,6 +12,11 @@ public class Project
     public string? LoginTemplate { get; set; }
     public bool RequireRoleToLogin { get; set; }
     public bool AllowSelfRegistration { get; set; }
+    // Opt-in, by product decision: forcing a second factor on every new tenant is a UX call that
+    // belongs to whoever owns the tenant. RediensIAM's own admin surface is governed separately
+    // and not by this flag: the first administrator signs in without a factor and every one after
+    // that must enrol, which is derived from the deployment's state rather than configured.
+    // Breached-password checking below stays on by default: it costs the user nothing.
     public bool RequireMfa { get; set; }
     public string[] AllowedEmailDomains { get; set; } = [];
     public bool EmailVerificationEnabled { get; set; }
@@ -31,7 +34,7 @@ public class Project
     public bool PasswordRequireSpecial { get; set; }
     public string? EmailFromName { get; set; }
     public string[] IpAllowlist { get; set; } = [];
-    public bool CheckBreachedPasswords { get; set; }
+    public bool CheckBreachedPasswords { get; set; } = true;
     public string[] AllowedScopes { get; set; } = [];
 
     public Organisation Organisation { get; set; } = null!;

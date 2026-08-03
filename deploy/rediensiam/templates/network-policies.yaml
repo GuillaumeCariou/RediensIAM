@@ -1,3 +1,37 @@
+{{- $np := .Values.rediensiam.networkPolicy }}
+{{- if $np.defaultDenyIngress }}
+# ── Baseline default-deny (ingress) ───────────────────────────────────────────────────────
+# Pods with an explicit policy below are unaffected — NetworkPolicy is additive/union, so this
+# only ever bites a pod that nothing else selects.
+#
+# `defaultDenyScope` decides who that covers:
+#   release   — pods carrying this release's instance label. Correct when the namespace is
+#               shared, which is why step 9 chose it: `default` then held nine unrelated pods.
+#   namespace — every pod in the namespace. Strictly stronger, and safe only when nothing
+#               else lives here. Verified 2026-07-31: `kubectl get all -n default` returns
+#               this release and the `kubernetes` Service, nothing more.
+#
+# Honest scope note: every RediensIAM pod is already selected by one of the explicit policies
+# below, so `namespace` buys nothing for the pods that exist today. What it buys is the next
+# pod — a debug shell, a co-tenant workload, a future job — which now starts closed instead of
+# starting open and waiting for someone to notice.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-default-deny-ingress
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+{{- if eq $np.defaultDenyScope "namespace" }}
+    {}
+{{- else }}
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+  policyTypes: [Ingress]
+---
+{{- end }}
+# ── App ───────────────────────────────────────────────────────────────────────────────────
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -11,15 +45,16 @@ spec:
   egress:
     - ports: [{port: 5432}]
       to:
-        - podSelector:
-            matchLabels:
-              app: {{ .Release.Name }}-postgres
+{{ include "rediensiam.postgresPeer" . | indent 8 }}
     - ports: [{port: 6379}]
       to:
         - podSelector:
             matchLabels:
               app: {{ .Release.Name }}-dragonfly
-    - ports: [{port: 4445}]
+    # 4445 is the admin API. 4444 is the public API — the app calls it for the Hydra health
+    # probe (SystemHealthController) and it was missing from this list, so that probe was
+    # being denied at the network layer.
+    - ports: [{port: 4444}, {port: 4445}]
       to:
         - podSelector:
             matchLabels:
@@ -29,29 +64,49 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: keto
-    - ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+{{ include "rediensiam.dnsEgress" . | indent 4 }}
+    # Outbound SMTP and HTTPS (per-org SMTP, webhooks, social IdPs, SAML metadata). The
+    # except list is the network-layer half of the SSRF control: the application refuses
+    # these ranges, and now the pod cannot route to them either.
     - ports: [{port: 587}, {port: 465}, {port: 25}, {port: 1025}]
       to:
         - ipBlock:
             cidr: 0.0.0.0/0
-            except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"]
+            except: {{ toJson $np.privateRanges }}
     - ports: [{port: 443}]
       to:
         - ipBlock:
             cidr: 0.0.0.0/0
-            except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"]
+            except: {{ toJson $np.privateRanges }}
   ingress:
+    # Public API (:5000) from the ingress controller.
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: kube-system
-      ports: [{port: 5000}, {port: 5001}]
+              kubernetes.io/metadata.name: {{ $np.ingressControllerNamespace }}
+      ports: [{port: 5000}]
+    # Public API (:5000) from co-tenant pods in this namespace. ASSUMPTION: in-cluster
+    # relying parties call /api/introspect directly rather than through the ingress — the
+    # yandee gateway on this cluster does. This is the rule the previous version wrote, but
+    # it also granted :5001; the admin port is no longer part of this grant.
+    - from:
+        - podSelector: {}
+      ports: [{port: 5000}]
+    # Admin API (:5001) from the ingress controller only — this is the admin ingress path.
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: default
-      ports: [{port: 5000}, {port: 5001}]
+              kubernetes.io/metadata.name: {{ $np.ingressControllerNamespace }}
+      ports: [{port: 5001}]
+{{- if eq .Values.rediensiam.service.admin.type "NodePort" }}
+    # DEV ONLY. A NodePort is entered from the node's network stack, which no pod- or
+    # namespace-selector can match, so scoping :5001 here is not possible while the NodePort
+    # exists. This rule renders only because service.admin.type is NodePort — prod is
+    # ClusterIP and never reaches this branch. It is the reason R-05 is a dev-only posture.
+    - ports: [{port: 5001}]
+{{- end }}
 ---
+# ── Hydra ─────────────────────────────────────────────────────────────────────────────────
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -61,7 +116,7 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: hydra
-  policyTypes: [Ingress]
+  policyTypes: [Ingress, Egress]
   ingress:
     - from:
         - podSelector:
@@ -69,14 +124,21 @@ spec:
               app: {{ .Release.Name }}
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: kube-system
+              kubernetes.io/metadata.name: {{ $np.ingressControllerNamespace }}
       ports: [{port: 4444}]
+    # :4445 has NO authentication of any kind. This rule is the entire control on it.
     - from:
         - podSelector:
             matchLabels:
               app: {{ .Release.Name }}
       ports: [{port: 4445}]
+  egress:
+    - ports: [{port: 5432}]
+      to:
+{{ include "rediensiam.postgresPeer" . | indent 8 }}
+{{ include "rediensiam.dnsEgress" . | indent 4 }}
 ---
+# ── Keto ──────────────────────────────────────────────────────────────────────────────────
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -86,15 +148,23 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: keto
-  policyTypes: [Ingress]
+  policyTypes: [Ingress, Egress]
   ingress:
+    # :4467 is the write API and is unauthenticated by design. Same as Hydra's :4445 — this
+    # rule is the entire control on who can write a permission tuple.
     - from:
         - podSelector:
             matchLabels:
               app: {{ .Release.Name }}
       ports: [{port: 4466}, {port: 4467}]
+  egress:
+    - ports: [{port: 5432}]
+      to:
+{{ include "rediensiam.postgresPeer" . | indent 8 }}
+{{ include "rediensiam.dnsEgress" . | indent 4 }}
 {{- if .Values.rediensiam.postgres.local.enabled }}
 ---
+# ── Postgres ──────────────────────────────────────────────────────────────────────────────
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -104,7 +174,7 @@ spec:
   podSelector:
     matchLabels:
       app: {{ .Release.Name }}-postgres
-  policyTypes: [Ingress]
+  policyTypes: [Ingress, Egress]
   ingress:
     # Postgres is shared by the app, Hydra, and Keto pods — restrict ingress to those.
     - from:
@@ -117,10 +187,27 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: keto
+        # T-03. The backup CronJob was missing from this list, so every run was refused at
+        # the network layer with "Connection refused". Because the CronJob had never fired
+        # (LAST SCHEDULE <none>), the backup looked present and worked never.
+        - podSelector:
+            matchLabels:
+              app: {{ .Release.Name }}-backup
+        # S-5. The RLS hook Job, when postgres.rls.enabled. Same lesson as the backup
+        # above: a Job that is not named here is refused at the network layer and the
+        # only symptom is a hook that fails long after anyone is watching.
+        - podSelector:
+            matchLabels:
+              app: {{ .Release.Name }}-rls
       ports: [{port: 5432}]
+  egress:
+    # The database originates nothing. DNS only, so a write primitive inside Postgres has no
+    # outbound channel.
+{{ include "rediensiam.dnsEgress" . | indent 4 }}
 {{- end }}
 {{- if .Values.rediensiam.dragonfly.local.enabled }}
 ---
+# ── Dragonfly ─────────────────────────────────────────────────────────────────────────────
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -130,7 +217,7 @@ spec:
   podSelector:
     matchLabels:
       app: {{ .Release.Name }}-dragonfly
-  policyTypes: [Ingress]
+  policyTypes: [Ingress, Egress]
   ingress:
     # Only the app talks to the cache; lock out everything else.
     - from:
@@ -138,4 +225,6 @@ spec:
             matchLabels:
               app: {{ .Release.Name }}
       ports: [{port: 6379}]
+  egress:
+{{ include "rediensiam.dnsEgress" . | indent 4 }}
 {{- end }}

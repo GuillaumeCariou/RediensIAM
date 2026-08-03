@@ -23,12 +23,10 @@ public sealed class SocialLoginServiceTests : IDisposable
 {
     private readonly WireMockServer          _server;
     private readonly SocialLoginService      _svc;
-    private readonly IDistributedCache       _cache;
 
     public SocialLoginServiceTests()
     {
         _server = WireMockServer.Start(new WireMockServerSettings { Port = 0 });
-        _cache  = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
         _svc    = BuildSvc(_server);
     }
 
@@ -431,8 +429,8 @@ public sealed class SocialLoginServiceTests : IDisposable
             .RespondWith(Response.Create().WithStatusCode(200)
                 .WithBodyAsJson(new { sub = "kc-sub-1", email = "kc@example.com", name = "Keycloak User" }));
 
-        // "keycloak" is not in BuiltinEndpoints and not a special-cased type →
-        // GetUserProfileAsync hits _ => GetStandardProfileAsync → GetUserInfoEndpointAsync (L318-319)
+        // "keycloak" is neither a built-in endpoint nor a special-cased type, so the profile has to
+        // be fetched via generic OIDC discovery of the userinfo endpoint.
         var provider = new ProviderConfig("kc1", "keycloak", "cid", "sec", _server.Url);
         var svc      = BuildSvc(_server);   // fresh instance — no shared discovery cache
         var profile  = await svc.ExchangeAndGetProfileAsync(provider, "code");

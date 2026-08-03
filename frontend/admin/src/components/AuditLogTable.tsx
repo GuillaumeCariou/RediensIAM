@@ -1,9 +1,6 @@
 import { ScrollText, ChevronLeft, ChevronRight, Download } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
 import { fmtDate } from '@/lib/utils';
+import { IamChip } from '@/components/iam';
 
 export interface AuditEntry {
   id: string;
@@ -27,78 +24,83 @@ interface Props {
   actionColors?: Record<string, 'default' | 'destructive' | 'success' | 'warning' | 'secondary'>;
 }
 
+/** The prop still speaks in the old variant names; this is the one place that translates. */
+const ACTION_TONE = {
+  default: 'accent', destructive: 'danger', success: 'success', warning: 'warn', secondary: 'default',
+} as const;
+
 export default function AuditLogTable({ entries, loading, offset, hasMore, exporting, onPrev, onNext, onExport, actionColors }: Readonly<Props>) {
   return (
     <div className="p-6 space-y-4">
       <div className="flex justify-end">
-        <Button variant="outline" size="sm" onClick={onExport} disabled={exporting}>
+        <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={onExport} disabled={exporting}>
           <Download className="h-4 w-4" />{exporting ? 'Exporting…' : 'Export CSV'}
-        </Button>
+        </button>
       </div>
       <div className="rounded-xl border bg-card overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Time</TableHead>
-              <TableHead>Action</TableHead>
-              <TableHead>Actor</TableHead>
-              <TableHead>Target</TableHead>
-              <TableHead>IP</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+        <table className="iam-tbl">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Action</th>
+              <th>Actor</th>
+              <th>Target</th>
+              <th>IP</th>
+            </tr>
+          </thead>
+          <tbody>
             {(() => {
               if (loading) return (
                 Array.from({ length: 8 }, (_, i) => `sk-row-${i}`).map(rowId => (
-                  <TableRow key={rowId}>
+                  <tr key={rowId}>
                     {Array.from({ length: 5 }, (_, j) => `sk-cell-${j}`).map(cellId => (
-                      <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>
+                      <td key={cellId}><div className="iam-skeleton h-4 w-full" /></td>
                     ))}
-                  </TableRow>
+                  </tr>
                 ))
               );
               if (entries.length === 0) return (
-                <TableRow>
-                  <TableCell colSpan={5} className="text-center text-muted-foreground py-12">
+                <tr>
+                  <td className="text-center text-muted-foreground py-12" colSpan={5}>
                     <ScrollText className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     No audit events found
-                  </TableCell>
-                </TableRow>
+                  </td>
+                </tr>
               );
               return entries.map(e => (
-                <TableRow key={e.id}>
-                  <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{fmtDate(e.created_at)}</TableCell>
-                  <TableCell>
-                    <Badge variant={actionColors?.[e.action] ?? 'secondary'} className="font-mono text-xs">
+                <tr key={e.id}>
+                  <td className="text-xs text-muted-foreground whitespace-nowrap">{fmtDate(e.created_at)}</td>
+                  <td>
+                    <IamChip className="font-mono text-xs" tone={ACTION_TONE[actionColors?.[e.action] ?? 'secondary']}>
                       {e.action}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
+                    </IamChip>
+                  </td>
+                  <td>
                     {e.actor_id
                       ? <p className="text-xs text-muted-foreground font-mono">{e.actor_id.slice(0, 8)}…</p>
                       : <span className="text-muted-foreground">—</span>}
-                  </TableCell>
-                  <TableCell>
-                    {e.target_type && <Badge variant="secondary" className="text-xs">{e.target_type}</Badge>}
+                  </td>
+                  <td>
+                    {e.target_type && <IamChip className="text-xs" tone="default">{e.target_type}</IamChip>}
                     {e.target_id && <p className="text-xs text-muted-foreground font-mono mt-0.5">{e.target_id.slice(0, 8)}…</p>}
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground font-mono">{e.ip_address ?? '—'}</TableCell>
-                </TableRow>
+                  </td>
+                  <td className="text-xs text-muted-foreground font-mono">{e.ip_address ?? '—'}</td>
+                </tr>
               ));
             })()}
-          </TableBody>
-        </Table>
+          </tbody>
+        </table>
       </div>
 
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <span>{entries.length === 0 ? 'No results' : `Showing ${offset + 1}–${offset + entries.length}`}</span>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={onPrev} disabled={offset === 0 || loading}>
+          <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={onPrev} disabled={offset === 0 || loading}>
             <ChevronLeft className="h-4 w-4" />Previous
-          </Button>
-          <Button variant="outline" size="sm" onClick={onNext} disabled={!hasMore || loading}>
+          </button>
+          <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={onNext} disabled={!hasMore || loading}>
             Next<ChevronRight className="h-4 w-4" />
-          </Button>
+          </button>
         </div>
       </div>
     </div>

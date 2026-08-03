@@ -21,6 +21,29 @@ public sealed class HydraStub : IDisposable
         SetupDefaults();
     }
 
+    /// <summary>
+    /// The body of the last request this stub received whose path contains <paramref name="pathFragment"/>,
+    /// optionally narrowed to one HTTP method.
+    ///
+    /// <para>
+    /// The registration tests used to assert only that the call did not throw, which is true of a
+    /// payload missing every field that matters — <c>post_logout_redirect_uris</c> went unregistered
+    /// for as long as the client existed and no test noticed, because nothing ever read the body.
+    /// </para>
+    /// </summary>
+    public string? LastRequestBody(string pathFragment, string? method = null)
+    {
+        for (var i = _server.LogEntries.Count - 1; i >= 0; i--)
+        {
+            var entry = _server.LogEntries.ElementAt(i);
+            var req = entry?.RequestMessage;
+            if (req?.Path is null || !req.Path.Contains(pathFragment, StringComparison.Ordinal)) continue;
+            if (method != null && !string.Equals(req.Method, method, StringComparison.OrdinalIgnoreCase)) continue;
+            return req.Body;
+        }
+        return null;
+    }
+
     /// <summary>Resets all stubs back to the default safe no-ops.</summary>
     public void ResetDefaults()
     {
@@ -156,7 +179,79 @@ public sealed class HydraStub : IDisposable
             .RespondWith(Response.Create()
                 .WithStatusCode(200)
                 .WithHeader("Content-Type", "application/json")
-                .WithBodyAsJson(new { active = true, sub = userId, ext }));
+                .WithBodyAsJson(new { active = true, sub = userId, client_id = RediensIAM.Config.Roles.AdminClientId, token_use = "access_token", ext }));
+    }
+
+    /// <summary>
+    /// Registers a token that Hydra reports as issued to <paramref name="clientId"/> with
+    /// audience <paramref name="audience"/>. Used by the audience-confusion regression test:
+    /// a token minted for a tenant's own OAuth2 client must not be accepted by the
+    /// IAM management API even when its ext claims carry management roles.
+    /// </summary>
+    public void RegisterTokenForClient(
+        string token, string userId, string? orgId, string? projectId,
+        string[] roles, string clientId, string[] audience)
+    {
+        var ext = new Dictionary<string, object?>
+        {
+            ["user_id"]    = userId,
+            ["org_id"]     = orgId,
+            ["project_id"] = projectId,
+            ["roles"]      = roles,
+        };
+
+        _server
+            .Given(Request.Create()
+                .WithPath("/admin/oauth2/introspect")
+                .UsingPost()
+                .WithBody($"*token={Uri.EscapeDataString(token)}*", WireMock.Matchers.MatchBehaviour.AcceptOnMatch))
+            .AtPriority(1)
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBodyAsJson(new
+                {
+                    active     = true,
+                    sub        = userId,
+                    client_id  = clientId,
+                    aud        = audience,
+                    token_use  = "access_token",
+                    ext
+                }));
+    }
+
+    /// <summary>
+    /// Registers a token that Hydra reports as a <c>refresh_token</c> rather than an
+    /// access token. Introspection without <c>token_type_hint</c> reports refresh tokens
+    /// as active, so the gateway must reject them explicitly.
+    /// </summary>
+    public void RegisterRefreshToken(string token, string userId, string[] roles)
+    {
+        var ext = new Dictionary<string, object?>
+        {
+            ["user_id"]    = userId,
+            ["org_id"]     = (string?)null,
+            ["project_id"] = (string?)null,
+            ["roles"]      = roles,
+        };
+
+        _server
+            .Given(Request.Create()
+                .WithPath("/admin/oauth2/introspect")
+                .UsingPost()
+                .WithBody($"*token={Uri.EscapeDataString(token)}*", WireMock.Matchers.MatchBehaviour.AcceptOnMatch))
+            .AtPriority(1)
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBodyAsJson(new
+                {
+                    active    = true,
+                    sub       = userId,
+                    client_id = "client_admin_system",
+                    token_use = "refresh_token",
+                    ext
+                }));
     }
 
     /// <summary>
@@ -182,7 +277,7 @@ public sealed class HydraStub : IDisposable
             .RespondWith(Response.Create()
                 .WithStatusCode(200)
                 .WithHeader("Content-Type", "application/json")
-                .WithBodyAsJson(new { active = true, sub = userId, ext }));
+                .WithBodyAsJson(new { active = true, sub = userId, client_id = RediensIAM.Config.Roles.AdminClientId, token_use = "access_token", ext }));
     }
 
     /// <summary>
@@ -208,7 +303,7 @@ public sealed class HydraStub : IDisposable
             .RespondWith(Response.Create()
                 .WithStatusCode(200)
                 .WithHeader("Content-Type", "application/json")
-                .WithBodyAsJson(new { active = true, sub = userId, ext }));
+                .WithBodyAsJson(new { active = true, sub = userId, client_id = RediensIAM.Config.Roles.AdminClientId, token_use = "access_token", ext }));
     }
 
     // ── Login challenge helpers ───────────────────────────────────────────────
@@ -216,7 +311,14 @@ public sealed class HydraStub : IDisposable
     /// <summary>
     /// Configures a login challenge response for the given challenge string.
     /// </summary>
-    public void SetupLoginChallenge(string challenge, string? clientId, bool skip = false, string subject = "")
+    /// <summary>
+    /// Configures a login challenge. <paramref name="projectId"/> lands in BOTH
+    /// <c>client.metadata</c> (the authority, see <c>LoginChallengeProject</c>) and
+    /// <c>oidc_context.extra</c>, mirroring what RediensIAM writes when it registers a client.
+    /// </summary>
+    public void SetupLoginChallenge(
+        string challenge, string? clientId, bool skip = false, string subject = "",
+        string projectId = "test-project")
     {
         _server
             .Given(Request.Create()
@@ -231,8 +333,8 @@ public sealed class HydraStub : IDisposable
                     skip,
                     subject,
                     request_url = $"http://localhost/oauth2/auth?client_id={clientId}",
-                    client = new { client_id = clientId, metadata = new Dictionary<string, object> { ["project_id"] = "test-project" } },
-                    oidc_context = new { extra = new Dictionary<string, object> { ["project_id"] = "test-project" } }
+                    client = new { client_id = clientId, metadata = new Dictionary<string, object> { ["project_id"] = projectId } },
+                    oidc_context = new { extra = new Dictionary<string, object> { ["project_id"] = projectId } }
                 }));
     }
 
@@ -318,7 +420,9 @@ public sealed class HydraStub : IDisposable
                     skip        = false,
                     subject     = "",
                     request_url = $"http://localhost/oauth2/auth?client_id={clientId}&project_id={projectId}",
-                    client      = new { client_id = clientId, metadata = new Dictionary<string, object>() },
+                    // The client is registered for this project (the authority); the request
+                    // repeats it in the URL only — that is the branch under test.
+                    client      = new { client_id = clientId, metadata = new Dictionary<string, object> { ["project_id"] = projectId } },
                     oidc_context = new { extra = new Dictionary<string, object>() }   // no project_id
                 }));
     }
@@ -426,6 +530,22 @@ public sealed class HydraStub : IDisposable
                 .WithParam("subject", subject))
             .AtPriority(1)
             .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(sessions));
+    }
+
+    /// <summary>
+    /// Makes session revocation fail, so a caller that discards the status can be caught claiming
+    /// it revoked something it did not. Scoped to one subject: the stub server is shared across the
+    /// whole collection, and a blanket failure mapping breaks every later test that revokes.
+    /// </summary>
+    public void SetupSessionRevocationFailure(string subject)
+    {
+        _server
+            .Given(Request.Create()
+                .WithPath("/admin/oauth2/auth/sessions/consent")
+                .UsingDelete()
+                .WithParam("subject", subject))
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(500).WithBodyAsJson(new { error = "stub_failure" }));
     }
 
     // ── OAuth2 client helpers ─────────────────────────────────────────────────
@@ -583,6 +703,24 @@ public sealed class HydraStub : IDisposable
             e.RequestMessage?.Path == "/admin/oauth2/auth/requests/consent/accept" &&
             e.RequestMessage?.Query?.ContainsKey("consent_challenge") == true &&
             e.RequestMessage.Query["consent_challenge"].Contains(challenge));
+
+    /// <summary>Raw session body RediensIAM sent to Hydra when accepting a consent — the exact
+    /// claim set that ends up in the issued access token.</summary>
+    public string? AcceptedConsentBody(string challenge) =>
+        _server.LogEntries
+            .Where(e => e.RequestMessage?.Path == "/admin/oauth2/auth/requests/consent/accept"
+                && e.RequestMessage?.Query?.ContainsKey("consent_challenge") == true
+                && e.RequestMessage.Query["consent_challenge"].Contains(challenge))
+            .Select(e => e.RequestMessage?.Body)
+            .LastOrDefault();
+
+    /// <summary>True if RediensIAM asked Hydra to revoke the consent sessions of this subject.</summary>
+    public bool SessionsRevokedFor(string subject) =>
+        _server.LogEntries.Any(e =>
+            e.RequestMessage?.Path == "/admin/oauth2/auth/sessions/consent" &&
+            e.RequestMessage?.Method == "DELETE" &&
+            e.RequestMessage?.Query?.ContainsKey("subject") == true &&
+            e.RequestMessage.Query["subject"].Contains(subject));
 
     public bool ConsentWasRejected(string challenge) =>
         _server.LogEntries.Any(e =>

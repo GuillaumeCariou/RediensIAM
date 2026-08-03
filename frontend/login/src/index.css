@@ -1,7 +1,7 @@
 /* === OKLCH Design Tokens === */
 :root {
-  --font-sans: 'Geist', system-ui, -apple-system, sans-serif;
-  --font-mono: 'Geist Mono', 'JetBrains Mono', monospace;
+  --font-sans: 'Geist Variable', 'Geist', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Geist Mono Variable', 'Geist Mono', 'JetBrains Mono', monospace;
 
   /* Forest / Light (default) */
   --bg: oklch(0.98 0.008 140);

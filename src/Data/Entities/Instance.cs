@@ -26,7 +26,12 @@ public class Instance
     public string PublicUrl       { get; set; } = "";
     public string AdminSpaOrigin  { get; set; } = "";
     public string Domain          { get; set; } = "";
-    public string AdminPath       { get; set; } = "/admin";
+    /// <summary>
+    /// Unused. It never decided where the console is served — that is <c>Roles.ConsoleBasePath</c>
+    /// — and nothing reads this column. Kept because dropping it is a migration on a live database
+    /// for no gain; the plumbing that fed it is gone.
+    /// </summary>
+    public string AdminPath       { get; set; } = "/console";
     public string TrustedProxies  { get; set; } = "";
 
     // ── Ports ─────────────────────────────────────────────────────────────────

@@ -2,8 +2,13 @@ import { useEffect, useState } from 'react';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import CommandPalette from './CommandPalette';
-import TweaksButton from './TweaksButton';
+import MfaReminder from '@/components/MfaReminder';
 
+/**
+ * CommandPalette is mounted conditionally rather than kept mounted and hidden: unmounting is what
+ * resets its query and keyboard cursor, so every open starts fresh. Hoisting it out of the
+ * `cmdOpen &&` guard reintroduces a palette that reopens showing the last search.
+ */
 export default function Shell({ children }: Readonly<{ children: React.ReactNode }>) {
   const [cmdOpen, setCmdOpen] = useState(false);
 
@@ -23,12 +28,12 @@ export default function Shell({ children }: Readonly<{ children: React.ReactNode
       <Sidebar />
       <div className="iam-main">
         <Topbar onCmdK={() => setCmdOpen(true)} />
+        <MfaReminder />
         <div className="iam-main-scroll">
           {children}
         </div>
       </div>
-      <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
-      <TweaksButton />
+      {cmdOpen && <CommandPalette onClose={() => setCmdOpen(false)} />}
     </div>
   );
 }

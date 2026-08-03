@@ -25,6 +25,12 @@ function dotStatus(s: HealthStatus): 'success' | 'danger' | 'muted' {
   return 'muted';
 }
 
+function StatusChip({ status }: Readonly<{ status: HealthStatus }>) {
+  if (status === 'ok') return <IamChip tone="success">OK</IamChip>;
+  if (status === 'error') return <IamChip tone="danger">Error</IamChip>;
+  return <IamChip tone="default">Not configured</IamChip>;
+}
+
 function ComponentCard({ check }: Readonly<{ check: ComponentHealth }>) {
   return (
     <div style={{
@@ -44,11 +50,7 @@ function ComponentCard({ check }: Readonly<{ check: ComponentHealth }>) {
           {check.latency_ms != null && (
             <span className="iam-mono" style={{ fontSize: 11, color: 'var(--fg-muted)' }}>{check.latency_ms} ms</span>
           )}
-          {check.status === 'ok'
-            ? <IamChip tone="success">OK</IamChip>
-            : check.status === 'error'
-              ? <IamChip tone="danger">Error</IamChip>
-              : <IamChip tone="default">Not configured</IamChip>}
+          <StatusChip status={check.status} />
         </div>
       </div>
 
@@ -77,15 +79,18 @@ export default function SystemHealth() {
   const [loading, setLoading] = useState(true);
   const [lastRun, setLastRun] = useState<Date | null>(null);
 
-  const load = () => {
-    setLoading(true);
+  /** The fetch alone. Sets no state synchronously, so an effect may call it directly. */
+  const fetchHealth = () => {
     getSystemHealth()
       .then((d: HealthResponse) => { setData(d); setLastRun(new Date()); })
       .catch(console.error)
       .finally(() => setLoading(false));
   };
 
-  useEffect(load, []);
+  /** What the Re-run button calls: the spinner comes back, then the fetch. */
+  const load = () => { setLoading(true); fetchHealth(); };
+
+  useEffect(fetchHealth, []);
 
   const categories = data ? [...new Set(data.checks.map(c => c.category))] : [];
 
@@ -125,13 +130,16 @@ export default function SystemHealth() {
           </div>
         )}
 
-        {loading ? (
+        {(() => {
+          if (loading) return (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             {Array.from({ length: 6 }, (_, i) => (
               <div key={i} style={{ height: 80, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }} />
             ))}
           </div>
-        ) : data ? (
+          );
+          if (!data) return null;
+          return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
             {categories.map(cat => (
               <div key={cat}>
@@ -146,7 +154,8 @@ export default function SystemHealth() {
               </div>
             ))}
           </div>
-        ) : null}
+          );
+        })()}
       </div>
 
       <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>

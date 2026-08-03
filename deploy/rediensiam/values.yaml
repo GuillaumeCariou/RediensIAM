@@ -1,9 +1,37 @@
 rediensiam:
 
+  # ── Where this deployment lives ───────────────────────────────────────────────
+  # Both are REQUIRED and deliberately empty here: they are the two values that make a chart
+  # specific to one deployment, and this chart is meant to stay generic and publishable. Set them
+  # in your environment file (values.dev.yaml / values.prod.yaml) or in your own -f overlay.
+  #
+  # publicUrl — the origin end users reach: the login pages, the OIDC endpoints, the API.
+  # adminUrl  — the origin the admin console is served from. May be the same host, and in a
+  #             Tailscale-only or otherwise restricted setup usually is not.
+  #
+  # The values below are placeholders, and deliberately so: a chart has to render on its own
+  # defaults — that is what an offline validator, a `helm lint` and anyone reading the chart for
+  # the first time all do — and these two are the only values without a sensible generic answer.
+  # They name no real deployment. Override both.
+  #
+  # Emptying either on purpose still fails naming the key, which is the case that used to reach
+  # urlParse with a nil and die on "wrong type for value; expected string; got interface {}" —
+  # an error naming neither the key nor the file to put it in.
+  publicUrl: "https://iam.example.com"
+  adminUrl: "https://admin.iam.example.com"
+
   # ── App image ─────────────────────────────────────────────────────────────────
   image:
     repository: rediensiam
-    tag: "0.0.1"
+    # Empty means the chart's own appVersion, which is what keeps the two from drifting: this
+    # said 0.2.3 while Chart.yaml said 0.3.0, and only deploy.sh's --set image.digest hid it.
+    tag: ""
+    # Digest pin (R-16). When set it replaces `tag`, so a pod restart re-runs the exact
+    # bytes that were deployed instead of whatever the registry currently answers with.
+    # deploy.sh resolves this from `docker push` output and passes it with --set.
+    digest: ""
+    # IfNotPresent is only safe *because* of the digest above — `Always` against a mutable
+    # tag makes every restart a fresh trust decision about the registry.
     pullPolicy: IfNotPresent
 
   replicaCount: 1
@@ -15,21 +43,51 @@ rediensiam:
       ephemeral-storage: 1Gi
     limits:
       cpu: 500m
-      memory: 512Mi
+      # Argon2id is configured at 64 MiB with parallelism 4 (see AppConfig), so a handful of
+      # concurrent logins allocates hundreds of MiB in hashing arenas alone. At 512Mi the pod was
+      # OOM-killable by unauthenticated traffic hitting /auth/login.
+      memory: 1Gi
       ephemeral-storage: 2Gi
 
   # ── App config ────────────────────────────────────────────────────────────────
   app:
-    adminPath: "/admin"
     # CSV of CIDRs allowed to set X-Forwarded-* (must contain your ingress controller's
-    # pod/node network). Empty falls back to RFC1918 + loopback. Maps to App__TrustedProxies.
-    trustedProxies: ""
+    # pod/node network). Maps to App__TrustedProxies.
+    # NOT optional: the image runs as Production, and Program.cs refuses to start on an
+    # empty value rather than silently trusting RFC1918 — a pod that can spoof
+    # X-Forwarded-For defeats every IP-based control. The default below is the k3s pod
+    # and service CIDR; override it for any other cluster.
+    # Any environment variable the blocks below do not already set, as name/value pairs. The app
+    # reads more settings than this chart names — see docs/CONFIGURATION.md for the full list — and
+    # this is how you reach one without editing a template:
+    #
+    #   extraEnv:
+    #     Security__MaxLoginAttempts: "3"
+    #     Audit__RetentionDays: "730"
+    #
+    # Non-secret values only. Anything secret-bearing goes through `secrets`, which renders into a
+    # Secret instead of the pod spec.
+    extraEnv: {}
+
+    trustedProxies: "10.42.0.0/16,10.43.0.0/16"
 
   # ── Argon2 password hashing ───────────────────────────────────────────────────
   # Optional hex-encoded server-side pepper. Generate with `openssl rand -hex 32`.
   # Set in values.secret.yaml; maps to Security__Argon2Pepper.
+  #
+  # argon2Peppers : S-10 rotation, "id:hex,id:hex" with the ACTIVE pepper first. Supersedes
+  #   argon2Pepper. Unlike encryption keys there is no sweep — a hash cannot be re-derived
+  #   without the password, so accounts re-pepper on their next successful login and the old
+  #   pepper must stay listed for as long as you are unwilling to lock out dormant accounts.
   security:
+    # How long one sign-in lasts before Hydra asks for the password again, in minutes. Eight hours
+    # is a working day; a shared machine does not carry the session into the next one. Zero turns
+    # SSO off entirely — every authorization request then needs the password, which is what this
+    # deployment did by accident until 0.5.0 and which some deployments will want on purpose.
+    ssoSessionMinutes: 480
     argon2Pepper: ""
+    argon2Peppers: ""
+
 
   # ── Networking ────────────────────────────────────────────────────────────────
   service:
@@ -37,8 +95,12 @@ rediensiam:
       port: 5000
     admin:
       port: 5001
-      # Admin SPA is exposed ONLY via NodePort — no public ingress.
-      # Access: direct on local network, or SSH tunnel from remote:
+      # R-05: ClusterIP by default. A NodePort binds on EVERY node interface, which put
+      # Swagger, /metrics and the whole /admin,/org,/project surface on the node's LAN
+      # address, bypassing the ingress. values.dev.yaml opts back into NodePort for local
+      # development; prod reaches the admin SPA through the Tailscale-only admin ingress.
+      type: ClusterIP
+      # Only used when type is NodePort.
       #   ssh -L 30501:localhost:30501 user@server
       nodePort: 30501
 
@@ -47,8 +109,97 @@ rediensiam:
     public:
       enabled: true
       host: ""    # set in values.dev.yaml / values.prod.yaml
+      # Traefik entrypoint names for the router that serves this host. They are names a controller
+      # chooses, not a protocol: a deployment running more than one Traefik can have them called
+      # anything, and the chart pinned "web,websecure" with no way to say otherwise.
+      entrypoints: "web,websecure"
+      # R-02: TLS on the public auth surface. Off here because dev serves `iam.localhost`,
+      # which no CA will certify; values.prod.yaml turns it on. When enabled the router
+      # drops the `web` entrypoint and a redirectScheme middleware sends :80 → :443.
+      tls:
+        enabled: false
+        secretName: ""              # defaults to <release>-public-tls
+        clusterIssuer: letsencrypt  # must already exist, or set certManager.acme.enabled
+      # Traefik middlewares on the public router. Traefik's CRDs ship with k3s, so these
+      # need no extra component; they are the ingress-layer rate limit and body cap.
+      rateLimit:
+        enabled: true
+        average: 50       # requests/period per source IP
+        burst: 100
+        period: 1s
+      maxBodyBytes: 1048576   # 1 MiB request body cap; 0 disables the middleware
+      # P-04. Prefixes the app serves on BOTH listeners but that must not be reachable on the
+      # public hostname: the admin console and the whole management API. They stay reachable on
+      # the admin ingress. `/auth`, `/account` and `/api` are deliberately absent — the login SPA,
+      # end-user self-service and the resource-server introspection surface are public by design,
+      # and `/api` is what the in-cluster gateway calls. Empty list removes the deny entirely.
+      adminOnlyPaths:
+        - /admin
+        - /console
+        - /org
+        - /project
+        - /service-accounts
     admin:
-      enabled: false    # keep false — NodePort only
+      enabled: false    # prod enables this; dev uses the NodePort
+      host: ""
+      # Empty inherits ingress.className above. Set it when the admin host is served by a different
+      # controller from the public one — which is the only arrangement in which "this host is not
+      # reachable from outside" is a property of the deployment rather than a hope.
+      className: ""
+      entrypoints: "websecure"
+      # The public ingress has had a tls toggle all along; this one emitted its tls: block
+      # unconditionally, so a deployment terminating TLS upstream could not turn it off.
+      tls:
+        enabled: true
+        # Issuer for the admin ingress cert: the name of a ClusterIssuer you already run.
+        # Empty falls back to the chart's own self-signed Issuer (<release>-selfsigned, in this
+        # namespace), which trains operators to click through a warning on the most privileged
+        # UI here — see the runbook in SECURITY-AUDIT-LOG.md step 09 for the two ways out
+        # (internal CA, or ACME DNS-01 on the Tailscale domain).
+        clusterIssuer: ""
+
+  # ── cert-manager ──────────────────────────────────────────────────────────────
+  # The chart renders its own self-signed Issuer whenever the admin ingress, Postgres TLS or
+  # cache TLS needs one.
+  # A publicly trusted issuer needs an ACME account, so it is opt-in: set acme.enabled and
+  # acme.email, and make sure port 80 reaches Traefik for the HTTP-01 challenge.
+  # cert-manager itself is NOT installed by this chart.
+  certManager:
+    # Set when the named ClusterIssuer is one you already run — it turns off the render-time guard
+    # that otherwise refuses to annotate an Ingress with an issuer nothing will create.
+    assumeExternalIssuer: false
+    acme:
+      enabled: false
+      email: ""
+      server: "https://acme-v02.api.letsencrypt.org/directory"
+      issuerName: letsencrypt
+
+  # ── NetworkPolicy ─────────────────────────────────────────────────────────────
+  networkPolicy:
+    # Default-deny on ingress: any pod the scope selects, that no other policy selects,
+    # receives nothing.
+    defaultDenyIngress: true
+    # `release` (instance-labelled pods) or `namespace` (every pod in the namespace).
+    # Step 9 had to pick `release`: `default` then held nine unrelated `yandee-*` pods and a
+    # namespace-wide deny would have cut them off. Those were uninstalled on 2026-07-31 and
+    # `default` now holds this release only, so the stronger scope costs nothing here.
+    # Set this back to `release` if you install into a namespace you share with anything else
+    # — a namespace-wide deny is an outage for a neighbour that has no policy of its own.
+    defaultDenyScope: namespace
+    # Namespace running the ingress controller (k3s: Traefik in kube-system).
+    ingressControllerNamespace: kube-system
+    # Namespace running cluster DNS. Egress to :53 is narrowed to kube-dns pods here.
+    dnsNamespace: kube-system
+    # Ranges the app pod may never reach on its outbound SMTP/HTTPS paths.
+    # 100.64.0.0/10 is the CGNAT range Tailscale hands out and is the one the earlier list
+    # omitted — the application refuses it (step 5) but the pod could still route to it.
+    privateRanges:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+      - 169.254.0.0/16
+      - 100.64.0.0/10
+      - 127.0.0.0/8
 
   # ── SMTP (optional; per-org SMTP overrides this) ──────────────────────────────
   smtp:
@@ -63,8 +214,27 @@ rediensiam:
   # encryptionKey : 64-char hex — encrypts TOTP secrets, SMTP passwords, webhook secrets
   # databaseUrl   : full PostgreSQL connection string
   # cacheUrl      : full Redis/Dragonfly connection string
+  #
+  # encryptionKeys : S-10 rotation. Empty until you rotate. Format "id:hex,id:hex" with the
+  #   ACTIVE key first — everything new is encrypted under it, everything listed can decrypt.
+  #   Ids are positive integers and must never be reused. Setting this supersedes encryptionKey.
+  #   Runbook: SECURITY-AUDIT-LOG.md step 16 §7. Do not drop the old key until
+  #   GET /admin/key-rotation reports totalPending: 0.
   secrets:
+    # Name of a Secret that ALREADY exists in the release namespace, carrying the same keys
+    # templates/secret.yaml would render. Empty (the default) keeps today's behaviour: the chart
+    # creates `<release>-secrets` from the values below.
+    #
+    # Set it when the values below cannot exist — which is every GitOps deployment. Argo CD and
+    # Flux render this chart from the repository itself, so a gitignored values.secret.yaml is
+    # never read, and the two remaining options are both wrong: commit the passwords, or seal a
+    # Secret that Helm immediately overwrites with empty strings on the next sync.
+    #
+    # Setting this ALSO disables the three render-time guards in templates/dragonfly.yaml, which
+    # are conditioned on a non-empty cacheUrl — see the note at the top of that file.
+    existingSecret: ""
     encryptionKey: ""
+    encryptionKeys: ""
     databaseUrl: ""
     cacheUrl: ""
     smtpPassword: ""
@@ -72,12 +242,73 @@ rediensiam:
     bootstrapPassword: ""
 
   # ── PostgreSQL ────────────────────────────────────────────────────────────────
+  # Nightly pg_dumpall to a PVC. On by default: until this existed, a disk failure
+  # destroyed every tenant permanently and nothing in the chart said so.
+  # A dump beside the database is not disaster recovery — copy the PVC off-node for
+  # that. It does cover the cases that actually happen: a bad migration, a dropped
+  # table, a tenant deleting itself.
+  #
+  # This CronJob renders only when postgres.local.enabled is true. An external
+  # CloudNativePG cluster does continuous WAL archiving to object storage, which is
+  # strictly better than a nightly logical dump — running both would give you two
+  # backups with different recovery points and no statement about which one is
+  # authoritative. See postgres.external below.
+  backup:
+    # IANA name, e.g. "Europe/Paris". Empty keeps the Kubernetes default, which is UTC.
+    timeZone: ""
+    enabled: true
+    schedule: "0 3 * * *"
+    storage: 5Gi
+    retainCopies: 14
+
   postgres:
+    # ── Built-in StatefulSet (the default) ─────────────────────────────────────
+    # Set local.enabled=false to run against an external PostgreSQL instead — see
+    # postgres.external below for what the chart still needs to know in that mode.
     local:
       enabled: true
       image: postgres:16-alpine
       storage: 2Gi
+      # The bootstrap SUPERUSER `iam`. T-04: this used to be the credential the app, Hydra
+      # and Keto all shared. Nothing uses it at runtime any more — it is initdb's owner and
+      # the break-glass account. Keep it, rotate it, do not put it in a DSN.
       password: ""
+      # T-04. Per-component least-privilege login roles, created by postgres.yaml's init.sh
+      # on a first-ever start. Each owns exactly one database and cannot CONNECT to the
+      # others; none is superuser and none can create roles or databases.
+      #   iam_app    → rediensiam    iam_hydra → hydra
+      #   iam_keto   → keto          iam_backup → read-only across all of them
+      # deploy.sh generates all four. An existing installation does NOT get them from a
+      # chart upgrade — init.sh only ever runs against an empty data directory — so see the
+      # migration runbook in SECURITY-AUDIT-LOG.md step 15c.
+      roles:
+        appPassword: ""
+        hydraPassword: ""
+        ketoPassword: ""
+        backupPassword: ""
+      # R-15. Turns on server-side TLS using a cert-manager Certificate issued by the
+      # `selfsigned` ClusterIssuer. Off by default because it has two hard prerequisites:
+      #   1. cert-manager must be installed (this chart does not install it), and
+      #   2. every DSN must carry sslmode — see the R-15 runbook in SECURITY-AUDIT-LOG.md step 09.
+      # Postgres with ssl=on still accepts non-TLS clients, so enabling this alone does not
+      # break anything; it is the DSN change that actually enforces it.
+      tls:
+        enabled: false
+        # Step 3 of the same runbook: once every DSN carries sslmode, rewrite the
+        # `host` lines in pg_hba.conf to `hostssl` so the SERVER refuses a client
+        # that does not negotiate TLS. Until this is set, TLS is a client-side
+        # preference — correct today, and silently undone by the next service
+        # someone points at this database with sslmode=disable.
+        #
+        # Ordering matters and the chart enforces it: setting this without
+        # tls.enabled, or without `SSL Mode=Require` in every DSN, is a `helm
+        # template` failure rather than a database that answers nothing.
+        #
+        # This only takes effect on a FIRST-EVER start — pg_hba.conf is written by
+        # initdb. On a running database do it live (one sed and pg_reload_conf, no
+        # restart, reversible) and set this flag so a rebuild reproduces it:
+        #   SECURITY-AUDIT-LOG.md step 18 §2
+        requireSsl: false
       resources:
         requests:
           cpu: 100m
@@ -88,12 +319,98 @@ rediensiam:
           memory: 1Gi
           ephemeral-storage: 2Gi
 
+    # ── External PostgreSQL (CloudNativePG) — used when local.enabled is false ──
+    # The chart does NOT install CloudNativePG and does not create the Cluster; an
+    # operator brings both. What the chart needs from you in this mode:
+    #
+    #   1. Three DSNs in your secrets file pointing at the CNPG read/write service
+    #      (`<cluster>-rw`), one per component, each naming its own role:
+    #        rediensiam.secrets.databaseUrl  → iam_app  @ database `rediensiam`
+    #        hydra.hydra.config.dsn          → iam_hydra @ database `hydra`
+    #        keto.keto.config.dsn            → iam_keto  @ database `keto`
+    #      The T-04 role split is not optional here — see
+    #      SECURITY-AUDIT-LOG.md step 18 for the Cluster manifest that
+    #      creates the same four roles, databases and CONNECT grants that
+    #      postgres.yaml's init.sh creates for the built-in StatefulSet.
+    #   2. podSelector below, so the NetworkPolicies that let the app, Hydra and
+    #      Keto reach :5432 select the right pods. The chart cannot guess this:
+    #      with the built-in StatefulSet it is `app: <release>-postgres`, and CNPG
+    #      labels its instance pods `cnpg.io/cluster: <cluster-name>`.
+    #
+    # What stands down automatically in this mode:
+    #   - the postgres StatefulSet, Service, init ConfigMap and TLS Certificate
+    #   - `<release>-postgres-lockdown` (nothing here owns those pods)
+    #   - the nightly pg_dumpall CronJob and its PVC — CNPG's own continuous
+    #     backup (WAL archiving + base backups to object storage) supersedes it.
+    #     Configure `.spec.backup` on the Cluster; the chart will not do it for you
+    #     and will not warn you if you forget.
+    external:
+      # Labels carried by the database pods. CNPG stamps every instance pod with
+      # `cnpg.io/cluster: <metadata.name of the Cluster>`.
+      podSelector:
+        cnpg.io/cluster: rediensiam-db
+      # Namespace those pods live in. Empty means this release's namespace. A CNPG
+      # Cluster in another namespace also needs that namespace to carry the
+      # `kubernetes.io/metadata.name` label (kubelet sets it by default since 1.21).
+      namespace: ""
+
+    # ── S-5 phase 2 — Postgres row-level security ──────────────────────────────
+    # These policies are fail-closed by design: a connection that has not set
+    # `rediensiam.org_id` sees zero rows in every tenant table, which for this
+    # application is a total outage, not a degraded mode. The application half
+    # that keeps that from happening shipped in step 21 —
+    # src/Data/TenantScopeInterceptor.cs issues `SET rediensiam.org_id` on every
+    # connection open, an org uuid for tenant traffic and the literal `system` for
+    # the paths that legitimately cross tenants. On since step 29 in dev.
+    #
+    # THE HONEST LIMIT, which enabling this does not change: login resolves a user
+    # by e-mail before any tenant is known, so the authentication surface runs as
+    # `system`. RLS protects authenticated, org-bearing traffic. The enumerated
+    # unscoped paths are TenantScopeInterceptor.LegitimatelyUnscopedPaths.
+    #
+    # Off by default for one reason only: on an ALREADY-RUNNING database this is a
+    # migration, not an upgrade — see SECURITY-AUDIT-LOG.md step 29 for
+    # the enablement as performed, and SECURITY-AUDIT-LOG.md step 18 §3 for the runbook.
+    #
+    # The one superuser prerequisite, `ALTER ROLE iam_backup BYPASSRLS`, is not a
+    # thing to remember on a database initdb'd by this chart: init.sh grants it
+    # unconditionally, so it is there whether or not this flag was on at install
+    # time. It was conditional until 2026-08-01, which made it absent from every
+    # database `setup.sh --prod` had ever created — that script forces this flag
+    # off on a first install — so an existing installation may still lack it. Run
+    # it by hand once, as superuser, if so; files/rls.sql aborts the deploy rather
+    # than letting the policies land, because without the grant pg_dumpall errors
+    # on the first policied table and the nightly backup stops.
+    #
+    # Enabling this renders a post-install/post-upgrade Job that applies
+    # files/rls.sql as the table owner. The SQL is idempotent and re-runnable.
+    rls:
+      enabled: false
+      # Applied to the application database only. Hydra and Keto own their own
+      # schemas, have no tenant column, and are isolated by the T-04 role split.
+      database: rediensiam
+
   # ── Dragonfly (Redis-compatible cache) ────────────────────────────────────────
   dragonfly:
     local:
       enabled: true
       image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.25.0
       password: ""
+      # Cache transport encryption. Same cert-manager prerequisite as Postgres, but this one
+      # is a HARD cutover: with --tls Dragonfly stops accepting cleartext, so the cacheUrl
+      # secret must gain `ssl=true` in the same change or the app cannot reach the cache —
+      # and the cache holds the DataProtection key ring.
+      #
+      # deploy.sh derives that `ssl=true` from this flag, and templates/dragonfly.yaml fails
+      # the render if the flag and the DSN ever disagree in either direction, so the pair
+      # cannot be split by accident. On the reuse path (a secrets file that already exists)
+      # deploy.sh stops and prints the one-line edit instead.
+      #
+      # Still off by default only because cert-manager is not this chart's to install; it is
+      # on in values.dev.yaml. `enabled: true` also requires `password` to be set — Dragonfly
+      # refuses to start with TLS and no auth method. Runbook: SECURITY-AUDIT-LOG.md step 09 §6.5.
+      tls:
+        enabled: false
       resources:
         requests:
           cpu: 50m
@@ -125,12 +442,35 @@ rediensiam:
 # Hydra subchart — shared config (URLs set in values.dev.yaml / values.prod.yaml)
 # ══════════════════════════════════════════════════════════════════════════════
 hydra:
+  # hydra-maester is a Kubernetes controller that reconciles `OAuth2Client` custom resources into
+  # Hydra clients. This deployment does not use that CRD — every client is created through the
+  # Hydra Admin REST API from the app (HydraService.CreateOAuth2ClientAsync, and the callers in
+  # OrgController / SystemAdminController / ManagedApiController). Left on, it is a pod that
+  # mounts a ServiceAccount token and holds a **ClusterRole granting `list`, `watch` and `create`
+  # on Secrets across every namespace** — cluster-wide read of every Secret in the cluster, for a
+  # reconciliation loop with nothing to reconcile. Off.
+  maester:
+    enabled: false
   hydra:
     config:
       strategies:
         access_token: jwt
       secrets:
         system: []    # REQUIRED: set in values.secret.yaml / values.prod.secret.yaml
+      # Token lifetimes as stated policy rather than Hydra's defaults (step 8 §3d).
+      # Refresh-token rotation and reuse detection are Hydra defaults and are NOT overridden.
+      # Why these numbers: RevokeSessionsAsync kills the consent session and therefore the
+      # refresh chain, but an access token already minted survives to its own exp. So
+      # access_token is the residual window after a revocation — 15m, down from the 1h
+      # default. refresh_token is the outer bound on a stolen-but-unrotated chain; 168h (7d)
+      # costs an interactive re-auth once a week and is the knob to raise if that is too
+      # aggressive for your users.
+      ttl:
+        access_token: 15m
+        refresh_token: 168h
+        id_token: 15m
+        auth_code: 10m
+        login_consent_request: 30m
       log:
         level: info
         format: json
@@ -167,6 +507,16 @@ hydra:
 # Keto subchart — shared config
 # ══════════════════════════════════════════════════════════════════════════════
 keto:
+  # Keto talks to Postgres and to nothing else — it has no reason to hold a credential for the
+  # Kubernetes API. It mounted one anyway: the subchart's deployment template resolves the flag
+  # with `ternary .Values.deployment.automountServiceAccountToken .Values.automountServiceAccountToken
+  # (not (empty .Values.deployment.automountServiceAccountToken))`, and `empty false` is true —
+  # so `deployment.automountServiceAccountToken: false` alone can never be selected, and the
+  # subchart default of `true` always wins. Falling through picks a top-level key the chart does
+  # not define, which renders an empty value. Both keys together are what produces `false`.
+  automountServiceAccountToken: false
+  deployment:
+    automountServiceAccountToken: false
   keto:
     config:
       namespaces:

@@ -132,7 +132,7 @@ public class EntityModelTests
     [Fact]
     public void TotpEncryption_DecryptString_RoundTrips()
     {
-        var key       = Convert.FromHexString(new string('0', 64));
+        var key       = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         var plaintext = "hello world";
         var encrypted = TotpEncryption.EncryptString(key, plaintext);
         TotpEncryption.DecryptString(key, encrypted).Should().Be(plaintext);
@@ -248,7 +248,6 @@ public class EntityModelTests
                 ["App:Domain"]                          = "localhost",
                 ["IAM_PUBLIC_PORT"]                     = "5000",
                 ["IAM_ADMIN_PORT"]                      = "5001",
-                ["IAM_ADMIN_PATH"]                      = "/myadmin",
                 ["IAM_BOOTSTRAP_PASSWORD"]              = "secret",
                 ["Smtp:Username"]                       = "smtpuser",
                 ["Smtp:Password"]                       = "smtppass",
@@ -258,7 +257,6 @@ public class EntityModelTests
             .Build());
 
         cfg.PublicPort.Should().Be(5000);
-        cfg.AdminPath.Should().Be("/myadmin");
         cfg.BootstrapPassword.Should().Be("secret");
         cfg.SmtpUsername.Should().Be("smtpuser");
         cfg.SmtpPassword.Should().Be("smtppass");
@@ -380,7 +378,6 @@ public class EntityModelTests
             })
             .Build());
 
-        cfg.AdminPath.Should().Be("/admin");
         cfg.CacheConnectionString.Should().Contain("localhost");
         cfg.CacheInstanceName.Should().Be("rediensiam:");
         cfg.PublicUrl.Should().Be("http://localhost");
@@ -534,14 +531,14 @@ public class EntityModelTests
     [Fact]
     public void TotpEncryption_EncryptProviderSecrets_NullIncoming_ReturnsNull()
     {
-        var key = Convert.FromHexString(new string('0', 64));
+        var key = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         TotpEncryption.EncryptProviderSecretsInTheme(null, null, key).Should().BeNull();
     }
 
     [Fact]
     public void TotpEncryption_EncryptProviderSecrets_NoProvidersKey_ReturnsIncoming()
     {
-        var key     = Convert.FromHexString(new string('0', 64));
+        var key     = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         var incoming = new Dictionary<string, object> { ["color"] = "blue" };
         TotpEncryption.EncryptProviderSecretsInTheme(incoming, null, key).Should().BeSameAs(incoming);
     }
@@ -549,7 +546,7 @@ public class EntityModelTests
     [Fact]
     public void TotpEncryption_EncryptProviderSecrets_ProvidersNotArray_ReturnsIncoming()
     {
-        var key = Convert.FromHexString(new string('0', 64));
+        var key = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         var doc = JsonDocument.Parse("{\"providers\": \"not-array\"}");
         var incoming = new Dictionary<string, object>
         {
@@ -562,7 +559,7 @@ public class EntityModelTests
     public void TotpEncryption_EncryptProviderSecrets_ExistingNull_BuildsEmptyMap()
     {
         // existing is null → BuildExistingSecretsMap returns empty map
-        var key = Convert.FromHexString(new string('0', 64));
+        var key = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         var doc = JsonDocument.Parse("""{"providers": [{"id": "gh", "client_id": "abc"}]}""");
         var incoming = new Dictionary<string, object>
         {
@@ -576,7 +573,7 @@ public class EntityModelTests
     public void TotpEncryption_EncryptProviderSecrets_ExistingNoProviders_UsesEmptyMap()
     {
         // existing dict exists but has no "providers" key → BuildExistingSecretsMap returns empty
-        var key = Convert.FromHexString(new string('0', 64));
+        var key = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         var doc = JsonDocument.Parse("""{"providers": [{"id": "gh", "client_id": "abc"}]}""");
         var incoming = new Dictionary<string, object>
         {
@@ -591,7 +588,7 @@ public class EntityModelTests
     public void TotpEncryption_EncryptProviderSecrets_ExistingProvidersNotArray_UsesEmptyMap()
     {
         // existing has "providers" but it's a non-array JsonElement
-        var key = Convert.FromHexString(new string('0', 64));
+        var key = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         var inDoc = JsonDocument.Parse("""{"providers": [{"id": "gh"}]}""");
         var exDoc = JsonDocument.Parse("""{"providers": "not-array"}""");
         var incoming = new Dictionary<string, object>
@@ -610,7 +607,7 @@ public class EntityModelTests
     public void TotpEncryption_EncryptProviderSecrets_ProviderNoId_NoSecret_LeavesDictClean()
     {
         // Provider has no "id" property → providerId is null → else-if skipped
-        var key = Convert.FromHexString(new string('0', 64));
+        var key = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         var doc = JsonDocument.Parse("""{"providers": [{"client_id": "abc"}]}""");
         var incoming = new Dictionary<string, object>
         {
@@ -624,7 +621,7 @@ public class EntityModelTests
     public void TotpEncryption_EncryptProviderSecrets_ProviderHasId_ExistingSecretPreserved()
     {
         // Provider has id but no client_secret → falls to else-if → looks up existing secret
-        var key = Convert.FromHexString(new string('0', 64));
+        var key = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         var plaintext = "original-secret";
         var existingEnc = TotpEncryption.EncryptString(key, plaintext);
 
@@ -669,9 +666,9 @@ public class EntityModelTests
 
         using var cts = new CancellationTokenSource();
 
-        // PurgeExpiredLogsAsync throws immediately (no DB provider).
-        // The catch block runs (lines 22-23), then Task.Delay(24h) starts.
-        // We cancel after 50ms — Task.Delay throws OperationCanceledException.
+        // The purge throws immediately (no DB provider), which the loop must swallow before
+        // sleeping for its 24-hour interval. Cancelling after 50 ms is the only way out of that
+        // sleep — without the cancel this test would hang for a day.
         _ = Task.Delay(50).ContinueWith(_ => cts.Cancel());
 
         var method = typeof(AuditLogRetentionService)
@@ -728,7 +725,6 @@ public class EntityModelTests
             new NoOpWebhookQueue(),
             new NoOpSsrfValidator());
 
-        // Write a job and complete the channel
         await ch.Writer.WriteAsync(new WebhookJob(
             Guid.NewGuid(), "user.created", "{}", "secret", "http://localhost/hook"));
         ch.Writer.Complete();
@@ -741,7 +737,7 @@ public class EntityModelTests
         // ExecuteAsync completes (channel done); wait a bit for fire-and-forget ProcessJobAsync
         var act = async () => await task;
         await act.Should().NotThrowAsync();
-        await Task.Delay(200); // let the background Task.Run complete (covers lines 174-177)
+        await Task.Delay(200); // let the fire-and-forget job finish before the test tears down
     }
 
     private static AppConfig BuildNoOpAppConfig() =>
@@ -759,7 +755,7 @@ public class EntityModelTests
     // ── RequireManagementLevelAttribute — null claims path (lines 20-22) ─────
 
     [Fact]
-    public void RequireManagementLevelAttribute_NullClaims_ReturnsUnauthorized()
+    public async Task RequireManagementLevelAttribute_NullClaims_ReturnsUnauthorized()
     {
         var attr        = new RequireManagementLevelAttribute(ManagementLevel.OrgAdmin);
         var httpContext = new DefaultHttpContext();
@@ -771,9 +767,15 @@ public class EntityModelTests
             actionContext, new List<IFilterMetadata>(),
             new Dictionary<string, object?>(), controller: null!);
 
-        attr.OnActionExecuting(execContext);
+        var nextCalled = false;
+        await attr.OnActionExecutionAsync(execContext, () =>
+        {
+            nextCalled = true;
+            return Task.FromResult<ActionExecutedContext>(null!);
+        });
 
         execContext.Result.Should().BeOfType<UnauthorizedObjectResult>();
+        nextCalled.Should().BeFalse("the action must not run without claims");
     }
 
     // ── WebhookDispatcherService — Redis recovery path (lines 143-152) ───────

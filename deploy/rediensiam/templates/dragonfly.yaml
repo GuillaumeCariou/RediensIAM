@@ -1,4 +1,81 @@
+{{- /*
+  ⚠ THE THREE GUARDS BELOW DO NOT RUN IN `secrets.existingSecret` MODE.
+
+  They are all conditioned on a non-empty `secrets.cacheUrl`, and in that mode the cache URL lives
+  in a Secret this template cannot read. Nothing here can compare it against `tls.enabled` any
+  more — so the pair that these guards exist to hold together becomes the operator's to hold.
+
+  That is a real loss, and worth stating plainly rather than leaving to be discovered: a guard
+  that silently stops running is worse than no guard, because the reader still counts on it.
+
+  What must be true, and can no longer be checked here:
+    · tls.enabled true  → the cache URL carries `ssl=true`, and `dragonfly-password` is non-empty
+    · tls.enabled false → the cache URL carries no `ssl=true`
+  Either half alone is a total cache outage, and the cache holds the DataProtection key ring —
+  so it is every session, not a degraded mode.
+
+  The check has to live wherever the Secret is produced. For the Yandee deployment that is
+  `bootstrap/seal-secrets.sh --verify`, which renders the chart, looks for `--tls_cert_file` on
+  Dragonfly's real command line, and compares it against the `cache-url` actually present in the
+  cluster. Any other consumer of `existingSecret` needs its own equivalent.
+*/ -}}
 {{- if .Values.rediensiam.dragonfly.local.enabled }}
+{{- $tls := .Values.rediensiam.dragonfly.local.tls.enabled }}
+{{- $cacheUrl := .Values.rediensiam.secrets.cacheUrl | default "" }}
+{{- /*
+  R-15 cutover guards. All three are gated on a non-empty cacheUrl, for the reason
+  postgres.yaml states verbatim: empty means the credential comes from the gitignored
+  secrets file, which `helm lint` and `helm template` on values.yaml + values.<env>.yaml
+  alone never see, and failing there would break the repository's own gate on a
+  configuration that is correct. Every real deploy layers that file, so every real
+  deploy is judged.
+*/}}
+{{- if $cacheUrl }}
+{{- if and $tls (not .Values.rediensiam.dragonfly.local.password) }}
+{{- /*
+  Observed 2026-07-31, not theorised: with `--tls` and an empty `--requirepass`,
+  Dragonfly v1.25 logs `TLS configured but no authentication method is used!` and
+  exits, taking the cache — and therefore the DataProtection key ring, and therefore
+  every session — with it. `dragonfly.local.password` defaulted to "" and deploy.sh
+  never generated one, so this was the state of every install.
+*/}}
+{{- fail "rediensiam.dragonfly.local.tls.enabled needs rediensiam.dragonfly.local.password — Dragonfly refuses to start with TLS and no authentication method" }}
+{{- end }}
+{{- /*
+  The cutover itself, guarded in both directions. Same shape as the Postgres guard, but
+  the cache needs the mirror case too: Dragonfly with `--tls` refuses cleartext AND
+  Dragonfly without it speaks no TLS, so either half of the pair on its own is a total
+  cache outage — which, because the cache holds the DataProtection key ring, is every
+  session. A template error is the only place to catch that before it is an incident.
+*/}}
+{{- $wantsSsl := regexMatch "(?i)(^|,) *ssl *= *true" $cacheUrl }}
+{{- if and $tls (not $wantsSsl) }}
+{{- fail "rediensiam.dragonfly.local.tls.enabled is set but rediensiam.secrets.cacheUrl has no `ssl=true` — Dragonfly stops answering cleartext, so both must change in the SAME upgrade (SECURITY-AUDIT-LOG.md step 09 §6.5)" }}
+{{- end }}
+{{- if and (not $tls) $wantsSsl }}
+{{- fail "rediensiam.secrets.cacheUrl asks for `ssl=true` but rediensiam.dragonfly.local.tls.enabled is off — the cache serves no TLS and the app will not connect (SECURITY-AUDIT-LOG.md step 09 §6.5)" }}
+{{- end }}
+{{- end }}
+{{- if .Values.rediensiam.dragonfly.local.tls.enabled }}
+# Cache transport encryption. Unlike Postgres this is a HARD cutover — with --tls Dragonfly
+# stops answering cleartext — so the cacheUrl secret must gain `ssl=true` in the same change.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Release.Name }}-dragonfly-tls
+  namespace: {{ .Release.Namespace }}
+spec:
+  secretName: {{ .Release.Name }}-dragonfly-tls
+  issuerRef:
+    name: {{ include "rediensiam.selfSignedIssuer" . }}
+    kind: Issuer
+  commonName: {{ .Release.Name }}-dragonfly
+  dnsNames:
+    - {{ .Release.Name }}-dragonfly
+    - {{ .Release.Name }}-dragonfly.{{ .Release.Namespace }}.svc
+    - {{ .Release.Name }}-dragonfly.{{ .Release.Namespace }}.svc.cluster.local
+---
+{{- end }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -28,6 +105,12 @@ spec:
         app: {{ .Release.Name }}-dragonfly
     spec:
       automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        {{- if .Values.rediensiam.dragonfly.local.tls.enabled }}
+        fsGroup: 999    # so uid 999 can read the mounted key
+        {{- end }}
       containers:
         - name: dragonfly
           image: {{ .Values.rediensiam.dragonfly.local.image }}
@@ -43,11 +126,45 @@ spec:
             - name: DRAGONFLY_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: dragonfly-password
           ports:
             - containerPort: 6379
-          args: ["--logtostderr", "--requirepass=$(DRAGONFLY_PASSWORD)"]
+          # Neither probe existed. During a rolling update the Service routed to a Dragonfly that
+          # was not yet serving, and this cache holds the DataProtection key ring — so the window
+          # is session-affecting rather than cosmetic. A wedged (rather than crashed) instance was
+          # never restarted either.
+          readinessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          args:
+            - --logtostderr
+            - --requirepass=$(DRAGONFLY_PASSWORD)
+            {{- if .Values.rediensiam.dragonfly.local.tls.enabled }}
+            - --tls
+            - --tls_cert_file=/etc/dragonfly-tls/tls.crt
+            - --tls_key_file=/etc/dragonfly-tls/tls.key
+            {{- end }}
+          {{- if .Values.rediensiam.dragonfly.local.tls.enabled }}
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/dragonfly-tls
+              readOnly: true
+          {{- end }}
           resources:
             {{- toYaml .Values.rediensiam.dragonfly.local.resources | nindent 12 }}
+      {{- if .Values.rediensiam.dragonfly.local.tls.enabled }}
+      volumes:
+        - name: tls
+          secret:
+            secretName: {{ .Release.Name }}-dragonfly-tls
+            defaultMode: 0440
+      {{- end }}
 {{- end }}

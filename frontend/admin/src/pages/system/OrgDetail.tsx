@@ -1,22 +1,12 @@
+import { rowActivation } from '../../components/iam/rowActivation';
 import { useEffect, useState, useCallback } from 'react';
 import { ApiError } from '@/auth';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router';
 import { useAuth } from '@/context/AuthContext';
 import {
   ArrowLeft, PauseCircle, PlayCircle, Pencil, UserPlus,
   MoreHorizontal, Shield, Trash2, FolderKanban, List, Plus,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Separator } from '@/components/ui/separator';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
   getOrg, suspendOrg, unsuspendOrg, updateOrg, deleteOrg,
   listSystemUserListMembers,
@@ -27,6 +17,7 @@ import {
   listProjects, adminCreateProject,
 } from '@/api';
 import { fmtDateShort } from '@/lib/utils';
+import { IamChip, IamDialog, IamMenu } from '@/components/iam';
 
 interface Org { id: string; name: string; slug: string; active: boolean; suspended_at: string | null; created_at: string; org_list_id: string; }
 interface Member { id: string; username: string; discriminator: string; email: string; active: boolean; }
@@ -49,32 +40,26 @@ export default function OrgDetail() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // rename
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameVal, setRenameVal] = useState('');
 
-  // add user to org list
   const [addUserOpen, setAddUserOpen] = useState(false);
   const [addUserForm, setAddUserForm] = useState({ email: '', username: '', password: '' });
   const [addUserSaving, setAddUserSaving] = useState(false);
   const [addUserError, setAddUserError] = useState('');
 
-  // assign role
   const [assignRoleTarget, setAssignRoleTarget] = useState<Member | null>(null);
   const [assignRoleForm, setAssignRoleForm] = useState({ role: 'org_admin', scope_id: '' });
   const [assignRoleSaving, setAssignRoleSaving] = useState(false);
 
-  // remove user
   const [removeUserTarget, setRemoveUserTarget] = useState<Member | null>(null);
 
-  // create user list
   const [createListOpen, setCreateListOpen] = useState(false);
   const [newListName, setNewListName] = useState('');
   const [createListSaving, setCreateListSaving] = useState(false);
 
-  // create project
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
-  const [newProject, setNewProject] = useState({ name: '', slug: '', redirect_uri: '' });
+  const [newProject, setNewProject] = useState({ name: '', slug: '', redirect_uri: '', post_logout_redirect_uri: '' });
   const [createProjectSaving, setCreateProjectSaving] = useState(false);
   const [createProjectError, setCreateProjectError] = useState('');
 
@@ -186,9 +171,10 @@ export default function OrgDetail() {
         name: newProject.name,
         slug: newProject.slug,
         redirect_uris: newProject.redirect_uri ? [newProject.redirect_uri] : [],
+        post_logout_redirect_uris: newProject.post_logout_redirect_uri ? [newProject.post_logout_redirect_uri] : [],
       });
       setCreateProjectOpen(false);
-      setNewProject({ name: '', slug: '', redirect_uri: '' });
+      setNewProject({ name: '', slug: '', redirect_uri: '', post_logout_redirect_uri: '' });
       load();
     } catch (err) {
       const body = err instanceof ApiError ? (err.body as Record<string, string> | null) : null;
@@ -203,26 +189,25 @@ export default function OrgDetail() {
 
   const skeletonRows = (cols: number, rows = 2) =>
     Array.from({ length: rows }, (_, i) => `sk-row-${i}`).map(rowId => (
-      <TableRow key={rowId}>
+      <tr key={rowId}>
         {Array.from({ length: cols }, (_, j) => `sk-cell-${j}`).map(cellId => (
-          <TableCell key={cellId}><Skeleton className="h-4 w-full" /></TableCell>
+          <td key={cellId}><div className="iam-skeleton h-4 w-full" /></td>
           ))}
-      </TableRow>
+      </tr>
     ));
 
   return (
     <div className="p-6 space-y-4">
-      <Button variant="ghost" size="sm" className="-ml-1" onClick={() => navigate('/system/organisations')}>
+      <button className="iam-btn iam-btn-ghost iam-btn-sm -ml-1" onClick={() => navigate('/system/organisations')}>
         <ArrowLeft className="h-4 w-4" />Back to Organisations
-      </Button>
+      </button>
 
       {/* ── Org Section ───────────────────────────────────────────────── */}
       <div className="rounded-xl border bg-card p-6 space-y-6">
 
-        {/* Header */}
         <div className="flex items-start justify-between gap-4">
           {loading
-            ? <div className="space-y-2"><Skeleton className="h-6 w-48" /><Skeleton className="h-4 w-72" /></div>
+            ? <div className="space-y-2"><div className="iam-skeleton h-6 w-48" /><div className="iam-skeleton h-4 w-72" /></div>
             : <div>
                 <h1 className="text-xl font-bold">{org?.name}</h1>
                 <p className="text-sm text-muted-foreground">
@@ -232,404 +217,343 @@ export default function OrgDetail() {
           }
           {!loading && org && (
             <div className="flex items-center gap-2 shrink-0">
-              <Badge variant={org.suspended_at ? 'destructive' : 'success'}>
+              <IamChip tone={org.suspended_at ? 'danger' : 'success'}>
                 {org.suspended_at ? 'Suspended' : 'Active'}
-              </Badge>
-              <Button variant="outline" size="sm" onClick={() => { setRenameVal(org.name); setRenameOpen(true); }}>
+              </IamChip>
+              <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={() => { setRenameVal(org.name); setRenameOpen(true); }}>
                 <Pencil className="h-4 w-4" />Rename
-              </Button>
+              </button>
               {isSuperAdmin && (
-                <Button variant="outline" size="sm" onClick={handleSuspend}>
+                <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={handleSuspend}>
                   {org.suspended_at
                     ? <><PlayCircle className="h-4 w-4" />Unsuspend</>
                     : <><PauseCircle className="h-4 w-4" />Suspend</>
                   }
-                </Button>
+                </button>
               )}
               {isSuperAdmin && (
-                <Button variant="outline" size="sm" className="text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => setDeleteOrgOpen(true)}>
+                <button className="iam-btn iam-btn-secondary iam-btn-sm text-destructive border-[var(--danger)] hover:bg-[var(--danger-soft)]" onClick={() => setDeleteOrgOpen(true)}>
                   <Trash2 className="h-4 w-4" />Delete
-                </Button>
+                </button>
               )}
             </div>
           )}
         </div>
 
-        <Separator />
+        <hr className="iam-sep" />
 
-        {/* Org User List */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Org User List</h2>
-            <Button size="sm" variant="outline" disabled={loading} onClick={() => setAddUserOpen(true)}>
+            <button className="iam-btn iam-btn-secondary iam-btn-sm" disabled={loading} onClick={() => setAddUserOpen(true)}>
               <UserPlus className="h-4 w-4" />Add User
-            </Button>
+            </button>
           </div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>User</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Roles</TableHead>
-                <TableHead className="w-12"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+          <table className="iam-tbl">
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Email</th>
+                <th>Roles</th>
+                <th className="w-12"></th>
+              </tr>
+            </thead>
+            <tbody>
               {(() => {
                 if (loading) return (
                   skeletonRows(4)
                 );
                 if (orgListMembers.length === 0) return (
-                  <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-6">No users in org list.</TableCell></TableRow>
+                  <tr><td className="text-center text-muted-foreground py-6" colSpan={4}>No users in org list.</td></tr>
                 );
                 return (
                   orgListMembers.map(m => {
                       const roles = rolesMap[m.id] ?? [];
                       return (
-                        <TableRow key={m.id}>
-                          <TableCell className="font-medium">{m.username}#{m.discriminator}</TableCell>
-                          <TableCell className="text-sm text-muted-foreground">{m.email}</TableCell>
-                          <TableCell>
+                        <tr key={m.id}>
+                          <td className="font-medium">{m.username}#{m.discriminator}</td>
+                          <td className="text-sm text-muted-foreground">{m.email}</td>
+                          <td>
                             {roles.length === 0
                               ? <span className="text-xs text-muted-foreground">No role</span>
                               : roles.map(r => (
-                                  <Badge key={r.id} variant={r.role === 'org_admin' ? 'default' : 'secondary'} className="mr-1 text-xs">
+                                  <IamChip className="mr-1 text-xs" tone={r.role === 'org_admin' ? 'accent' : 'default'} key={r.id}>
                                     {r.role === 'org_admin' ? 'Org Admin' : `PM: ${r.scope_name ?? '…'}`}
-                                  </Badge>
+                                  </IamChip>
                                 ))
                             }
-                          </TableCell>
-                          <TableCell>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent>
-                                <DropdownMenuItem onClick={() => { setAssignRoleTarget(m); setAssignRoleForm({ role: 'org_admin', scope_id: '' }); }}>
+                          </td>
+                          <td>
+                            <IamMenu trigger={<MoreHorizontal className="h-4 w-4" />}>
+<button type="button" className="iam-menu-item" onClick={() => { setAssignRoleTarget(m); setAssignRoleForm({ role: 'org_admin', scope_id: '' }); }}>
                                   <Shield className="h-4 w-4" />Assign role
-                                </DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setRemoveUserTarget(m)}>
+                                </button>
+                                <div className="iam-menu-sep" />
+                                <button type="button" className="iam-menu-item iam-menu-item-danger" onClick={() => setRemoveUserTarget(m)}>
                                   <Trash2 className="h-4 w-4" />Remove from org
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </TableCell>
-                        </TableRow>
+                                </button>
+</IamMenu>
+                          </td>
+                        </tr>
                       );
                     })
                 );
               })()}
-            </TableBody>
-          </Table>
+            </tbody>
+          </table>
         </div>
 
-        <Separator />
+        <hr className="iam-sep" />
 
-        {/* Service Accounts */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Service Accounts</h2>
-            <Button size="sm" variant="outline" disabled>
+            <button className="iam-btn iam-btn-secondary iam-btn-sm" disabled>
               <Plus className="h-4 w-4" />New SA
-            </Button>
+            </button>
           </div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Last used</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+          <table className="iam-tbl">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Description</th>
+                <th>Status</th>
+                <th>Last used</th>
+              </tr>
+            </thead>
+            <tbody>
               {(() => {
                 if (loading) return (
                   skeletonRows(4, 1)
                 );
                 if (serviceAccounts.length === 0) return (
-                  <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-6">No service accounts.</TableCell></TableRow>
+                  <tr><td className="text-center text-muted-foreground py-6" colSpan={4}>No service accounts.</td></tr>
                 );
                 return (
                   serviceAccounts.map(sa => (
-                      <TableRow key={sa.id}>
-                        <TableCell className="font-medium">{sa.name}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">{sa.description ?? '—'}</TableCell>
-                        <TableCell>
-                          <Badge variant={sa.active ? 'success' : 'secondary'}>{sa.active ? 'Active' : 'Inactive'}</Badge>
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
+                      <tr key={sa.id}>
+                        <td className="font-medium">{sa.name}</td>
+                        <td className="text-sm text-muted-foreground">{sa.description ?? '—'}</td>
+                        <td>
+                          <IamChip tone={sa.active ? 'success' : 'default'}>{sa.active ? 'Active' : 'Inactive'}</IamChip>
+                        </td>
+                        <td className="text-sm text-muted-foreground">
                           {sa.last_used_at ? fmtDateShort(sa.last_used_at) : '—'}
-                        </TableCell>
-                      </TableRow>
+                        </td>
+                      </tr>
                     ))
                 );
               })()}
-            </TableBody>
-          </Table>
+            </tbody>
+          </table>
         </div>
       </div>
 
       {/* ── User Lists + Projects ──────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-4">
 
-        {/* User Lists (movable) */}
         <div className="rounded-xl border bg-card overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b">
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
               <List className="h-4 w-4" />User Lists
             </h2>
-            <Button size="sm" onClick={() => setCreateListOpen(true)}>
+            <button className="iam-btn iam-btn-primary iam-btn-sm" onClick={() => setCreateListOpen(true)}>
               <Plus className="h-4 w-4" />New
-            </Button>
+            </button>
           </div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Users</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+          <table className="iam-tbl">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Users</th>
+              </tr>
+            </thead>
+            <tbody>
               {(() => {
                 if (loading) return (
                   skeletonRows(2)
                 );
                 if (userLists.length === 0) return (
-                  <TableRow><TableCell colSpan={2} className="text-center text-muted-foreground py-8">No user lists.</TableCell></TableRow>
+                  <tr><td className="text-center text-muted-foreground py-8" colSpan={2}>No user lists.</td></tr>
                 );
                 return (
                   userLists.map(ul => (
-                      <TableRow key={ul.id} className="cursor-pointer hover:bg-muted/50" onClick={() => navigate(`/system/organisations/${id}/userlists/${ul.id}`)}>
-                        <TableCell className="font-medium">{ul.name}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">—</TableCell>
-                      </TableRow>
+                      <tr key={ul.id} {...rowActivation(() => navigate(`/system/organisations/${id}/userlists/${ul.id}`))}>
+                        <td className="font-medium">{ul.name}</td>
+                        <td className="text-sm text-muted-foreground">—</td>
+                      </tr>
                     ))
                 );
               })()}
-            </TableBody>
-          </Table>
+            </tbody>
+          </table>
         </div>
 
-        {/* Projects */}
         <div className="rounded-xl border bg-card overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b">
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
               <FolderKanban className="h-4 w-4" />Projects
             </h2>
-            <Button size="sm" onClick={() => setCreateProjectOpen(true)}>
+            <button className="iam-btn iam-btn-primary iam-btn-sm" onClick={() => setCreateProjectOpen(true)}>
               <Plus className="h-4 w-4" />New
-            </Button>
+            </button>
           </div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>User List</TableHead>
-                <TableHead>Status</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+          <table className="iam-tbl">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>User List</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
               {(() => {
                 if (loading) return (
                   skeletonRows(3)
                 );
                 if (projects.length === 0) return (
-                  <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground py-8">No projects.</TableCell></TableRow>
+                  <tr><td className="text-center text-muted-foreground py-8" colSpan={3}>No projects.</td></tr>
                 );
                 return (
                   projects.map(p => (
-                      <TableRow
-                        key={p.id}
-                        className="cursor-pointer hover:bg-muted/50"
-                        onClick={() => navigate(`/system/organisations/${id}/projects/${p.id}`)}
-                      >
-                        <TableCell className="font-medium">{p.name}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
+                      <tr key={p.id} {...rowActivation(() => navigate(`/system/organisations/${id}/projects/${p.id}`))}>
+                        <td className="font-medium">{p.name}</td>
+                        <td className="text-sm text-muted-foreground">
                           {p.assigned_user_list_id
                             ? (assignedListName(p.assigned_user_list_id) ?? <span className="font-mono text-xs">{p.assigned_user_list_id.slice(0, 8)}…</span>)
                             : <span className="italic">Unassigned</span>
                           }
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={p.active ? 'success' : 'secondary'}>{p.active ? 'Active' : 'Draft'}</Badge>
-                        </TableCell>
-                      </TableRow>
+                        </td>
+                        <td>
+                          <IamChip tone={p.active ? 'success' : 'default'}>{p.active ? 'Active' : 'Draft'}</IamChip>
+                        </td>
+                      </tr>
                     ))
                 );
               })()}
-            </TableBody>
-          </Table>
+            </tbody>
+          </table>
         </div>
       </div>
 
       {/* ── Dialogs ───────────────────────────────────────────────────── */}
 
-      {/* Rename */}
-      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Rename Organisation</DialogTitle></DialogHeader>
-          <form onSubmit={handleRename} className="space-y-4">
+      <IamDialog open={renameOpen} onClose={() => setRenameOpen(false)}
+      title="Rename Organisation"
+      footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={() => setRenameOpen(false)}>Cancel</button>
+              <button className="iam-btn iam-btn-primary" type="submit" form="orgdetail-form-5">Save</button></>}
+    >
+<form id="orgdetail-form-5" onSubmit={handleRename} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="rename">Name</Label>
-              <Input id="rename" value={renameVal} onChange={e => setRenameVal(e.target.value)} required />
+              <label className="iam-label" htmlFor="rename">Name</label>
+              <input className="iam-input" id="rename" value={renameVal} onChange={e => setRenameVal(e.target.value)} required />
             </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setRenameOpen(false)}>Cancel</Button>
-              <Button type="submit">Save</Button>
-            </DialogFooter>
+            
           </form>
-        </DialogContent>
-      </Dialog>
+    </IamDialog>
 
-      {/* Add User to org list */}
-      <Dialog open={addUserOpen} onOpenChange={setAddUserOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Add User to Org List</DialogTitle>
-            <DialogDescription>Creates a new user in the organisation's admin user list.</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleAddUser} className="space-y-4">
+      <IamDialog open={addUserOpen} onClose={() => setAddUserOpen(false)}
+      title="Add User to Org List"
+      desc="Creates a new user in the organisation's admin user list."
+      footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={() => setAddUserOpen(false)}>Cancel</button>
+              <button className="iam-btn iam-btn-primary" type="submit" form="orgdetail-form-4" disabled={addUserSaving}>{addUserSaving ? 'Adding…' : 'Add User'}</button></>}
+    >
+<form id="orgdetail-form-4" onSubmit={handleAddUser} className="space-y-4">
             {addUserError && <p className="text-sm text-destructive">{addUserError}</p>}
-            <div className="space-y-2"><Label>Email</Label><Input value={addUserForm.email} onChange={e => setAddUserForm(f => ({ ...f, email: e.target.value }))} required type="email" /></div>
-            <div className="space-y-2"><Label>Username</Label><Input value={addUserForm.username} onChange={e => setAddUserForm(f => ({ ...f, username: e.target.value }))} required /></div>
-            <div className="space-y-2"><Label>Password</Label><Input value={addUserForm.password} onChange={e => setAddUserForm(f => ({ ...f, password: e.target.value }))} required type="password" /></div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setAddUserOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={addUserSaving}>{addUserSaving ? 'Adding…' : 'Add User'}</Button>
-            </DialogFooter>
+            <div className="space-y-2"><label className="iam-label" htmlFor="org-add-user-email">Email</label><input className="iam-input" id="org-add-user-email" value={addUserForm.email} onChange={e => setAddUserForm(f => ({ ...f, email: e.target.value }))} required type="email" /></div>
+            <div className="space-y-2"><label className="iam-label" htmlFor="org-add-user-username">Username</label><input className="iam-input" id="org-add-user-username" value={addUserForm.username} onChange={e => setAddUserForm(f => ({ ...f, username: e.target.value }))} required /></div>
+            <div className="space-y-2"><label className="iam-label" htmlFor="org-add-user-password">Password</label><input className="iam-input" id="org-add-user-password" autoComplete="new-password" value={addUserForm.password} onChange={e => setAddUserForm(f => ({ ...f, password: e.target.value }))} required type="password" /></div>
+            
           </form>
-        </DialogContent>
-      </Dialog>
+    </IamDialog>
 
-      {/* Assign Role */}
-      <Dialog open={!!assignRoleTarget} onOpenChange={v => !v && setAssignRoleTarget(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Assign Role</DialogTitle>
-            <DialogDescription>
-              Assign an admin role to {assignRoleTarget?.username}#{assignRoleTarget?.discriminator}.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleAssignRole} className="space-y-4">
+      <IamDialog open={!!assignRoleTarget} onClose={() => (v => !v && setAssignRoleTarget(null))(false)}
+      title="Assign Role"
+      desc={<>Assign an admin role to {assignRoleTarget?.username}#{assignRoleTarget?.discriminator}.</>}
+      footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={() => setAssignRoleTarget(null)}>Cancel</button>
+              <button className="iam-btn iam-btn-primary" type="submit" form="orgdetail-form-3" disabled={assignRoleSaving}>{assignRoleSaving ? 'Assigning…' : 'Assign'}</button></>}
+    >
+<form id="orgdetail-form-3" onSubmit={handleAssignRole} className="space-y-4">
             <div className="space-y-2">
-              <Label>Role</Label>
-              <Select value={assignRoleForm.role} onValueChange={v => setAssignRoleForm(f => ({ ...f, role: v, scope_id: '' }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="org_admin">Org Admin</SelectItem>
-                  <SelectItem value="project_manager">Project Manager</SelectItem>
-                </SelectContent>
-              </Select>
+              <label className="iam-label" htmlFor="org-assign-role">Role</label>
+              <select className="iam-select" id="org-assign-role" value={assignRoleForm.role} onChange={e => (v => setAssignRoleForm(f => ({ ...f, role: v, scope_id: '' })))(e.target.value)}>
+<option value="org_admin">Org Admin</option>
+                  <option value="project_admin">Project Admin</option>
+</select>
             </div>
-            {assignRoleForm.role === 'project_manager' && (
+            {assignRoleForm.role === 'project_admin' && (
               <div className="space-y-2">
-                <Label>Project (scope)</Label>
-                <Select value={assignRoleForm.scope_id} onValueChange={v => setAssignRoleForm(f => ({ ...f, scope_id: v }))}>
-                  <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
-                  <SelectContent>
-                    {projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <label className="iam-label" htmlFor="org-assign-role-scope">Project (scope)</label>
+                <select className="iam-select" id="org-assign-role-scope" value={assignRoleForm.scope_id} onChange={e => (v => setAssignRoleForm(f => ({ ...f, scope_id: v })))(e.target.value)}>
+                  <option value="" disabled>Select a project…</option>
+{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+</select>
               </div>
             )}
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setAssignRoleTarget(null)}>Cancel</Button>
-              <Button type="submit" disabled={assignRoleSaving}>{assignRoleSaving ? 'Assigning…' : 'Assign'}</Button>
-            </DialogFooter>
+            
           </form>
-        </DialogContent>
-      </Dialog>
+    </IamDialog>
 
-      {/* Remove User */}
-      <AlertDialog open={!!removeUserTarget} onOpenChange={v => !v && setRemoveUserTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove {removeUserTarget?.username}#{removeUserTarget?.discriminator}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This removes the user from the org list and permanently deletes their account.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleRemoveUser} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Remove
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <IamDialog open={!!removeUserTarget} onClose={() => (v => !v && setRemoveUserTarget(null))(false)}
+      title={<>Remove {removeUserTarget?.username}#{removeUserTarget?.discriminator}?</>}
+      desc="This removes the user from the org list and permanently deletes their account."
+      footer={<><button type="button" onClick={() => (v => !v && setRemoveUserTarget(null))(false)} className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleRemoveUser}>Remove</button></>}
+    >
 
-      {/* Create User List */}
-      <Dialog open={createListOpen} onOpenChange={setCreateListOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>New User List</DialogTitle>
-            <DialogDescription>Creates a movable user list in this organisation.</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleCreateList} className="space-y-4">
+    </IamDialog>
+
+      <IamDialog open={createListOpen} onClose={() => setCreateListOpen(false)}
+      title="New User List"
+      desc="Creates a movable user list in this organisation."
+      footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={() => setCreateListOpen(false)}>Cancel</button>
+              <button className="iam-btn iam-btn-primary" type="submit" form="orgdetail-form-2" disabled={createListSaving}>{createListSaving ? 'Creating…' : 'Create'}</button></>}
+    >
+<form id="orgdetail-form-2" onSubmit={handleCreateList} className="space-y-4">
             <div className="space-y-2">
-              <Label>Name</Label>
-              <Input value={newListName} onChange={e => setNewListName(e.target.value)} required placeholder="Acme Employees" />
+              <label className="iam-label" htmlFor="org-new-list-name">Name</label>
+              <input className="iam-input" id="org-new-list-name" value={newListName} onChange={e => setNewListName(e.target.value)} required placeholder="Acme Employees" />
             </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setCreateListOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={createListSaving}>{createListSaving ? 'Creating…' : 'Create'}</Button>
-            </DialogFooter>
+            
           </form>
-        </DialogContent>
-      </Dialog>
+    </IamDialog>
 
-      {/* Create Project */}
-      <Dialog open={createProjectOpen} onOpenChange={setCreateProjectOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>New Project</DialogTitle>
-            <DialogDescription>Create a new project in this organisation.</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleCreateProject} className="space-y-4">
+      <IamDialog open={createProjectOpen} onClose={() => setCreateProjectOpen(false)}
+      title="New Project"
+      desc="Create a new project in this organisation."
+      footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={() => setCreateProjectOpen(false)}>Cancel</button>
+              <button className="iam-btn iam-btn-primary" type="submit" form="orgdetail-form" disabled={createProjectSaving}>{createProjectSaving ? 'Creating…' : 'Create'}</button></>}
+    >
+<form id="orgdetail-form" onSubmit={handleCreateProject} className="space-y-4">
             {createProjectError && <p className="text-sm text-destructive">{createProjectError}</p>}
             <div className="space-y-2">
-              <Label>Name</Label>
-              <Input value={newProject.name} onChange={e => setNewProject(p => ({ ...p, name: e.target.value }))} required placeholder="Main App" />
+              <label className="iam-label" htmlFor="org-new-project-name">Name</label>
+              <input className="iam-input" id="org-new-project-name" value={newProject.name} onChange={e => setNewProject(p => ({ ...p, name: e.target.value }))} required placeholder="Main App" />
             </div>
             <div className="space-y-2">
-              <Label>Slug</Label>
-              <Input
-                value={newProject.slug}
-                onChange={e => setNewProject(p => ({ ...p, slug: e.target.value.toLowerCase().replaceAll(/\s+/g, '-') }))}
-                required placeholder="main-app" pattern="[a-z0-9]+(-[a-z0-9]+)*"
-              />
+              <label className="iam-label" htmlFor="org-new-project-slug">Slug</label>
+              <input className="iam-input" id="org-new-project-slug" value={newProject.slug} onChange={e => setNewProject(p => ({ ...p, slug: e.target.value.toLowerCase().replaceAll(/\s+/g, '-') }))} required placeholder="main-app" pattern="[a-z0-9]+(-[a-z0-9]+)*" />
               <p className="text-xs text-muted-foreground">Lowercase letters, numbers and hyphens only.</p>
             </div>
             <div className="space-y-2">
-              <Label>Redirect URI</Label>
-              <Input value={newProject.redirect_uri} onChange={e => setNewProject(p => ({ ...p, redirect_uri: e.target.value }))} placeholder="https://app.example.com/callback" />
+              <label className="iam-label" htmlFor="org-new-project-redirect-uri">Redirect URI</label>
+              <input className="iam-input" id="org-new-project-redirect-uri" value={newProject.redirect_uri} onChange={e => setNewProject(p => ({ ...p, redirect_uri: e.target.value }))} placeholder="https://app.example.com/callback" />
             </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setCreateProjectOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={createProjectSaving}>{createProjectSaving ? 'Creating…' : 'Create'}</Button>
-            </DialogFooter>
+            <div>
+              <label className="iam-label" htmlFor="org-proj-logout-uri">Post-logout redirect URI</label>
+              <input id="org-proj-logout-uri" className="iam-input" value={newProject.post_logout_redirect_uri} onChange={e => setNewProject(p => ({ ...p, post_logout_redirect_uri: e.target.value }))} placeholder="https://app.example.com/" />
+              <p className="iam-help">Where sign-out may return the user. A target not listed here is refused, and the sign-out fails.</p>
+            </div>
+            
           </form>
-        </DialogContent>
-      </Dialog>
+    </IamDialog>
 
-      <AlertDialog open={deleteOrgOpen} onOpenChange={setDeleteOrgOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete organisation "{org?.name}"?</AlertDialogTitle>
-            <AlertDialogDescription>
-              All user lists, projects, and service accounts belonging to this organisation will be permanently deleted. This cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteOrg} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <IamDialog open={deleteOrgOpen} onClose={() => setDeleteOrgOpen(false)}
+      title={<>Delete organisation "{org?.name}"?</>}
+      desc="All user lists, projects, and service accounts belonging to this organisation will be permanently deleted. This cannot be undone."
+      footer={<><button type="button" onClick={() => setDeleteOrgOpen(false)} className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleDeleteOrg}>Delete</button></>}
+    >
+
+    </IamDialog>
     </div>
   );
 }

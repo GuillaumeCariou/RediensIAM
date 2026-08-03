@@ -1,5 +1,6 @@
-import { BrowserRouter, Routes, Route, Navigate, useSearchParams } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useSearchParams } from 'react-router';
 import Login from './pages/Login';
+import Logout from './pages/Logout';
 import MfaChallenge from './pages/MfaChallenge';
 import MfaSetup from './pages/MfaSetup';
 import PasswordReset from './pages/PasswordReset';
@@ -35,6 +36,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/logout" element={<Logout />} />
         <Route path="/mfa" element={<MfaChallenge />} />
         <Route path="/mfa-setup" element={<MfaSetup />} />
         <Route path="/password-reset" element={<PasswordReset />} />

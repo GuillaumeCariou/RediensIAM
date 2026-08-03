@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { requestPasswordReset, verifyPasswordResetOtp, confirmPasswordReset } from '../api';
 
 type Step = 'email' | 'otp' | 'password' | 'done';
@@ -28,6 +28,53 @@ function ErrorBanner({ message }: Readonly<{ message: string }>) {
     <div className="deny-banner deny-banner-error" style={{ marginTop: 16 }}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
       {message}
+    </div>
+  );
+}
+
+/** Six OTP inputs, fixed order — stable keys so React never keys on the array index. */
+const OTP_CELL_IDS = ['otp-1', 'otp-2', 'otp-3', 'otp-4', 'otp-5', 'otp-6'];
+
+interface OtpGridProps {
+  cells: string[];
+  setCells: (cells: string[]) => void;
+  cellRefs: React.RefObject<(HTMLInputElement | null)[]>;
+}
+
+/** The six-digit entry grid. Lives outside PasswordReset so its focus juggling is self-contained. */
+function OtpGrid({ cells, setCells, cellRefs }: Readonly<OtpGridProps>) {
+  function handleCellChange(i: number, v: string) {
+    if (!/^\d?$/.test(v)) return;
+    const next = [...cells]; next[i] = v; setCells(next);
+    if (v && i < 5) cellRefs.current[i + 1]?.focus();
+  }
+
+  function handleCellKeyDown(e: React.KeyboardEvent, i: number) {
+    if (e.key === 'Backspace' && !cells[i] && i > 0) cellRefs.current[i - 1]?.focus();
+  }
+
+  function handleCellPaste(e: React.ClipboardEvent) {
+    const digits = e.clipboardData.getData('text').replaceAll(/\D/g, '').slice(0, 6);
+    if (digits.length === 0) return;
+    e.preventDefault();
+    const next = ['', '', '', '', '', ''];
+    for (let i = 0; i < digits.length; i++) next[i] = digits[i];
+    setCells(next);
+    cellRefs.current[Math.min(digits.length, 5)]?.focus();
+  }
+
+  return (
+    <div className="otp-grid">
+      {OTP_CELL_IDS.map((cellId, i) => (
+        <input key={cellId} ref={el => { cellRefs.current[i] = el; }}
+          className="otp-cell" type="text" inputMode="numeric"
+          maxLength={1} value={cells[i]} autoFocus={i === 0}
+          aria-label={`Digit ${i + 1} of 6`}
+          onChange={e => handleCellChange(i, e.target.value)}
+          onKeyDown={e => handleCellKeyDown(e, i)}
+          onPaste={handleCellPaste}
+        />
+      ))}
     </div>
   );
 }
@@ -95,27 +142,6 @@ export default function PasswordReset() {
     finally { setLoading(false); }
   }
 
-  function handleCellChange(i: number, v: string) {
-    if (!/^\d?$/.test(v)) return;
-    const next = [...cells]; next[i] = v; setCells(next);
-    if (v && i < 5) cellRefs.current[i + 1]?.focus();
-  }
-
-  function handleCellKeyDown(e: React.KeyboardEvent, i: number) {
-    if (e.key === 'Backspace' && !cells[i] && i > 0) cellRefs.current[i - 1]?.focus();
-  }
-
-  function handleCellPaste(e: React.ClipboardEvent) {
-    const digits = e.clipboardData.getData('text').replaceAll(/\D/g, '').slice(0, 6);
-    if (digits.length === 0) return;
-    e.preventDefault();
-    const next = ['', '', '', '', '', ''];
-    for (let i = 0; i < digits.length; i++) next[i] = digits[i];
-    setCells(next);
-    cellRefs.current[Math.min(digits.length, 5)]?.focus();
-  }
-
-
   return (
     <div className="login-center">
       <div className="login-card fade-in">
@@ -123,7 +149,8 @@ export default function PasswordReset() {
         <h1 className="login-title">Reset your password.</h1>
         <p className="login-subtitle">{subtitleMap[step]}</p>
 
-        {step === 'done' ? (
+        {(() => {
+          if (step === 'done') return (
           <>
             <div className="deny-banner" style={{ background: 'var(--success-soft)', color: 'var(--success)', borderColor: 'oklch(from var(--success) l c h / 0.4)', marginTop: 20 }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ flexShrink: 0 }}><polyline points="20,6 9,17 4,12"/></svg>
@@ -131,7 +158,8 @@ export default function PasswordReset() {
             </div>
             <a href="/login" className="btn btn-primary btn-lg" style={{ marginTop: 16, textDecoration: 'none' }}>Back to sign in</a>
           </>
-        ) : step === 'email' ? (
+          );
+          if (step === 'email') return (
           <>
             <ErrorBanner message={error} />
             <form className="login-form" onSubmit={handleEmail}>
@@ -150,23 +178,13 @@ export default function PasswordReset() {
               </a>
             </div>
           </>
-        ) : step === 'otp' ? (
+          );
+          if (step === 'otp') return (
           <>
             <ErrorBanner message={error} />
             <form onSubmit={handleOtp}>
               <div className="label" style={{ textAlign: 'center', marginTop: 20 }}>Enter the code we sent to <strong>{email}</strong></div>
-              <div className="otp-grid">
-                {cells.map((c, i) => (
-                  <input key={i} ref={el => { cellRefs.current[i] = el; }}
-                    className="otp-cell" type="text" inputMode="numeric"
-                    maxLength={1} value={c} autoFocus={i === 0}
-                    aria-label={`Digit ${i + 1} of 6`}
-                    onChange={e => handleCellChange(i, e.target.value)}
-                    onKeyDown={e => handleCellKeyDown(e, i)}
-                    onPaste={handleCellPaste}
-                  />
-                ))}
-              </div>
+              <OtpGrid cells={cells} setCells={setCells} cellRefs={cellRefs} />
               <button className="btn btn-primary btn-lg" type="submit" disabled={loading || code.length !== 6} style={{ marginTop: 16 }}>
                 {loading ? 'Verifying…' : 'Verify'}
               </button>
@@ -176,7 +194,8 @@ export default function PasswordReset() {
               Back
             </button>
           </>
-        ) : (
+          );
+          return (
           <>
             <ErrorBanner message={error} />
             <form className="login-form" onSubmit={handlePassword}>
@@ -193,7 +212,8 @@ export default function PasswordReset() {
               </button>
             </form>
           </>
-        )}
+          );
+        })()}
       </div>
     </div>
   );

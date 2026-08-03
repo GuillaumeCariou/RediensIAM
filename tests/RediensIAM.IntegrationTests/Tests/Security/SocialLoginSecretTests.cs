@@ -66,12 +66,11 @@ public class SocialLoginSecretTests(TestFixture fixture)
         fixture.Keto.AllowAll();
         var client          = fixture.ClientWithToken(token);
 
-        // Save a theme with a secret via the admin path
         var superToken  = fixture.Seed.SuperAdminToken(admin.Id);
         var superClient = fixture.ClientWithToken(superToken);
         await superClient.PatchAsJsonAsync($"/admin/projects/{project.Id}", new { login_theme = GoogleProvider });
 
-        // Read it back via org endpoint
+        // Written by a super admin, read back by an org admin: the secret must not cross that line.
         var res  = await client.GetAsync($"/org/projects/{project.Id}");
         res.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();

@@ -1,5 +1,3 @@
-using System.Text;
-using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -17,22 +15,23 @@ namespace RediensIAM.Controllers;
 [ApiController]
 [Route("org")]
 [RequireManagementLevel(ManagementLevel.OrgAdmin)]
+#pragma warning disable S107 // what this controller depends on, listed; the bundle that hid the count only forwarded
 public class OrgController(
     RediensIamDbContext db,
-    OrgAdminServices svc,
+    HydraService hydra,
+    KetoService keto,
+    PasswordService passwords,
+    AuditLogService audit,
+    IEmailService emailService,
+    IDistributedCache cache,
+    LiveAuthorizationService live,
     AppConfig appConfig,
     ILogger<OrgController> logger) : ControllerBase
+#pragma warning restore S107
 {
     private static readonly string[] _hydraGrantTypes    = ["authorization_code", "refresh_token"];
     private static readonly string[] _hydraResponseTypes = ["code"];
 
-    // Unwrap bundle (S107)
-    private HydraService hydra         => svc.Hydra;
-    private KetoService keto           => svc.Keto;
-    private PasswordService passwords   => svc.Passwords;
-    private AuditLogService audit       => svc.Audit;
-    private IEmailService emailService  => svc.Email;
-    private IDistributedCache cache     => svc.Cache;
     private static readonly string[] BuiltInScopes = ["openid", "profile", "offline_access"];
     private const string KindInvite      = "invite";
     private const string AuditOrg        = "organisation";
@@ -59,7 +58,11 @@ public class OrgController(
     {
         var org = await db.Organisations.FindAsync(OrgId);
         if (org == null) return NotFound();
-        // -1 means "reset to global default"
+        // -1 means "reset to global default". Anything below the floor is refused rather than
+        // clamped: silently keeping more data than an admin asked for would be its own surprise,
+        // and 0/negative made the retention sweep delete the org's entire history within 24 h.
+        if (body.AuditRetentionDays is { } days && days != -1 && days < AppConfig.MinAuditRetentionDays)
+            return BadRequest(new { error = "audit_retention_too_short", minimum = AppConfig.MinAuditRetentionDays });
         if (body.AuditRetentionDays.HasValue)
             org.AuditRetentionDays = body.AuditRetentionDays == -1 ? null : body.AuditRetentionDays;
         org.UpdatedAt = DateTimeOffset.UtcNow;
@@ -82,7 +85,13 @@ public class OrgController(
             throw new ForbiddenException("No org context");
         var projects = await db.Projects
             .Where(p => p.OrgId == orgId)
-            .Select(p => new { p.Id, p.Name, p.Slug, p.Active, p.AssignedUserListId, p.RequireRoleToLogin })
+            // The console shows the assigned user list by name and the creation date; without them
+            // the User List column read "None" for every project that had one.
+            .Select(p => new
+            {
+                p.Id, p.Name, p.Slug, p.Active, p.AssignedUserListId, p.RequireRoleToLogin, p.CreatedAt,
+                AssignedUserListName = p.AssignedUserList != null ? p.AssignedUserList.Name : null,
+            })
             .ToListAsync();
         return Ok(projects);
     }
@@ -108,6 +117,7 @@ public class OrgController(
                 client_id = $"client_{project.Id}",
                 client_name = $"Project: {project.Name}",
                 redirect_uris = body.RedirectUris ?? [],
+                post_logout_redirect_uris = body.PostLogoutRedirectUris ?? [],
                 grant_types = _hydraGrantTypes,
                 response_types = _hydraResponseTypes,
                 scope = "openid profile offline_access",
@@ -137,7 +147,6 @@ public class OrgController(
         var project = await db.Projects.AsNoTracking()
             .FirstOrDefaultAsync(p => p.Id == id && (isSuperAdmin || p.OrgId == OrgId));
         if (project == null) return NotFound();
-        // Strip client secrets before exposing to caller
         project.LoginTheme = TotpEncryption.StripSecretsFromTheme(project.LoginTheme) ?? project.LoginTheme;
         return Ok(project);
     }
@@ -148,6 +157,36 @@ public class OrgController(
         var isSuperAdmin = Claims.Roles.Contains(Roles.SuperAdmin);
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && (isSuperAdmin || p.OrgId == OrgId));
         if (project == null) return NotFound();
+        if (await MfaDowngradeGuard.CheckAsync(db, audit, ActorId, project, body.RequireMfa, body.ConfirmMfaDowngrade) is { } mfaErr)
+            return mfaErr;
+        ApplyProjectFields(project, body);
+        var roleErr = await ApplyDefaultRoleAsync(project, body.ClearDefaultRole, body.DefaultRoleId, id);
+        if (roleErr != null) return roleErr;
+        // This route reached ApplyLoginTheme without any validation at all — so the org path
+        // accepted tenant CSS and a non-HTTPS logo that the project path refused.
+        if (LoginThemeValidator.Validate(body.LoginTheme) is { } themeErr)
+            return BadRequest(new { error = themeErr });
+        ApplyLoginTheme(project, body.LoginTheme);
+        ApplyEmailFromName(project, body.ClearEmailFromName, body.EmailFromName);
+        if (body.IpAllowlist != null)
+        {
+            var invalidCidrs = body.IpAllowlist.Where(entry => !ProjectController.IsValidCidr(entry)).ToArray();
+            if (invalidCidrs.Length > 0)
+                return BadRequest(new { error = "invalid_ip_allowlist", invalid = invalidCidrs });
+            project.IpAllowlist = body.IpAllowlist;
+        }
+        if (body.CheckBreachedPasswords.HasValue) project.CheckBreachedPasswords = body.CheckBreachedPasswords.Value;
+        project.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+        return Ok(new { project.Id, project.Name });
+    }
+
+    /// <summary>
+    /// The plain field copies of <see cref="UpdateProject"/>. Split out for readability only —
+    /// same fields, same conditions, applied at the same point in the method.
+    /// </summary>
+    private static void ApplyProjectFields(Project project, UpdateProjectRequest body)
+    {
         if (body.Name != null) project.Name = body.Name;
         if (body.RequireRoleToLogin.HasValue) project.RequireRoleToLogin = body.RequireRoleToLogin.Value;
         if (body.RequireMfa.HasValue) project.RequireMfa = body.RequireMfa.Value;
@@ -156,15 +195,6 @@ public class OrgController(
         if (body.SmsVerificationEnabled.HasValue) project.SmsVerificationEnabled = body.SmsVerificationEnabled.Value;
         if (body.Active.HasValue) project.Active = body.Active.Value;
         if (body.AllowedEmailDomains != null) project.AllowedEmailDomains = body.AllowedEmailDomains;
-        var roleErr = await ApplyDefaultRoleAsync(project, body.ClearDefaultRole, body.DefaultRoleId, id);
-        if (roleErr != null) return roleErr;
-        ApplyLoginTheme(project, body.LoginTheme);
-        ApplyEmailFromName(project, body.ClearEmailFromName, body.EmailFromName);
-        if (body.IpAllowlist != null) project.IpAllowlist = body.IpAllowlist;
-        if (body.CheckBreachedPasswords.HasValue) project.CheckBreachedPasswords = body.CheckBreachedPasswords.Value;
-        project.UpdatedAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync();
-        return Ok(new { project.Id, project.Name });
     }
 
     private async Task<IActionResult?> ApplyDefaultRoleAsync(Project project, bool? clearRole, Guid? newRoleId, Guid projectId)
@@ -392,6 +422,15 @@ public class OrgController(
         var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(ul => ul.Id == id && ul.OrgId == OrgId);
         if (ul == null) return NotFound();
 
+        // The same check the /admin path already had. Without it the unique index on
+        // (UserListId, Email) surfaced as a DbUpdateException and a 500 internal_error, which tells
+        // the caller nothing about the one thing they can fix.
+        var normalizedEmail = body.Email.ToLowerInvariant();
+        if (await db.Users.AnyAsync(u => u.UserListId == id && u.Email == normalizedEmail))
+            return Conflict(new { error = "email_already_exists" });
+
+        if (UserHelpers.PasswordFloorError(body.Password) is { } floorErr) return floorErr;
+
         var username = body.Username ?? body.Email.Split('@')[0];
         var discriminator = await UserHelpers.GenerateDiscriminatorAsync(db, id, username);
 
@@ -424,9 +463,9 @@ public class OrgController(
                 CreatedAt = DateTimeOffset.UtcNow
             });
             await db.SaveChangesAsync();
-            inviteUrl = $"{appConfig.PublicUrl}/auth/invite/complete?token={Uri.EscapeDataString(raw)}";
+            inviteUrl = appConfig.InviteUrl(raw);
             var orgName = ul.Organisation?.Name ?? "the organization";
-            await emailService.SendInviteAsync(user.Email, inviteUrl, orgName);
+            await emailService.SendInviteAsync(user.Email, inviteUrl, orgName, OrgId);
         }
 
         await audit.RecordAsync(OrgId, null, ActorId, isInvite ? "user.invited" : "user.created", "user", user.Id.ToString());
@@ -447,7 +486,6 @@ public class OrgController(
         if (user == null) return NotFound();
         if (user.Active) return BadRequest(new { error = "user_already_active" });
 
-        // Expire any existing invite tokens
         var existing = await db.EmailTokens
             .Where(t => t.UserId == uid && t.Kind == KindInvite && t.UsedAt == null)
             .ToListAsync();
@@ -465,9 +503,9 @@ public class OrgController(
         });
         await db.SaveChangesAsync();
 
-        var inviteUrl = $"{appConfig.PublicUrl}/auth/invite/complete?token={Uri.EscapeDataString(raw)}";
+        var inviteUrl = appConfig.InviteUrl(raw);
         var orgName   = ul.Organisation?.Name ?? "the organization";
-        await emailService.SendInviteAsync(user.Email, inviteUrl, orgName);
+        await emailService.SendInviteAsync(user.Email, inviteUrl, orgName, OrgId);
         await audit.RecordAsync(OrgId, null, ActorId, "user.invite_resent", "user", uid.ToString());
         return Ok(new { message = "invite_resent" });
     }
@@ -512,15 +550,19 @@ public class OrgController(
 
     private async Task<IActionResult> ApplyUserUpdate(User user, UpdateUserRequest body)
     {
-        var passwordChanged = UserHelpers.ApplyUpdate(user, body, passwords);
+        if (UserHelpers.PasswordFloorError(body.NewPassword) is { } floorErr) return floorErr;
+        var (passwordChanged, deactivated) = UserHelpers.ApplyUpdate(user, body, passwords);
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
-        if (passwordChanged)
+        if (passwordChanged || deactivated)
         {
             var subject = user.UserList.OrgId.HasValue ? $"{user.UserList.OrgId}:{user.Id}" : user.Id.ToString();
             await hydra.RevokeSessionsAsync(subject);
-            await audit.RecordAsync(OrgId, null, ActorId, "user.password_reset_by_admin", "user", user.Id.ToString());
         }
+        if (passwordChanged)
+            await audit.RecordAsync(OrgId, null, ActorId, "user.password_reset_by_admin", "user", user.Id.ToString());
+        if (deactivated)
+            await audit.RecordAsync(OrgId, null, ActorId, "user.deactivated", "user", user.Id.ToString());
         await audit.RecordAsync(OrgId, null, ActorId, "user.updated", "user", user.Id.ToString());
         return Ok(new { user.Id, user.Email, user.Username, user.Discriminator, user.DisplayName, user.Phone, user.Active, user.EmailVerified, user.LockedUntil, user.FailedLoginCount });
     }
@@ -605,6 +647,7 @@ public class OrgController(
         if (body.Role == Roles.SuperAdmin) return StatusCode(403, new { error = "cannot_grant_super_admin" });
         
         await keto.AssignManagementRoleAsync(ActorId, body.UserId, OrgId, body.Role, body.ScopeId);
+        await live.InvalidateAsync(body.UserId);
         return Ok(new { message = "role_assigned" });
     }
 
@@ -619,32 +662,70 @@ public class OrgController(
         if (body.Role != null && body.Role == Roles.SuperAdmin)
             return StatusCode(403, new { error = "cannot_grant_super_admin" });
 
-        if (body.ScopeId != null && body.ScopeId != role.ScopeId)
-        {
-            var projectExists = await db.Projects.AnyAsync(p => p.Id == body.ScopeId && p.OrgId == orgId);
-            if (!projectExists) return BadRequest(new { error = "project_not_in_org" });
-        }
+        // This endpoint used to bypass KetoService.AssignManagementRoleAsync entirely, so the
+        // management-level checks it performs (can the actor grant this rank?) were skipped and
+        // any string could be written as a Keto relation.
+        if (body.Role != null && !SystemAdminController.KnownManagementRoles.Contains(body.Role))
+            return BadRequest(new { error = "unknown_role", allowed = SystemAdminController.KnownManagementRoles });
 
-        // Delete old Keto tuple before updating
-        var oldSubject = role.ScopeId.HasValue ? $"user:{role.UserId}|project:{role.ScopeId}" : $"user:{role.UserId}";
+        var actorLevel = await keto.GetActorManagementLevelForOrgAsync(ActorId, orgId);
+        var targetLevel = ManagementLevelForRole(body.Role ?? role.Role);
+        if (actorLevel == ManagementLevel.None || targetLevel < actorLevel)
+            return StatusCode(403, new { error = "insufficient_management_level" });
+
+        if (await ValidateScopeIsInOrgAsync(body.ScopeId, role.ScopeId, orgId) is { } scopeErr)
+            return scopeErr;
+
+        var oldSubject = KetoSubject(role.UserId, role.ScopeId);
         await keto.DeleteRelationTupleAsync(Roles.KetoOrgsNamespace, orgId.ToString(), role.Role, oldSubject);
 
         if (body.Role != null) role.Role = body.Role;
         if (body.ScopeId != null) role.ScopeId = body.ScopeId;
         await db.SaveChangesAsync();
 
-        // Write new Keto tuple
-        var newSubject = role.ScopeId.HasValue ? $"user:{role.UserId}|project:{role.ScopeId}" : $"user:{role.UserId}";
+        var newSubject = KetoSubject(role.UserId, role.ScopeId);
         await keto.WriteRelationTupleAsync(Roles.KetoOrgsNamespace, orgId.ToString(), role.Role, newSubject);
+        await live.InvalidateAsync(role.UserId);
+        await audit.RecordAsync(orgId, null, ActorId, "role.management.assigned", "user", role.UserId.ToString(),
+            new() { ["role"] = role.Role });
 
         return Ok(new { role.Id, role.Role, role.ScopeId });
     }
+
+    private static ManagementLevel ManagementLevelForRole(string roleName) => roleName switch
+    {
+        Roles.SuperAdmin   => ManagementLevel.SuperAdmin,
+        Roles.OrgAdmin     => ManagementLevel.OrgAdmin,
+        Roles.ProjectAdmin => ManagementLevel.ProjectAdmin,
+        _                  => ManagementLevel.None,
+    };
+
+    /// <summary>
+    /// Rejects a scope change that points at a project outside this org. Unchanged (or absent)
+    /// scopes are not re-checked, exactly as before — the tuple they produce is the one already
+    /// stored.
+    /// </summary>
+    private async Task<IActionResult?> ValidateScopeIsInOrgAsync(Guid? newScopeId, Guid? currentScopeId, Guid orgId)
+    {
+        if (newScopeId != null && newScopeId != currentScopeId)
+        {
+            var projectExists = await db.Projects.AnyAsync(p => p.Id == newScopeId && p.OrgId == orgId);
+            if (!projectExists) return BadRequest(new { error = "project_not_in_org" });
+        }
+        return null;
+    }
+
+    /// <summary>The Keto subject string for a management grant — scoped to a project when the grant is.</summary>
+    private static string KetoSubject(Guid userId, Guid? scopeId)
+        => scopeId.HasValue ? $"user:{userId}|project:{scopeId}" : $"user:{userId}";
 
     [HttpDelete("admins/{id}")]
     public async Task<IActionResult> RemoveOrgListManager(Guid id)
     {
         
+        var removed = await db.OrgRoles.AsNoTracking().FirstOrDefaultAsync(r => r.Id == id && r.OrgId == OrgId);
         await keto.RemoveManagementRoleAsync(ActorId, id, OrgId);
+        if (removed != null) await live.InvalidateAsync(removed.UserId);
         return NoContent();
     }
 
@@ -671,6 +752,9 @@ public class OrgController(
     [HttpPut("smtp")]
     public async Task<IActionResult> UpsertSmtp([FromBody] UpsertSmtpRequest body)
     {
+        if (await SmtpEndpointValidator.ValidateAsync(body.Host, body.Port, body.StartTls) is { } smtpErr)
+            return BadRequest(new { error = smtpErr });
+
         var orgId  = OrgId;
         var config = await db.OrgSmtpConfigs.FirstOrDefaultAsync(c => c.OrgId == orgId);
         if (config == null)
@@ -731,8 +815,11 @@ public class OrgController(
         }
         catch (Exception ex)
         {
+            // No exception text on the wire. The message distinguishes "connection refused" from
+            // "no route" from an SMTP banner, which turns this endpoint into a probe oracle for
+            // whatever the pod can reach. It stays in the log, where only an operator sees it.
             logger.LogWarning(ex, "SMTP test failed for org {OrgId}", OrgId);
-            return BadRequest(new { error = "smtp_test_failed", detail = ex.Message });
+            return BadRequest(new { error = "smtp_test_failed" });
         }
     }
 
@@ -773,6 +860,9 @@ public class OrgController(
         if (string.IsNullOrEmpty(body.EntityId)) return BadRequest(new { error = "entity_id_required" });
         if (string.IsNullOrEmpty(body.MetadataUrl) && string.IsNullOrEmpty(body.SsoUrl))
             return BadRequest(new { error = "metadata_url_or_sso_url_required" });
+        // Without metadata there is no way to discover the signing key, so it must be supplied.
+        if (string.IsNullOrEmpty(body.MetadataUrl) && string.IsNullOrEmpty(body.CertificatePem))
+            return BadRequest(new { error = "certificate_pem_required_without_metadata_url" });
 
         var provider = new SamlIdpConfig
         {
@@ -901,16 +991,14 @@ public class OrgController(
         return Empty;
     }
 
-    private static string CsvEscape(string? value)
-    {
-        if (value == null) return "";
-        if (value.Contains(',') || value.Contains('"') || value.Contains('\n'))
-            return $"\"{value.Replace("\"", "\"\"")}\"";
-        return value;
-    }
+    private static string CsvEscape(string? value) => CsvWriter.Escape(value);
 }
 
-public record CreateProjectRequest(string Name, string Slug, bool? RequireRoleToLogin, string[]? RedirectUris);
+    // post_logout_redirect_uris is not optional decoration: Hydra rejects any logout whose
+    // target the client has not whitelisted, and the browser SDK this repo ships always sends
+    // one. A project registered without it can be signed into and not out of.
+public record CreateProjectRequest(string Name, string Slug, bool? RequireRoleToLogin, string[]? RedirectUris,
+    string[]? PostLogoutRedirectUris = null);
 public record UpdateProjectRequest(
     string? Name,
     bool? RequireRoleToLogin,
@@ -926,7 +1014,9 @@ public record UpdateProjectRequest(
     string? EmailFromName,
     bool? ClearEmailFromName,
     string[]? IpAllowlist,
-    bool? CheckBreachedPasswords);
+    bool? CheckBreachedPasswords,
+    // Acknowledges the 409 from MfaDowngradeGuard. Only read when require_mfa goes true → false.
+    bool? ConfirmMfaDowngrade = null);
 public record UpdateScopesRequest(string[] Scopes);
 public record CreateSamlProviderRequest(string EntityId, string? MetadataUrl, string? SsoUrl, string? CertificatePem, string? EmailAttributeName, string? DisplayNameAttributeName, bool? JitProvisioning, Guid? DefaultRoleId);
 public record UpdateSamlProviderRequest(string? EntityId, string? MetadataUrl, string? SsoUrl, string? CertificatePem, string? EmailAttributeName, string? DisplayNameAttributeName, bool? JitProvisioning, Guid? DefaultRoleId, bool? Active);

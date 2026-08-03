@@ -1,4 +1,3 @@
-using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
@@ -72,18 +71,26 @@ public sealed class RedisWebhookQueue(IConnectionMultiplexer redis) : IWebhookQu
 
 // ── Channel job ───────────────────────────────────────────────────────────────
 
+/// <summary>
+/// A queued delivery. <paramref name="SecretEnc"/> is the stored ciphertext, decrypted at delivery
+/// and never before: this record is serialised into the cache, where it waits — and, when delivery
+/// was blocked, waited indefinitely. A reader of the cache could otherwise lift the key that signs
+/// every tenant's events, which is the reader the data-protection key ring in the same cache is
+/// encrypted against.
+/// </summary>
 public sealed record WebhookJob(
     Guid WebhookId,
     string EventType,
     string Payload,
-    string SecretPlain,
+    string SecretEnc,
     string Url);
 
 // ── WebhookService — enqueues jobs, used by other services ───────────────────
 
+// appConfig is not a parameter here: this half only enqueues, and the encryption key and the
+// delivery timeout it would have carried are read by the dispatcher below, which takes its own.
 public class WebhookService(
     IServiceScopeFactory scopeFactory,
-    AppConfig appConfig,
     Channel<WebhookJob> channel,
     IWebhookQueue webhookQueue)
 {
@@ -119,19 +126,40 @@ public class WebhookService(
             .ToListAsync();
 
         foreach (var wh in webhooks)
-        {
-            var secret = "";
-            if (!string.IsNullOrEmpty(wh.SecretEnc))
-            {
-                try { secret = TotpEncryption.DecryptString(appConfig.WebhookEncKey, wh.SecretEnc); }
-                catch { /* corrupt key — still deliver, just without a valid signature */ }
-            }
+            await EnqueueAsync(wh, eventType, payload);
+    }
 
-            var job = new WebhookJob(wh.Id, eventType, payload, secret, wh.Url);
-            var jobJson = JsonSerializer.Serialize(job, JobOpts);
-            await webhookQueue.PersistAsync(jobJson, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-            await channel.Writer.WriteAsync(job);
-        }
+    /// <summary>
+    /// Dispatches to one specific webhook, bypassing subscription matching.
+    ///
+    /// Used by the "send test" action: it emits <c>webhook.test</c>, which is deliberately not
+    /// in <see cref="WebhookEvents.All"/> and therefore cannot be subscribed to. Routing the
+    /// test through the normal <see cref="DispatchAsync"/> matching meant it silently matched
+    /// nothing and the button was a no-op.
+    /// </summary>
+    public async Task DispatchToWebhookAsync(Guid webhookId, string eventType, object payloadObj)
+    {
+        var payload = JsonSerializer.Serialize(new
+        {
+            @event = eventType,
+            created_at = DateTimeOffset.UtcNow,
+            data = payloadObj
+        }, JsonOpts);
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<RediensIamDbContext>();
+        var wh = await db.Webhooks.FirstOrDefaultAsync(w => w.Id == webhookId && w.Active);
+        if (wh == null) return;
+
+        await EnqueueAsync(wh, eventType, payload);
+    }
+
+    private async Task EnqueueAsync(Webhook wh, string eventType, string payload)
+    {
+        var job = new WebhookJob(wh.Id, eventType, payload, wh.SecretEnc ?? "", wh.Url);
+        var jobJson = JsonSerializer.Serialize(job, JobOpts);
+        await webhookQueue.PersistAsync(jobJson, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        await channel.Writer.WriteAsync(job);
     }
 
     // Called by the dispatcher to log the attempt result. Uses its own scope to keep
@@ -156,7 +184,6 @@ public class WebhookDispatcherService(
     IWebhookQueue webhookQueue,
     IWebhookSsrfValidator ssrfValidator) : BackgroundService
 {
-    // Retry delays: 2s, 8s, 32s
     private static readonly int[] RetryDelaysMs = [2_000, 8_000, 32_000];
     private readonly SemaphoreSlim _sem = new(20, 20);
 
@@ -201,11 +228,41 @@ public class WebhookDispatcherService(
                 finally { _sem.Release(); }
             }, drainCts.Token);
         }
-        // Wait for in-flight tasks to finish
         for (var i = 0; i < 20; i++)
         {
             if (_sem.CurrentCount == 20) break;
             await Task.Delay(500, CancellationToken.None);
+        }
+    }
+
+    /// <summary>
+    /// Persists an attempt that never reached the network — a blocked URL, or a secret that could
+    /// not be read. Both used to leave no trace at all, so the operator saw an empty delivery list
+    /// and no reason for it.
+    /// </summary>
+    private async Task RecordDeliveryAsync(
+        WebhookJob job, int? statusCode, string error, int attempts, bool delivered)
+    {
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var service = scope.ServiceProvider.GetRequiredService<WebhookService>();
+            await service.RecordDeliveryAsync(new WebhookDelivery
+            {
+                Id           = Guid.NewGuid(),
+                WebhookId    = job.WebhookId,
+                Event        = job.EventType,
+                Payload      = job.Payload,
+                StatusCode   = statusCode,
+                ErrorMessage = delivered ? null : error,
+                AttemptCount = attempts,
+                DeliveredAt  = delivered ? DateTimeOffset.UtcNow : null,
+                CreatedAt    = DateTimeOffset.UtcNow,
+            });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to persist webhook delivery record for {Id}", job.WebhookId);
         }
     }
 
@@ -215,11 +272,41 @@ public class WebhookDispatcherService(
         if (await ssrfValidator.IsPrivateOrReservedAsync(job.Url))
         {
             logger.LogWarning("Webhook {Id} delivery blocked: URL resolved to private IP at delivery time", job.WebhookId);
+            // Recorded and removed, not simply abandoned. Returning here left the job in the
+            // pending set forever: every replica replayed it on every restart, and the operator saw
+            // an empty delivery list rather than a refusal.
+            await RecordDeliveryAsync(job, null, "blocked: url resolved to a private address", 1, false);
+            await webhookQueue.RemoveAsync(jobJson);
             return;
         }
 
         var payloadBytes = Encoding.UTF8.GetBytes(job.Payload);
-        var sig = ComputeSignature(job.SecretPlain, payloadBytes);
+
+        // Sign over "{timestamp}.{payload}" so a receiver can reject replays by checking the
+        // age of the timestamp. Signing the payload alone made every delivery replayable
+        // forever. ComputeSignature also has to be inside the try: a non-base64 secret threw
+        // out of the un-awaited Task.Run and the job vanished silently.
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
+        string sig;
+        try
+        {
+            // Decrypted here rather than at enqueue: the job is serialised into the cache, and the
+            // signing key has no business sitting there. A secret that cannot be decrypted or is
+            // not valid base64 fails the delivery — sending it unsigned looked like a graceful
+            // degradation, but a receiver that only checks "is the signature header present"
+            // accepts an unsigned payload from anyone.
+            var secret = string.IsNullOrEmpty(job.SecretEnc)
+                ? ""
+                : TotpEncryption.DecryptString(appConfig.WebhookEncKey, job.SecretEnc);
+            sig = ComputeSignature(secret, timestamp, payloadBytes);
+        }
+        catch (Exception ex) when (ex is FormatException or CryptographicException)
+        {
+            logger.LogError(ex, "Webhook {Id}: signing secret unusable — refusing to deliver unsigned", job.WebhookId);
+            await RecordDeliveryAsync(job, null, "signing secret could not be read", 1, false);
+            await webhookQueue.RemoveAsync(jobJson);
+            return;
+        }
 
         int? lastStatus = null;
         string? lastError = null;
@@ -238,7 +325,9 @@ public class WebhookDispatcherService(
                 req.Content = new ByteArrayContent(payloadBytes);
                 req.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
                 req.Headers.Add("X-RediensIAM-Signature", $"sha256={sig}");
+                req.Headers.Add("X-RediensIAM-Timestamp", timestamp);
                 req.Headers.Add("X-RediensIAM-Event", job.EventType);
+                req.Headers.Add("X-RediensIAM-Delivery", job.WebhookId.ToString());
 
                 var resp = await client.SendAsync(req, ct);
                 lastStatus = (int)resp.StatusCode;
@@ -284,15 +373,24 @@ public class WebhookDispatcherService(
             logger.LogError(ex, "Failed to persist webhook delivery record for {Id}", job.WebhookId);
         }
 
-        // Remove from Redis persistent queue — job is done (delivered or exhausted)
         try { await webhookQueue.RemoveAsync(jobJson); }
         catch (Exception ex) { logger.LogWarning(ex, "Failed to remove webhook job from Redis queue"); }
     }
 
-    private static string ComputeSignature(string secret, byte[] payload)
+    /// <summary>
+    /// HMAC-SHA256 over <c>{timestamp}.{payload}</c>, hex-encoded. Receivers should recompute it
+    /// with the shared secret and reject deliveries whose <c>X-RediensIAM-Timestamp</c> is older
+    /// than their tolerance window.
+    /// </summary>
+    private static string ComputeSignature(string secret, string timestamp, byte[] payload)
     {
         if (string.IsNullOrEmpty(secret)) return "";
+        var signed = new byte[Encoding.UTF8.GetByteCount(timestamp) + 1 + payload.Length];
+        var written = Encoding.UTF8.GetBytes(timestamp, signed);
+        signed[written] = (byte)'.';
+        payload.CopyTo(signed, written + 1);
+
         using var hmac = new HMACSHA256(Convert.FromBase64String(secret));
-        return Convert.ToHexString(hmac.ComputeHash(payload)).ToLowerInvariant();
+        return Convert.ToHexString(hmac.ComputeHash(signed)).ToLowerInvariant();
     }
 }

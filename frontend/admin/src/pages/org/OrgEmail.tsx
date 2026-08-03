@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useCallback, useEffect, useState } from 'react';
+import { useParams } from 'react-router';
 import { IamChip, IamDot } from '@/components/iam';
 import { useAuth } from '@/context/AuthContext';
 import {
@@ -7,6 +7,28 @@ import {
   adminGetOrgSmtp, adminUpsertOrgSmtp, adminDeleteOrgSmtp, adminTestOrgSmtp,
 } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
+import { ApiError } from '@/auth';
+
+/**
+ * Every SMTP failure has to be explained from its error code alone. The write endpoints validate
+ * the relay before storing it (SmtpEndpointValidator), and /org/smtp/test deliberately no longer
+ * echoes the SMTP server's own message — that message distinguished "host unreachable" from
+ * "connection refused", which turns the endpoint into a port scanner for anyone with an org admin
+ * account. Do not surface the server text here even if the API starts returning it again.
+ */
+const SMTP_ERRORS: Record<string, string> = {
+  smtp_host_required:   'Host is required.',
+  smtp_host_too_long:   'Host is too long (255 characters maximum).',
+  smtp_port_not_allowed:'Port must be one of 25, 465, 587, 1025 or 2525.',
+  smtp_tls_required:    'TLS is required. Enable StartTLS, or use port 465 for implicit TLS.',
+  smtp_host_not_allowed:'That host resolves to a private or reserved address and cannot be used.',
+  smtp_test_failed:     'Could not send through this relay. Check the host, port, and credentials.',
+};
+
+function smtpErrorMessage(e: unknown, fallback: string): string {
+  const code = e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined;
+  return (code && SMTP_ERRORS[code]) ?? fallback;
+}
 
 interface SmtpConfig {
   configured: boolean; host?: string; port?: number; start_tls?: boolean;
@@ -20,15 +42,12 @@ interface FormState {
 
 const EMPTY_FORM: FormState = { host: '', port: '587', start_tls: true, username: '', password: '', from_address: '', from_name: '' };
 
-function Toggle({ checked, onChange }: Readonly<{ checked: boolean; onChange: (v: boolean) => void }>) {
+function Toggle({ checked, onChange, label }: Readonly<{ checked: boolean; onChange: (v: boolean) => void; label: string }>) {
+  // `aria-label` because the switch sits opposite its caption rather than inside a <label>: a
+  // checkbox with no name announces itself as an unlabelled checkbox and says nothing about
+  // what it turns on.
   return (
-    <button onClick={() => onChange(!checked)} style={{
-      width: 36, height: 20, borderRadius: 10,
-      background: checked ? 'var(--ia-accent)' : 'var(--border-strong)',
-      position: 'relative', border: 'none', cursor: 'pointer', flexShrink: 0, transition: 'background 150ms',
-    }}>
-      <span style={{ position: 'absolute', top: 2, left: checked ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 150ms' }} />
-    </button>
+    <input type="checkbox" className="iam-switch" aria-label={label} checked={checked} onChange={e => onChange(e.target.checked)} />
   );
 }
 
@@ -47,7 +66,10 @@ export default function OrgEmail() {
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [error, setError] = useState('');
 
-  const fetchConfig = async () => {
+  // Keyed on the org being viewed. React Router reuses this component across :id changes, and with
+  // an empty dependency list the effect never re-ran: navigating from one organisation's Email page
+  // to another showed the first org's relay under the second org's URL, and Save wrote it there.
+  const fetchConfig = useCallback(async () => {
     try {
       const data: SmtpConfig = isAdmin ? await adminGetOrgSmtp(id) : await getOrgSmtp();
       setConfig(data);
@@ -56,9 +78,9 @@ export default function OrgEmail() {
       } else { setForm(EMPTY_FORM); }
     } catch { setError('Failed to load SMTP configuration.'); }
     finally { setLoading(false); }
-  };
+  }, [id, isAdmin]);
 
-  useEffect(() => { fetchConfig(); }, []);
+  useEffect(() => { void fetchConfig(); }, [fetchConfig]);
 
   const handleSave = async () => {
     setSaving(true); setError('');
@@ -67,7 +89,7 @@ export default function OrgEmail() {
       if (isAdmin) await adminUpsertOrgSmtp(id, body);
       else await upsertOrgSmtp(body);
       await fetchConfig(); setEditing(false);
-    } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Failed to save SMTP configuration.'); }
+    } catch (e: unknown) { setError(smtpErrorMessage(e, 'Failed to save SMTP configuration.')); }
     finally { setSaving(false); }
   };
 
@@ -85,7 +107,7 @@ export default function OrgEmail() {
     try {
       const res = isAdmin ? await adminTestOrgSmtp(id) : await testOrgSmtp();
       setTestResult({ ok: true, msg: `Test email sent to ${res.to}` });
-    } catch (e: unknown) { setTestResult({ ok: false, msg: e instanceof Error ? e.message : 'Test failed' }); }
+    } catch (e: unknown) { setTestResult({ ok: false, msg: smtpErrorMessage(e, 'Test failed.') }); }
     finally { setTesting(false); }
   };
 
@@ -168,7 +190,7 @@ export default function OrgEmail() {
                 <div style={{ fontSize: 13, fontWeight: 500 }}>STARTTLS</div>
                 <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Use STARTTLS negotiation (port 587). Disable for SSL on port 465.</div>
               </div>
-              <Toggle checked={form.start_tls} onChange={v => set('start_tls', v)} />
+              <Toggle label="STARTTLS" checked={form.start_tls} onChange={v => set('start_tls', v)} />
             </div>
 
             <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--fg-subtle)', marginBottom: 12 }}>Authentication</div>

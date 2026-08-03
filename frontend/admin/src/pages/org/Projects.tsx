@@ -1,5 +1,6 @@
+import { rowActivation } from '../../components/iam/rowActivation';
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { IamChip, IamDialog } from '@/components/iam';
 import { listProjects, createProject, deleteProject, listUserLists, assignUserList, unassignUserList } from '@/api';
 import { ApiError } from '@/auth';
@@ -16,13 +17,7 @@ interface UserList { id: string; name: string; }
 
 function Toggle({ checked, onChange }: Readonly<{ checked: boolean; onChange: (v: boolean) => void }>) {
   return (
-    <button onClick={() => onChange(!checked)} style={{
-      width: 36, height: 20, borderRadius: 10,
-      background: checked ? 'var(--ia-accent)' : 'var(--border-strong)',
-      position: 'relative', border: 'none', cursor: 'pointer', flexShrink: 0, transition: 'background 150ms',
-    }}>
-      <span style={{ position: 'absolute', top: 2, left: checked ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 150ms' }} />
-    </button>
+    <input type="checkbox" className="iam-switch" checked={checked} onChange={e => onChange(e.target.checked)} />
   );
 }
 
@@ -30,6 +25,16 @@ function ProjectMenu({ onOpen, onAssign, onUnassign, hasUserList, onDelete }: Re
   onOpen: () => void; onAssign: () => void; onUnassign: () => void; hasUserList: boolean; onDelete: () => void;
 }>) {
   const [open, setOpen] = useState(false);
+
+  // On the document, not on the scrim below — see the same note in system/Organisations.tsx: a
+  // div with no tabindex never receives a key event, so Escape could not close this menu.
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [open]);
+
   return (
     <div style={{ position: 'relative' }}>
       <button className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm"
@@ -38,7 +43,7 @@ function ProjectMenu({ onOpen, onAssign, onUnassign, hasUserList, onDelete }: Re
       </button>
       {open && (
         <>
-          <div role="none" style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }} />
+          <div role="none" style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} />
           <div style={{ position: 'absolute', right: 0, top: '100%', zIndex: 50, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-md)', minWidth: 160, padding: 4 }}>
             <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }} onClick={() => { setOpen(false); onOpen(); }}>Open Project</button>
             <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }} onClick={() => { setOpen(false); onAssign(); }}>Assign User List</button>
@@ -61,8 +66,10 @@ export default function Projects() {
   const [createOpen, setCreateOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState<Project | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
-  const [selectedList, setSelectedList] = useState('');
-  const [form, setForm] = useState({ name: '', slug: '', redirect_uris: '', require_role_to_login: false });
+  // '__none__' is the option that means "no user list"; '' matches no option at all, so it would
+  // paint the first entry as chosen while state said otherwise.
+  const [selectedList, setSelectedList] = useState('__none__');
+  const [form, setForm] = useState({ name: '', slug: '', redirect_uris: '', post_logout_redirect_uris: '', require_role_to_login: false });
   const [saving, setSaving] = useState(false);
   const [createError, setCreateError] = useState('');
 
@@ -84,8 +91,9 @@ export default function Projects() {
         org_id: orgId, name: form.name, slug: form.slug,
         require_role_to_login: form.require_role_to_login,
         redirect_uris: form.redirect_uris.split('\n').map(s => s.trim()).filter(Boolean),
+        post_logout_redirect_uris: form.post_logout_redirect_uris.split('\n').map(s => s.trim()).filter(Boolean),
       });
-      setCreateOpen(false); setForm({ name: '', slug: '', redirect_uris: '', require_role_to_login: false }); load();
+      setCreateOpen(false); setForm({ name: '', slug: '', redirect_uris: '', post_logout_redirect_uris: '', require_role_to_login: false }); load();
     } catch (err) {
       const body = err instanceof ApiError ? (err.body as Record<string, string> | null) : null;
       setCreateError(body?.detail ?? body?.error ?? 'Failed to create project.');
@@ -130,17 +138,17 @@ export default function Projects() {
               </tr>
             </thead>
             <tbody>
-              {loading ? (
-                Array.from({ length: 4 }, (_, i) => (
+              {(() => {
+                if (loading) return Array.from({ length: 4 }, (_, i) => (
                   <tr key={i}>{Array.from({ length: 7 }, (_, j) => <td key={j}><div style={{ height: 14, background: 'var(--surface-2)', borderRadius: 4, width: '70%' }} /></td>)}</tr>
-                ))
-              ) : projects.length === 0 ? (
-                <tr><td colSpan={7}>
-                  <div className="iam-empty"><div className="iam-empty-title">No projects yet</div></div>
-                </td></tr>
-              ) : (
-                projects.map(p => (
-                  <tr key={p.id} style={{ cursor: 'pointer' }} onClick={() => navigate(projectUrl(p.id))}>
+                ));
+                if (projects.length === 0) return (
+                  <tr><td colSpan={7}>
+                    <div className="iam-empty"><div className="iam-empty-title">No projects yet</div></div>
+                  </td></tr>
+                );
+                return projects.map(p => (
+                  <tr key={p.id} {...rowActivation(() => navigate(projectUrl(p.id)))}>
                     <td style={{ fontWeight: 500 }}>{p.name}</td>
                     <td><span className="iam-mono" style={{ fontSize: 11, color: 'var(--fg-muted)' }}>{p.slug}</span></td>
                     <td>{p.active ? <IamChip tone="success">Active</IamChip> : <IamChip tone="default">Inactive</IamChip>}</td>
@@ -158,15 +166,15 @@ export default function Projects() {
                     <td onClick={e => e.stopPropagation()}>
                       <ProjectMenu
                         onOpen={() => navigate(projectUrl(p.id))}
-                        onAssign={() => { setAssignOpen(p); setSelectedList(p.assigned_user_list_id ?? ''); }}
+                        onAssign={() => { setAssignOpen(p); setSelectedList(p.assigned_user_list_id ?? '__none__'); }}
                         onUnassign={() => { setAssignOpen(p); setSelectedList('__none__'); }}
                         hasUserList={!!p.assigned_user_list_id}
                         onDelete={() => setDeleteTarget(p)}
                       />
                     </td>
                   </tr>
-                ))
-              )}
+                ));
+              })()}
             </tbody>
           </table>
         </div>
@@ -199,6 +207,11 @@ export default function Projects() {
           <div>
             <label className="iam-label" htmlFor="proj-create-uris">Redirect URIs (one per line)</label>
             <textarea id="proj-create-uris" className="iam-input" style={{ minHeight: 80, resize: 'vertical' }} value={form.redirect_uris} onChange={e => setForm(f => ({ ...f, redirect_uris: e.target.value }))} placeholder="https://dashboard.example.com/callback" />
+          </div>
+          <div>
+            <label className="iam-label" htmlFor="proj-create-logout-uris">Post-logout redirect URIs (one per line)</label>
+            <textarea id="proj-create-logout-uris" className="iam-input" style={{ minHeight: 60, resize: 'vertical' }} value={form.post_logout_redirect_uris} onChange={e => setForm(f => ({ ...f, post_logout_redirect_uris: e.target.value }))} placeholder="https://dashboard.example.com/" />
+            <p className="iam-help">Where sign-out may return the user. A target not listed here is refused, and the sign-out fails.</p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <Toggle checked={form.require_role_to_login} onChange={v => setForm(f => ({ ...f, require_role_to_login: v }))} />

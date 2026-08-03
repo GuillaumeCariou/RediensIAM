@@ -31,7 +31,6 @@ public class AuditLogRetentionService(
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<RediensIamDbContext>();
 
-        // Purge per-org logs using the org's own retention setting (falling back to global)
         var orgs = await db.Organisations.AsNoTracking()
             .Select(o => new { o.Id, o.AuditRetentionDays })
             .ToListAsync(stoppingToken);
@@ -39,7 +38,9 @@ public class AuditLogRetentionService(
         int total = 0;
         foreach (var org in orgs)
         {
-            var days = org.AuditRetentionDays ?? appConfig.AuditRetentionDays;
+            // Clamped here as well as at the write path: this is the only code that deletes, and
+            // a row set directly in the database must not be able to make the cutoff be now.
+            var days = AppConfig.ClampRetention(org.AuditRetentionDays ?? appConfig.AuditRetentionDays);
             var cutoff = DateTimeOffset.UtcNow.AddDays(-days);
             var deleted = await db.AuditLogs
                 .Where(a => a.OrgId == org.Id && a.CreatedAt < cutoff)
@@ -47,7 +48,6 @@ public class AuditLogRetentionService(
             total += deleted;
         }
 
-        // Purge system-level logs (OrgId == null) using the global retention setting
         var systemCutoff = DateTimeOffset.UtcNow.AddDays(-appConfig.AuditRetentionDays);
         total += await db.AuditLogs
             .Where(a => a.OrgId == null && a.CreatedAt < systemCutoff)

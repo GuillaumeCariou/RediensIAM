@@ -19,7 +19,8 @@
     /* Path aliases */
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "rediensiam-web": ["../../sdk/typescript/rediensiam-web/src/index.ts"]
     },
 
     /* Linting */

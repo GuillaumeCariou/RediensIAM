@@ -178,23 +178,22 @@ public class OrganisationTests(TestFixture fixture)
     [Fact]
     public async Task UpdateOrg_SetAuditRetentionDays_PersistsValue()
     {
-        // Covers SystemAdminController line 93: HasValue=true, value != -1 → sets int value
         var (_, _, client) = await SuperAdminClientAsync();
         var (org, _)       = await fixture.Seed.CreateOrgAsync();
 
-        var res = await client.PatchAsJsonAsync($"/admin/organizations/{org.Id}", new { audit_retention_days = 30 });
+        var res = await client.PatchAsJsonAsync($"/admin/organizations/{org.Id}", new { audit_retention_days = 120 });
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
 
         await fixture.RefreshDbAsync();
         var updated = await fixture.Db.Organisations.FindAsync(org.Id);
-        updated!.AuditRetentionDays.Should().Be(30);
+        updated!.AuditRetentionDays.Should().Be(120);
     }
 
     [Fact]
     public async Task UpdateOrg_ClearAuditRetentionDays_SetsNull()
     {
-        // Covers SystemAdminController line 93: HasValue=true, value == -1 → sets null
+        // -1 is the sentinel for "clear the override and fall back to the global default".
         var (_, _, client) = await SuperAdminClientAsync();
         var (org, _)       = await fixture.Seed.CreateOrgAsync();
         org.AuditRetentionDays = 90;

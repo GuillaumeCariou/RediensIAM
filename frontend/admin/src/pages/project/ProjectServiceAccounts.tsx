@@ -28,6 +28,15 @@ function SaMenu({ onViewPats, onGenPat, onDelete }: Readonly<{
   onViewPats: () => void; onGenPat: () => void; onDelete: () => void;
 }>) {
   const [open, setOpen] = useState(false);
+
+  // On the document, not on the scrim below — see the same note in system/Organisations.tsx.
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [open]);
+
   return (
     <div style={{ position: 'relative' }}>
       <button className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm"
@@ -36,7 +45,7 @@ function SaMenu({ onViewPats, onGenPat, onDelete }: Readonly<{
       </button>
       {open && (
         <>
-          <div role="none" style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }} />
+          <div role="none" style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} />
           <div style={{ position: 'absolute', right: 0, top: '100%', zIndex: 50, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-md)', minWidth: 160, padding: 4 }}>
             <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }} onClick={() => { setOpen(false); onViewPats(); }}>View PATs</button>
             <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }} onClick={() => { setOpen(false); onGenPat(); }}>Generate PAT</button>
@@ -101,7 +110,8 @@ export default function ProjectServiceAccounts() {
       setNewPat(res.token);
       setPatForm({ name: '', expires_at: '' });
       setGenPatOpen(null);
-      if (patSa?.id === genPatOpen.id) openPats(genPatOpen);
+      // No list to refresh: both ways into this dialog close the PAT list first — the footer
+      // button clears patSa on its way here, and the row menu is unreachable behind a modal.
     } finally { setSaving(false); }
   };
 
@@ -137,19 +147,19 @@ export default function ProjectServiceAccounts() {
               <tr><th>Name</th><th>Status</th><th>Last Used</th><th style={{ width: 36 }}></th></tr>
             </thead>
             <tbody>
-              {loading ? (
-                Array.from({ length: 3 }, (_, i) => (
+              {(() => {
+                if (loading) return Array.from({ length: 3 }, (_, i) => (
                   <tr key={i}>{Array.from({ length: 4 }, (_, j) => <td key={j}><div style={{ height: 14, background: 'var(--surface-2)', borderRadius: 4, width: '70%' }} /></td>)}</tr>
-                ))
-              ) : accounts.length === 0 ? (
-                <tr><td colSpan={4}>
-                  <div className="iam-empty">
-                    <div className="iam-empty-title">No service accounts</div>
-                    <div className="iam-empty-desc">{assignedListId ? 'Create one for automation.' : 'Assign a user list to this project first.'}</div>
-                  </div>
-                </td></tr>
-              ) : (
-                accounts.map(sa => (
+                ));
+                if (accounts.length === 0) return (
+                  <tr><td colSpan={4}>
+                    <div className="iam-empty">
+                      <div className="iam-empty-title">No service accounts</div>
+                      <div className="iam-empty-desc">{assignedListId ? 'Create one for automation.' : 'Assign a user list to this project first.'}</div>
+                    </div>
+                  </td></tr>
+                );
+                return accounts.map(sa => (
                   <tr key={sa.id}>
                     <td>
                       <div style={{ fontWeight: 500 }}>{sa.name}</div>
@@ -165,8 +175,8 @@ export default function ProjectServiceAccounts() {
                       />
                     </td>
                   </tr>
-                ))
-              )}
+                ));
+              })()}
             </tbody>
           </table>
         </div>

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { IamChip, IamDialog } from '@/components/iam';
 import { listWebhooks, createWebhook, updateWebhook, deleteWebhook, testWebhook, listWebhookDeliveries } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
+import { useOrgContext } from '@/hooks/useOrgContext';
 import { fmtDate } from '@/lib/utils';
 
 interface Webhook {
@@ -23,20 +24,12 @@ const EVENT_GROUPS: { label: string; events: string[] }[] = [
 
 function Toggle({ checked, onChange }: Readonly<{ checked: boolean; onChange: () => void }>) {
   return (
-    <button onClick={onChange} style={{
-      width: 36, height: 20, borderRadius: 10,
-      background: checked ? 'var(--ia-accent)' : 'var(--border-strong)',
-      position: 'relative', border: 'none', cursor: 'pointer', flexShrink: 0, transition: 'background 150ms',
-    }}>
-      <span style={{
-        position: 'absolute', top: 2, left: checked ? 18 : 2,
-        width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 150ms',
-      }} />
-    </button>
+    <input type="checkbox" className="iam-switch" checked={checked} onChange={onChange} />
   );
 }
 
 export default function OrgWebhooks() {
+  const { isSystemCtx } = useOrgContext();
   const [webhooks, setWebhooks] = useState<Webhook[]>([]);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
@@ -53,14 +46,24 @@ export default function OrgWebhooks() {
   const [testMsg, setTestMsg] = useState<{ id: string; ok: boolean; text: string } | null>(null);
 
   const load = () => {
+    // /org/webhooks is scoped by the caller's own token, and there is no admin-scope equivalent —
+    // so in the system context this page used to list and edit the SIGNED-IN admin's webhooks
+    // while the URL named someone else's organisation. Rather than write to the wrong tenant, it
+    // says what it cannot do.
+    if (isSystemCtx) { setWebhooks([]); setLoading(false); return; }
     setLoading(true);
     listWebhooks()
       .then((d: Webhook[]) => setWebhooks(Array.isArray(d) ? d : []))
       .catch(console.error)
       .finally(() => setLoading(false));
   };
-  useEffect(load, []);
+  useEffect(load, [isSystemCtx]);
 
+  /**
+   * The `else` branch below must not close the dialog quietly. A webhook created without a
+   * returned signing secret leaves the user with no way to verify signatures and no second
+   * chance to read the secret, so the failure is surfaced and they are told to rotate it.
+   */
   const handleCreate = async () => {
     setCreateError('');
     if (!newUrl.startsWith('https://')) { setCreateError('URL must use HTTPS.'); return; }
@@ -75,8 +78,6 @@ export default function OrgWebhooks() {
         setSecretOpen(true);
         load();
       } else {
-        // Don't silently close the dialog: the user just lost their only chance to capture
-        // the signing secret. Surface the failure so they can rotate it explicitly.
         setCreateError('Webhook created, but the server did not return a signing secret. Please rotate the secret manually before relying on signature verification.');
         load();
       }
@@ -116,6 +117,24 @@ export default function OrgWebhooks() {
     else setNewEvents(evs => [...new Set([...evs, ...events])]);
   };
 
+  if (isSystemCtx) {
+    return (
+      <div>
+        <PageHeader title="Webhooks" description="Receive HTTP notifications when events occur" />
+        <div className="iam-page">
+          <div className="iam-empty">
+            <div className="iam-empty-title">Not available from the system console</div>
+            <div className="iam-empty-desc">
+              Webhooks are scoped to the organisation whose credentials made the request, and there
+              is no deployment-wide route for them. Manage them from that organisation&apos;s own
+              console. This page used to edit your own organisation&apos;s webhooks here.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       <PageHeader
@@ -154,9 +173,9 @@ export default function OrgWebhooks() {
                     <td>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, maxWidth: 220 }}>
                         {wh.events.slice(0, 3).map(e => (
-                          <span key={e} className="iam-chip iam-chip-default iam-chip-mono" style={{ fontSize: 10 }}>{e}</span>
+                          <span key={e} className="iam-chip iam-chip-mono" style={{ fontSize: 10 }}>{e}</span>
                         ))}
-                        {wh.events.length > 3 && <span className="iam-chip iam-chip-default" style={{ fontSize: 10 }}>+{wh.events.length - 3}</span>}
+                        {wh.events.length > 3 && <span className="iam-chip" style={{ fontSize: 10 }}>+{wh.events.length - 3}</span>}
                       </div>
                     </td>
                     <td><Toggle checked={wh.active} onChange={() => handleToggleActive(wh)} /></td>
@@ -307,6 +326,15 @@ export default function OrgWebhooks() {
 
 function WebhookMenu({ onTest, onDeliveries, onDelete }: Readonly<{ onTest: () => void; onDeliveries: () => void; onDelete: () => void; }>) {
   const [open, setOpen] = useState(false);
+
+  // On the document, not on the scrim below — see the same note in system/Organisations.tsx.
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [open]);
+
   return (
     <div style={{ position: 'relative' }}>
       <button className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm" onClick={() => setOpen(o => !o)}>
@@ -314,7 +342,7 @@ function WebhookMenu({ onTest, onDeliveries, onDelete }: Readonly<{ onTest: () =
       </button>
       {open && (
         <>
-          <div role="none" style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }} />
+          <div role="none" style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} />
           <div style={{ position: 'absolute', right: 0, top: '100%', zIndex: 50, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-md)', minWidth: 140, padding: 4 }}>
             <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }} onClick={() => { setOpen(false); onTest(); }}>Test</button>
             <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }} onClick={() => { setOpen(false); onDeliveries(); }}>View deliveries</button>

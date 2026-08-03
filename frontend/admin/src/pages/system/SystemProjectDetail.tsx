@@ -1,18 +1,11 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router';
 import { ArrowLeft, Pencil, Trash2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Card, CardContent } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { adminGetProject, adminGetProjectStats, updateProject, adminDeleteProject } from '@/api';
 import { fmtDateShort } from '@/lib/utils';
 import ProjectStatsCards from '@/components/ProjectStatsCards';
 import type { ProjectStats } from '@/components/ProjectStatsCards';
+import { IamChip, IamDialog } from '@/components/iam';
 
 interface Project {
   id: string; name: string; slug: string; active: boolean;
@@ -33,16 +26,19 @@ export default function SystemProjectDetail() {
   const [renameVal, setRenameVal] = useState('');
   const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
 
-  const load = useCallback(() => {
+  /** The fetch alone. Sets no state synchronously, so an effect may call it directly. */
+  const fetchProject = useCallback(() => {
     if (!oid || !pid) return;
-    setLoading(true);
     Promise.all([
       adminGetProject(pid).then(setProject),
       adminGetProjectStats(pid).then(setStats).catch(() => null),
     ]).catch(console.error).finally(() => setLoading(false));
   }, [oid, pid]);
 
-  useEffect(() => { load(); }, [load]);
+  /** What a user-triggered refresh calls: the spinner comes back, then the fetch. */
+  const load = useCallback(() => { setLoading(true); fetchProject(); }, [fetchProject]);
+
+  useEffect(() => { fetchProject(); }, [fetchProject]);
 
   const handleRename = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -60,18 +56,18 @@ export default function SystemProjectDetail() {
 
   return (
     <div className="p-6 space-y-4">
-      <Button variant="ghost" size="sm" className="-ml-1" onClick={() => navigate(`/system/organisations/${oid}`)}>
+      <button className="iam-btn iam-btn-ghost iam-btn-sm -ml-1" onClick={() => navigate(`/system/organisations/${oid}`)}>
         <ArrowLeft className="h-4 w-4" />Back to Organisation
-      </Button>
+      </button>
 
       <ProjectStatsCards stats={stats} loading={loading} />
 
       {/* ── Project info ── */}
-      <Card>
-        <CardContent className="pt-6 space-y-4">
+      <div className="iam-card">
+        <div className="iam-card-pad pt-6 space-y-4">
           <div className="flex items-start justify-between gap-4">
             {loading
-              ? <div className="space-y-2"><Skeleton className="h-6 w-48" /><Skeleton className="h-4 w-80" /></div>
+              ? <div className="space-y-2"><div className="iam-skeleton h-6 w-48" /><div className="iam-skeleton h-4 w-80" /></div>
               : <div>
                   <h1 className="text-xl font-bold">{project?.name}</h1>
                   <p className="text-sm text-muted-foreground">
@@ -81,54 +77,43 @@ export default function SystemProjectDetail() {
             }
             {!loading && project && (
               <div className="flex items-center gap-2 shrink-0">
-                <Badge variant={project.active ? 'success' : 'secondary'}>
+                <IamChip tone={project.active ? 'success' : 'default'}>
                   {project.active ? 'Active' : 'Inactive'}
-                </Badge>
-                <Button variant="outline" size="sm" className="text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => setDeleteProjectOpen(true)}>
+                </IamChip>
+                <button className="iam-btn iam-btn-secondary iam-btn-sm text-destructive border-[var(--danger)] hover:bg-[var(--danger-soft)]" onClick={() => setDeleteProjectOpen(true)}>
                   <Trash2 className="h-4 w-4" />Delete
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => { setRenameVal(project.name); setRenameOpen(true); }}>
+                </button>
+                <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={() => { setRenameVal(project.name); setRenameOpen(true); }}>
                   <Pencil className="h-4 w-4" />Rename
-                </Button>
+                </button>
               </div>
             )}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       {/* ── Dialogs ── */}
-      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Rename Project</DialogTitle></DialogHeader>
-          <form onSubmit={handleRename} className="space-y-4">
+      <IamDialog open={renameOpen} onClose={() => setRenameOpen(false)}
+      title="Rename Project"
+      footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={() => setRenameOpen(false)}>Cancel</button>
+              <button className="iam-btn iam-btn-primary" type="submit" form="systemprojectdetail-form">Save</button></>}
+    >
+<form id="systemprojectdetail-form" onSubmit={handleRename} className="space-y-4">
             <div className="space-y-2">
-              <Label>Name</Label>
-              <Input value={renameVal} onChange={e => setRenameVal(e.target.value)} required />
+              <label className="iam-label" htmlFor="system-project-rename">Name</label>
+              <input className="iam-input" id="system-project-rename" value={renameVal} onChange={e => setRenameVal(e.target.value)} required />
             </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setRenameOpen(false)}>Cancel</Button>
-              <Button type="submit">Save</Button>
-            </DialogFooter>
+            
           </form>
-        </DialogContent>
-      </Dialog>
+    </IamDialog>
 
-      <AlertDialog open={deleteProjectOpen} onOpenChange={setDeleteProjectOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete project "{project?.name}"?</AlertDialogTitle>
-            <AlertDialogDescription>
-              The OAuth2 client for this project will also be deleted. All role assignments will be lost. This cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteProject} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <IamDialog open={deleteProjectOpen} onClose={() => setDeleteProjectOpen(false)}
+      title={<>Delete project "{project?.name}"?</>}
+      desc="The OAuth2 client for this project will also be deleted. All role assignments will be lost. This cannot be undone."
+      footer={<><button type="button" onClick={() => setDeleteProjectOpen(false)} className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleDeleteProject}>Delete</button></>}
+    >
+
+    </IamDialog>
     </div>
   );
 }

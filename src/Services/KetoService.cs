@@ -7,6 +7,9 @@ using RediensIAM.Exceptions;
 
 namespace RediensIAM.Services;
 
+/// <summary>One Ory Keto relation tuple, in the four fields this deployment ever writes.</summary>
+public sealed record RelationTuple(string Namespace, string Object, string Relation, string Subject);
+
 public class KetoService(IHttpClientFactory http, AppConfig appConfig, RediensIamDbContext db, AuditLogService audit)
 {
     private readonly string _readUrl = appConfig.KetoReadUrl;
@@ -37,17 +40,100 @@ public class KetoService(IHttpClientFactory http, AppConfig appConfig, RediensIa
         resp.EnsureSuccessStatusCode();
     }
 
+    /// <summary>
+    /// Throws unless Keto actually removed the tuple.
+    ///
+    /// <para>
+    /// The three delete calls discarded their response, so a revoke that Keto refused was reported
+    /// as done: the DB row went away and the grant stayed live with nothing left to name it. Every
+    /// "tuple-first, so it fails closed" comment in the controllers depended on this throwing.
+    /// A 404 means the tuple is already gone, which is the state the caller asked for.
+    /// </para>
+    /// </summary>
+    private static void EnsureDeleted(HttpResponseMessage response)
+    {
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return;
+        response.EnsureSuccessStatusCode();
+    }
+
     public async Task DeleteRelationTupleAsync(string namespaceName, string objectId, string relation, string subjectId)
     {
         var url = $"{_writeUrl}/admin/relation-tuples?namespace={Uri.EscapeDataString(namespaceName)}&object={Uri.EscapeDataString(objectId)}&relation={Uri.EscapeDataString(relation)}&subject_id={Uri.EscapeDataString(subjectId)}";
-        await WriteClient.DeleteAsync(url);
+        EnsureDeleted(await WriteClient.DeleteAsync(url));
     }
 
     public async Task DeleteAllProjectTuplesAsync(string projectId)
     {
         var url = $"{_writeUrl}/admin/relation-tuples?namespace={Uri.EscapeDataString("Projects")}&object={Uri.EscapeDataString(projectId)}";
-        await WriteClient.DeleteAsync(url);
+        EnsureDeleted(await WriteClient.DeleteAsync(url));
     }
+
+    /// <summary>
+    /// Removes every tuple on an organisation object — the structural <c>org</c> relation AND all
+    /// per-user management grants.
+    ///
+    /// Deleting an org used to drop only the structural tuple and the org_roles rows, leaving
+    /// <c>Organisations:{orgId}#org_admin@user:{uid}</c> behind. That orphan still satisfies
+    /// "is admin of some org" while no row remains to name which org, which is the first link in
+    /// a chain that ends at the system service accounts.
+    /// </summary>
+    public async Task DeleteAllOrgTuplesAsync(string orgId)
+    {
+        var url = $"{_writeUrl}/admin/relation-tuples?namespace={Uri.EscapeDataString(Roles.KetoOrgsNamespace)}&object={Uri.EscapeDataString(orgId)}";
+        EnsureDeleted(await WriteClient.DeleteAsync(url));
+    }
+
+    /// <summary>
+    /// Every tuple in <paramref name="namespaceName"/>, optionally narrowed to one relation.
+    ///
+    /// <para>
+    /// Paged: Keto answers with at most <c>page_size</c> tuples and a <c>next_page_token</c>, and a
+    /// reconciler that read only the first page would report every tuple beyond it as missing from
+    /// Keto — i.e. would propose deleting live grants. The page cap is a hard stop rather than an
+    /// endless loop, so a Keto that keeps handing back tokens cannot hang a background pass; the
+    /// caller sees a short list, which <see cref="GrantReconciler"/> treats as a refusal to repair
+    /// rather than as divergence.
+    /// </para>
+    /// </summary>
+    public async Task<IReadOnlyList<RelationTuple>> ListRelationTuplesAsync(
+        string namespaceName, string? relation = null, CancellationToken ct = default)
+    {
+        const int pageSize = 500;
+        const int maxPages = 200;
+
+        var tuples = new List<RelationTuple>();
+        var token = "";
+        for (var page = 0; page < maxPages; page++)
+        {
+            var url = $"{_readUrl}/relation-tuples?namespace={Uri.EscapeDataString(namespaceName)}&page_size={pageSize}";
+            if (!string.IsNullOrEmpty(relation)) url += $"&relation={Uri.EscapeDataString(relation)}";
+            if (!string.IsNullOrEmpty(token)) url += $"&page_token={Uri.EscapeDataString(token)}";
+
+            var resp = await ReadClient.GetAsync(url, ct);
+            // Throws rather than returning what arrived: a partial list read as the state of the
+            // store turns every unread grant into "missing from Keto", and the repair for that
+            // class deletes rows. Every other read in this class fails soft because a failed check
+            // is a denial; this one has to fail loud.
+            resp.EnsureSuccessStatusCode();
+
+            var result = await resp.Content.ReadFromJsonAsync<JsonElement>(_json, ct);
+            if (result.TryGetProperty("relation_tuples", out var arr) && arr.ValueKind == JsonValueKind.Array)
+                tuples.AddRange(arr.EnumerateArray().Select(ToTuple).OfType<RelationTuple>());
+
+            token = result.TryGetProperty("next_page_token", out var next) ? next.GetString() ?? "" : "";
+            if (string.IsNullOrEmpty(token)) break;
+        }
+        return tuples;
+    }
+
+    private static RelationTuple? ToTuple(JsonElement t) =>
+        t.ValueKind == JsonValueKind.Object
+        && t.TryGetProperty("namespace", out var ns) && ns.GetString() is { } nsv
+        && t.TryGetProperty("object", out var obj) && obj.GetString() is { } objv
+        && t.TryGetProperty("relation", out var rel) && rel.GetString() is { } relv
+        && t.TryGetProperty("subject_id", out var sub) && sub.GetString() is { } subv
+            ? new RelationTuple(nsv, objv, relv, subv)
+            : null;
 
     public async Task<bool> HasAnyRelationAsync(string namespaceName, string relation, string subjectId)
     {
@@ -59,28 +145,68 @@ public class KetoService(IHttpClientFactory http, AppConfig appConfig, RediensIa
     }
 
     // ── Role level resolution ─────────────────────────────────────────────────
+    //
+    // S-8. One question, one implementation, one store.
+    //
+    // There used to be three: LiveAuthorizationService resolved project_admin as "Keto manager of
+    // some project OR an org_roles row anywhere", GetActorManagementLevelForOrgAsync as "an
+    // org_roles row in this org", GetActorManagementLevelForProjectAsync as "Keto manager of this
+    // project". Three answers to one question, two of them sourced from a store the other did not
+    // consult, and no code path that could ever notice them disagreeing.
+    //
+    // Keto is now the single authority for every management level, because it is the store every
+    // grant writes to *first* (AssignManagementRoleAsync, AssignOrgAdmin) — so a row without a
+    // tuple is a failed grant, which fails closed, while a tuple without a row is a grant whose
+    // bookkeeping lagged, which still works. org_roles keeps holding the scope, the display name
+    // and the grant provenance; it is no longer consulted as an answer.
 
-    public async Task<ManagementLevel> GetActorManagementLevelForProjectAsync(Guid actorId, Guid projectId, Guid orgId)
+    /// <summary>
+    /// Whether <paramref name="level"/> is granted to the actor within the given scope. The scopes
+    /// are the ones the grant paths actually write, so the check reads the tuple the grant wrote.
+    /// </summary>
+    public async Task<bool> IsManagementLevelGrantedAsync(Guid actorId, ManagementLevel level, Guid? orgId, Guid? projectId)
     {
-        if (await CheckAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{actorId}"))
-            return ManagementLevel.SuperAdmin;
-        if (await CheckAsync(Roles.KetoOrgsNamespace, orgId.ToString(), Roles.KetoOrgAdminRelation, $"user:{actorId}"))
-            return ManagementLevel.OrgAdmin;
-        if (await CheckAsync(Roles.KetoProjectsNamespace, projectId.ToString(), Roles.KetoManagerRelation, $"user:{actorId}"))
-            return ManagementLevel.ProjectAdmin;
+        var subject = $"user:{actorId}";
+        return level switch
+        {
+            ManagementLevel.SuperAdmin => await CheckAsync(
+                Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, subject),
+
+            // An org_admin claim must name the org it applies to. Falling back to "admin of any
+            // org" let an orphaned grant — one whose organisation had been deleted — satisfy the
+            // check while carrying an empty org_id downstream.
+            ManagementLevel.OrgAdmin => orgId is { } org
+                && await CheckAsync(Roles.KetoOrgsNamespace, org.ToString(), Roles.KetoOrgAdminRelation, subject),
+
+            // Both shapes AssignManagementRoleAsync writes: unscoped (org-wide project_admin) and
+            // scoped to one project. Plus the Projects#manager relation, which is what
+            // GetConsent reads to decide the role goes in the token at all.
+            ManagementLevel.ProjectAdmin =>
+                (projectId is { } proj && await CheckAsync(
+                    Roles.KetoProjectsNamespace, proj.ToString(), Roles.KetoManagerRelation, subject))
+                || (orgId is { } o && await CheckAsync(
+                    Roles.KetoOrgsNamespace, o.ToString(), Roles.ProjectAdmin, subject))
+                || (orgId is { } o2 && projectId is { } p2 && await CheckAsync(
+                    Roles.KetoOrgsNamespace, o2.ToString(), Roles.ProjectAdmin, $"{subject}|project:{p2}")),
+
+            _ => false,
+        };
+    }
+
+    /// <summary>Most privileged level the actor holds in the given scope, or None.</summary>
+    public async Task<ManagementLevel> ResolveManagementLevelAsync(Guid actorId, Guid? orgId, Guid? projectId)
+    {
+        foreach (var level in (ManagementLevel[])[ManagementLevel.SuperAdmin, ManagementLevel.OrgAdmin, ManagementLevel.ProjectAdmin])
+            if (await IsManagementLevelGrantedAsync(actorId, level, orgId, projectId))
+                return level;
         return ManagementLevel.None;
     }
 
-    public async Task<ManagementLevel> GetActorManagementLevelForOrgAsync(Guid actorId, Guid orgId)
-    {
-        if (await CheckAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{actorId}"))
-            return ManagementLevel.SuperAdmin;
-        if (await CheckAsync(Roles.KetoOrgsNamespace, orgId.ToString(), Roles.KetoOrgAdminRelation, $"user:{actorId}"))
-            return ManagementLevel.OrgAdmin;
-        var pmRole = await db.OrgRoles.AnyAsync(r => r.OrgId == orgId && r.UserId == actorId && r.Role == Roles.ProjectAdmin);
-        if (pmRole) return ManagementLevel.ProjectAdmin;
-        return ManagementLevel.None;
-    }
+    public Task<ManagementLevel> GetActorManagementLevelForProjectAsync(Guid actorId, Guid projectId, Guid orgId)
+        => ResolveManagementLevelAsync(actorId, orgId, projectId);
+
+    public Task<ManagementLevel> GetActorManagementLevelForOrgAsync(Guid actorId, Guid orgId)
+        => ResolveManagementLevelAsync(actorId, orgId, null);
 
     // ── Role assignment ───────────────────────────────────────────────────────
 

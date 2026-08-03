@@ -6,7 +6,11 @@ namespace RediensIAM.IntegrationTests.Tests.Auth;
 [Collection("RediensIAM")]
 public class LoginTests(TestFixture fixture) : IAsyncLifetime
 {
-    // Flush Dragonfly before every login test so the IP rate limiter starts clean.
+    /// <summary>
+    /// Flushes the cache before every login test. Without it the per-IP rate limiter carries
+    /// failures over from the previous test and whichever test runs late in the class starts
+    /// getting 429s instead of the status it asserts.
+    /// </summary>
     public Task InitializeAsync() => fixture.FlushCacheAsync();
     public Task DisposeAsync()    => Task.CompletedTask;
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -18,8 +22,10 @@ public class LoginTests(TestFixture fixture) : IAsyncLifetime
         var project        = await fixture.Seed.CreateProjectAsync(org.Id);
         var list           = await fixture.Seed.CreateUserListAsync(org.Id);
 
-        // Assign user list to project
+        // RequireMfa defaults to true, so a fixture that means to exercise password-only login has
+        // to opt out the way a tenant would.
         project.AssignedUserListId = list.Id;
+        project.RequireMfa         = false;
         await fixture.Db.SaveChangesAsync();
 
         var user = await fixture.Seed.CreateUserAsync(list.Id, password: password);
@@ -246,7 +252,8 @@ public class LoginTests(TestFixture fixture) : IAsyncLifetime
         var (org, project, list, _) = await ScaffoldAsync();
         var targetUser = await fixture.Seed.CreateUserAsync(list.Id);
 
-        // Submit 5 wrong passwords (MaxLoginAttempts = 5 per TestFixture config)
+        // 5 is MaxLoginAttempts from TestFixture's configuration — change it there and this loop
+        // stops reaching the lockout.
         for (var i = 0; i < 5; i++)
         {
             var ch = NewChallenge();
@@ -285,7 +292,6 @@ public class LoginTests(TestFixture fixture) : IAsyncLifetime
     public async Task Login_ProjectNotReady_Returns400()
     {
         var (org, project, _, _) = await ScaffoldAsync();
-        // Remove user list assignment
         project.AssignedUserListId = null;
         await fixture.Db.SaveChangesAsync();
 

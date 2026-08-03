@@ -1,0 +1,145 @@
+{{- if .Values.rediensiam.postgres.rls.enabled }}
+{{- /*
+  S-5 phase 2. Applies files/rls.sql to the application database after the app has
+  migrated, as a Helm post-install/post-upgrade hook.
+
+  Why a hook and not postgres.yaml's init.sh: init.sh runs at initdb, before EF has
+  created a single table. Policies have to be attached after the migrations, on
+  every upgrade, so that a migration that adds a table is caught by the coverage
+  gate in rls.sql rather than shipping an unprotected one.
+
+  Why iam_app and not the superuser: CREATE POLICY and FORCE ROW LEVEL SECURITY are
+  owner privileges, and iam_app already owns every table here. This Job never needs
+  the `iam` credential.
+
+  This is OFF by default and must stay off until the application sets
+  `rediensiam.org_id` on every connection — see values.yaml postgres.rls.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-rls
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  rls.sql: |
+{{ .Files.Get "files/rls.sql" | indent 4 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-rls
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    # A failed Job is left behind on purpose: its log is the only record of which
+    # table the coverage gate rejected.
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        # Admitted on :5432 by `<release>-postgres-lockdown`. Without this label the
+        # Job is refused at the network layer and reports it as a connection error
+        # long after anyone is watching — exactly how T-03's backup failed.
+        app: {{ .Release.Name }}-rls
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: rls
+          image: {{ .Values.rediensiam.postgres.local.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            # The app's own DSN, so this works unchanged against the built-in
+            # StatefulSet and against an external CloudNativePG cluster, with or
+            # without TLS. It is the one place that already knows the host, port,
+            # database, owner role and sslmode.
+            - name: APP_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "rediensiam.secretName" . }}
+                  key: database-url
+            - name: RLS_DATABASE
+              value: {{ .Values.rediensiam.postgres.rls.database | quote }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              # Npgsql keyword-value form: `Host=…;Port=…;Database=…;Username=…;Password=…`.
+              # Read one key without ever echoing the value.
+              val() { printf '%s' "${APP_DSN}" | tr ';' '\n' \
+                        | grep -i "^[[:space:]]*$1[[:space:]]*=" | head -1 | cut -d= -f2- \
+                        | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'; }
+
+              PGHOST=$(val Host);     export PGHOST
+              PGPORT=$(val Port);     export PGPORT="${PGPORT:-5432}"
+              PGUSER=$(val Username); export PGUSER
+              PGPASSWORD=$(val Password); export PGPASSWORD
+              # rls.database rather than the DSN's Database: the two are the same
+              # today, and naming it explicitly is what stops a mistyped DSN from
+              # silently applying tenant policies to some other database.
+              export PGDATABASE="${RLS_DATABASE}"
+
+              # `SSL Mode=Require` → libpq `require`. Absent → let libpq default.
+              SSLMODE=$(val 'SSL *Mode' | tr 'A-Z' 'a-z')
+              [ -n "${SSLMODE}" ] && export PGSSLMODE="${SSLMODE}"
+
+              [ -n "${PGHOST}" ] || { echo "FATAL: no Host in the app DSN" >&2; exit 1; }
+              echo "applying RLS to ${PGDATABASE} on ${PGHOST}:${PGPORT} as ${PGUSER} (sslmode=${PGSSLMODE:-default})"
+
+              # NetworkPolicy is programmed asynchronously as a pod starts, so a
+              # connection made in the first second of life can be refused. Same
+              # race the backup CronJob hit on 2026-07-31.
+              for i in $(seq 1 30); do
+                pg_isready -q && break
+                echo "waiting for ${PGHOST} (${i}/30)"; sleep 2
+              done
+              pg_isready || { echo "FATAL: ${PGHOST} unreachable after 60s" >&2; exit 1; }
+
+              # The application creates its tables with EF migrations at startup, and a policy
+              # applied to a table that does not exist yet is a policy that is not applied —
+              # silently, because rls.sql's coverage gate can only check the tables it finds.
+              # This hook used to be ordered after the app came up only because deploy.sh
+              # passed `helm --wait`; that flag had to go (a backup PVC that cannot bind until
+              # 03:00 made a first install time out — see deploy.sh), so the ordering is
+              # asserted here instead of assumed.
+              for i in $(seq 1 60); do
+                psql -tAc "SELECT to_regclass('public.\"__EFMigrationsHistory\"') IS NOT NULL" \
+                  2>/dev/null | grep -q '^t$' && break
+                echo "waiting for the application's migrations (${i}/60)"; sleep 5
+              done
+              psql -tAc "SELECT to_regclass('public.\"__EFMigrationsHistory\"') IS NOT NULL" \
+                | grep -q '^t$' \
+                || { echo "FATAL: ${PGDATABASE} has no __EFMigrationsHistory after 5m — the app has not migrated, so there is nothing to police" >&2; exit 1; }
+
+              psql -v ON_ERROR_STOP=1 -f /sql/rls.sql
+          volumeMounts:
+            - name: sql
+              mountPath: /sql
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+      volumes:
+        - name: sql
+          configMap:
+            name: {{ .Release.Name }}-rls
+{{- end }}

@@ -4,7 +4,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Caching.Distributed;
 using RediensIAM.Config;
-using RediensIAM.Models;
 
 namespace RediensIAM.Services;
 
@@ -77,7 +76,10 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
 
     public async Task<string> AcceptLoginAsync(string challenge, string subject, Dictionary<string, object> context)
     {
-        var body = new { subject, context, remember = false, remember_for = 0 };
+        // remember_for is seconds, and remember must be true for Hydra to keep anything at all —
+        // a non-zero remember_for beside remember: false is silently ignored.
+        var rememberFor = appConfig.SsoSessionMinutes * 60;
+        var body = new { subject, context, remember = rememberFor > 0, remember_for = rememberFor };
         var resp = await Client.PutAsJsonAsync(
             $"{_adminUrl}/admin/oauth2/auth/requests/login/accept?login_challenge={challenge}", body);
         resp.EnsureSuccessStatusCode();
@@ -214,7 +216,12 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
 
     public async Task EnsureAdminSpaClientAsync(string adminSpaOrigin)
     {
-        var redirectUris = new[] { $"{adminSpaOrigin}/admin/callback" };
+        var redirectUris = new[] { $"{adminSpaOrigin}/{Roles.ConsoleBasePath}/callback" };
+        // Hydra refuses a post_logout_redirect_uri the client has not whitelisted, and the SDK the
+        // console runs on always sends one. Without this field every sign-out ended on Hydra's error
+        // page with the session still open. The console is served under /admin/, so that — not the
+        // bare origin — is where a logout lands.
+        var postLogoutUris = new[] { $"{adminSpaOrigin}/{Roles.ConsoleBasePath}/" };
         var body = new
         {
             client_id                  = Roles.AdminClientId,
@@ -223,6 +230,7 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
             response_types             = new[] { "code" },
             scope                      = "openid offline",
             redirect_uris              = redirectUris,
+            post_logout_redirect_uris  = postLogoutUris,
             token_endpoint_auth_method = "none",
             subject_type               = "public"
         };
@@ -260,7 +268,24 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
     {
         var url = $"{_adminUrl}/admin/oauth2/auth/sessions/consent?subject={Uri.EscapeDataString(subject)}";
         if (clientId != null) url += $"&client={Uri.EscapeDataString(clientId)}";
-        await Client.DeleteAsync(url);
+        EnsureRevoked(await Client.DeleteAsync(url));
+    }
+
+    /// <summary>
+    /// Throws unless Hydra actually revoked something.
+    ///
+    /// <para>
+    /// These three calls used to discard the response, so a 500 from Hydra was indistinguishable
+    /// from a successful revocation: <c>PATCH /account/password</c> answered
+    /// <c>"sessions_revoked": true</c> with every stolen session still live, and the try/catch
+    /// around the call could never fire because nothing threw. 404 is success — it means there was
+    /// nothing to revoke, which is the outcome the caller wanted.
+    /// </para>
+    /// </summary>
+    private static void EnsureRevoked(HttpResponseMessage response)
+    {
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return;
+        response.EnsureSuccessStatusCode();
     }
 
     public async Task<List<HydraConsentSession>> ListConsentSessionsAsync(string subject)
@@ -272,23 +297,29 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
 
     public async Task RevokeConsentSessionAsync(string subject, string clientId)
     {
-        await Client.DeleteAsync(
-            $"{_adminUrl}/admin/oauth2/auth/sessions/consent?subject={Uri.EscapeDataString(subject)}&client={Uri.EscapeDataString(clientId)}");
+        EnsureRevoked(await Client.DeleteAsync(
+            $"{_adminUrl}/admin/oauth2/auth/sessions/consent?subject={Uri.EscapeDataString(subject)}&client={Uri.EscapeDataString(clientId)}"));
     }
 
     public async Task RevokeAllConsentSessionsAsync(string subject)
     {
-        await Client.DeleteAsync(
-            $"{_adminUrl}/admin/oauth2/auth/sessions/consent?subject={Uri.EscapeDataString(subject)}");
+        EnsureRevoked(await Client.DeleteAsync(
+            $"{_adminUrl}/admin/oauth2/auth/sessions/consent?subject={Uri.EscapeDataString(subject)}"));
     }
 
     // ── Token validation ──────────────────────────────────────────────────────
 
-    // Validates tokens via Hydra's admin introspection endpoint (port 4445).
-    // Avoids fetching JWKS from the public port (4444) which may not be reachable pod-to-pod.
+    /// <summary>
+    /// Validates tokens through Hydra's admin introspection endpoint (port 4445) rather than by
+    /// fetching JWKS from the public port (4444), which may not be reachable pod-to-pod.
+    ///
+    /// <para>
+    /// Answers are cached so that validation does not cost one Hydra admin call per request. The
+    /// TTL is capped by the token's own remaining lifetime — see the note at the write site.
+    /// </para>
+    /// </summary>
     public async Task<TokenClaims?> ValidateJwtAsync(string token)
     {
-        // Cache introspection results to avoid O(RPS) calls to Hydra admin API
         var tokenHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
         var cacheKey  = $"introspect:{tokenHash}";
 
@@ -296,12 +327,21 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
         if (cached != null)
             return JsonSerializer.Deserialize<TokenClaims>(cached, _json);
 
-        var form = new FormUrlEncodedContent([new("token", token)]);
+        // token_type_hint pins the lookup to access tokens. Without it Hydra also reports
+        // refresh tokens as active, which would let a refresh token authenticate an API call.
+        var form = new FormUrlEncodedContent(
+            [new("token", token), new("token_type_hint", "access_token")]);
         var resp = await Client.PostAsync($"{_adminUrl}/admin/oauth2/introspect", form);
         if (!resp.IsSuccessStatusCode) return null;
 
         var body = await resp.Content.ReadFromJsonAsync<IntrospectResult>(_json);
         if (body is not { Active: true }) return null;
+
+        // Belt and braces: some Hydra versions honour token_type_hint only as a lookup order.
+        // Reject anything the server does not explicitly call an access token.
+        if (body.TokenUse is { Length: > 0 } use &&
+            !use.Equals("access_token", StringComparison.OrdinalIgnoreCase))
+            return null;
 
         var ext = body.Ext;
         var userId    = ext?.GetString("user_id")    ?? body.Sub ?? "";
@@ -312,7 +352,9 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
         var claims = new TokenClaims
         {
             UserId = userId, OrgId = orgId, ProjectId = projectId,
-            Roles = roles, IsServiceAccount = false
+            Roles = roles, IsServiceAccount = false,
+            ClientId  = body.ClientId ?? "",
+            Audiences = body.Aud ?? [],
         };
 
         // Cache for up to 60s, bounded above by the token's actual expiry so revocation
@@ -334,7 +376,10 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
     private sealed record IntrospectResult(
         bool Active, string? Sub,
         [property: JsonPropertyName("exp")] long? Exp,
-        [property: JsonPropertyName("ext")] ExtClaims? Ext);
+        [property: JsonPropertyName("ext")] ExtClaims? Ext,
+        [property: JsonPropertyName("client_id")] string? ClientId,
+        [property: JsonPropertyName("aud")] List<string>? Aud,
+        [property: JsonPropertyName("token_use")] string? TokenUse);
 
     private sealed class ExtClaims : Dictionary<string, JsonElement>
     {

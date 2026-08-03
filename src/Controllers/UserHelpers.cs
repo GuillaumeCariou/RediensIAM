@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using RediensIAM.Data;
 using RediensIAM.Data.Entities;
@@ -8,10 +9,28 @@ namespace RediensIAM.Controllers;
 internal static class UserHelpers
 {
     /// <summary>
-    /// Applies the update to <paramref name="user"/>. Returns true if a password rotation occurred,
-    /// so the caller can revoke existing Hydra sessions.
+    /// The absolute password floor for the admin-driven create/update paths, which have no
+    /// project to read a policy from and so ran no length check at all. An account seeded below
+    /// the floor keeps that password indefinitely — nothing re-evaluates it after the write.
+    /// A null or empty password is an invite: no hash is written, so there is nothing to check.
     /// </summary>
-    internal static bool ApplyUpdate(User user, UpdateUserRequest body, PasswordService passwords)
+    internal static BadRequestObjectResult? PasswordFloorError(string? password) =>
+        string.IsNullOrEmpty(password) || password.Length >= PasswordPolicyService.AbsoluteMinimumLength
+            ? null
+            : new BadRequestObjectResult(new
+            {
+                error      = "password_too_short",
+                min_length = PasswordPolicyService.AbsoluteMinimumLength,
+            });
+
+    /// <summary>
+    /// Applies the update to <paramref name="user"/>. Reports what the caller must follow up on:
+    /// a password rotation and a deactivation both invalidate every session already issued.
+    ///
+    /// <c>Active</c> is consulted at login only, so before this a deactivated account kept full
+    /// API access at every resource server until its token expired.
+    /// </summary>
+    internal static (bool PasswordChanged, bool Deactivated) ApplyUpdate(User user, UpdateUserRequest body, PasswordService passwords)
     {
         if (body.Email != null)          ApplyEmail(user, body.Email);
         if (body.Username != null)       user.Username    = body.Username;
@@ -20,12 +39,9 @@ internal static class UserHelpers
         if (body.Active.HasValue)        ApplyActive(user, body.Active.Value);
         if (body.EmailVerified.HasValue) ApplyEmailVerified(user, body.EmailVerified.Value);
         if (body.ClearLock == true)    { user.LockedUntil = null; user.FailedLoginCount = 0; }
-        if (!string.IsNullOrEmpty(body.NewPassword))
-        {
-            user.PasswordHash = passwords.Hash(body.NewPassword);
-            return true;
-        }
-        return false;
+        var passwordChanged = !string.IsNullOrEmpty(body.NewPassword);
+        if (passwordChanged) user.PasswordHash = passwords.Hash(body.NewPassword!);
+        return (passwordChanged, body.Active == false);
     }
 
     private static void ApplyEmail(User user, string email)

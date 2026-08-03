@@ -25,12 +25,28 @@ public sealed class InstanceConfigurationProvider(InstanceBootstrapOptions opts)
         // Provider runs before DI is built — open a one-shot DbContext from the
         // connection string directly. Migrations are idempotent so running them
         // here is safe even though Program.cs also retries them on startup.
+        // Carries the tenant-scope interceptor too, even though this provider only touches the
+        // deployment-global `instances` table. It is also where `Migrate()` runs for the first
+        // time, and a future migration that backfills data would otherwise write to tenant tables
+        // on a connection with no `rediensiam.org_id` — which under RLS is fail-closed, i.e. a
+        // migration that silently does nothing. There is no request in flight here, so the scope
+        // it sets is 'system'.
         var dbOpts = new DbContextOptionsBuilder<RediensIamDbContext>()
-            .UseNpgsql(opts.ConnectionString).Options;
+            .UseNpgsql(opts.ConnectionString)
+            .AddInterceptors(new Data.TenantScopeInterceptor(new HttpContextAccessor()))
+            .Options;
+
+        // Writing the instances row is itself an audited mutation, and the chain link over it is
+        // keyed — so this pre-DI context needs the same AppConfig the app will build a moment
+        // later. Constructed from the configuration snapshot this provider was handed, which is
+        // where the encryption root already lives.
+        var appConfig = new AppConfig(new ConfigurationBuilder()
+            .AddInMemoryCollection(opts.EnvDefaults)
+            .Build());
 
         try
         {
-            using var db = new RediensIamDbContext(dbOpts);
+            using var db = new RediensIamDbContext(dbOpts, appConfig);
             db.Database.Migrate();
 
             var now = DateTimeOffset.UtcNow;
@@ -41,12 +57,25 @@ public sealed class InstanceConfigurationProvider(InstanceBootstrapOptions opts)
                 db.Instances.Add(inst);
                 db.SaveChanges();
             }
-            else if (opts.ReconfigureFromEnv)
+            else
             {
+                // Unconditionally, and RECONFIGURE_FROM_ENV only decides whether that counts as a
+                // deliberate reconfiguration worth stamping.
+                //
+                // It used to be conditional, and nothing set the flag — so the row captured at
+                // first install outlived every later change. An operator editing a value in the
+                // chart saw it in `kubectl get deploy` and not in the process: roughly twenty keys,
+                // including the lockout policy, the Argon2 cost and the audit retention, were
+                // frozen at whatever the first boot happened to write. ApplyEnv already prefers the
+                // stored value where the environment says nothing, so running it always is not a
+                // reset — it is the deployment being allowed to describe itself.
                 ApplyEnv(inst, opts.EnvDefaults);
-                inst.ConfigVersion++;
+                if (opts.ReconfigureFromEnv)
+                {
+                    inst.ConfigVersion++;
+                    inst.ReconfiguredAt = now;
+                }
                 inst.UpdatedAt = now;
-                inst.ReconfiguredAt = now;
                 db.SaveChanges();
             }
             Data = ToDict(inst);
@@ -77,15 +106,11 @@ public sealed class InstanceConfigurationProvider(InstanceBootstrapOptions opts)
         i.PublicUrl       = S("App:PublicUrl",       i.PublicUrl);
         i.AdminSpaOrigin  = S("App:AdminSpaOrigin",  i.AdminSpaOrigin);
         i.Domain          = S("App:Domain",          i.Domain);
-        i.AdminPath       = S("IAM_ADMIN_PATH",      i.AdminPath);
-        i.TrustedProxies  = S("App:TrustedProxies",  i.TrustedProxies);
         i.PublicPort      = I("IAM_PUBLIC_PORT",     i.PublicPort);
         i.AdminPort       = I("IAM_ADMIN_PORT",      i.AdminPort);
 
-        i.HydraAdminUrl   = S("Hydra:AdminUrl",      i.HydraAdminUrl);
-        i.HydraPublicUrl  = S("Hydra:PublicUrl",     i.HydraPublicUrl);
-        i.KetoReadUrl     = S("Keto:ReadUrl",        i.KetoReadUrl);
-        i.KetoWriteUrl    = S("Keto:WriteUrl",       i.KetoWriteUrl);
+        // Trust anchors (App:TrustedProxies, Hydra:*Url, Keto:*Url) are deliberately absent:
+        // see the note above ToDict.
 
         i.SmtpHost        = S("Smtp:Host",           i.SmtpHost);
         i.SmtpPort        = I("Smtp:Port",           i.SmtpPort);
@@ -111,20 +136,33 @@ public sealed class InstanceConfigurationProvider(InstanceBootstrapOptions opts)
 
     // ── entity → flat IConfiguration dict ────────────────────────────────────
 
+    /// <summary>
+    /// Emits the operational configuration only.
+    ///
+    /// <c>Hydra:AdminUrl</c>, <c>Keto:ReadUrl</c>/<c>WriteUrl</c> and <c>App:TrustedProxies</c>
+    /// are deliberately NOT emitted, even though the columns still exist. They decide *who the
+    /// process believes* — where tokens are introspected, where authorisation resolves, and whose
+    /// <c>X-Forwarded-For</c> is trusted — and this row is written with the same Postgres
+    /// credentials Hydra and Keto hold. A process must not learn who to trust from data it can
+    /// itself write; fail-closed on an unreachable Keto defends against Keto being *down*, not
+    /// against Keto being *someone else*. These come from env/appsettings only, which is already
+    /// how the chart supplies them.
+    /// </summary>
     private static Dictionary<string, string?> ToDict(Instance i) => new(StringComparer.OrdinalIgnoreCase)
     {
-        ["App:PublicUrl"]               = i.PublicUrl,
-        ["App:AdminSpaOrigin"]          = i.AdminSpaOrigin,
-        ["App:Domain"]                  = i.Domain,
-        ["App:TrustedProxies"]          = i.TrustedProxies,
-        ["IAM_ADMIN_PATH"]              = i.AdminPath,
+        // App:PublicUrl, App:AdminSpaOrigin and App:Domain are NOT emitted either, for the same
+        // reason as the trust anchors above and one more that is purely operational.
+        //
+        // They decide which Host headers the process accepts and which origin an authorization
+        // code may be redirected to — a topology decision, made by whoever deploys. Serving them
+        // from this row means the value captured at first install outlives every later change: the
+        // chart says one thing, `kubectl get deploy` shows it, and the process uses another,
+        // because ApplyEnv only runs again when RECONFIGURE_FROM_ENV is set and nothing sets it.
+        // Moving the console to its own hostname failed exactly that way, and every symptom
+        // pointed somewhere else — a 400 from host filtering, with the correct value in the pod's
+        // environment.
         ["IAM_PUBLIC_PORT"]             = i.PublicPort.ToString(),
         ["IAM_ADMIN_PORT"]              = i.AdminPort.ToString(),
-
-        ["Hydra:AdminUrl"]              = i.HydraAdminUrl,
-        ["Hydra:PublicUrl"]             = i.HydraPublicUrl,
-        ["Keto:ReadUrl"]                = i.KetoReadUrl,
-        ["Keto:WriteUrl"]               = i.KetoWriteUrl,
 
         ["Smtp:Host"]                   = i.SmtpHost,
         ["Smtp:Port"]                   = i.SmtpPort.ToString(),

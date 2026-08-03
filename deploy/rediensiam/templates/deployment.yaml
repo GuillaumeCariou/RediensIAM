@@ -12,13 +12,31 @@ spec:
       app: {{ .Release.Name }}
   template:
     metadata:
+      annotations:
+        # Every credential reaches this pod through secretKeyRef, which Kubernetes resolves
+        # once at pod start. Without this annotation the pod template is byte-identical after
+        # a credential change, no rollout happens, and the app keeps serving with the old
+        # password until something unrelated restarts it. Found during the T-04 role
+        # migration: `helm upgrade` reported success and the app pod was still 32 minutes old
+        # holding the superuser DSN. deploy.sh happened to mask this because it also passes a
+        # fresh image digest on every run.
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
       labels:
         app: {{ .Release.Name }}
+        # Selected by the default-deny ingress policy.
+        app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
       automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault    # R-32 / CIS K8s 5.7.2
       containers:
         - name: rediensiam
-          image: {{ .Values.rediensiam.image.repository }}:{{ .Values.rediensiam.image.tag }}
+          {{- if .Values.rediensiam.image.digest }}
+          image: {{ .Values.rediensiam.image.repository }}@{{ .Values.rediensiam.image.digest }}
+          {{- else }}
+          image: {{ .Values.rediensiam.image.repository }}:{{ .Values.rediensiam.image.tag | default .Chart.AppVersion }}
+          {{- end }}
           imagePullPolicy: {{ .Values.rediensiam.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
@@ -45,8 +63,19 @@ spec:
               value: {{ .Values.rediensiam.adminUrl | quote }}
             - name: App__Domain
               value: {{ index (urlParse .Values.rediensiam.publicUrl) "host" | quote }}
-            - name: IAM_ADMIN_PATH
-              value: {{ .Values.rediensiam.app.adminPath | quote }}
+            - name: Security__SsoSessionMinutes
+              value: {{ .Values.rediensiam.security.ssoSessionMinutes | default 480 | quote }}
+            {{- /*
+              Everything the block above does not name. The application reads far more settings
+              than this template sets — the lockout policy, the Argon2 cost, the audit retention,
+              the OTP lifetimes — and until this existed the only way to reach one was to edit the
+              chart. Non-secret values only: a secret belongs in `secrets`, which lands in a Secret
+              rather than in the pod spec where `kubectl describe` prints it.
+            */}}
+            {{- range $name, $value := .Values.rediensiam.app.extraEnv }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
             - name: App__TrustedProxies
               value: {{ .Values.rediensiam.app.trustedProxies | default "" | quote }}
             # ── Ory ────────────────────────────────────────────────────────────
@@ -75,39 +104,62 @@ spec:
             - name: ConnectionStrings__Default
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: database-url
             - name: Cache__ConnectionString
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: cache-url
+            # Off by default (see values.yaml): a first launch must not gate the bootstrap admin's
+            # own login on a factor it has no way to deliver yet.
+            # The chart drives containerPort, the Services and all three probes from these, but
+            # never told the app about them: changing either produced a Deployment whose probes and
+            # Services pointed at ports nothing was listening on, with no template error.
+            - name: IAM_PUBLIC_PORT
+              value: {{ .Values.rediensiam.service.public.port | quote }}
+            - name: IAM_ADMIN_PORT
+              value: {{ .Values.rediensiam.service.admin.port | quote }}
             - name: Security__TotpSecretEncryptionKey
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: totp-key
+            # S-10: when non-empty, supersedes Security__TotpSecretEncryptionKey.
+            - name: Security__EncryptionKeys
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "rediensiam.secretName" . }}
+                  key: encryption-keys
+                  optional: true
             - name: Security__Argon2Pepper
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: argon2-pepper
+                  optional: true
+            # S-10: when non-empty, supersedes Security__Argon2Pepper.
+            - name: Security__Argon2Peppers
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "rediensiam.secretName" . }}
+                  key: argon2-peppers
                   optional: true
             - name: Smtp__Password
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: smtp-password
             - name: IAM_BOOTSTRAP_EMAIL
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: bootstrap-email
                   optional: true
             - name: IAM_BOOTSTRAP_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: bootstrap-password
                   optional: true
           startupProbe:
@@ -117,11 +169,19 @@ spec:
               httpHeaders:
                 - name: Host
                   value: {{ index (urlParse .Values.rediensiam.publicUrl) "host" | quote }}
-            failureThreshold: 30
+            # 60 x 5s = 300s. Startup runs three serial retry loops — migrations, the bootstrap
+            # admin, then the Hydra admin client — each up to 12 attempts at 5s, so the worst case
+            # is 180s before the app ever listens. A 150s budget killed the container mid-startup
+            # and CrashLoopBackOff'd on a self-repeating cycle, most likely on a first install where
+            # Postgres and Hydra are coming up in parallel.
+            failureThreshold: 60
             periodSeconds: 5
           readinessProbe:
             httpGet:
-              path: /health
+              # /health/ready also checks the database and the cache. /health stays process-only,
+              # because a liveness probe that fails on a database blip restarts every replica at
+              # once and turns an outage into a crash loop.
+              path: /health/ready
               port: {{ .Values.rediensiam.service.public.port }}
               httpHeaders:
                 - name: Host
@@ -140,8 +200,25 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.rediensiam.dragonfly.local.tls.enabled }}
+            # R-15. CacheTls pins the cache connection to this CA rather than the OS trust
+            # store, which is what lets the app reject a certificate the cluster issued for
+            # some other service. The path is CacheTls.DefaultCaBundlePath, so nothing has to
+            # be configured at install time. Only ca.crt is projected — never the key.
+            - name: cache-tls-ca
+              mountPath: /etc/cache-tls
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.rediensiam.resources | nindent 12 }}
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if .Values.rediensiam.dragonfly.local.tls.enabled }}
+        - name: cache-tls-ca
+          secret:
+            secretName: {{ .Release.Name }}-dragonfly-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}

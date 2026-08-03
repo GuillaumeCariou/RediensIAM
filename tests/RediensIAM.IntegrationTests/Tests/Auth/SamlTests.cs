@@ -32,6 +32,21 @@ public partial class SamlControllerTests(TestFixture fixture)
     [GeneratedRegex(@"value=""([^""]+)""[^>]*name=""RelayState""")]
     private static partial Regex RelayStateByValueRegex();
 
+    /// <summary>
+    /// Self-signed PEM used wherever an IdP is configured with an explicit SsoUrl.
+    /// A signing certificate is mandatory in that mode — assertions cannot be validated
+    /// without one — so every seeded IdP needs it.
+    /// </summary>
+    internal static readonly string TestCertPem = CreateTestCertPem();
+
+    private static string CreateTestCertPem()
+    {
+        using var rsa = RSA.Create(2048);
+        var req = new CertificateRequest("CN=SeedTestIdP", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        using var cert = req.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(1));
+        return cert.ExportCertificatePem();
+    }
+
     private async Task<SamlIdpConfig> SeedIdpAsync(Guid projectId,
         string ssoUrl = "https://idp.example.com/sso",
         bool active = true)
@@ -42,6 +57,7 @@ public partial class SamlControllerTests(TestFixture fixture)
             ProjectId = projectId,
             EntityId  = "https://idp.example.com",
             SsoUrl    = ssoUrl,
+            CertificatePem = TestCertPem,
             Active    = active,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow,
@@ -82,8 +98,10 @@ public partial class SamlControllerTests(TestFixture fixture)
     [Fact]
     public async Task Start_ValidChallenge_NonExistentIdp_Returns404()
     {
-        var challenge = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "some-client");
+        var (nfOrg, _)  = await fixture.Seed.CreateOrgAsync();
+        var nfProject   = await fixture.Seed.CreateProjectAsync(nfOrg.Id);
+        var challenge   = Guid.NewGuid().ToString("N");
+        fixture.Hydra.SetupLoginChallenge(challenge, "some-client", projectId: nfProject.Id.ToString());
 
         var res = await fixture.Client.GetAsync(
             $"/auth/saml/start?login_challenge={challenge}&idp_id={Guid.NewGuid()}");
@@ -96,12 +114,12 @@ public partial class SamlControllerTests(TestFixture fixture)
     [Fact]
     public async Task Start_ValidChallenge_InactiveIdp_Returns404()
     {
-        var challenge = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "some-client");
-
         var (org, _)  = await fixture.Seed.CreateOrgAsync();
         var project   = await fixture.Seed.CreateProjectAsync(org.Id);
         var idp       = await SeedIdpAsync(project.Id, active: false);  // inactive
+
+        var challenge = Guid.NewGuid().ToString("N");
+        fixture.Hydra.SetupLoginChallenge(challenge, "some-client", projectId: project.Id.ToString());
 
         var res = await fixture.Client.GetAsync(
             $"/auth/saml/start?login_challenge={challenge}&idp_id={idp.Id}");
@@ -112,12 +130,12 @@ public partial class SamlControllerTests(TestFixture fixture)
     [Fact]
     public async Task Start_ValidChallenge_ValidIdp_ReturnsRedirect()
     {
-        var challenge = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "some-client");
-
         var (org, _) = await fixture.Seed.CreateOrgAsync();
         var project  = await fixture.Seed.CreateProjectAsync(org.Id);
         var idp      = await SeedIdpAsync(project.Id);  // SsoUrl set, Active=true
+
+        var challenge = Guid.NewGuid().ToString("N");
+        fixture.Hydra.SetupLoginChallenge(challenge, "some-client", projectId: project.Id.ToString());
 
         var res = await fixture.Client.GetAsync(
             $"/auth/saml/start?login_challenge={challenge}&idp_id={idp.Id}");
@@ -160,12 +178,15 @@ public partial class SamlControllerTests(TestFixture fixture)
 
     // ── Helpers for full ACS flow tests ──────────────────────────────────────
 
-    // Seeds a project + list (optionally) + SamlIdpConfig backed by a test RSA cert.
+    /// <summary>
+    /// Seeds a project + list (optionally) + SamlIdpConfig backed by a test RSA cert.
+    /// The cert is exported as PFX and re-imported so it holds its own self-contained key: the
+    /// <c>RSA</c> instance it was created from is disposed long before <c>Bind()</c> runs, and
+    /// without the round-trip signing fails at that point with an opaque key error.
+    /// </summary>
     private async Task<(SamlIdpConfig idp, X509Certificate2 cert)> SeedAcsSamlIdpAsync(
         bool assignList = true, bool jit = true)
     {
-        // Export as PFX and re-import so the cert holds its own self-contained key,
-        // independent of the RSA object that may be disposed by the time Bind() is called.
         X509Certificate2 cert;
         {
             using var rsa = RSA.Create(2048);
@@ -204,8 +225,10 @@ public partial class SamlControllerTests(TestFixture fixture)
         return (idp, cert);
     }
 
-    // Calls Start (to populate session), decodes the redirect to extract the authn-
-    // request ID, then builds and returns a valid signed SAMLResponse POST form.
+    /// <summary>
+    /// Calls Start (to populate session), decodes the redirect to extract the authn-request ID,
+    /// then builds and returns a valid signed SAMLResponse POST form.
+    /// </summary>
     private static async Task<FormUrlEncodedContent> BuildAcsFormAsync(
         HttpClient client, string challenge, SamlIdpConfig idp, X509Certificate2 cert,
         ClaimsIdentity? identity = null,
@@ -227,7 +250,6 @@ public partial class SamlControllerTests(TestFixture fixture)
                            .ToDictionary(p => Uri.UnescapeDataString(p[0]),
                                          p => Uri.UnescapeDataString(p[1]));
 
-        // SP-generated relay state
         var spRelayState = qp.TryGetValue("RelayState", out var rs) ? rs : string.Empty;
         spRelayState.Should().NotBeNullOrEmpty("relay state must be present in the Start redirect URL");
 
@@ -243,23 +265,25 @@ public partial class SamlControllerTests(TestFixture fixture)
         xmlDoc.LoadXml(authnXml);
         var authnReqId = xmlDoc.DocumentElement!.GetAttribute("ID");
 
-        return BuildSignedResponseForm(challenge, idp, cert, spRelayState, authnReqId,
+        return BuildSignedResponseForm(idp, cert, spRelayState, authnReqId,
             identity, responseStatus);
     }
 
-    // Builds the ACS POST form directly without calling Start (no session populated).
-    // Use this to test IdP-initiated flows, missing-session branches, etc.
+    /// <summary>
+    /// Builds the ACS POST form directly without calling Start, so no session is populated.
+    /// Use this for IdP-initiated flows and missing-session branches.
+    /// </summary>
     private static FormUrlEncodedContent BuildAcsFormNoSession(
         string challenge, SamlIdpConfig idp, X509Certificate2 cert,
         ClaimsIdentity? identity = null)
     {
         var relayState = $"login_challenge={Uri.EscapeDataString(challenge)}&idp_id={idp.Id}";
-        return BuildSignedResponseForm(challenge, idp, cert, relayState,
+        return BuildSignedResponseForm(idp, cert, relayState,
             authnReqId: "_fake_req_no_session", identity);
     }
 
     private static FormUrlEncodedContent BuildSignedResponseForm(
-        string challenge, SamlIdpConfig idp, X509Certificate2 cert,
+        SamlIdpConfig idp, X509Certificate2 cert,
         string relayState, string authnReqId,
         ClaimsIdentity? identity = null,
         Saml2StatusCodes responseStatus = Saml2StatusCodes.Success)
@@ -352,7 +376,7 @@ public partial class SamlControllerTests(TestFixture fixture)
     {
         var (idp, cert) = await SeedAcsSamlIdpAsync(assignList: false);
         var challenge   = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
         var client = fixture.NewSessionClient();
         var form   = await BuildAcsFormAsync(client, challenge, idp, cert);
 
@@ -370,7 +394,7 @@ public partial class SamlControllerTests(TestFixture fixture)
     {
         var (idp, cert) = await SeedAcsSamlIdpAsync(jit: false);
         var challenge   = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
         var client = fixture.NewSessionClient();
         var form   = await BuildAcsFormAsync(client, challenge, idp, cert);
 
@@ -396,7 +420,7 @@ public partial class SamlControllerTests(TestFixture fixture)
         await fixture.Db.SaveChangesAsync();
 
         var challenge = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
         var client = fixture.NewSessionClient();
         var form   = await BuildAcsFormAsync(client, challenge, idp, cert);
 
@@ -412,17 +436,15 @@ public partial class SamlControllerTests(TestFixture fixture)
     [Fact]
     public async Task Acs_ValidResponse_JitProvisioning_ReturnsRedirect()
     {
-        // User does not exist → JIT-provisioned → login accepted → redirect
         var (idp, cert) = await SeedAcsSamlIdpAsync();
         var challenge   = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
         var client = fixture.NewSessionClient();
         var form   = await BuildAcsFormAsync(client, challenge, idp, cert);
 
         var res = await client.PostAsync("/auth/saml/acs", form);
         res.StatusCode.Should().Be(HttpStatusCode.Redirect);
 
-        // Verify the user was JIT-provisioned in the DB
         var provisioned = await fixture.Db.Users
             .FirstOrDefaultAsync(u => u.Email == "saml-user@test.com");
         provisioned.Should().NotBeNull();
@@ -442,7 +464,7 @@ public partial class SamlControllerTests(TestFixture fixture)
         await fixture.Db.SaveChangesAsync();
 
         var challenge = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
         var client = fixture.NewSessionClient();
         var form   = await BuildAcsFormAsync(client, challenge, idp, cert);
 
@@ -471,7 +493,7 @@ public partial class SamlControllerTests(TestFixture fixture)
         await fixture.Db.SaveChangesAsync();
 
         var challenge = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
         var client = fixture.NewSessionClient();
         var form   = await BuildAcsFormAsync(client, challenge, idp, cert,
             new ClaimsIdentity(new[] { new Claim("email", "saml-role-user@test.com") }));
@@ -510,7 +532,7 @@ public partial class SamlControllerTests(TestFixture fixture)
     {
         var (idp, cert) = await SeedAcsSamlIdpAsync();
         var challenge   = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
         var client = fixture.NewSessionClient();
         var form   = await BuildAcsFormAsync(client, challenge, idp, cert,
             responseStatus: Saml2StatusCodes.Requester);
@@ -547,7 +569,7 @@ public partial class SamlControllerTests(TestFixture fixture)
     {
         var (idp, cert) = await SeedAcsSamlIdpAsync();
         var challenge   = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
         var client = fixture.NewSessionClient();
 
         // Call Start to populate session with the real request ID
@@ -560,15 +582,61 @@ public partial class SamlControllerTests(TestFixture fixture)
             .ToDictionary(p => Uri.UnescapeDataString(p[0]), p => Uri.UnescapeDataString(p[1]))
             .GetValueOrDefault("RelayState", "");
 
-        // Build a response with a DIFFERENT InResponseTo than what was stored in the session
-        var form = BuildSignedResponseForm(challenge, idp, cert, spRelayState,
+        // Build a response echoing an InResponseTo that was never issued
+        var form = BuildSignedResponseForm(idp, cert, spRelayState,
             authnReqId: "_wrong_request_id");
 
         var res = await client.PostAsync("/auth/saml/acs", form);
 
         res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
-        body.GetProperty("error").GetString().Should().Be("saml_response_invalid");
+        // Pending requests are keyed by their own ID, so an InResponseTo the SP never issued
+        // (or already consumed) simply resolves to nothing.
+        body.GetProperty("error").GetString().Should().Be("saml_no_pending_request");
+    }
+
+    // ── ACS: the tenant's own login controls ─────────────────────────────────
+
+    /// <summary>
+    /// A project that demands a second factor demands it of federated users too.
+    ///
+    /// <para>
+    /// The ACS accepted the login through Hydra directly, consulting neither <c>require_mfa</c> nor
+    /// <c>ip_allowlist</c> — both of which the password path enforces. So the tenants most likely
+    /// to enable those controls, the ones running an IdP, were the ones for whom they did nothing.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Acs_ProjectRequiresMfa_DoesNotCompleteTheLogin()
+    {
+        var (idp, cert) = await SeedAcsSamlIdpAsync();
+        var project = await fixture.Db.Projects.FirstAsync(p => p.Id == idp.ProjectId);
+        project.RequireMfa = true;
+        await fixture.Db.SaveChangesAsync();
+
+        var challenge = Guid.NewGuid().ToString("N");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
+        var client   = fixture.NewSessionClient();
+        var identity = new ClaimsIdentity(new[]
+        {
+            new Claim("email", "saml-mfa@tenant.test"),
+            new Claim("displayName", "Saml Mfa"),
+        });
+        var form = await BuildAcsFormAsync(client, challenge, idp, cert, identity);
+
+        var res = await client.PostAsync("/auth/saml/acs", form);
+
+        var location = res.Headers.Location?.ToString() ?? "";
+        location.Should().NotContain("/callback",
+            "the project demands a second factor, so the login must not be accepted yet");
+
+        await fixture.RefreshDbAsync();
+        var user = await fixture.Db.Users.FirstOrDefaultAsync(u => u.Email == "saml-mfa@tenant.test");
+        if (user != null)
+        {
+            (await fixture.Db.AuditLogs.AnyAsync(a => a.ActorId == user.Id && a.Action == "user.login.saml"))
+                .Should().BeFalse("the login was not completed");
+        }
     }
 
     // ── ACS: response has no email claim ─────────────────────────────────────
@@ -578,7 +646,7 @@ public partial class SamlControllerTests(TestFixture fixture)
     {
         var (idp, cert) = await SeedAcsSamlIdpAsync();
         var challenge   = Guid.NewGuid().ToString("N");
-        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
         var client = fixture.NewSessionClient();
         // ClaimsIdentity with no email-related claims
         var identity = new ClaimsIdentity(new[] { new Claim("displayName", "No Email User") });
@@ -589,6 +657,81 @@ public partial class SamlControllerTests(TestFixture fixture)
         res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("error").GetString().Should().Be("saml_email_missing");
+    }
+
+    // ── T-26: SAML XML processing — XXE and signature wrapping ───────────────
+
+    /// <summary>Re-encodes a built ACS form with the SAMLResponse XML rewritten.</summary>
+    private static async Task<FormUrlEncodedContent> MutateSamlResponseAsync(
+        FormUrlEncodedContent form, Func<string, string> mutate)
+    {
+        var fields = Microsoft.AspNetCore.WebUtilities.QueryHelpers
+            .ParseQuery(await form.ReadAsStringAsync());
+        var xml = Encoding.UTF8.GetString(Convert.FromBase64String(fields["SAMLResponse"].ToString()));
+        return new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["SAMLResponse"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(mutate(xml))),
+            ["RelayState"]   = fields["RelayState"].ToString(),
+        });
+    }
+
+    /// <summary>
+    /// The ACS parses attacker-reachable XML before anything is authenticated. ITfoxtec loads it
+    /// through XmlReader with DtdProcessing.Prohibit and a null XmlResolver, so a DOCTYPE is
+    /// refused outright — which closes external-entity retrieval and internal entity expansion in
+    /// one move. Asserted here because nothing else in the suite would notice if that loader were
+    /// swapped for XmlDocument.LoadXml.
+    /// </summary>
+    [Fact]
+    public async Task Acs_ResponseCarryingADoctype_IsRefused()
+    {
+        var (idp, cert) = await SeedAcsSamlIdpAsync();
+        var challenge   = Guid.NewGuid().ToString("N");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
+        var client = fixture.NewSessionClient();
+        var form   = await BuildAcsFormAsync(client, challenge, idp, cert);
+
+        var hostile = await MutateSamlResponseAsync(form, xml =>
+            "<!DOCTYPE Response [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]>" + xml);
+
+        var res = await client.PostAsync("/auth/saml/acs", hostile);
+
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await res.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("error").GetString().Should().Be("saml_response_invalid");
+        (await fixture.Db.Users.AnyAsync(u => u.Email == "saml-user@test.com"))
+            .Should().BeFalse("a document the parser refused must not provision anyone");
+    }
+
+    /// <summary>
+    /// Classic signature wrapping: keep the genuine signed assertion so the signature still
+    /// verifies, and append a copy the SP might read instead. ITfoxtec requires exactly one
+    /// Assertion element in the document and binds the signature reference to the element it
+    /// validates, so the response is refused rather than half-trusted.
+    /// </summary>
+    [Fact]
+    public async Task Acs_ResponseWithASecondWrappedAssertion_IsRefused()
+    {
+        var (idp, cert) = await SeedAcsSamlIdpAsync();
+        var challenge   = Guid.NewGuid().ToString("N");
+        fixture.Hydra.SetupLoginChallenge(challenge, "saml-client", projectId: idp.ProjectId.ToString());
+        var client = fixture.NewSessionClient();
+        var form   = await BuildAcsFormAsync(client, challenge, idp, cert);
+
+        var hostile = await MutateSamlResponseAsync(form, xml =>
+        {
+            var doc = new XmlDocument { XmlResolver = null };
+            doc.LoadXml(xml);
+            var assertion = doc.DocumentElement!.SelectSingleNode("*[local-name()='Assertion']")!;
+            doc.DocumentElement.AppendChild(assertion.CloneNode(deep: true));
+            return doc.OuterXml;
+        });
+
+        var res = await client.PostAsync("/auth/saml/acs", hostile);
+
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await res.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("error").GetString().Should().Be("saml_response_invalid");
     }
 }
 
@@ -844,6 +987,7 @@ public class SamlServiceUnitTests
             Id       = Guid.NewGuid(),
             EntityId = "https://idp.example.com",
             SsoUrl   = "https://idp.example.com/sso",
+            CertificatePem = SamlControllerTests.TestCertPem,
         };
 
         var config = await svc.BuildConfigAsync(idp, "https://sp.example.com/saml/metadata", new Uri("https://sp.example.com/saml/acs"));
@@ -916,6 +1060,36 @@ public class SamlServiceUnitTests
             idp, "https://sp.example.com/saml/metadata", new Uri("https://sp.example.com/saml/acs"));
 
         config.SignatureValidationCertificates.Should().HaveCount(1);
+    }
+
+    /// <summary>
+    /// T-26. CertificateValidationMode.None disables ITfoxtec's certificate validator outright,
+    /// so nothing looked at NotBefore/NotAfter on the explicitly configured signing certificate —
+    /// the metadata branch filters expired certs, this one did not. A key an IdP has rotated away
+    /// from stayed authoritative here for ever.
+    /// </summary>
+    [Fact]
+    public async Task BuildConfigAsync_ExpiredExplicitCertificate_IsRefused()
+    {
+        using var rsa = RSA.Create(2048);
+        var req = new CertificateRequest("CN=ExpiredIdP", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        using var expired = req.CreateSelfSigned(
+            DateTimeOffset.UtcNow.AddYears(-2), DateTimeOffset.UtcNow.AddDays(-1));
+
+        var svc = BuildService();
+        var idp = new SamlIdpConfig
+        {
+            Id             = Guid.NewGuid(),
+            EntityId       = "https://idp.example.com",
+            SsoUrl         = "https://idp.example.com/sso",
+            CertificatePem = expired.ExportCertificatePem(),
+        };
+
+        var act = async () => await svc.BuildConfigAsync(
+            idp, "https://sp.example.com/saml/metadata", new Uri("https://sp.example.com/saml/acs"));
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage($"*{idp.Id}*validity window*");
     }
 }
 

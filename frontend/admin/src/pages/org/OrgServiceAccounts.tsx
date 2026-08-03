@@ -1,5 +1,6 @@
+import { rowActivation } from '../../components/iam/rowActivation';
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { IamChip, IamDialog } from '@/components/iam';
 import { listServiceAccounts, createServiceAccount, deleteServiceAccount, listUserLists } from '@/api';
 import { useOrgContext } from '@/hooks/useOrgContext';
@@ -80,7 +81,7 @@ export default function OrgServiceAccounts() {
                   </td></tr>
                 );
                 return accounts.map(sa => (
-                  <tr key={sa.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`${orgBase}/service-accounts/${sa.id}`)}>
+                  <tr key={sa.id} {...rowActivation(() => navigate(`${orgBase}/service-accounts/${sa.id}`))}>
                     <td>
                       <div style={{ fontWeight: 500 }}>{sa.name}</div>
                       {sa.description && <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>{sa.description}</div>}

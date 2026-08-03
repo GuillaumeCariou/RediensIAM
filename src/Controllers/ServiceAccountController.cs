@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using RediensIAM.Config;
 using RediensIAM.Data;
 using RediensIAM.Data.Entities;
+using RediensIAM.Filters;
 using RediensIAM.Middleware;
 using RediensIAM.Services;
 
@@ -17,25 +18,37 @@ namespace RediensIAM.Controllers;
 /// </summary>
 [ApiController]
 [Route("service-accounts")]
+// Every action gates on the management level carried by the token, which is a snapshot taken
+// when that token was minted. This filter is what re-verifies the level against Keto, so a
+// revoked administrator cannot keep minting credentials on the deployment's most privileged
+// service accounts for the rest of the token's lifetime. ProjectAdmin is the least-privileged
+// level any action here admits; the per-action checks below still apply on top of it.
+[RequireManagementLevel(ManagementLevel.ProjectAdmin)]
 public class ServiceAccountController(
     RediensIamDbContext db,
     PatService patService,
-    AuditLogService audit) : ControllerBase
+    AuditLogService audit,
+    AppConfig appConfig) : ControllerBase
 {
     private const string AuditSa = "service_account";
 
     private TokenClaims Claims     => HttpContext.GetClaims()!;
-    private ManagementLevel Level  => Claims.GetManagementLevel();
+    // The grant, not the claim (S-1 / R-22). The class carries [RequireManagementLevel], which is
+    // what makes the `!` safe — that dependency is the invariant S-1 exists to make explicit.
+    private ManagementLevel Level  => HttpContext.GetGrantedLevel()!.Value.Value;
     private Guid ActorId           => Claims.ParsedUserId;
-    private Guid? CallerOrgId      => Guid.TryParse(Claims.OrgId, out var g) ? g : null;
+    // Guid.Empty, never null. A null here compared equal to UserList.OrgId IS NULL — the
+    // __system__ list — so a token whose org_id failed to parse gained access to the most
+    // privileged service accounts in the deployment. Every other controller already uses
+    // Guid.Empty, which matches no real row.
+    private Guid CallerOrgId       => Guid.TryParse(Claims.OrgId, out var g) ? g : Guid.Empty;
 
-    // Returns true if the caller has management access to the given SA.
     private async Task<bool> CanAccessAsync(ServiceAccount sa)
     {
         return Level switch
         {
             ManagementLevel.SuperAdmin   => true,
-            ManagementLevel.OrgAdmin     => sa.UserList.OrgId == CallerOrgId,
+            ManagementLevel.OrgAdmin     => sa.UserList.OrgId != null && sa.UserList.OrgId == CallerOrgId,
             ManagementLevel.ProjectAdmin => await IsCallerProjectListAsync(sa.UserListId),
             _                            => false
         };
@@ -58,7 +71,7 @@ public class ServiceAccountController(
         IQueryable<ServiceAccount> query = db.ServiceAccounts.Include(sa => sa.UserList);
 
         if (Level == ManagementLevel.OrgAdmin)
-            query = query.Where(sa => sa.UserList.OrgId == CallerOrgId);
+            query = query.Where(sa => sa.UserList.OrgId != null && sa.UserList.OrgId == CallerOrgId);
         else if (Level == ManagementLevel.ProjectAdmin)
         {
             if (!Guid.TryParse(Claims.ProjectId, out var projectId))
@@ -93,7 +106,6 @@ public class ServiceAccountController(
         var list = await db.UserLists.FindAsync(body.UserListId);
         if (list == null) return BadRequest(new { error = "user_list_not_found" });
 
-        // Validate caller has rights over the target list
         if (Level == ManagementLevel.OrgAdmin && list.OrgId != CallerOrgId)
             return StatusCode(403, new { error = "list_not_in_your_org" });
 
@@ -106,7 +118,8 @@ public class ServiceAccountController(
                 return StatusCode(403, new { error = "can_only_create_sa_in_your_project_list" });
         }
 
-        // SuperAdmin may use any list, including the root list (system SA)
+        // SuperAdmin falls through both branches deliberately: it may use any list, including the
+        // __system__ root list, which is what creating a system service account means.
 
         var sa = new ServiceAccount
         {
@@ -179,7 +192,15 @@ public class ServiceAccountController(
     {
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
         if (sa == null || !await CanAccessAsync(sa)) return NotFound();
-        var (raw, pat) = await patService.GenerateAsync(id, body.Name, body.ExpiresAt, ActorId);
+        // A PAT with no expiry is a permanent credential on a service account whose grants the
+        // caller may lose tomorrow. Absent or over-long requests are clamped, not rejected, so
+        // existing callers keep working — with a bounded credential.
+        var maxExpiry = DateTimeOffset.UtcNow.AddDays(appConfig.MaxPatLifetimeDays);
+        if (body.ExpiresAt <= DateTimeOffset.UtcNow) return BadRequest(new { error = "expires_at_in_the_past" });
+        var expiresAt = body.ExpiresAt is { } requested && requested < maxExpiry ? requested : maxExpiry;
+        var (raw, pat) = await patService.GenerateAsync(id, body.Name, expiresAt, ActorId);
+        await audit.RecordAsync(sa.UserList.OrgId, null, ActorId, "sa.pat.created", AuditSa, id.ToString(),
+            new() { ["pat_id"] = pat.Id.ToString(), ["expires_at"] = pat.ExpiresAt?.ToString("O") ?? "never" });
         return Ok(new { pat.Id, pat.Name, token = raw, pat.ExpiresAt, message = "store_this_token_shown_once" });
     }
 
@@ -188,8 +209,11 @@ public class ServiceAccountController(
     {
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
         if (sa == null || !await CanAccessAsync(sa)) return NotFound();
-        try { await patService.RevokePat(patId, id); return NoContent(); }
+        try { await patService.RevokePat(patId, id); }
         catch (KeyNotFoundException) { return NotFound(); }
+        await audit.RecordAsync(sa.UserList.OrgId, null, ActorId, "sa.pat.revoked", AuditSa, id.ToString(),
+            new() { ["pat_id"] = patId.ToString() });
+        return NoContent();
     }
 
     // ── API keys (Hydra JWK) ──────────────────────────────────────────────────
@@ -207,8 +231,11 @@ public class ServiceAccountController(
     {
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
         if (sa == null || !await CanAccessAsync(sa)) return NotFound();
-        try { var clientId = await patService.AddKeyAsync(sa, body.Jwk); return Ok(new { client_id = clientId }); }
+        string clientId;
+        try { clientId = await patService.AddKeyAsync(sa, body.Jwk); }
         catch (Exception ex) { return BadRequest(new { error = "hydra_error", detail = ex.Message }); }
+        await audit.RecordAsync(sa.UserList.OrgId, null, ActorId, "sa.key.added", AuditSa, id.ToString());
+        return Ok(new { client_id = clientId });
     }
 
     [HttpDelete("{id}/api-keys")]
@@ -217,6 +244,7 @@ public class ServiceAccountController(
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
         if (sa == null || !await CanAccessAsync(sa)) return NotFound();
         await patService.RemoveKeyAsync(sa);
+        await audit.RecordAsync(sa.UserList.OrgId, null, ActorId, "sa.key.removed", AuditSa, id.ToString());
         return Ok(new { message = "key_removed" });
     }
 
@@ -260,6 +288,8 @@ public class ServiceAccountController(
         };
         db.ServiceAccountRoles.Add(role);
         await db.SaveChangesAsync();
+        // Cached introspections still carry the old role set — drop them now.
+        await patService.InvalidateServiceAccountAsync(id);
         await audit.RecordAsync(body.OrgId, body.ProjectId, ActorId, "sa.role.assigned",
             AuditSa, id.ToString(), new() { ["role"] = body.Role });
         return Created($"/service-accounts/{id}/roles/{role.Id}",
@@ -287,6 +317,7 @@ public class ServiceAccountController(
 
         db.ServiceAccountRoles.Remove(role);
         await db.SaveChangesAsync();
+        await patService.InvalidateServiceAccountAsync(id);
         await audit.RecordAsync(role.OrgId, role.ProjectId, ActorId, "sa.role.removed",
             AuditSa, id.ToString(), new() { ["role"] = role.Role });
         return NoContent();
@@ -303,14 +334,18 @@ public class ServiceAccountController(
         };
         if (targetLevel == ManagementLevel.None) return BadRequest(new { error = "unknown_role" });
         if (targetLevel < Level) return StatusCode(403, new { error = "insufficient_level_to_grant_this_role" });
-        if (Level == ManagementLevel.OrgAdmin && body.OrgId != CallerOrgId)
-            return StatusCode(403, new { error = "org_mismatch" });
-        if (Level == ManagementLevel.ProjectAdmin)
-            return ValidateProjectAdminRoleAssignment(body);
+        if (Level == ManagementLevel.ProjectAdmin
+            && ValidateProjectAdminRoleAssignment(body) is { } projectErr) return projectErr;
         if (body.Role == Roles.OrgAdmin && body.OrgId == null)
             return BadRequest(new { error = "org_id_required_for_org_admin" });
         if (body.Role == Roles.ProjectAdmin && (body.OrgId == null || body.ProjectId == null))
             return BadRequest(new { error = "org_id_and_project_id_required_for_project_admin" });
+        // One rule for every caller below SuperAdmin, not just OrgAdmin. The org id written here
+        // becomes the credential's tenant scope at PatService.IntrospectAsync, which is what
+        // IntrospectionController scopes introspection by — so a caller that can choose it
+        // chooses the boundary that is supposed to contain it.
+        if (Level != ManagementLevel.SuperAdmin && body.OrgId != CallerOrgId)
+            return StatusCode(403, new { error = "org_mismatch" });
         return null;
     }
 

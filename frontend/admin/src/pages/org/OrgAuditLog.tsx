@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { getAuditLog, exportOrgAuditLog } from '@/api';
 import { useOrgContext } from '@/hooks/useOrgContext';
 import PageHeader from '@/components/layout/PageHeader';
@@ -28,9 +28,9 @@ export default function OrgAuditLog() {
     } finally { setExporting(false); }
   };
 
-  const load = (off: number) => {
+  const load = useCallback((off: number) => {
     setLoading(true);
-    getAuditLog({ org_id: orgId, limit: PAGE_SIZE, offset: off })
+    getAuditLog({ scope: isSystemCtx ? 'system' : 'org', org_id: orgId, limit: PAGE_SIZE, offset: off })
       .then(res => {
         const rows = Array.isArray(res) ? res : (res?.entries ?? []);
         setEntries(rows);
@@ -38,9 +38,11 @@ export default function OrgAuditLog() {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  };
+    // isSystemCtx picks which log is read; it changes with the scope switcher while orgId can stay
+    // the same, so it belongs in the deps and not only in the closure.
+  }, [orgId, isSystemCtx]);
 
-  useEffect(() => { load(0); }, [orgId]);
+  useEffect(() => { load(0); }, [load]);
 
   const prev = () => { const o = Math.max(0, offset - PAGE_SIZE); setOffset(o); load(o); };
   const next = () => { const o = offset + PAGE_SIZE; setOffset(o); load(o); };

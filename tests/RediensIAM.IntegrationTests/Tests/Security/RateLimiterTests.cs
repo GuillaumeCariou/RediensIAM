@@ -27,7 +27,8 @@ public class RateLimiterTests(TestFixture fixture)
     {
         var (project, org) = await ScaffoldProjectAsync();
 
-        // 5 failed attempts
+        // 5 is MaxLoginAttempts from TestFixture's configuration — the loop has to exhaust the
+        // budget exactly, so change it there and this stops testing the limiter.
         for (var i = 0; i < 5; i++)
         {
             var ch = NewChallenge();
@@ -41,7 +42,6 @@ public class RateLimiterTests(TestFixture fixture)
             });
         }
 
-        // 6th attempt should be rate-limited
         var ch6 = NewChallenge();
         fixture.Hydra.SetupLoginChallengeWithProject(ch6, project.HydraClientId,
             project.Id.ToString(), org.Id.ToString());
@@ -89,7 +89,8 @@ public class RateLimiterTests(TestFixture fixture)
         project.AllowedEmailDomains   = ["allowed.com"]; // restrict domain so every attempt fails
         await fixture.Db.SaveChangesAsync();
 
-        // 5 domain-blocked failures
+        // Every one of these is refused for the domain, and a domain refusal has to charge the
+        // limiter too — otherwise it is a free oracle for probing which domains are allowed.
         for (var i = 0; i < 5; i++)
         {
             var ch = NewChallenge();
@@ -128,7 +129,8 @@ public class RateLimiterTests(TestFixture fixture)
         project.EmailVerificationEnabled = true;
         await fixture.Db.SaveChangesAsync();
 
-        // 5 failed reset attempts (non-existent email — each records a failure)
+        // Resets for addresses that do not exist still have to charge the limiter, or the
+        // enumeration-safe response becomes an unlimited probe.
         for (var i = 0; i < 5; i++)
         {
             await fixture.Client.PostAsJsonAsync("/auth/password-reset/request", new
@@ -138,7 +140,6 @@ public class RateLimiterTests(TestFixture fixture)
             });
         }
 
-        // 6th attempt should be rate-limited
         var res = await fixture.Client.PostAsJsonAsync("/auth/password-reset/request", new
         {
             project_id = project.Id,

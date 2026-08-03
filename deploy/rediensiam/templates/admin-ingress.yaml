@@ -1,20 +1,36 @@
 {{- if .Values.rediensiam.ingress.admin.enabled }}
-# Private admin ingress — Tailscale only (auth.ts.rediens.net).
-# HTTPS via cert-manager self-signed cert (browser warning on first visit).
+# Private admin ingress: a host of its own, reached over the operator's private network.
+# Issuer is configurable (ingress.admin.tls.clusterIssuer names a ClusterIssuer you run). Empty
+# falls back to the chart's own self-signed Issuer, which produces a browser warning on the
+# most privileged UI in the deployment and so trains operators to click through certificate
+# errors — see the R-05 runbook in SECURITY-AUDIT-LOG.md step 09.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: {{ .Release.Name }}-admin-internal
   namespace: {{ .Release.Namespace }}
   annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    cert-manager.io/cluster-issuer: selfsigned
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.rediensiam.ingress.admin.entrypoints }}
+    {{- if .Values.rediensiam.ingress.admin.tls.enabled }}
+    {{- if .Values.rediensiam.ingress.admin.tls.clusterIssuer }}
+    cert-manager.io/cluster-issuer: {{ .Values.rediensiam.ingress.admin.tls.clusterIssuer }}
+    {{- else }}
+    cert-manager.io/issuer: {{ include "rediensiam.selfSignedIssuer" . }}
+    {{- end }}
+    {{- end }}
 spec:
-  ingressClassName: {{ .Values.rediensiam.ingress.className }}
+  # Its own class, falling back to the shared one. Reading `ingress.className` here meant that a
+  # deployment running two controllers — a public one on a forwarded address, an admin one on an
+  # address that is never forwarded — had its admin Ingress served by the public controller. The
+  # host resolves nowhere public, so the topology looks like the protection; it is not, and a
+  # request carrying the admin Host sent to the public address is answered.
+  ingressClassName: {{ .Values.rediensiam.ingress.admin.className | default .Values.rediensiam.ingress.className }}
+  {{- if .Values.rediensiam.ingress.admin.tls.enabled }}
   tls:
     - hosts:
         - {{ include "rediensiam.ingressAdminHost" . }}
       secretName: {{ .Release.Name }}-admin-tls
+  {{- end }}
   rules:
     - host: {{ include "rediensiam.ingressAdminHost" . }}
       http:

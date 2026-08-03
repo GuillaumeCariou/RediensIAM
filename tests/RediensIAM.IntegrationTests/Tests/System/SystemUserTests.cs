@@ -127,7 +127,6 @@ public class SystemUserTests(TestFixture fixture)
     [Fact]
     public async Task UpdateUser_ClearDisplayName_SetsNull()
     {
-        // Covers SystemAdminController line 223: DisplayName == "" → null branch
         var (user, client) = await ScaffoldAsync();
         user.DisplayName = "Old Name";
         await fixture.Db.SaveChangesAsync();
@@ -144,7 +143,6 @@ public class SystemUserTests(TestFixture fixture)
     [Fact]
     public async Task UpdateUser_SetPhone_PersistsValue()
     {
-        // Covers SystemAdminController line 224: Phone != null, non-empty → sets value
         var (user, client) = await ScaffoldAsync();
 
         var res = await client.PatchAsJsonAsync($"/admin/users/{user.Id}", new { phone = "+1-555-0100" });
@@ -159,7 +157,6 @@ public class SystemUserTests(TestFixture fixture)
     [Fact]
     public async Task UpdateUser_ClearPhone_SetsNull()
     {
-        // Covers SystemAdminController line 224: Phone == "" → null branch
         var (user, client) = await ScaffoldAsync();
         user.Phone = "+1-555-0100";
         await fixture.Db.SaveChangesAsync();
@@ -195,5 +192,31 @@ public class SystemUserTests(TestFixture fixture)
         var res = await client.DeleteAsync($"/admin/users/{Guid.NewGuid()}/sessions");
 
         res.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    /// <summary>
+    /// The console's user table reads four fields this projection never sent, so the Organisation
+    /// and User List columns were always blank and <c>isLocked()</c> was permanently false — which
+    /// hid the Locked badge and, with it, the only route to the Unlock action.
+    /// </summary>
+    [Fact]
+    public async Task SearchUsers_ReturnsTheFieldsTheConsoleRenders()
+    {
+        var (user, client) = await ScaffoldAsync();
+        user.LockedUntil = DateTimeOffset.UtcNow.AddMinutes(10);
+        await fixture.Db.SaveChangesAsync();
+
+        var res  = await client.GetAsync($"/admin/users?q={Uri.EscapeDataString(user.Email)}");
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+
+        var row = body.EnumerateArray()
+            .First(u => u.GetProperty("email").GetString() == user.Email);
+
+        foreach (var field in new[] { "display_name", "org_name", "user_list_name", "locked_until" })
+            row.TryGetProperty(field, out _).Should().BeTrue($"the console renders {field}");
+
+        row.GetProperty("locked_until").ValueKind.Should().NotBe(JsonValueKind.Null,
+            "this account is locked, and the badge and the unlock action both key off it");
     }
 }

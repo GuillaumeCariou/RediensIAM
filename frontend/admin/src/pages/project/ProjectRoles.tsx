@@ -104,19 +104,19 @@ export default function ProjectRoles() {
               </tr>
             </thead>
             <tbody>
-              {loading ? (
-                Array.from({ length: 4 }, (_, i) => (
+              {(() => {
+                if (loading) return Array.from({ length: 4 }, (_, i) => (
                   <tr key={i}>{Array.from({ length: 5 }, (_, j) => <td key={j}><div style={{ height: 14, background: 'var(--surface-2)', borderRadius: 4, width: '70%' }} /></td>)}</tr>
-                ))
-              ) : roles.length === 0 ? (
-                <tr><td colSpan={5}>
-                  <div className="iam-empty">
-                    <div className="iam-empty-title">No roles defined yet</div>
-                    <div className="iam-empty-desc">Create roles to control project access.</div>
-                  </div>
-                </td></tr>
-              ) : (
-                [...roles].sort((a, b) => a.rank - b.rank).map(role => (
+                ));
+                if (roles.length === 0) return (
+                  <tr><td colSpan={5}>
+                    <div className="iam-empty">
+                      <div className="iam-empty-title">No roles defined yet</div>
+                      <div className="iam-empty-desc">Create roles to control project access.</div>
+                    </div>
+                  </td></tr>
+                );
+                return [...roles].sort((a, b) => a.rank - b.rank).map(role => (
                   <tr key={role.id}>
                     <td style={{ fontWeight: 500 }}>
                       <span className="iam-mono">{role.name}</span>
@@ -131,8 +131,8 @@ export default function ProjectRoles() {
                       </button>
                     </td>
                   </tr>
-                ))
-              )}
+                ));
+              })()}
             </tbody>
           </table>
         </div>

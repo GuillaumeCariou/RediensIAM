@@ -73,9 +73,9 @@ public class WebhookDeliveryTests(TestFixture fixture)
               .RespondWith(Response.Create().WithStatusCode(200));
 
         var (orgId, _, client, anchorId) = await ScaffoldAsync();
-        await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"]);
+        var wh = await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"]);
 
-        await client.PostAsJsonAsync($"/org/webhooks/{anchorId}/test", new { });
+        await client.PostAsJsonAsync($"/org/webhooks/{wh.Id}/test", new { });
         await Task.Delay(500); // let the background dispatcher fire
 
         var hits = target.LogEntries.Where(e => e.RequestMessage!.Path == "/hook").ToList();
@@ -92,9 +92,9 @@ public class WebhookDeliveryTests(TestFixture fixture)
               .RespondWith(Response.Create().WithStatusCode(200));
 
         var (orgId, _, client, anchorId) = await ScaffoldAsync();
-        await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"]);
+        var wh = await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"]);
 
-        await client.PostAsJsonAsync($"/org/webhooks/{anchorId}/test", new { });
+        await client.PostAsJsonAsync($"/org/webhooks/{wh.Id}/test", new { });
         await Task.Delay(500);
 
         var hits = target.LogEntries.Where(e => e.RequestMessage!.Path == "/hook").ToList();
@@ -117,9 +117,9 @@ public class WebhookDeliveryTests(TestFixture fixture)
 
         var (orgId, _, client, anchorId) = await ScaffoldAsync();
         // SecretEnc = "" → dispatcher sees empty plaintext → ComputeSignature returns ""
-        await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"], secretEnc: "");
+        var wh = await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"], secretEnc: "");
 
-        await client.PostAsJsonAsync($"/org/webhooks/{anchorId}/test", new { });
+        await client.PostAsJsonAsync($"/org/webhooks/{wh.Id}/test", new { });
         await Task.Delay(500);
 
         var hits = target.LogEntries.Where(e => e.RequestMessage!.Path == "/hook").ToList();
@@ -138,16 +138,16 @@ public class WebhookDeliveryTests(TestFixture fixture)
         var (orgId, _, client, anchorId) = await ScaffoldAsync();
 
         // Encrypt with the same HKDF-derived key the app uses for WebhookEncKey
-        var encKey = HKDF.DeriveKey(
+        var encKey = new KeyRing(1, HKDF.DeriveKey(
             HashAlgorithmName.SHA256,
             Convert.FromHexString(new string('0', 64)),
             32,
-            info: Encoding.UTF8.GetBytes("rediensiam-webhook-secret-v1"));
+            info: Encoding.UTF8.GetBytes("rediensiam-webhook-secret-v1")));
         var rawSecret   = Convert.ToBase64String(Encoding.UTF8.GetBytes("super-secret"));
         var secretEnc   = TotpEncryption.EncryptString(encKey, rawSecret);
-        await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"], secretEnc: secretEnc);
+        var wh = await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"], secretEnc: secretEnc);
 
-        await client.PostAsJsonAsync($"/org/webhooks/{anchorId}/test", new { });
+        await client.PostAsJsonAsync($"/org/webhooks/{wh.Id}/test", new { });
         await Task.Delay(500);
 
         var hits = target.LogEntries.Where(e => e.RequestMessage!.Path == "/hook").ToList();
@@ -170,7 +170,7 @@ public class WebhookDeliveryTests(TestFixture fixture)
         var (orgId, _, client, anchorId) = await ScaffoldAsync();
         var wh = await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"]);
 
-        await client.PostAsJsonAsync($"/org/webhooks/{anchorId}/test", new { });
+        await client.PostAsJsonAsync($"/org/webhooks/{wh.Id}/test", new { });
         await Task.Delay(500);
 
         await fixture.RefreshDbAsync();
@@ -239,41 +239,61 @@ public class WebhookDeliveryTests(TestFixture fixture)
 
     // ── Failure scenarios ─────────────────────────────────────────────────────
 
+    /// <summary>
+    /// A secret that cannot be read fails the delivery and says so.
+    ///
+    /// <para>
+    /// This test previously asserted the opposite — that the payload still had to reach the
+    /// endpoint, unsigned, rather than being "silently dropped". The reasoning was availability,
+    /// and the deciding argument against it is that nothing about it is silent any more: the
+    /// attempt is recorded with its reason, which is visible in the deliveries list. Weighed
+    /// against that, an unsigned delivery is accepted by any receiver that checks only whether a
+    /// signature header is present — and the signature is the only thing that makes a webhook
+    /// payload trustworthy. A receiver that verifies properly would reject it anyway, so the
+    /// event is lost in both designs; only one of them can also be forged.
+    /// </para>
+    /// </summary>
     [Fact]
-    public async Task Delivery_CorruptSecretEnc_StillDeliversPayload()
+    public async Task Delivery_CorruptSecretEnc_IsRefusedAndRecorded()
     {
-        // Invalid base64 in SecretEnc → DecryptString throws → catch at WebhookService.cs:75
-        // → secret falls back to "" → job still dispatched and delivered
         using var target = WireMockServer.Start(new WireMockServerSettings { Port = 0 });
         target.Given(Request.Create().WithPath("/hook").UsingPost())
               .RespondWith(Response.Create().WithStatusCode(200));
 
         var (orgId, _, client, anchorId) = await ScaffoldAsync();
-        await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"],
+        var wh = await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"],
             secretEnc: "not-valid-base64!!!");
 
-        await client.PostAsJsonAsync($"/org/webhooks/{anchorId}/test", new { });
+        await client.PostAsJsonAsync($"/org/webhooks/{wh.Id}/test", new { });
         await Task.Delay(500);
 
-        target.LogEntries.Where(e => e.RequestMessage!.Path == "/hook").Should().HaveCount(1);
+        target.LogEntries.Where(e => e.RequestMessage!.Path == "/hook").Should().BeEmpty(
+            "an unsigned payload is one a receiver cannot tell from a forged one");
+
+        await fixture.RefreshDbAsync();
+        var delivery = await fixture.Db.WebhookDeliveries
+            .Where(d => d.WebhookId == wh.Id)
+            .OrderByDescending(d => d.CreatedAt)
+            .FirstOrDefaultAsync();
+        delivery.Should().NotBeNull("the refusal has to be visible in the deliveries list");
+        delivery!.ErrorMessage.Should().Contain("signing secret");
     }
 
     [Fact]
     public async Task Delivery_EndpointReturns500_RecordsHttpError()
     {
-        // Non-2xx response → sets lastError = "HTTP 500", covers lines 143-144;
-        // retry check covers lines 151-152 (background — completes after test ends)
+        // A non-2xx reply records an HTTP error and schedules a retry. The retry itself outlives the
+        // test, which is why the assertion is "at least one request", not an exact count.
         using var target = WireMockServer.Start(new WireMockServerSettings { Port = 0 });
         target.Given(Request.Create().WithPath("/hook").UsingPost())
               .RespondWith(Response.Create().WithStatusCode(500));
 
         var (orgId, _, client, anchorId) = await ScaffoldAsync();
-        await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"]);
+        var wh = await SeedWebhookAsync(orgId, target.Url + "/hook", ["webhook.test"]);
 
-        await client.PostAsJsonAsync($"/org/webhooks/{anchorId}/test", new { });
+        await client.PostAsJsonAsync($"/org/webhooks/{wh.Id}/test", new { });
         await Task.Delay(500); // first attempt completes synchronously before retry delay starts
 
-        // At least one request received (first attempt)
         target.LogEntries.Where(e => e.RequestMessage!.Path == "/hook")
             .Should().NotBeEmpty();
     }
@@ -288,9 +308,11 @@ public class WebhookDeliveryTests(TestFixture fixture)
         // temp is disposed — port is no longer listening
 
         var (orgId, _, client, anchorId) = await ScaffoldAsync();
-        await SeedWebhookAsync(orgId, targetUrl, ["webhook.test"]);
+        var wh = await SeedWebhookAsync(orgId, targetUrl, ["webhook.test"]);
 
-        await client.PostAsJsonAsync($"/org/webhooks/{anchorId}/test", new { });
-        await Task.Delay(500); // connection refused is immediate → catch block (lines 145-149) executed
+        await client.PostAsJsonAsync($"/org/webhooks/{wh.Id}/test", new { });
+        // Connection refused comes back immediately; the delay only gives the background dispatcher
+        // time to reach and swallow it. Nothing to assert — the point is that nothing throws.
+        await Task.Delay(500);
     }
 }

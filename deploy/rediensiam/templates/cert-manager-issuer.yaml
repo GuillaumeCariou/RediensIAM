@@ -1,8 +1,38 @@
-{{- if .Values.rediensiam.ingress.admin.enabled }}
+{{/*
+cert-manager issuers. cert-manager itself is NOT installed by this chart — see the runbook.
+The built-in self-signed issuer also signs the optional Postgres / Dragonfly server certs, so
+it is rendered whenever anything needs it, not only for the admin ingress. It is namespaced
+and release-named — see rediensiam.selfSignedIssuer in _helpers.tpl for why.
+*/}}
+{{- if or (and .Values.rediensiam.ingress.admin.enabled .Values.rediensiam.ingress.admin.tls.enabled (not .Values.rediensiam.ingress.admin.tls.clusterIssuer)) .Values.rediensiam.postgres.local.tls.enabled .Values.rediensiam.dragonfly.local.tls.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "rediensiam.selfSignedIssuer" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  selfSigned: {}
+{{- end }}
+{{- if .Values.rediensiam.certManager.acme.enabled }}
+{{- if not .Values.rediensiam.certManager.acme.email }}
+{{- fail "rediensiam.certManager.acme.email is required when certManager.acme.enabled is true" }}
+{{- end }}
+---
+# Publicly trusted issuer for the public auth surface (R-02). HTTP-01 solver: the ACME server
+# must be able to reach http://<publicHost>/.well-known/acme-challenge/ — i.e. port 80 on this
+# node must be open to the internet and DNS for publicHost must already point at it.
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
-  name: selfsigned
+  name: {{ .Values.rediensiam.certManager.acme.issuerName }}
 spec:
-  selfSigned: {}
+  acme:
+    server: {{ .Values.rediensiam.certManager.acme.server | quote }}
+    email: {{ .Values.rediensiam.certManager.acme.email | quote }}
+    privateKeySecretRef:
+      name: {{ .Values.rediensiam.certManager.acme.issuerName }}-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: {{ .Values.rediensiam.ingress.className }}
 {{- end }}

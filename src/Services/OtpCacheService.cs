@@ -62,8 +62,28 @@ public class OtpCacheService(IConnectionMultiplexer redis, AppConfig appConfig)
 
     // ── Session-keyed OTP (no userId — for pending registrations and resets) ──
 
-    public async Task StorePendingAsync(string prefix, string sessionId, string data)
-        => await _db.StringSetAsync($"pending:{prefix}:{sessionId}", data, TimeSpan.FromSeconds(_ttlSeconds));
+    /// <summary>
+    /// Stores short-lived flow state server-side. <paramref name="ttlSeconds"/> overrides the OTP
+    /// TTL for flows that legitimately take longer than a one-time code — enrolling an
+    /// authenticator means scanning a QR code and waiting for the next window.
+    /// </summary>
+    public async Task StorePendingAsync(string prefix, string sessionId, string data, int? ttlSeconds = null)
+        => await _db.StringSetAsync($"pending:{prefix}:{sessionId}", data,
+            TimeSpan.FromSeconds(ttlSeconds ?? _ttlSeconds));
+
+    /// <summary>TTL for enrolment flows (TOTP/WebAuthn/phone setup).</summary>
+    public const int EnrolmentTtlSeconds = 900;
+
+    /// <summary>Reads pending state without consuming it — for flows where a wrong code should
+    /// let the user retry rather than restart enrolment.</summary>
+    public async Task<string?> PeekPendingAsync(string prefix, string sessionId)
+    {
+        var val = await _db.StringGetAsync($"pending:{prefix}:{sessionId}");
+        return val.IsNull ? null : val.ToString();
+    }
+
+    public async Task DeletePendingAsync(string prefix, string sessionId)
+        => await _db.KeyDeleteAsync($"pending:{prefix}:{sessionId}");
 
     public async Task<string?> GetAndDeletePendingAsync(string prefix, string sessionId)
     {

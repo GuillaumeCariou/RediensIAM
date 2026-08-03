@@ -1,16 +1,24 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { getThemeByProject, completeInvite } from '../api';
 
-import { sanitizeCss } from '../lib/sanitizeCss';
+import { sanitizeCss, safeCssValue } from '../lib/sanitizeCss';
 
-// Returns a cleanup function that removes the applied CSS vars and <style> node.
+/**
+ * Applies a tenant theme to the document. Returns a cleanup function that removes the applied
+ * CSS vars and the injected style node — callers must run it, or a theme leaks across navigations
+ * and style nodes accumulate.
+ *
+ * Every value goes through {@link safeCssValue} and the free-form block through
+ * {@link sanitizeCss}: `data` is tenant-controlled and this page is unauthenticated.
+ */
 function applyTheme(data: Record<string, unknown>): () => void {
   const t = (data?.theme ?? {}) as Record<string, string>;
   const el = document.documentElement;
   const touched: string[] = [];
   const set = (v: string, val?: string) => {
-    if (val) { el.style.setProperty(v, val); touched.push(v); }
+    const safe = safeCssValue(val);
+    if (safe) { el.style.setProperty(v, safe); touched.push(v); }
   };
   set('--primary', t.primary_color);
   set('--accent', t.primary_color);
@@ -48,6 +56,13 @@ function LoginLogo() {
   );
 }
 
+/**
+ * The first effect below scrubs the invite token from the address bar and browser history. The
+ * token is a single-use credential: left in the URL it leaks via Referer headers to any
+ * third-party request the page makes, and survives in shared screenshots and browser history.
+ * It is read into state before the scrub, so removing the effect is not visibly broken — it just
+ * silently reopens the leak.
+ */
 export default function SetPassword() {
   const [params] = useSearchParams();
   const token     = params.get('token')      ?? '';
@@ -59,8 +74,6 @@ export default function SetPassword() {
   const [loading,  setLoading]  = useState(false);
   const [done,     setDone]     = useState(false);
 
-  // Scrub the invite token from the address bar and browser history so it doesn't
-  // leak via Referer headers (e.g. to Google Fonts) or stay in shared screenshots.
   useEffect(() => {
     if (!token) return;
     const cleaned = new URL(globalThis.location.href);

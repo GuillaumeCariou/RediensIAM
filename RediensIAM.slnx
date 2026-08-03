@@ -2,6 +2,10 @@
   <Folder Name="/src/">
     <Project Path="src/RediensIAM.csproj" />
   </Folder>
+  <Folder Name="/sdk/">
+    <Project Path="sdk/dotnet/RediensIAM.Client/RediensIAM.Client.csproj" />
+    <Project Path="sdk/dotnet/RediensIAM.Client.Tests/RediensIAM.Client.Tests.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/RediensIAM.IntegrationTests/RediensIAM.IntegrationTests.csproj" />
   </Folder>

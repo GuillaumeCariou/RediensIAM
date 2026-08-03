@@ -1,19 +1,152 @@
 {{- if .Values.rediensiam.postgres.local.enabled }}
+{{- $tls := .Values.rediensiam.postgres.local.tls }}
+{{- if $tls.requireSsl }}
+{{- /*
+  R-15 ordering guard. `hostssl` on a server with ssl=off answers nothing at all,
+  and `hostssl` with a cleartext DSN answers nothing to that component. Both are
+  total outages discovered at connection time. Fail at template time instead.
+*/}}
+{{- if not $tls.enabled }}
+{{- fail "rediensiam.postgres.local.tls.requireSsl needs tls.enabled — hostssl on a server with ssl=off refuses every client" }}
+{{- end }}
+{{- $dsns := dict "rediensiam.secrets.databaseUrl" (.Values.rediensiam.secrets.databaseUrl | default "") "hydra.hydra.config.dsn" (dig "hydra" "config" "dsn" "" .Values.hydra) "keto.keto.config.dsn" (dig "keto" "config" "dsn" "" .Values.keto) }}
+{{- /*
+  Only a DSN that actually points at PostgreSQL is judged.
+    - empty means "comes from the gitignored secrets file", which `helm lint` and
+      `helm template` on values.yaml + values.<env>.yaml alone never see; failing
+      there would break the repository's own gate on a file that is correct, and an
+      absent DSN fails at deploy time anyway because Hydra will not start without one.
+    - the Keto subchart ships `dsn: memory` as its default, which has no transport
+      to encrypt.
+  A cleartext Postgres DSN is still caught, which is the case that matters.
+*/}}
+{{- range $name, $dsn := $dsns }}
+{{- if and (regexMatch "(?i)^postgres|host *=" $dsn) (not (regexMatch "(?i)ssl ?mode *= *(require|verify)" $dsn)) }}
+{{- fail (printf "rediensiam.postgres.local.tls.requireSsl is set but %s does not request TLS — cut every DSN over to sslmode=require FIRST (SECURITY-AUDIT-LOG.md step 18 §2)" $name) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if $tls.enabled }}
+# R-15. Server-side TLS for the bundled Postgres. Signed by the chart's built-in Issuer,
+# so `sslmode=require` (encryption, no server authentication) is the honest ceiling here;
+# `verify-full` needs a real CA whose root is distributed to app, Hydra and Keto — see the
+# R-15 runbook. Postgres with ssl=on still ACCEPTS cleartext clients: it is the sslmode in
+# each DSN that enforces the encrypted path, which is why this can be enabled without an
+# outage and switched over per-client.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Release.Name }}-postgres-tls
+  namespace: {{ .Release.Namespace }}
+spec:
+  secretName: {{ .Release.Name }}-postgres-tls
+  issuerRef:
+    name: {{ include "rediensiam.selfSignedIssuer" . }}
+    kind: Issuer
+  commonName: {{ .Release.Name }}-postgres
+  dnsNames:
+    - {{ .Release.Name }}-postgres
+    - {{ .Release.Name }}-postgres.{{ .Release.Namespace }}.svc
+    - {{ .Release.Name }}-postgres.{{ .Release.Namespace }}.svc.cluster.local
+---
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ .Release.Name }}-postgres-init
   namespace: {{ .Release.Namespace }}
 data:
+  # T-04. This file runs ONCE, on a first-ever start against an empty PGDATA. It has no
+  # effect on an existing database — see the migration runbook in
+  # SECURITY-AUDIT-LOG.md step 15c for the path that does.
   init.sh: |
     #!/bin/bash
     set -e
-    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "postgres" <<-EOSQL
-      CREATE DATABASE hydra;
-      CREATE DATABASE keto;
-      GRANT ALL PRIVILEGES ON DATABASE hydra TO $POSTGRES_USER;
-      GRANT ALL PRIVILEGES ON DATABASE keto TO $POSTGRES_USER;
+    # The local socket authenticates with scram-sha-256 now (POSTGRES_INITDB_ARGS on the
+    # StatefulSet below), not `trust`, so even this script needs the superuser password.
+    export PGPASSWORD="$POSTGRES_PASSWORD"
+
+    # Previously: one role, `iam`, created by initdb with SUPERUSER + CREATEROLE + CREATEDB
+    # and no expiry, shared by the app, Hydra and Keto. Any one of the three DSNs was a
+    # superuser credential for all of them, and `local all all trust` meant `kubectl exec`
+    # into this pod was superuser with no credential at all.
+    #
+    # Now: `iam` remains the bootstrap superuser and is used by NOTHING at runtime. Each
+    # component gets its own non-superuser login role that owns exactly one database and
+    # cannot CONNECT to the other two.
+    #
+    # Passwords are passed as psql variables, so :'name' quotes and escapes them. They are
+    # never interpolated into the SQL text by the shell.
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "postgres" \
+      -v app_pw="$APP_DB_PASSWORD" \
+      -v hydra_pw="$HYDRA_DB_PASSWORD" \
+      -v keto_pw="$KETO_DB_PASSWORD" \
+      -v backup_pw="$BACKUP_DB_PASSWORD" <<-'EOSQL'
+      CREATE ROLE iam_app    LOGIN PASSWORD :'app_pw'    NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+      CREATE ROLE iam_hydra  LOGIN PASSWORD :'hydra_pw'  NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+      CREATE ROLE iam_keto   LOGIN PASSWORD :'keto_pw'   NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+      -- The backup needs to read every database and nothing else. pg_read_all_data covers
+      -- SELECT on all tables plus USAGE on all schemas, which is what pg_dumpall needs when
+      -- it is run with --no-role-passwords (the only part that requires superuser).
+      CREATE ROLE iam_backup LOGIN PASSWORD :'backup_pw' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+      -- The grant the two comments below already assume. It was deleted once while every comment
+      -- and document citing it stayed, so pg_dumpall hit permission denied on the first table and
+      -- exited: no database this chart created has ever produced a backup. The 13 detection rules
+      -- authenticate as this same role, so they returned nothing but errors for just as long.
+      -- Role membership is cluster-wide, so granting it here covers every database below.
+      GRANT pg_read_all_data TO iam_backup;
+      -- S-5 phase 2. pg_dump sets `row_security = off`, which ERRORS for a role that cannot
+      -- bypass RLS, so the nightly pg_dumpall ABORTS on the first policied table. It hands
+      -- iam_backup nothing it did not already have: pg_read_all_data above already reads
+      -- every row, RLS or no RLS.
+      --
+      -- UNCONDITIONAL, and that is the point. This used to be gated on postgres.rls.enabled,
+      -- and init.sh only ever runs at initdb — while `setup.sh --prod` FORCES rls off on a
+      -- first install and does not even ask. Every prod database therefore came out without
+      -- the grant, and enabling RLS later could only ever fail: observed 2026-08-01, the
+      -- post-upgrade Job aborting with `iam_backup cannot bypass RLS`. The values.yaml claim
+      -- that the grant "is no longer a thing to remember" was true of no prod install that
+      -- setup.sh could produce. Granting it always costs nothing and removes the ordering
+      -- trap; files/rls.sql still refuses to apply a policy without it, so a database created
+      -- before this line fails the deploy rather than the backup.
+      ALTER ROLE iam_backup BYPASSRLS;
+
+      -- `rediensiam` used to be created by the app itself, which is why `iam` needed
+      -- CREATEDB. Pre-creating it here is what lets iam_app drop that attribute.
+      CREATE DATABASE rediensiam OWNER iam_app;
+      CREATE DATABASE hydra      OWNER iam_hydra;
+      CREATE DATABASE keto       OWNER iam_keto;
+
+      -- PUBLIC holds CONNECT on every new database by default. Leaving it is what would
+      -- let a leaked Keto DSN open Hydra's database and read every consent record.
+      REVOKE CONNECT ON DATABASE rediensiam FROM PUBLIC;
+      REVOKE CONNECT ON DATABASE hydra      FROM PUBLIC;
+      REVOKE CONNECT ON DATABASE keto       FROM PUBLIC;
+      REVOKE CONNECT ON DATABASE postgres   FROM PUBLIC;
+
+      GRANT CONNECT ON DATABASE rediensiam TO iam_app,   iam_backup;
+      GRANT CONNECT ON DATABASE hydra      TO iam_hydra, iam_backup;
+      GRANT CONNECT ON DATABASE keto       TO iam_keto,  iam_backup;
+      -- pg_dumpall iterates every database with datallowconn, `postgres` included; without
+      -- this the backup fails on the very first database it reaches.
+      GRANT CONNECT ON DATABASE postgres   TO iam_backup;
     EOSQL
+{{- if .Values.rediensiam.postgres.local.tls.requireSsl }}
+
+    # R-15. `ssl=on` alone only makes TLS AVAILABLE — Postgres still accepts a
+    # cleartext client, so the encrypted path is a property of each DSN rather than
+    # of the server. `hostssl` makes the server refuse a TCP client that does not
+    # negotiate TLS, which is what turns "our clients are configured correctly"
+    # into a control. The `local` (unix socket) lines are left alone: that path
+    # never leaves the pod's network namespace and pg_isready uses it.
+    #
+    # initdb is the only point at which pg_hba.conf is generated, so this runs on a
+    # first-ever start only. On an existing database do it live — see
+    # SECURITY-AUDIT-LOG.md step 18 §2. hostssl` never matches here
+    # because there is no whitespace after `host` in it.
+    sed -i -E 's/^host([[:space:]])/hostssl\1/' "$PGDATA/pg_hba.conf"
+    echo "R-15: pg_hba.conf host -> hostssl (cleartext TCP refused)"
+{{- end }}
 ---
 apiVersion: v1
 kind: Service
@@ -53,6 +186,38 @@ spec:
         fsGroup: 70
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        # Data-loss guard for the PGDATA move below. An installation created before that
+        # change keeps its data directory at the mount ROOT; the new PGDATA points one level
+        # down, so postgres would find an empty directory, run initdb, and come up as a
+        # brand-new empty cluster — reporting success the whole way. Stop the rollout instead.
+        # Migration: move the contents down one level, as uid 70, with the database stopped.
+        - name: pgdata-location-guard
+          image: {{ .Values.rediensiam.postgres.local.image }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              if [ -f /var/lib/postgresql/data/PG_VERSION ]; then
+                echo "FATAL: this volume holds a PostgreSQL data directory at the mount root," >&2
+                echo "       but PGDATA is now /var/lib/postgresql/data/pgdata. Starting would" >&2
+                echo "       initdb an EMPTY cluster beside your data. Move it down one level:" >&2
+                echo "         kubectl scale sts {{ .Release.Name }}-postgres --replicas=0 -n {{ .Release.Namespace }}" >&2
+                echo "         # then, in a pod as uid 70 with the PVC mounted at /data:" >&2
+                echo "         mkdir -p /data/pgdata && find /data -mindepth 1 -maxdepth 1 \\" >&2
+                echo "           ! -name pgdata -exec mv -t /data/pgdata {} +" >&2
+                exit 1
+              fi
+              echo "pgdata guard: no data directory at the mount root — ok"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
       containers:
         - name: postgres
           image: {{ .Values.rediensiam.postgres.local.image }}
@@ -67,10 +232,57 @@ spec:
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ include "rediensiam.secretName" . }}
                   key: postgres-password
             - name: POSTGRES_DB
               value: postgres
+            # A SUBDIRECTORY of the mount, not the mount itself. local-path (and most dynamic
+            # provisioners) hand out a volume root owned by uid 0; `fsGroup: 70` sets the GROUP
+            # but never the owner, and initdb chmods PGDATA to 0700 — which uid 70 may not do
+            # to a directory it does not own. A first-ever start therefore died with
+            #   initdb: error: could not change permissions of directory "…/data": Operation not permitted
+            # and CrashLoopBackOff'd forever. Observed on a fresh install 2026-08-01; every
+            # existing installation predates the non-root securityContext, so its data
+            # directory is already uid-70-owned and none of them ever hit it.
+            # The subdirectory is created by the entrypoint AS uid 70, so it is owned by 70.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            # T-04. initdb writes `local all all trust` and `host all all 127.0.0.1/32 trust`
+            # by default, which is why `kubectl exec … psql -U iam` needed no password. These
+            # two flags are the only way to change that at initdb time; on an already-created
+            # data directory pg_hba.conf must be rewritten by hand (migration runbook).
+            - name: POSTGRES_INITDB_ARGS
+              value: "--auth-local=scram-sha-256 --auth-host=scram-sha-256"
+            # Consumed by init.sh above, on first start only.
+            - name: APP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "rediensiam.secretName" . }}
+                  key: postgres-app-password
+            - name: HYDRA_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "rediensiam.secretName" . }}
+                  key: postgres-hydra-password
+            - name: KETO_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "rediensiam.secretName" . }}
+                  key: postgres-keto-password
+            - name: BACKUP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "rediensiam.secretName" . }}
+                  key: postgres-backup-password
+          {{- if .Values.rediensiam.postgres.local.tls.enabled }}
+          args:
+            - -c
+            - ssl=on
+            - -c
+            - ssl_cert_file=/etc/postgres-tls/tls.crt
+            - -c
+            - ssl_key_file=/etc/postgres-tls/tls.key
+          {{- end }}
           ports:
             - containerPort: 5432
           volumeMounts:
@@ -78,6 +290,11 @@ spec:
               mountPath: /var/lib/postgresql/data
             - name: init
               mountPath: /docker-entrypoint-initdb.d
+            {{- if .Values.rediensiam.postgres.local.tls.enabled }}
+            - name: tls
+              mountPath: /etc/postgres-tls
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.rediensiam.postgres.local.resources | nindent 12 }}
           readinessProbe:
@@ -90,6 +307,14 @@ spec:
           configMap:
             name: {{ .Release.Name }}-postgres-init
             defaultMode: 0755
+        {{- if .Values.rediensiam.postgres.local.tls.enabled }}
+        # 0640 with root ownership is the only mode Postgres accepts for a key it does not
+        # own; fsGroup 70 above makes it group-readable by the postgres user.
+        - name: tls
+          secret:
+            secretName: {{ .Release.Name }}-postgres-tls
+            defaultMode: 0640
+        {{- end }}
   volumeClaimTemplates:
     - metadata:
         name: data

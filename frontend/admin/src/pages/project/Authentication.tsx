@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { useProjectContext } from '@/hooks/useOrgContext';
 import { IamChip, IamDialog } from '@/components/iam';
 import { getProjectInfo, updateProject, listRoles, listSamlProviders, createSamlProvider, deleteSamlProvider } from '@/api';
@@ -20,7 +20,7 @@ interface Provider {
 
 interface SamlProvider {
   id: string; entity_id: string; metadata_url?: string;
-  email_attribute_name: string; name_attribute_name?: string;
+  email_attribute_name: string; display_name_attribute_name?: string;
   jit_provisioning: boolean; active: boolean;
 }
 
@@ -61,26 +61,36 @@ const DEFAULT_THEME: Theme = {
 
 function nanoid() { return crypto.randomUUID().replaceAll('-', '').slice(0, 8); }
 
-function Toggle({ checked, onChange }: Readonly<{ checked: boolean; onChange: (v: boolean) => void }>) {
+function Toggle({ checked, onChange, label, id }: Readonly<{ checked: boolean; onChange: (v: boolean) => void; label?: string; id?: string }>) {
+  // A styled checkbox rather than a bare <button>: it carries the role, the checked state and the
+  // accessible name for free. The button version announced itself as "button", fifteen times on
+  // this page, with no name and no state — "Require MFA" was indistinguishable from "Reject
+  // breached passwords".
   return (
-    <button type="button" onClick={() => onChange(!checked)} style={{
-      width: 36, height: 20, borderRadius: 10,
-      background: checked ? 'var(--ia-accent)' : 'var(--border-strong)',
-      position: 'relative', border: 'none', cursor: 'pointer', flexShrink: 0, transition: 'background 150ms',
-    }}>
-      <span style={{ position: 'absolute', top: 2, left: checked ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 150ms' }} />
-    </button>
+    <input
+      type="checkbox"
+      className="iam-switch"
+      id={id}
+      checked={checked}
+      aria-label={label}
+      onChange={e => onChange(e.target.checked)}
+    />
   );
 }
 
 function ColorRow({ label, value, onChange }: Readonly<{ label: string; value: string; onChange: (v: string) => void }>) {
+  // Four of these sit on the page at once, so the id has to be per-instance.
+  const uid = useId();
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <label className="iam-label">{label}</label>
+      {/* Two controls edit the one value. The caption drives the hex field rather than the
+          swatch, because a label click should put the cursor somewhere, not throw up the
+          operating system's colour picker. The swatch carries its own name instead. */}
+      <label className="iam-label" htmlFor={`${uid}-hex`}>{label}</label>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <input type="color" value={value || '#000000'} onChange={e => onChange(e.target.value)}
+        <input type="color" aria-label={`${label} colour picker`} value={value || '#000000'} onChange={e => onChange(e.target.value)}
           style={{ height: 36, width: 44, borderRadius: 6, cursor: 'pointer', border: '1px solid var(--border)', padding: 2, background: 'transparent', flexShrink: 0 }} />
-        <input className="iam-input iam-mono" value={value} onChange={e => onChange(e.target.value)} placeholder="#000000" />
+        <input className="iam-input iam-mono" id={`${uid}-hex`} value={value} onChange={e => onChange(e.target.value)} placeholder="#000000" />
       </div>
     </div>
   );
@@ -91,11 +101,16 @@ const MAX_LOGO_BYTES = 256 * 1024;
 function LogoUpload({ value, onChange, label = 'Logo' }: Readonly<{ value?: string; onChange: (v: string) => void; label?: string }>) {
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const inputId = `logo-file-input-${label.replaceAll(/\s+/g, '-')}`;
+  // Was derived from `label`, which is not unique: the per-provider blocks each render one of
+  // these with the same "Custom logo (optional)" caption, so every expanded provider produced the
+  // same element id and the file picker opened for whichever one happened to be first in the DOM.
+  const inputId = `${useId()}-file`;
+  /**
+   * Raster formats only, as an allowlist. `image/svg+xml` is absent on purpose and must stay
+   * absent: an SVG can carry <script>/<onload> and executes when rendered via <img>/<object>/CSS
+   * background-image on the downstream login page, which is where this logo ends up.
+   */
   const isSafeImageMime = (mime: string) => {
-    // Reject SVG outright — SVG files can contain <script>/<onload> and execute
-    // when rendered via <img>/<object>/CSS background-image on the downstream
-    // login page. Allow only raster formats.
     const allowed = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/avif']);
     return allowed.has(mime.toLowerCase());
   };
@@ -107,17 +122,27 @@ function LogoUpload({ value, onChange, label = 'Logo' }: Readonly<{ value?: stri
     reader.onload = e => onChange(e.target?.result as string);
     reader.readAsDataURL(file);
   };
+  /**
+   * The `data:` branch repeats both checks the file-picker path applies — MIME allowlist and size
+   * cap. Without them the URL field is a straight bypass of the upload limits: paste an
+   * `data:image/svg+xml,…` and the SVG reaches the login page, or paste a huge blob and the size
+   * cap never runs. Neither check may be dropped from this branch.
+   *
+   * The size test uses raw URL length as an upper bound on the decoded bytes (base64 expands 4/3),
+   * so it over-estimates and never under-estimates.
+   *
+   * Non-data URLs must be https: an http logo on the login page is mixed content and an
+   * on-path rewrite point.
+   */
   const handleUrlInput = (v: string) => {
     setError(null);
     if (v === '') { onChange(v); return; }
     if (v.startsWith('data:')) {
-      // Pasted data: URL — verify MIME prefix AND size cap (file upload limit cannot be bypassed via URL field).
       const match = /^data:([^;,]+)[;,]/.exec(v);
       if (!match || !isSafeImageMime(match[1])) {
         setError('data: URL must reference a raster image (PNG, JPEG, GIF, WebP, AVIF).');
         return;
       }
-      // Approximate decoded size: base64 ratio 4/3. Treat raw URL length as upper bound.
       if (v.length > MAX_LOGO_BYTES * 1.5) {
         setError(`Embedded image must be under ${Math.floor(MAX_LOGO_BYTES / 1024)} KB.`);
         return;
@@ -133,7 +158,10 @@ function LogoUpload({ value, onChange, label = 'Logo' }: Readonly<{ value?: stri
   };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <label className="iam-label">{label}</label>
+      {/* A caption over the whole uploader — the drop zone, the browse control inside it and the
+          URL field below — not a label for any one of them, so it is not a <label>. Each of those
+          carries its own name. */}
+      <p className="iam-label">{label}</p>
       <button type="button"
         onDragOver={e => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
@@ -162,7 +190,7 @@ function LogoUpload({ value, onChange, label = 'Logo' }: Readonly<{ value?: stri
           </div>
         )}
       </button>
-      <input className="iam-input" value={value?.startsWith('data:') ? '' : (value ?? '')} onChange={e => handleUrlInput(e.target.value)} placeholder="https://cdn.example.com/logo.png" />
+      <input className="iam-input" aria-label={`${label} URL`} value={value?.startsWith('data:') ? '' : (value ?? '')} onChange={e => handleUrlInput(e.target.value)} placeholder="https://cdn.example.com/logo.png" />
       {error && <div role="alert" style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</div>}
     </div>
   );
@@ -181,10 +209,13 @@ function CopyButton({ text }: Readonly<{ text: string }>) {
 }
 
 function SecretInput({ value, saved: secretSaved, onChange }: Readonly<{ value: string; saved?: boolean; onChange: (v: string) => void }>) {
+  // Per-instance, not a constant: one of these renders for every expanded provider, and a shared
+  // id made every "Client Secret" label point at the first provider's field.
+  const uid = useId();
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <label className="iam-label" htmlFor="secret-input" style={{ fontSize: 11 }}>Client Secret</label>
-      <input id="secret-input" className="iam-input" type="password" value={value} onChange={e => onChange(e.target.value)}
+      <label className="iam-label" htmlFor={`${uid}-secret`} style={{ fontSize: 11 }}>Client Secret</label>
+      <input id={`${uid}-secret`} className="iam-input" type="password" value={value} onChange={e => onChange(e.target.value)}
         placeholder={secretSaved && !value ? '••••••••• (saved — enter new to replace)' : 'OAuth2 client secret'}
         autoComplete="new-password" />
       {secretSaved && !value && (
@@ -214,6 +245,7 @@ export default function Authentication() {
   const [theme, setTheme] = useState<Theme>(DEFAULT_THEME);
   const [customFont, setCustomFont] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [previewDark, setPreviewDark] = useState(false);
@@ -245,13 +277,15 @@ export default function Authentication() {
   const [addSamlOpen,   setAddSamlOpen]   = useState(false);
   const [samlForm,      setSamlForm]      = useState({
     entity_id: '', metadata_url: '', email_attribute_name: 'email',
-    name_attribute_name: '', jit_provisioning: true, active: true,
+    display_name_attribute_name: '', jit_provisioning: true, active: true,
   });
   const [samlSaving, setSamlSaving] = useState(false);
   const [samlError,  setSamlError]  = useState('');
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!projectId) { setLoading(false); return; }
+    setLoading(true);
+    setLoadError(false);
     Promise.all([
       getProjectInfo(projectId).then(p => {
         if (p.login_theme) {
@@ -284,11 +318,20 @@ export default function Authentication() {
       }),
       listRoles(projectId).then(r => setRoles((r.roles ?? r ?? []).sort((a: Role, b: Role) => a.rank - b.rank))),
       listSamlProviders(projectId).then(r => setSamlProviders(r.providers ?? r ?? [])).catch(() => {}),
-    ]).catch(console.error).finally(() => setLoading(false));
+    ]).catch(err => { console.error(err); setLoadError(true); }).finally(() => setLoading(false));
   }, [projectId]);
+
+  useEffect(load, [load]);
 
   const set = <K extends keyof Theme>(k: K, v: Theme[K]) => setTheme(t => ({ ...t, [k]: v }));
 
+  /**
+   * `safeProviders` below strips the server-only `client_secret_saved` flag, and drops
+   * `client_secret` entirely when the server already holds one and the admin did not retype it —
+   * otherwise saving any unrelated setting would overwrite the stored secret with an empty string.
+   * The `no-unused-vars` suppression is there because the discarded bindings exist only to be
+   * omitted by rest-destructuring; it is not hiding a real unused variable.
+   */
   const handleSave = async () => {
     const ipLines = ipAllowlist.split('\n').map(s => s.trim()).filter(Boolean);
     const badIp = ipLines.find(s => !/^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$|^[0-9a-fA-F:]+\/\d{1,3}$/.test(s));
@@ -298,11 +341,15 @@ export default function Authentication() {
     try {
       const domains = allowedDomains.split(',').map(d => d.trim()).filter(Boolean);
       const safeProviders = (theme.providers ?? []).map(p => {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { client_secret_saved, ...rest } = p;
+        // Copy-then-delete rather than rest-destructuring: naming a binding only to discard it
+        // needs a lint suppression beside it, and a suppression is a thing the next reader has to
+        // evaluate. `client_secret_saved` is the server's own flag and must not be echoed back;
+        // `client_secret` is dropped when the server already holds one and the admin did not
+        // retype it, so saving an unrelated setting cannot overwrite the stored secret with "".
+        const rest = { ...p };
+        delete rest.client_secret_saved;
         if (p.client_secret_saved && !p.client_secret) {
-          const { client_secret: _cs, ...noSecret } = rest;
-          return noSecret;
+          delete rest.client_secret;
         }
         return rest;
       });
@@ -331,13 +378,18 @@ export default function Authentication() {
     } finally { setSaving(false); }
   };
 
+  /**
+   * Per-provider secrets are stripped before the theme is base64'd into the preview URL. That URL
+   * ends up in browser history, web-server logs and Referer headers, so an OAuth `client_secret`
+   * must never travel in it. Adding a field back to `cfg` without filtering it here leaks it.
+   */
   const previewUrl = useMemo(() => {
-    // Strip per-provider secrets before embedding the theme in the URL — the preview iframe URL
-    // ends up in browser history, web-server logs, and Referer headers; OAuth client_secret values
-    // must never travel via URL.
+    // Copy-then-delete rather than rest-destructuring: the discarded names would each need a lint
+    // suppression, and a suppression beside a secret-stripping step is the last place worth one.
     const safeProviders = (theme.providers ?? []).map(p => {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { client_secret, client_secret_saved, ...rest } = p as unknown as Record<string, unknown>;
+      const rest = { ...p } as Record<string, unknown>;
+      delete rest.client_secret;
+      delete rest.client_secret_saved;
       return rest;
     });
     const safeTheme = { ...theme, providers: safeProviders };
@@ -387,6 +439,11 @@ export default function Authentication() {
 
   const spMetadataUrl = `${globalThis.location.origin}/admin/projects/${projectId}/saml/metadata`;
 
+  /**
+   * `samlForm.active` is deliberately not sent below: the create endpoint does not accept it and
+   * always creates providers enabled. Adding it here looks like it works and silently does
+   * nothing — disable a provider with the PATCH endpoint afterwards instead.
+   */
   const handleAddSaml = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSamlSaving(true); setSamlError('');
@@ -395,14 +452,13 @@ export default function Authentication() {
         entity_id: samlForm.entity_id,
         metadata_url: samlForm.metadata_url || undefined,
         email_attribute_name: samlForm.email_attribute_name || 'email',
-        name_attribute_name: samlForm.name_attribute_name || undefined,
+        display_name_attribute_name: samlForm.display_name_attribute_name || undefined,
         jit_provisioning: samlForm.jit_provisioning,
-        active: samlForm.active,
       });
       if (res.error) { setSamlError(res.error_description ?? 'Failed to add provider.'); return; }
       setSamlProviders(prev => [...prev, res]);
       setAddSamlOpen(false);
-      setSamlForm({ entity_id: '', metadata_url: '', email_attribute_name: 'email', name_attribute_name: '', jit_provisioning: true, active: true });
+      setSamlForm({ entity_id: '', metadata_url: '', email_attribute_name: 'email', display_name_attribute_name: '', jit_provisioning: true, active: true });
     } catch { setSamlError('Something went wrong.'); }
     finally { setSamlSaving(false); }
   };
@@ -411,6 +467,23 @@ export default function Authentication() {
     await deleteSamlProvider(projectId, idpId);
     setSamlProviders(prev => prev.filter(p => p.id !== idpId));
   };
+
+  // A load that failed leaves every field at its useState default. Rendering the form anyway means
+  // the next Save PATCHes those defaults over the tenant's real configuration — MFA off, allowlist
+  // empty — and reports success. Refusing to render is the whole fix.
+  if (loadError) return (
+    <div>
+      <PageHeader title="Authentication" />
+      <div className="iam-page">
+        <div className="iam-empty">
+          <p>This configuration could not be loaded, so it is not safe to edit.</p>
+          {/* Re-reads the project rather than reloading the page — see the same note in
+              ProjectSettings.tsx. */}
+          <button type="button" className="iam-btn" onClick={load}>Retry</button>
+        </div>
+      </div>
+    </div>
+  );
 
   if (loading) return (
     <div>
@@ -440,9 +513,7 @@ export default function Authentication() {
 
       <div className="iam-page" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 24 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 460px', gap: 24, alignItems: 'start' }}>
-          {/* Left: config tabs */}
           <div>
-            {/* Tab bar */}
             <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 20, gap: 0, flexWrap: 'wrap' }}>
               {TABS.map(t => (
                 <button key={t.id} onClick={() => setTab(t.id)} style={{
@@ -490,8 +561,8 @@ export default function Authentication() {
                       )}
                     </div>
                     <div>
-                      <label className="iam-label">Border Radius — {theme.border_radius ?? 8}px</label>
-                      <input type="range" min={0} max={24} value={theme.border_radius ?? 8}
+                      <label className="iam-label" htmlFor="login-theme-border-radius">Border Radius — {theme.border_radius ?? 8}px</label>
+                      <input type="range" id="login-theme-border-radius" min={0} max={24} value={theme.border_radius ?? 8}
                         onChange={e => set('border_radius', e.target.value)} style={{ width: '100%', accentColor: 'var(--ia-accent)', marginTop: 6 }} />
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--fg-subtle)', marginTop: 2 }}>
                         <span>Square</span><span>Rounded</span><span>Pill</span>
@@ -505,18 +576,16 @@ export default function Authentication() {
             {/* ── Providers ── */}
             {tab === 'providers' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                {/* Password login */}
                 <div className="iam-card iam-card-pad">
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div>
                       <p style={{ fontSize: 13, fontWeight: 500 }}>Password login</p>
                       <p style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Email/username + password form</p>
                     </div>
-                    <Toggle checked={theme.hydra_local_login ?? true} onChange={v => set('hydra_local_login', v)} />
+                    <Toggle label="Password login" checked={theme.hydra_local_login ?? true} onChange={v => set('hydra_local_login', v)} />
                   </div>
                 </div>
 
-                {/* Built-in social providers */}
                 {BUILTIN_PROVIDERS.map(({ type, label, defaultLabel }) => {
                   const p = getBuiltin(type);
                   const enabled = p?.enabled ?? false;
@@ -530,7 +599,7 @@ export default function Authentication() {
                             <p style={{ fontSize: 11, color: 'var(--fg-muted)' }}>{defaultLabel}</p>
                           </div>
                         </div>
-                        <Toggle checked={enabled} onChange={() => toggleBuiltin(type, defaultLabel)} />
+                        <Toggle label={label} checked={enabled} onChange={() => toggleBuiltin(type, defaultLabel)} />
                       </div>
                       {enabled && (
                         <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -553,7 +622,6 @@ export default function Authentication() {
                   );
                 })}
 
-                {/* Custom OIDC */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 4 }}>
                   <p style={{ fontSize: 13, fontWeight: 500 }}>Custom OIDC Providers</p>
                   <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={addOidc}>
@@ -579,7 +647,7 @@ export default function Authentication() {
                         </div>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <Toggle checked={p.enabled} onChange={v => updateOidc(p.id, { enabled: v })} />
+                        <Toggle label={`${p.label} enabled`} checked={p.enabled} onChange={v => updateOidc(p.id, { enabled: v })} />
                         <button type="button" className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm" onClick={() => removeOidc(p.id)}>
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                         </button>
@@ -607,7 +675,6 @@ export default function Authentication() {
                   </div>
                 ))}
 
-                {/* SAML 2.0 */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 4 }}>
                   <p style={{ fontSize: 13, fontWeight: 500 }}>SAML 2.0 Identity Providers</p>
                   <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={() => setAddSamlOpen(true)}>
@@ -645,7 +712,6 @@ export default function Authentication() {
                   </div>
                 )}
 
-                {/* Custom OAuth2 Scopes */}
                 <p style={{ fontSize: 13, fontWeight: 500, paddingTop: 4 }}>OAuth2 Scopes</p>
                 <div className="iam-card iam-card-pad">
                   <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Custom Scopes</div>
@@ -684,14 +750,14 @@ export default function Authentication() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                       <span className="iam-label" style={{ margin: 0 }}>Allow self-registration</span>
-                      <Toggle checked={allowSelfReg} onChange={setAllowSelfReg} />
+                      <Toggle label="Allow self-registration" checked={allowSelfReg} onChange={setAllowSelfReg} />
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid var(--border)', paddingTop: 14 }}>
                       <div>
                         <p style={{ fontSize: 13, fontWeight: 500 }}>Require MFA</p>
                         <p style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Users without a second factor cannot complete login until they enroll one.</p>
                       </div>
-                      <Toggle checked={requireMfa} onChange={setRequireMfa} />
+                      <Toggle label="Require MFA" checked={requireMfa} onChange={setRequireMfa} />
                     </div>
                   </div>
                 </div>
@@ -722,15 +788,17 @@ export default function Authentication() {
                       <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>characters (0 = disabled)</span>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {/* `id` and not the label text: these are the ids a <label for> points at,
+                          and the labels carry spaces and punctuation. */}
                       {([
-                        { label: 'Require uppercase letter (A–Z)', checked: requireUppercase, setter: setRequireUppercase },
-                        { label: 'Require lowercase letter (a–z)', checked: requireLowercase, setter: setRequireLowercase },
-                        { label: 'Require number (0–9)',           checked: requireDigit,     setter: setRequireDigit },
-                        { label: 'Require special character (!@#$…)', checked: requireSpecial, setter: setRequireSpecial },
-                      ] as const).map(({ label, checked, setter }) => (
-                        <div key={label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <label className="iam-label" style={{ margin: 0, fontWeight: 400 }}>{label}</label>
-                          <Toggle checked={checked} onChange={setter} />
+                        { id: 'uppercase', label: 'Require uppercase letter (A–Z)', checked: requireUppercase, setter: setRequireUppercase },
+                        { id: 'lowercase', label: 'Require lowercase letter (a–z)', checked: requireLowercase, setter: setRequireLowercase },
+                        { id: 'digit',     label: 'Require number (0–9)',           checked: requireDigit,     setter: setRequireDigit },
+                        { id: 'special',   label: 'Require special character (!@#$…)', checked: requireSpecial, setter: setRequireSpecial },
+                      ] as const).map(({ id, label, checked, setter }) => (
+                        <div key={id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <label className="iam-label" htmlFor={`pw-rule-${id}`} style={{ margin: 0, fontWeight: 400 }}>{label}</label>
+                          <Toggle id={`pw-rule-${id}`} checked={checked} onChange={setter} />
                         </div>
                       ))}
                     </div>
@@ -739,7 +807,7 @@ export default function Authentication() {
                         <p style={{ fontSize: 13, fontWeight: 500 }}>Reject breached passwords</p>
                         <p style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Passwords found in known data breaches are rejected. Uses HaveIBeenPwned k-anonymity API — no password is transmitted.</p>
                       </div>
-                      <Toggle checked={checkBreachedPasswords} onChange={setCheckBreachedPasswords} />
+                      <Toggle label="Reject breached passwords" checked={checkBreachedPasswords} onChange={setCheckBreachedPasswords} />
                     </div>
                   </div>
                 </div>
@@ -747,7 +815,7 @@ export default function Authentication() {
                 <div className="iam-card iam-card-pad">
                   <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Default Role</div>
                   <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', marginBottom: 12 }}>Role automatically assigned when a user registers or signs in via social login for the first time.</div>
-                  <select className="iam-input" style={{ maxWidth: 256 }}
+                  <select className="iam-input" style={{ maxWidth: 256 }} aria-label="Default role"
                     value={defaultRoleId ?? '__none__'} onChange={e => setDefaultRoleId(e.target.value === '__none__' ? null : e.target.value)}>
                     <option value="__none__">No default role</option>
                     {roles.map(r => (
@@ -770,14 +838,14 @@ export default function Authentication() {
                         <p style={{ fontSize: 13, fontWeight: 500 }}>Email verification</p>
                         <p style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Send a 6-digit OTP to the user's email address</p>
                       </div>
-                      <Toggle checked={emailVerif} onChange={setEmailVerif} />
+                      <Toggle label="Email verification" checked={emailVerif} onChange={setEmailVerif} />
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                       <div>
                         <p style={{ fontSize: 13, fontWeight: 500 }}>SMS verification</p>
                         <p style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Send a 6-digit OTP to the user's phone number</p>
                       </div>
-                      <Toggle checked={smsVerif} onChange={setSmsVerif} />
+                      <Toggle label="SMS verification" checked={smsVerif} onChange={setSmsVerif} />
                     </div>
                   </div>
                 </div>
@@ -848,7 +916,6 @@ export default function Authentication() {
             )}
           </div>
 
-          {/* Right: always-visible preview */}
           <div style={{ position: 'sticky', top: 24, display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', fontSize: 12, fontWeight: 500 }}>
@@ -869,13 +936,12 @@ export default function Authentication() {
               </button>
             </div>
             <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-              <iframe key={previewUrl} src={previewUrl} sandbox="allow-same-origin" style={{ width: '100%', height: 620, border: 'none', pointerEvents: 'none', display: 'block' }} title="Login page preview" />
+              <iframe key={previewUrl} src={previewUrl} sandbox="allow-scripts allow-same-origin" style={{ width: '100%', height: 620, border: 'none', pointerEvents: 'none', display: 'block' }} title="Login page preview" />
             </div>
           </div>
         </div>
       </div>
 
-      {/* Add SAML dialog */}
       <IamDialog
         open={addSamlOpen}
         onClose={() => { setAddSamlOpen(false); setSamlError(''); }}
@@ -908,7 +974,7 @@ export default function Authentication() {
             </div>
             <div>
               <label className="iam-label" htmlFor="saml-name-attr">Name attribute <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>(optional)</span></label>
-              <input id="saml-name-attr" className="iam-input" value={samlForm.name_attribute_name} onChange={e => setSamlForm(f => ({ ...f, name_attribute_name: e.target.value }))} placeholder="displayName" />
+              <input id="saml-name-attr" className="iam-input" value={samlForm.display_name_attribute_name} onChange={e => setSamlForm(f => ({ ...f, display_name_attribute_name: e.target.value }))} placeholder="displayName" />
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -916,11 +982,11 @@ export default function Authentication() {
               <p style={{ fontSize: 13, fontWeight: 500 }}>JIT provisioning</p>
               <p style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Automatically create users on first login</p>
             </div>
-            <Toggle checked={samlForm.jit_provisioning} onChange={v => setSamlForm(f => ({ ...f, jit_provisioning: v }))} />
+            <Toggle label="JIT provisioning" checked={samlForm.jit_provisioning} onChange={v => setSamlForm(f => ({ ...f, jit_provisioning: v }))} />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span className="iam-label" style={{ margin: 0 }}>Active</span>
-            <Toggle checked={samlForm.active} onChange={v => setSamlForm(f => ({ ...f, active: v }))} />
+            <Toggle label="Active" checked={samlForm.active} onChange={v => setSamlForm(f => ({ ...f, active: v }))} />
           </div>
         </form>
       </IamDialog>

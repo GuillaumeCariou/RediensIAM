@@ -1,5 +1,10 @@
+using RediensIAM.Health;
+using System.Reflection;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Mvc.Controllers;
 using Prometheus;
 using Microsoft.EntityFrameworkCore;
 using StackExchange.Redis;
@@ -23,25 +28,50 @@ var appConfig = new AppConfig(builder.Configuration);
 // Validate encryption key before DI is locked (uses builder.Environment, available pre-Build)
 ValidateEncryptionKey(appConfig, builder.Environment);
 
+// ── Host header filtering ──────────────────────────────────────────────────
+// The chart ships AllowedHosts="*" on the grounds that Traefik filters hosts at the ingress,
+// which turns off host filtering in the app entirely. Rather than trust that, derive the list
+// from the URLs this deployment already declares as its own. Kubernetes probes send an explicit
+// Host header matching App__PublicUrl, so they are covered. An operator who sets a real
+// AllowedHosts list still wins — this only replaces the wildcard.
+builder.Services.PostConfigure<Microsoft.AspNetCore.HostFiltering.HostFilteringOptions>(
+    o => ReplaceWildcardAllowedHosts(o, appConfig));
+
 // ── Database ───────────────────────────────────────────────────────────────
-builder.Services.AddDbContext<RediensIamDbContext>(options =>
-    options.UseNpgsql(appConfig.ConnectionString),
+// The interceptor publishes the request's tenant scope as the rediensiam.org_id session variable
+// the RLS policies read (S-5 phase 2). It is inert until the policies are applied, and applying
+// them without it is an outage — see Data/TenantScopeInterceptor.cs.
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton<TenantScopeInterceptor>();
+builder.Services.AddDbContext<RediensIamDbContext>((sp, options) =>
+    options.UseNpgsql(appConfig.ConnectionString)
+           .AddInterceptors(sp.GetRequiredService<TenantScopeInterceptor>()),
     ServiceLifetime.Scoped);
 
 // ── Redis / Dragonfly ──────────────────────────────────────────────────────
 builder.Services.Configure<ForwardedHeadersOptions>(o => ConfigureForwardedHeaders(o, builder.Configuration, builder.Environment));
 
-var cacheMultiplexer = await ConnectionMultiplexer.ConnectAsync(appConfig.CacheConnectionString);
+// ConnectAsync(string) validates the server certificate against the OS trust store and nothing in
+// the connection string changes that, which is what blocked cache TLS in step 18. CacheTls pins to
+// the mounted cluster CA instead; on a plaintext connection string it is a no-op.
+var cacheOptions = CacheTls.BuildOptions(appConfig.CacheConnectionString, appConfig.CacheTlsCaFile, Console.Error.WriteLine);
+var cacheMultiplexer = await ConnectionMultiplexer.ConnectAsync(cacheOptions);
 builder.Services.AddSingleton<IConnectionMultiplexer>(cacheMultiplexer);
 builder.Services.AddStackExchangeRedisCache(o =>
 {
-    o.Configuration  = appConfig.CacheConnectionString;
-    o.InstanceName   = appConfig.CacheInstanceName;
+    // Its own options instance: the cache builds a second multiplexer from these.
+    o.ConfigurationOptions = CacheTls.BuildOptions(appConfig.CacheConnectionString, appConfig.CacheTlsCaFile);
+    o.InstanceName         = appConfig.CacheInstanceName;
 });
 
 // ── Data Protection — persist keys to Redis so pod restarts don't invalidate sessions ──
+// The ring is what mints session cookies, and by default it is written to the cache in the clear.
+// ProtectKeysWithRootKey encrypts it under a purpose-derived subkey of the HKDF root and refuses
+// to read a key that arrived unencrypted — see Config/KeyRingProtection.cs. This is deliberately
+// independent of cache TLS: TLS protects the wire, this protects the stored bytes.
 builder.Services.AddDataProtection()
     .PersistKeysToStackExchangeRedis(cacheMultiplexer, "rediensiam:dataprotection:keys")
+    .ProtectKeysWithRootKey(appConfig)
     .SetApplicationName("rediensiam");
 
 // ── Session (for MFA state) — backed by Redis so it survives pod restarts ──
@@ -60,6 +90,10 @@ builder.Services.AddHttpClient("keto-read").AddStandardResilienceHandler();
 builder.Services.AddHttpClient("keto-write").AddStandardResilienceHandler();
 builder.Services.AddHttpClient("health", c => c.Timeout = TimeSpan.FromSeconds(5));
 builder.Services.AddHttpClient();
+// The unnamed client fetches SAML IdP metadata (via ITfoxtec) and the HIBP range API — both
+// operator- or tenant-named hosts. Redirects stay enabled: the connect callback vets each hop.
+builder.Services.AddHttpClient(string.Empty)
+    .ConfigurePrimaryHttpMessageHandler(() => WebhookUrlValidator.CreateSsrfSafeHandler(allowAutoRedirect: true));
 builder.Services.AddMemoryCache();
 
 // ── Services ───────────────────────────────────────────────────────────────
@@ -70,25 +104,29 @@ builder.Services.AddScoped<HydraService>();
 builder.Services.AddScoped<KetoService>();
 builder.Services.AddScoped<AuditLogService>();
 builder.Services.AddScoped<BreachCheckService>();
+builder.Services.AddScoped<PasswordPolicyService>();
+builder.Services.AddScoped<LiveAuthorizationService>();
 builder.Services.AddScoped<SamlService>();
 builder.Services.AddSingleton(_ => System.Threading.Channels.Channel.CreateUnbounded<RediensIAM.Services.WebhookJob>());
 builder.Services.AddSingleton<IWebhookQueue, RedisWebhookQueue>();
 builder.Services.AddSingleton<IWebhookSsrfValidator, WebhookSsrfValidator>();
 builder.Services.AddScoped<WebhookService>();
+builder.Services.AddScoped<KeyRotationService>();
+builder.Services.AddScoped<GrantReconciler>();
 builder.Services.AddHostedService<WebhookDispatcherService>();
 builder.Services.AddHostedService<AuditLogRetentionService>();
-builder.Services.AddHttpClient("webhook");
+// The audit chain verifier and the grant reconciler both existed with no caller, which makes them
+// functions that would have noticed rather than controls. This is what runs them.
+builder.Services.AddHostedService<IntegrityMonitorService>();
+// Every client that dials a URL chosen by a tenant or by a remote provider gets the SSRF-safe
+// handler: no redirects, and the reserved-range check runs on the address actually connected to
+// rather than on a separate DNS lookup. See WebhookUrlValidator.CreateSsrfSafeHandler.
+builder.Services.AddHttpClient("webhook")
+    .ConfigurePrimaryHttpMessageHandler(() => WebhookUrlValidator.CreateSsrfSafeHandler());
+builder.Services.AddHttpClient(SocialLoginService.NoRedirectClient)
+    .ConfigurePrimaryHttpMessageHandler(() => WebhookUrlValidator.CreateSsrfSafeHandler());
 builder.Services.AddScoped<PatService>();
 builder.Services.AddSingleton<SocialLoginService>();
-builder.Services.AddHttpContextAccessor();
-
-// ── Controller service bundles (reduce constructor param counts, S107) ────────
-builder.Services.AddScoped<AuthCoreServices>();
-builder.Services.AddScoped<AuthExtServices>();
-builder.Services.AddScoped<AuthControllerServices>();
-builder.Services.AddScoped<AccountControllerServices>();
-builder.Services.AddScoped<OrgAdminServices>();
-builder.Services.AddScoped<ManagedApiServices>();
 
 // ── WebAuthn / Passkeys ────────────────────────────────────────────────────
 builder.Services.AddFido2(opts =>
@@ -108,7 +146,16 @@ builder.Services.AddControllers()
         o.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower;
         o.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
     });
-builder.Services.AddHealthChecks();
+// Two checks, deliberately split by probe.
+//
+// /health stayed a bare 200 as long as the process was listening, so liveness and readiness could
+// never notice a lost database or cache: a pod that 500s every request stayed Ready and in the
+// Service. The dependencies are checked on /health/ready — which readiness uses — while /health
+// remains process-only, because a liveness probe that fails on a database blip restarts every
+// replica at once and turns an outage into a crash loop.
+builder.Services.AddHealthChecks()
+    .AddCheck<DatabaseHealthCheck>("database", tags: ["ready"])
+    .AddCheck<CacheHealthCheck>("cache", tags: ["ready"]);
 
 // ── OpenAPI / Swagger (admin port only) ────────────────────────────────────
 builder.Services.AddEndpointsApiExplorer();
@@ -156,25 +203,55 @@ var app = builder.Build();
 
 var logger = app.Services.GetRequiredService<ILogger<Program>>();
 
-if (appConfig.TotpSecretEncryptionKey == new string('0', 64))
-    logger.LogWarning("WARNING: TotpSecretEncryptionKey is the default all-zero dev placeholder. Override via Security__TotpSecretEncryptionKey before production.");
+if (appConfig.HasPlaceholderEncryptionKey)
+    logger.LogWarning("WARNING: an encryption root is the default all-zero dev placeholder. Override via Security__TotpSecretEncryptionKey (or Security__EncryptionKeys) before production.");
+
+if (logger.IsEnabled(LogLevel.Information))
+    logger.LogInformation(
+        "Encryption key ring: active key id {ActiveKeyId}, configured ids [{KeyIds}]; Argon2 pepper ids [{PepperIds}]",
+        appConfig.ActiveEncryptionKeyId,
+        string.Join(',', appConfig.ConfiguredEncryptionKeyIds),
+        string.Join(',', appConfig.Argon2PepperRing.Select(p => p.Id)));
 
 if (app.Environment.IsProduction())
-{
-    if (!appConfig.PublicUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-        logger.LogError("SECURITY: App__PublicUrl is not HTTPS in production ({Url}). OAuth2 tokens, session cookies, and redirects will be insecure.", appConfig.PublicUrl);
-    if (!appConfig.AdminSpaOrigin.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-        logger.LogWarning("WARNING: App__AdminSpaOrigin is not HTTPS in production ({Url}).", appConfig.AdminSpaOrigin);
-}
+    WarnOnNonHttpsProductionUrls(logger, appConfig);
 
 // ── Ensure DB schema exists ─────────────────────────────────────────────────
-await EnsureDbSchemaAsync(app);
+await EnsureDbSchemaAsync(app, appConfig);
 
-static async Task EnsureDbSchemaAsync(WebApplication webApp)
+static async Task EnsureDbSchemaAsync(WebApplication webApp, AppConfig cfg)
 {
     using var scope = webApp.Services.CreateScope();
     var db     = scope.ServiceProvider.GetRequiredService<RediensIamDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+
+    // Database:MigrateOnStartup=false means the operator migrates deliberately, so starting is
+    // the correct behaviour — refusing to boot would just make the switch useless. What is not
+    // acceptable is doing it quietly: an un-migrated schema surfaces as unexplained 500s on
+    // whichever endpoint first touches a missing column, a long way from the cause. The pending
+    // count turns "did not migrate" into "did not migrate, and you are N behind".
+    if (!cfg.MigrateOnStartup)
+    {
+        string pending;
+        try
+        {
+            pending = (await db.Database.GetPendingMigrationsAsync()).Count().ToString();
+        }
+        catch (Exception ex)
+        {
+            // Only the diagnostic is unavailable; the operator's instruction not to migrate still
+            // holds, so this must not abort startup the way the enabled path does.
+            logger.LogWarning(ex, "Could not read pending migrations while MigrateOnStartup is false");
+            pending = "unknown — could not reach the database";
+        }
+
+        logger.LogWarning(
+            "Database:MigrateOnStartup is false — NO migrations were applied at startup. Pending "
+            + "migrations: {PendingMigrations}. The schema is whatever already exists; apply "
+            + "migrations deliberately before treating this instance as healthy.", pending);
+        return;
+    }
+
     for (var attempt = 1; attempt <= 12; attempt++)
     {
         try
@@ -190,7 +267,14 @@ static async Task EnsureDbSchemaAsync(WebApplication webApp)
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "DB schema creation failed");
+            // Wrapped rather than rethrown bare: the bare throw left the retry count in the log
+            // line only, so a crash report read without the logs lost the one fact that
+            // distinguishes a slow database from a broken migration.
+            logger.LogCritical(ex, "DB schema creation failed after 12 attempts — aborting startup");
+            throw new InvalidOperationException(
+                "Database schema creation failed after 12 attempts over roughly 60 seconds. The "
+                + "retries would have continued had the database merely been unreachable, so "
+                + "treat this as a migration failure rather than a connectivity one.", ex);
         }
     }
 }
@@ -274,8 +358,10 @@ static async Task EnsureBootstrapAdminAsync(
             Active = true, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
         };
         bdb.Users.Add(user);
-        await bketo.WriteRelationTupleAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{user.Id}");
+        // Persist the user BEFORE granting super_admin in Keto. The reverse order leaves an
+        // orphaned super_admin tuple pointing at a user id that was never committed.
         await bdb.SaveChangesAsync();
+        await bketo.WriteRelationTupleAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{user.Id}");
         if (log.IsEnabled(LogLevel.Information))
             log.LogInformation("Bootstrap super admin created: {Email}", email);
         log.LogWarning("Bootstrap complete. Remove IAM_BOOTSTRAP_PASSWORD from environment variables.");
@@ -287,7 +373,13 @@ app.UseMiddleware<AppExceptionMiddleware>();
 app.UseForwardedHeaders();
 
 // ── Security headers ───────────────────────────────────────────────────────
-app.Use((ctx, next) => { AddSecurityHeaders(ctx); return next(); });
+// The admin console runs on its own origin and fetches {issuer}/.well-known/openid-configuration
+// before it can redirect, so connect-src has to name the issuer origin explicitly — 'self' can
+// never cover it. Resolved once at startup from the same value /console/config hands the SPA.
+var issuerOrigin = Uri.TryCreate(appConfig.PublicUrl, UriKind.Absolute, out var issuerUri)
+    ? issuerUri.GetLeftPart(UriPartial.Authority)
+    : "";
+app.Use((ctx, next) => { AddSecurityHeaders(ctx, issuerOrigin); return next(); });
 
 // ── Swagger UI — admin port only ───────────────────────────────────────────
 app.UseWhen(ctx => ctx.Connection.LocalPort == appConfig.AdminPort, branch =>
@@ -304,61 +396,115 @@ app.UseCors("AdminSpa");
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.UseRouting();
-app.MapHealthChecks("/health");
+app.MapHealthChecks("/health", new HealthCheckOptions { Predicate = _ => false });
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready"),
+});
 
 // Protect account/project/org/internal/manage/system routes — admin SPA loads without auth (handles PKCE itself)
 // /admin/system is always auth-gated (no browser SPA navigation hits it, only API calls)
-var protectedPrefixes = new[] { "/account", "/project", "/org", "/internal", "/service-accounts", "/api/manage", "/admin/system", "/auth/oauth2/link" };
+var protectedPrefixes = new[] { "/account", "/project", "/org", "/internal", "/service-accounts", "/api", "/admin/system", "/auth/oauth2/link" };
 app.UseWhen(
     ctx => protectedPrefixes.Any(p => ctx.Request.Path.StartsWithSegments(p)),
     branch => branch.UseMiddleware<GatewayAuthMiddleware>());
 
 // Validate admin API Bearer tokens.
-// GET without Authorization is allowed through (browser SPA navigations, controllers still check Claims).
-// All mutating verbs (POST/PATCH/DELETE/PUT) always require a valid Bearer token.
+//
+// The SPA is served from /admin/* and its browser navigations carry no Authorization header, so
+// they have to pass. The condition used to be "GET without an Authorization header", which made
+// every unauthenticated admin GET reach its controller and depend on that controller carrying
+// [RequireManagementLevel]. UseRouting has already run here, so the request can be told apart
+// properly: if it resolved to a controller action it is an API call and needs a token; if it did
+// not, it is a static asset or the SPA fallback.
 app.UseWhen(
     ctx => ctx.Request.Path.StartsWithSegments("/admin")
-        && !ctx.Request.Path.Equals("/admin/config")
-        && (ctx.Request.Headers.ContainsKey("Authorization") || ctx.Request.Method != HttpMethods.Get),
+        && (ctx.GetEndpoint()?.Metadata.GetMetadata<ControllerActionDescriptor>() != null
+            || ctx.Request.Method != HttpMethods.Get),
     branch => branch.UseMiddleware<GatewayAuthMiddleware>());
 
 // Public — no auth required; must be a minimal endpoint to bypass [RequireManagementLevel] on SystemAdminController
-app.MapGet("/admin/config", (AppConfig cfg) => Results.Json(
-    new { hydra_url = cfg.PublicUrl, client_id = Roles.AdminClientId, redirect_uri = $"{cfg.AdminSpaOrigin}/admin/callback" },
+// `version` is the running assembly's own number, not a constant the SPA carries: a console built
+// against one release and served by another would otherwise show the build it came from.
+app.MapGet("/console/config", (AppConfig cfg) => Results.Json(
+    new
+    {
+        hydra_url    = cfg.PublicUrl,
+        client_id    = Roles.AdminClientId,
+        redirect_uri = $"{cfg.AdminSpaOrigin}/{Roles.ConsoleBasePath}/callback",
+        version      = typeof(Program).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion.Split('+')[0]
+            ?? typeof(Program).Assembly.GetName().Version?.ToString(3),
+    },
     new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower }));
 
 app.MapControllers();
 
 // ── Prometheus scrape endpoint — admin port only ───────────────────────────
+// RequireHost matches the Host *header*, and host filtering strips the port before comparing —
+// so a caller on the public port could scrape this by sending the admin port in a header. Bind to
+// the port the connection actually arrived on, the way the Swagger branch above does.
 app.MapMetrics("/metrics")
-   .RequireHost($"*:{appConfig.AdminPort}");
+   .AddEndpointFilter(async (ctx, next) =>
+       ctx.HttpContext.Connection.LocalPort == appConfig.AdminPort
+           ? await next(ctx)
+           : Results.NotFound());
 
-// Admin SPA fallback (client-side routing)
-app.MapFallback("/admin/{**path}", async (string path, HttpContext ctx) =>
+app.MapFallback("/console/{**path}", async (string path, HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
     await ctx.Response.SendFileAsync(
-        Path.Combine(app.Environment.WebRootPath ?? "wwwroot", "admin", "index.html"));
+        Path.Combine(app.Environment.WebRootPath ?? "wwwroot", "console", "index.html"));
 });
 
-// Login SPA fallback
 app.MapFallbackToFile("index.html");
 
 await app.RunAsync();
 
-static void ValidateEncryptionKey(AppConfig cfg, IWebHostEnvironment env)
+// Body of the HostFilteringOptions PostConfigure above — extracted verbatim. Runs at
+// PostConfigure time, not registration time, so an operator-supplied AllowedHosts list still wins.
+static void ReplaceWildcardAllowedHosts(Microsoft.AspNetCore.HostFiltering.HostFilteringOptions o, AppConfig cfg)
 {
-    var encKeyVal = cfg.TotpSecretEncryptionKey;
-    if (encKeyVal.Length != 64 || !encKeyVal.All(Uri.IsHexDigit))
-        throw new InvalidOperationException(
-            "Security:TotpSecretEncryptionKey must be exactly 64 hex characters (32 bytes). " +
-            "Generate one with: openssl rand -hex 32");
-    if (encKeyVal == new string('0', 64) && env.IsProduction())
-        throw new InvalidOperationException(
-            "TotpSecretEncryptionKey must not be the default all-zero dev placeholder in production.");
+    if (!o.AllowedHosts.Contains("*")) return;
+    var derived = new[] { cfg.PublicUrl, cfg.AdminSpaOrigin }
+        .Select(u => Uri.TryCreate(u, UriKind.Absolute, out var uri) ? uri.Host : null)
+        .Append(cfg.Domain)
+        .Where(h => !string.IsNullOrWhiteSpace(h))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+    if (derived.Count > 0) o.AllowedHosts = derived!;
 }
 
-static void AddSecurityHeaders(HttpContext ctx)
+// The two production URL warnings from the startup block — same messages, same levels, same order.
+static void WarnOnNonHttpsProductionUrls(ILogger log, AppConfig cfg)
+{
+    if (!cfg.PublicUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        log.LogError("SECURITY: App__PublicUrl is not HTTPS in production ({Url}). OAuth2 tokens, session cookies, and redirects will be insecure.", cfg.PublicUrl);
+    if (!cfg.AdminSpaOrigin.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        log.LogWarning("WARNING: App__AdminSpaOrigin is not HTTPS in production ({Url}).", cfg.AdminSpaOrigin);
+}
+
+static void ValidateEncryptionKey(AppConfig cfg, IWebHostEnvironment env)
+{
+    if (string.IsNullOrWhiteSpace(cfg.EncryptionKeys))
+    {
+        var encKeyVal = cfg.TotpSecretEncryptionKey;
+        if (encKeyVal.Length != 64 || !encKeyVal.All(Uri.IsHexDigit))
+            throw new InvalidOperationException(
+                "Security:TotpSecretEncryptionKey must be exactly 64 hex characters (32 bytes). " +
+                "Generate one with: openssl rand -hex 32");
+    }
+    // Forces the key ring to parse: malformed Security:EncryptionKeys must fail at startup,
+    // not on the first TOTP decrypt. Also forces the pepper ring for the same reason.
+    _ = cfg.ConfiguredEncryptionKeyIds;
+    _ = cfg.Argon2PepperRing;
+    if (cfg.HasPlaceholderEncryptionKey && env.IsProduction())
+        throw new InvalidOperationException(
+            "The encryption root must not be the default all-zero dev placeholder in production.");
+}
+
+static void AddSecurityHeaders(HttpContext ctx, string issuerOrigin)
 {
     ctx.Response.Headers.XContentTypeOptions   = "nosniff";
     ctx.Response.Headers["Referrer-Policy"]    = "strict-origin-when-cross-origin";
@@ -366,11 +512,44 @@ static void AddSecurityHeaders(HttpContext ctx)
     ctx.Response.Headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()";
     if (ctx.Request.IsHttps)
         ctx.Response.Headers.StrictTransportSecurity = "max-age=31536000; includeSubDomains";
-    if (!ctx.Request.Path.StartsWithSegments("/preview"))
+    // The login SPA's /preview route is the one document meant to be framed: the console renders it
+    // in an iframe so an operator can see a project's branding before saving it. It is inert — no
+    // form posts, no credentials, config comes from the query string — so allowing the console's
+    // own origin to frame it costs nothing, and X-Frame-Options has no per-origin form, so the
+    // header has to be omitted there rather than widened.
+    // Exactly this path, and nothing under it. StartsWithSegments matches /preview/<anything> too,
+    // and the SPA fallback answers those with index.html — whose catch-all route renders the real
+    // login form. Unframing that is the clickjacking case this exemption must never reach.
+    //
+    // 'self' with no second origin: the console's iframe src is the relative "/preview?cfg=…", so
+    // the frame is same-origin by construction. Naming the admin origin as well would only widen
+    // the policy for a case that does not exist.
+    var framedByConsole = ctx.Request.Path.Equals("/preview", StringComparison.Ordinal);
+    // Named rather than inlined: a conditional inside an interpolation inside a conditional is
+    // three decisions on one line, and this one decides whether a page may be framed at all.
+    var frameAncestors = framedByConsole ? "'self'" : "'none'";
+    if (!framedByConsole)
         ctx.Response.Headers.XFrameOptions = "DENY";
-    ctx.Response.Headers.ContentSecurityPolicy = ctx.Request.Path.StartsWithSegments("/admin")
-        ? "script-src 'self'; style-src 'self'; object-src 'none'; frame-ancestors 'none';"
-        : "default-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none';";
+    // default-src is the fallback for every directive that is not named. Omitting it left
+    // connect-src, img-src, font-src and friends wide open on the admin policy.
+    // base-uri and form-action are not covered by default-src and must be set explicitly.
+    //
+    // style-src carries 'unsafe-inline' on both branches. Neither SPA can do without it: Radix
+    // (via react-style-singleton) injects a <style> element on every dialog open, and the login
+    // page renders the tenant's custom_css into one. Script injection stays refused — script-src
+    // is 'self' with no inline escape — and the CSS sink itself is guarded server-side by
+    // LoginThemeValidator, which is what makes widening this safe (C-6).
+    var issuerConnect = string.IsNullOrEmpty(issuerOrigin) ? "'self'" : $"'self' {issuerOrigin}";
+    ctx.Response.Headers.ContentSecurityPolicy = ctx.Request.Path.StartsWithSegments($"/{Roles.ConsoleBasePath}")
+        ? "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+          $"font-src 'self'; img-src 'self' data:; connect-src {issuerConnect}; " +
+          "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+        // The login page renders tenant branding: a project logo and social-provider icons, both
+        // remote HTTPS URLs the operator does not control. Images execute nothing.
+        : "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+          "font-src 'self'; img-src 'self' data: https:; connect-src 'self'; " +
+          $"object-src 'none'; frame-ancestors {frameAncestors}; " +
+          "base-uri 'self'; form-action 'self';";
 }
 
 // Configure forwarded-headers: honour X-Forwarded-* only from operator-trusted proxies.
@@ -433,16 +612,27 @@ static bool TryParseCidr(string cidr, out System.Net.IPNetwork network)
 static void AddDefaultTrustedNetworks(ForwardedHeadersOptions o)
 {
     // Well-known private + loopback ranges (RFC1918 + RFC5735). Not routable on the
-    // public internet, used by k3s/k8s pod networks. Hardcoding is intentional here.
+    // public internet, used by k3s/k8s pod networks.
+    //
+    // S1313 asks whether hardcoding an IP is safe. Here it is the only correct option: these
+    // literals are the RFC's own definition of a private network, not a deployment's address.
+    // Making them configurable would let an operator declare the public internet private and
+    // silently trust X-Forwarded-For from anywhere — the exact failure App__TrustedProxies
+    // refuses to start without. That value is what an operator sets; this is the constant.
+#pragma warning disable S1313 // RFC-defined ranges, deliberately not configurable
     var defaults = new (string Address, int Prefix)[]
     {
         ("10.0.0.0", 8), ("172.16.0.0", 12), ("192.168.0.0", 16), ("127.0.0.0", 8),
     };
+#pragma warning restore S1313
     foreach (var (address, prefix) in defaults)
         o.KnownIPNetworks.Add(new System.Net.IPNetwork(System.Net.IPAddress.Parse(address), prefix));
 }
 
-// Expose Program to integration test project
+/// <summary>
+/// Declared partial and public solely so <c>WebApplicationFactory&lt;Program&gt;</c> in the
+/// integration test project can name it. Nothing references it at runtime.
+/// </summary>
 public partial class Program
 {
     protected Program() { }

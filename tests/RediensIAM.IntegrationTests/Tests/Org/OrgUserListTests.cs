@@ -108,7 +108,6 @@ public class OrgUserListTests(TestFixture fixture)
     public async Task DeleteUserList_ImmovableOrgList_Returns400Or409()
     {
         var (org, _, client) = await OrgAdminClientAsync();
-        // The org's built-in immovable list
         var immovableList = await fixture.Db.UserLists.FindAsync(org.OrgListId);
 
         var res = await client.DeleteAsync($"/org/userlists/{immovableList!.Id}");
@@ -150,6 +149,12 @@ public class OrgUserListTests(TestFixture fixture)
         res.StatusCode.Should().Be(HttpStatusCode.Created);
     }
 
+    /// <summary>
+    /// Accepts 500 as well as 409 below because the duplicate is refused by a database unique
+    /// constraint, not by an application check: 409 if the controller catches it, 500 if the
+    /// violation escapes. Either way the second user must not be created — tighten this to a
+    /// plain 409 if the controller ever grows an explicit pre-check.
+    /// </summary>
     [Fact]
     public async Task AddUser_DuplicateEmail_Returns409()
     {
@@ -168,7 +173,7 @@ public class OrgUserListTests(TestFixture fixture)
             password = "P@ssw0rd!Test"
         });
 
-        ((int)res.StatusCode).Should().BeOneOf(409, 500);  // DB unique constraint (409 if caught, 500 if not)
+        ((int)res.StatusCode).Should().BeOneOf(409, 500);
     }
 
     // ── DELETE /org/userlists/{id}/users/{uid} ────────────────────────────────

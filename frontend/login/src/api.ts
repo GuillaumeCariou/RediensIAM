@@ -1,5 +1,16 @@
 const BASE = import.meta.env.VITE_API_BASE_URL ?? '';
 
+/**
+ * Reads the body once and parses it, turning a non-JSON response (an HTML error page, a proxy
+ * timeout) into `Server error <status>` rather than a parser stack trace shown to an
+ * unauthenticated visitor.
+ *
+ * The return type is `any` — deliberately, not for want of a better one. Every endpoint in this
+ * file has a different response shape, so a single named type here would be a lie; `unknown` would
+ * be honest and would force a cast at all thirty call sites, which is a cast either way and one
+ * that reads as a check without being one. What keeps this safe is that nothing branches on the
+ * result without testing the field it wants first.
+ */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function parseJson(r: Response): Promise<any> {
   const text = await r.text();
@@ -7,10 +18,15 @@ async function parseJson(r: Response): Promise<any> {
   catch { throw new Error(`Server error ${r.status}`); }
 }
 
-// Centralised fetch wrapper:
-//  - Always sets X-Requested-With (CSRF defence-in-depth; SameSite cookies are the primary defence).
-//  - Sets Content-Type when a JSON body is supplied.
-//  - Includes credentials by default (most endpoints need the MFA session cookie).
+/**
+ * The single place every login-app request goes through, so two things hold everywhere:
+ *
+ * - `X-Requested-With` is always set. It is CSRF defence-in-depth — SameSite cookies are the
+ *   primary defence — and it only works as long as no call bypasses this wrapper.
+ * - Credentials are included by default, because most of these endpoints authenticate off the
+ *   pending-MFA session cookie. The few that must not send it pass `credentials: 'omit'`
+ *   explicitly; note the spread of `init` after it, which is what lets them override.
+ */
 async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const headers: Record<string, string> = {
     'X-Requested-With': 'XMLHttpRequest',
@@ -21,12 +37,6 @@ async function apiFetch(path: string, init: RequestInit = {}): Promise<Response>
 }
 
 const enc = encodeURIComponent;
-
-export async function getLoginTheme(challenge: string) {
-  const r = await apiFetch(`/auth/login/theme?login_challenge=${enc(challenge)}`, { credentials: 'omit' });
-  if (!r.ok) throw new Error('Failed to load theme');
-  return parseJson(r);
-}
 
 export async function getLoginChallenge(challenge: string) {
   const r = await apiFetch(`/auth/login?login_challenge=${enc(challenge)}`, { credentials: 'omit' });
@@ -41,6 +51,21 @@ export async function submitLogin(body: {
   password: string;
 }) {
   const r = await apiFetch('/auth/login', { method: 'POST', body: JSON.stringify(body) });
+  return parseJson(r);
+}
+
+export async function getLogoutChallenge(challenge: string) {
+  const r = await apiFetch(`/auth/logout?logout_challenge=${enc(challenge)}`, { credentials: 'omit' });
+  if (!r.ok) throw new Error('Failed to load logout challenge');
+  return parseJson(r);
+}
+
+export async function acceptLogout(challenge: string) {
+  const r = await apiFetch('/auth/logout', {
+    method: 'POST',
+    body: JSON.stringify({ logout_challenge: challenge }),
+  });
+  if (!r.ok) throw new Error('Failed to complete sign-out');
   return parseJson(r);
 }
 
@@ -134,13 +159,18 @@ export async function completeInvite(token: string, password: string) {
   return parseJson(r);
 }
 
+/**
+ * MFA enrolment mid-login. This and the other `/auth/mfa/setup/*` calls below deliberately do not
+ * use the `/account/*` endpoints: those require a bearer token, which the user does not have yet
+ * at this point in the flow. These authenticate off the pending-MFA session cookie instead.
+ */
 export async function setupTotp() {
-  const r = await apiFetch('/account/mfa/totp/setup', { method: 'POST' });
+  const r = await apiFetch('/auth/mfa/setup/totp/start', { method: 'POST' });
   return parseJson(r);
 }
 
 export async function confirmTotp(code: string) {
-  const r = await apiFetch('/account/mfa/totp/confirm', {
+  const r = await apiFetch('/auth/mfa/setup/totp/confirm', {
     method: 'POST',
     body: JSON.stringify({ code }),
   });

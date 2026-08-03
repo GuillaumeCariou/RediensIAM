@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { setupTotp, confirmTotp } from '../api';
 import { safeNavigate } from '../safeNavigate';
 
 type Step = 'loading' | 'qr' | 'verify' | 'backup';
+
+const STEP_NUMBERS: Record<Step, number> = { loading: 0, qr: 1, verify: 2, backup: 3 };
+
+/** Six OTP inputs, fixed order — stable keys so React never keys on the array index. */
+const OTP_CELL_IDS = ['otp-1', 'otp-2', 'otp-3', 'otp-4', 'otp-5', 'otp-6'];
 
 function LoginLogo() {
   return (
@@ -121,7 +126,7 @@ export default function MfaSetup() {
     setTimeout(() => setCopied(false), 2000);
   }
 
-  const stepNum = step === 'qr' ? 1 : step === 'verify' ? 2 : step === 'backup' ? 3 : 0;
+  const stepNum = STEP_NUMBERS[step];
 
   if (step === 'loading') return (
     <div className="login-center">
@@ -220,13 +225,13 @@ export default function MfaSetup() {
             )}
             <div className="label" style={{ textAlign: 'center' }}>Enter the 6-digit code from your app</div>
             <div className="otp-grid">
-              {cells.map((c, i) => (
+              {OTP_CELL_IDS.map((cellId, i) => (
                 <input
-                  key={i}
+                  key={cellId}
                   ref={el => { cellRefs.current[i] = el; }}
                   className="otp-cell"
                   type="text" inputMode="numeric"
-                  maxLength={1} value={c}
+                  maxLength={1} value={cells[i]}
                   autoFocus={i === 0}
                   aria-label={`Digit ${i + 1} of 6`}
                   onChange={e => handleCellChange(i, e.target.value)}

@@ -111,22 +111,24 @@ public class BreachCheckServiceUnitTests
         public HttpClient CreateClient(string name) => new(new FailingHandler());
     }
 
+    /// <summary>
+    /// Fail-open is deliberate: an unreachable HIBP must return 0 below rather than throw, because
+    /// an outage on a third-party API must never lock users out of registration or password change.
+    /// Do not "fix" this into a fail-closed path.
+    /// </summary>
     [Fact]
     public async Task GetBreachCount_WhenHibpUnreachable_ReturnsZero()
     {
-        // Arrange: HTTP client always throws → catch block must return 0 (fail-open)
         var svc = new BreachCheckService(
             new FailingClientFactory(),
             NullLogger<BreachCheckService>.Instance);
 
-        // Act
         var count = await svc.GetBreachCountAsync("anypassword");
 
-        // Assert: fail-open — should not block the user
         count.Should().Be(0);
     }
 
-    // ── Breach found — line 26 (return int.TryParse branch) ──────────────────
+    // ── Breach found ─────────────────────────────────────────────────────────
 
     [Fact]
     public async Task GetBreachCount_WhenPasswordInDatabase_ReturnsCount()

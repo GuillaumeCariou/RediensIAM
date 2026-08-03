@@ -49,6 +49,73 @@ http://{{ .Release.Name }}-keto-write:4467
 {{- end -}}
 
 {{/*
+rediensiam.selfSignedIssuer
+The chart's built-in self-signed issuer: a NAMESPACED Issuer, named after the release.
+
+It used to be a ClusterIssuer called `selfsigned` — a fixed name on a cluster-scoped object,
+created unconditionally. Three ways that bites, all found by installing this chart a second
+time in one cluster:
+  · a cluster that already has an issuer called `selfsigned` (cert-manager's own doc example)
+    fails `helm install` outright with an ownership error, before anything is applied;
+  · two releases cannot coexist, in any namespaces;
+  · `helm uninstall` of either release deletes the issuer the other one still renews against.
+Nothing needed it to be cluster-scoped: the only Certificates it signs — Postgres, Dragonfly
+and the admin ingress — are all in the release's own namespace.
+*/}}
+{{- define "rediensiam.selfSignedIssuer" -}}
+{{ .Release.Name }}-selfsigned
+{{- end -}}
+
+{{/*
+rediensiam.dnsEgress
+The one egress rule every pod in this release needs. Narrowed from "0.0.0.0/0 on :53" to the
+kube-dns pods, because :53 to anywhere is the standard exfiltration channel.
+If DNS breaks after an upgrade, this selector is the first thing to check: it assumes coredns
+carries `k8s-app: kube-dns` in the namespace named by networkPolicy.dnsNamespace (k3s default).
+*/}}
+{{- define "rediensiam.dnsEgress" -}}
+- ports:
+    - {port: 53, protocol: UDP}
+    - {port: 53, protocol: TCP}
+  to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Values.rediensiam.networkPolicy.dnsNamespace }}
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+{{- end -}}
+
+{{/*
+rediensiam.postgresPeer
+The NetworkPolicy peer list for ":5432 to the database", for the app, Hydra and Keto egress
+rules. With the built-in StatefulSet that is a pod label this chart owns. With an external
+CloudNativePG cluster the chart owns nothing about those pods, so the selector has to be
+supplied — `cnpg.io/cluster: <name>` is what CNPG stamps on its instances.
+
+Getting this wrong is a silent outage in one direction only: too narrow and the app cannot
+reach the database at all, which is loud. It is never fail-open, because the default-deny is
+ingress-only and it is `postgres-lockdown` (built-in mode) or the CNPG cluster's own policy
+(external mode) that decides who may connect.
+*/}}
+{{- define "rediensiam.postgresPeer" -}}
+{{- if .Values.rediensiam.postgres.local.enabled -}}
+- podSelector:
+    matchLabels:
+      app: {{ .Release.Name }}-postgres
+{{- else -}}
+- podSelector:
+    matchLabels:
+{{ toYaml .Values.rediensiam.postgres.external.podSelector | indent 6 }}
+{{- if .Values.rediensiam.postgres.external.namespace }}
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: {{ .Values.rediensiam.postgres.external.namespace }}
+{{- end }}
+{{- end -}}
+{{- end -}}
+
+{{/*
 rediensiam.ingressPublicHost
 Returns the public ingress hostname.
 Uses rediensiam.ingress.public.host if set; otherwise parses host from rediensiam.publicUrl.
@@ -57,7 +124,7 @@ Uses rediensiam.ingress.public.host if set; otherwise parses host from rediensia
 {{- if .Values.rediensiam.ingress.public.host -}}
 {{ .Values.rediensiam.ingress.public.host }}
 {{- else -}}
-{{ index (urlParse .Values.rediensiam.publicUrl) "host" }}
+{{ index (urlParse (required "rediensiam.publicUrl is required: set it in your environment values file (values.dev.yaml, values.prod.yaml or your own -f overlay)" .Values.rediensiam.publicUrl)) "host" }}
 {{- end -}}
 {{- end -}}
 
@@ -70,6 +137,43 @@ Uses rediensiam.ingress.admin.host if set; otherwise parses host from rediensiam
 {{- if .Values.rediensiam.ingress.admin.host -}}
 {{ .Values.rediensiam.ingress.admin.host }}
 {{- else -}}
-{{ index (urlParse .Values.rediensiam.adminUrl) "host" }}
+{{ index (urlParse (required "rediensiam.adminUrl is required: set it in your environment values file (values.dev.yaml, values.prod.yaml or your own -f overlay)" .Values.rediensiam.adminUrl)) "host" }}
 {{- end -}}
+{{- end -}}
+
+{{/*
+Refuses to render an Ingress that names a ClusterIssuer nothing will create.
+
+values.prod.yaml asks for `letsencrypt` while certManager.acme.enabled is false, so the annotation
+pointed at an issuer the chart does not render and the operator may not have: the certificate never
+issues and Traefik serves its own self-signed one on the auth surface, which looks like a TLS
+misconfiguration rather than a missing prerequisite.
+*/}}
+{{- define "rediensiam.checkIssuer" -}}
+{{- $tls := .Values.rediensiam.ingress.public.tls -}}
+{{- if and $tls.enabled $tls.clusterIssuer (not .Values.rediensiam.certManager.acme.enabled) (not .Values.rediensiam.certManager.assumeExternalIssuer) -}}
+{{- if ne $tls.clusterIssuer "selfsigned" -}}
+{{- fail (printf "ingress.public.tls.clusterIssuer is %q but certManager.acme.enabled is false — this chart will not create that ClusterIssuer. Either enable ACME (and set an email), or confirm the issuer exists and set rediensiam.certManager.assumeExternalIssuer=true." $tls.clusterIssuer) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+rediensiam.secretName
+The Secret every credential in this release is read from.
+
+Defaults to `<release>-secrets`, which templates/secret.yaml renders from values — the shape the
+chart has always had, where the values arrive through a gitignored overlay such as
+values.prod.secret.yaml.
+
+That overlay cannot exist under GitOps: Argo CD renders the chart from what the repository
+contains, so the only two ways to give the app a password would be to commit it, or to seal a
+Secret that Helm then overwrites with empty strings on every sync. Hence `secrets.existingSecret`:
+name a Secret that already lives in the namespace, and the chart stops creating one.
+
+The keys are the same either way — see templates/secret.yaml for the list. An existing Secret that
+is missing one of them fails the pod at start with a named key, not a silent empty value.
+*/}}
+{{- define "rediensiam.secretName" -}}
+{{ .Values.rediensiam.secrets.existingSecret | default (printf "%s-secrets" .Release.Name) }}
 {{- end -}}

@@ -1,22 +1,128 @@
 # ── Prod environment overrides ────────────────────────────────────────────────
 # Layered on top of values.yaml. Secrets in values.prod.secret.yaml (gitignored).
-# Admin SPA accessible via Tailscale mesh (100.64.0.3) — no public hostname.
+#
+# This is a production PROFILE, not a production DEPLOYMENT. What it fixes is the posture —
+# TLS on, RLS on, no NodePort, two replicas, ACME off — because those are decisions that hold
+# for any operator. Every hostname and address below is a placeholder in the example.com family
+# and will not resolve anywhere. The chart is published, so a real name written here would ship
+# one deployment's topology to everyone who installs it; the real values belong in the operator's
+# own values overlay or infrastructure repository, layered on top of this file.
+#
+# The two hosts must stay same-site: the admin host is a subdomain of the public host's
+# registrable domain so Hydra's SameSite=Strict session cookie is sent when the console starts
+# an authorization request. Substituting your own names has to preserve that, not just the shape.
+#
+# The admin surface has no public hostname: it is reached over the operator's private network
+# (mesh VPN, VPN, or an internal-only load balancer) through the admin ingress below.
 
 rediensiam:
-  publicUrl: "https://auth.rediens.net"
-  adminUrl:  "https://auth.ts.rediens.net"    # Tailscale MagicDNS — HTTPS via self-signed cert, Tailscale-only
+  publicUrl: "https://auth.example.com"
+  adminUrl:  "https://auth.admin.example.com"    # private-network name — not publicly resolvable
+
+  # Two replicas is what makes the PodDisruptionBudget mean anything: maxUnavailable: 1 against a
+  # single pod lets a node drain take the last one, so the object that looks like it prevents
+  # downtime prevents nothing and every rollout is a full auth outage. Nothing in the app is
+  # pinned to one pod — sessions live in Dragonfly and state in Postgres.
+  replicaCount: 2
+
+
+  # R-05. No NodePort in prod: the admin surface is reached only through the private-network
+  # admin ingress below. This is what the values.yaml comment used to claim NodePort provided.
+  service:
+    admin:
+      type: ClusterIP
 
   ingress:
+    public:
+      # R-02. Requires a ClusterIssuer named below to exist. Either install cert-manager and
+      # set certManager.acme.enabled + email (renders a Let's Encrypt ClusterIssuer with an
+      # HTTP-01 solver), or point clusterIssuer at an issuer you already run.
+      tls:
+        enabled: true
+        clusterIssuer: letsencrypt
     admin:
       enabled: true
-      host: "auth.ts.rediens.net"
+      host: "auth.admin.example.com"
+      tls:
+        enabled: true
+        # Still self-signed: no public CA can certify a name that only exists inside the
+        # operator's private network. Empty means the chart's own Issuer. The runbook in
+        # SECURITY-AUDIT-LOG.md step 09 gives the
+        # two ways to fix that; until one is done, this is a known click-through warning on the
+        # most privileged UI.
+        clusterIssuer: ""
+
+  # R-15. Prod already requires cert-manager for the two ingress certs above, so the
+  # database certificate costs no new dependency. requireSsl makes pg_hba.conf admit
+  # `hostssl` only; deploy.sh writes matching DSNs on a fresh install because it
+  # greps this file for `requireSsl: true` before generating them.
+  #
+  # NOT YET RUN AGAINST A REAL PROD DATABASE — prod has never been deployed from this
+  # branch. On a FRESH install this is correct and self-consistent. On an EXISTING
+  # prod database it is a migration, not an upgrade: pg_hba.conf is written by initdb
+  # and a chart upgrade will not rewrite it. Follow §2 of
+  # SECURITY-AUDIT-LOG.md step 18 before the first upgrade that carries this.
+  postgres:
+    rls:
+      # The backstop under every hand-written `&& OrgId == …` conjunct in the codebase.
+      # files/rls.sql is FORCEd, has WITH CHECK on the write side, and aborts the deploy if a table
+      # appears without a policy — none of which ran while the chart shipped it off and prod never
+      # overrode it. Requires the backup role to hold BYPASSRLS, which templates/postgres.yaml grants.
+      enabled: true
+    local:
+      tls:
+        enabled: true
+        requireSsl: true
+
+  # R-15, cache half. Same cert-manager prerequisite as the database certificate above, so
+  # again no new dependency. UNLIKE Postgres this is a HARD cutover, in three ways prod has
+  # to plan for and dev did not:
+  #
+  #   1. --tls makes Dragonfly REFUSE cleartext. The `,ssl=true` half of cacheUrl must land in
+  #      the same upgrade. deploy.sh writes it from this flag on a fresh install and stops with
+  #      the one-line sed on the reuse path; templates/dragonfly.yaml fails the render if the
+  #      two ever disagree in either direction. So this cannot be split by accident.
+  #
+  #   2. The rollout is not seamless and no ordering makes it so. The Dragonfly pod flips
+  #      immediately while the Deployment keeps the OLD app pod serving, so that pod loses its
+  #      cache for the ~30 s before it terminates. Dragonfly has no PVC, so the restart also
+  #      empties the DataProtection key ring: every session is invalidated. That is the price.
+  #
+  #   3. ONLY IF THIS PROD RELEASE PREDATES STEP 23 AND ITS DRAGONFLY SURVIVES THE UPGRADE:
+  #      the key ring on disk is unprotected, and EncryptedOnlyXmlRepository refuses an
+  #      unprotected key rather than adopting one (a plaintext key in a shared cache can be
+  #      PLANTED, and it mints session cookies). The session path then 500s. Dev never hit this
+  #      because the cutover restarted a memory-only Dragonfly. Delete the ring first —
+  #        redis-cli … DEL rediensiam:dataprotection:keys
+  #      — and accept the same one-time session loss (2) already costs you. Item 3 is a no-op
+  #      for a cutover done in one upgrade, because (2) empties the ring anyway; it matters
+  #      when the cache is upgraded separately or has been given persistence.
+  #
+  # NOT YET RUN AGAINST A REAL PROD CLUSTER — this is `helm template`-verified and reasoned
+  # from the dev cutover in SECURITY-AUDIT-LOG.md step 23, not observed in prod.
+  dragonfly:
+    local:
+      tls:
+        enabled: true
+
+  # cert-manager must already be installed in the cluster; this chart does not install it.
+  certManager:
+    # This file names `letsencrypt` on the public ingress while ACME is off, which means the
+    # ClusterIssuer must already exist in the cluster — the chart does not create it. Saying so
+    # here is what satisfies the render-time guard; leaving it unsaid used to produce an Ingress
+    # whose certificate never issued, with Traefik's own self-signed cert on the auth surface.
+    # If you do not run an issuer, set acme.enabled and acme.email instead.
+    assumeExternalIssuer: true
+    acme:
+      enabled: false          # set true + email to issue a real cert for the public host
+      email: ""
 
   smtp:
     host: ""                             # set your SMTP server
     port: 587
     startTls: true
     username: ""                         # set your SMTP login
-    fromAddress: "noreply@rediens.net"
+    fromAddress: "noreply@example.com"   # set a sender your SMTP domain is allowed to send as
     fromName: "Rediens"
 
 hydra:
@@ -26,15 +132,23 @@ hydra:
     config:
       urls:
         self:
-          issuer:              "https://auth.rediens.net"
-        login:                 "https://auth.rediens.net/login"
-        consent:               "https://auth.rediens.net/auth/consent"
-        logout:                "https://auth.rediens.net/auth/logout"
-        post_logout_redirect:  "https://auth.ts.rediens.net/admin/"
+          issuer:              "https://auth.example.com"
+        login:                 "https://auth.example.com/login"
+        consent:               "https://auth.example.com/auth/consent"
+        # A browser redirect target, so it must be a page. It pointed at /auth/logout, which is
+        # the JSON controller behind this page — the browser landed on the raw challenge body and
+        # nothing ever accepted the request, so the session outlived the sign-out.
+        logout:                "https://auth.example.com/logout"
+        post_logout_redirect:  "https://auth.admin.example.com/console/"
+        error:                 "https://auth.example.com/auth/oauth2/error"
       serve:
         public:
           cors:
             enabled: true
             allowed_origins:
-              - "https://auth.ts.rediens.net"
-              - "http://localhost:30501"    # keep for local SSH fallback
+              # R-19 / chain C-9: `http://localhost:30501` is gone. It made port 30501 on ANY
+              # operator workstation a trusted origin against the production OAuth2 endpoints,
+              # permanently, for an SSH-tunnel convenience. The tunnel it existed for is also
+              # gone now that prod uses ClusterIP + the private admin ingress; reach the console
+              # at the admin host over the private network instead. This must track adminUrl.
+              - "https://auth.admin.example.com"

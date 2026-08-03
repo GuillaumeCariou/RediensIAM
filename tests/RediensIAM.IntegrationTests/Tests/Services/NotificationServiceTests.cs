@@ -164,8 +164,8 @@ public class NotificationServiceTests(TestFixture fixture)
         var svc      = new SmtpEmailService(SmtpConfig(), fixture.Db,
             NullLogger<SmtpEmailService>.Instance);
 
-        // OrgSmtpConfig found → enters the orgConfig != null branch (lines 66-76)
-        // No username → skips authenticate branch → tries ConnectAsync → socket error
+        // The org's own SMTP config is used. With no username the authenticate step is skipped, so
+        // the throw asserted below is the socket error from ConnectAsync — there is no real server.
         var act = () => svc.SendOtpAsync("user@test.com", "123456", "registration", org.Id);
 
         await act.Should().ThrowAsync<Exception>();
@@ -177,7 +177,7 @@ public class NotificationServiceTests(TestFixture fixture)
         var (org, smtpCfg) = await SeedOrgWithSmtpAsync();
 
         // Encrypt a dummy password into PasswordEnc
-        var key      = Convert.FromHexString(new string('0', 64));
+        var key      = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         var encPwd   = TotpEncryption.Encrypt(key, Encoding.UTF8.GetBytes("secret"));
         smtpCfg.PasswordEnc = encPwd;
         smtpCfg.Username    = "orguser";
@@ -186,7 +186,8 @@ public class NotificationServiceTests(TestFixture fixture)
         var svc = new SmtpEmailService(SmtpConfig(), fixture.Db,
             NullLogger<SmtpEmailService>.Instance);
 
-        // PasswordEnc != null → Decrypt branch (line 71-74) executes; then socket error
+        // The stored password is decrypted first; the throw asserted below comes from the socket,
+        // so a decryption failure would show up as a different exception.
         var act = () => svc.SendOtpAsync("user@test.com", "123456", "registration", org.Id);
 
         await act.Should().ThrowAsync<Exception>();
@@ -206,8 +207,8 @@ public class NotificationServiceTests(TestFixture fixture)
         var svc = new SmtpEmailService(SmtpConfig(), fixture.Db,
             NullLogger<SmtpEmailService>.Instance);
 
-        // projectId provided → enters the project?.EmailFromName override branch (line 98-99)
-        // Then tries to connect → socket error
+        // Passing a projectId lets the project's EmailFromName override the org default; the throw
+        // below is still just the socket error.
         var act = () => svc.SendOtpAsync("user@test.com", "123456", "registration", org.Id, project.Id);
 
         await act.Should().ThrowAsync<Exception>();
@@ -226,8 +227,8 @@ public class NotificationServiceTests(TestFixture fixture)
         var svc = new SmtpEmailService(SmtpConfig(), fixture.Db,
             NullLogger<SmtpEmailService>.Instance);
 
-        // No orgSmtpConfig → global SMTP branch → projectId path (lines 95-100)
-        // project.EmailFromName is null/empty → fromName unchanged → socket error
+        // No org SMTP config, so the global settings are used; the project's null EmailFromName must
+        // leave the global sender name alone rather than blank it.
         var act = () => svc.SendOtpAsync("user@test.com", "654321", "password_reset", null, project.Id);
 
         await act.Should().ThrowAsync<Exception>();
@@ -246,7 +247,8 @@ public class NotificationServiceTests(TestFixture fixture)
         var svc = new SmtpEmailService(SmtpConfig(), fixture.Db,
             NullLogger<SmtpEmailService>.Instance);
 
-        // projectId provided → resolves orgId → finds OrgSmtpConfig → lines 150-160 execute
+        // Only a projectId is passed: the org has to be resolved from it before its SMTP config
+        // can be found.
         var act = () => svc.SendInviteAsync("user@test.com",
             "https://app/invite/abc", "TestOrg", project.Id);
 
@@ -258,7 +260,7 @@ public class NotificationServiceTests(TestFixture fixture)
     {
         var (org, smtpCfg) = await SeedOrgWithSmtpAsync();
 
-        var key      = Convert.FromHexString(new string('0', 64));
+        var key      = new KeyRing(1, Convert.FromHexString(new string('0', 64)));
         var encPwd   = TotpEncryption.Encrypt(key, Encoding.UTF8.GetBytes("secret"));
         smtpCfg.PasswordEnc = encPwd;
         smtpCfg.Username    = "orguser";
@@ -270,7 +272,7 @@ public class NotificationServiceTests(TestFixture fixture)
         var svc = new SmtpEmailService(SmtpConfig(), fixture.Db,
             NullLogger<SmtpEmailService>.Instance);
 
-        // PasswordEnc != null → Decrypt branch (line 155-157) executes; then socket error
+        // The stored password is decrypted first; the throw asserted below comes from the socket.
         var act = () => svc.SendInviteAsync("user@test.com",
             "https://app/invite/abc", "TestOrg", project.Id);
 
@@ -289,7 +291,8 @@ public class NotificationServiceTests(TestFixture fixture)
         var svc = new SmtpEmailService(SmtpConfig(), fixture.Db,
             NullLogger<SmtpEmailService>.Instance);
 
-        // resolvedOrgId found but no OrgSmtpConfig for it → global SMTP branch (lines 162-170)
+        // The org resolves but has no SMTP config of its own, so the global settings must be used
+        // rather than the send being abandoned.
         var act = () => svc.SendInviteAsync("user@test.com",
             "https://app/invite/abc", "MyOrg", project.Id);
 
@@ -304,7 +307,8 @@ public class NotificationServiceTests(TestFixture fixture)
         var svc = new SmtpEmailService(SmtpConfig(), fixture.Db,
             NullLogger<SmtpEmailService>.Instance);
 
-        // SmtpHost is not empty → enters body → socket error on ConnectAsync (lines 202-217)
+        // SmtpHost is configured, so the method does not take its silent no-op path and the socket
+        // error is proof it really tried to send.
         var act = () => svc.SendNewDeviceAlertAsync(
             "user@test.com", "1.2.3.4", "Mozilla/5.0", DateTimeOffset.UtcNow);
 
@@ -319,7 +323,7 @@ public class NotificationServiceTests(TestFixture fixture)
         var svc = new SmtpEmailService(SmtpConfig(), fixture.Db,
             NullLogger<SmtpEmailService>.Instance);
 
-        // SmtpHost is not empty → enters body → socket error (lines 224-229)
+        // SmtpHost is configured, so the socket error is proof the check really dialled out.
         var act = () => svc.CheckConnectivityAsync();
 
         await act.Should().ThrowAsync<Exception>();
@@ -330,9 +334,9 @@ public class NotificationServiceTests(TestFixture fixture)
     [Fact]
     public async Task SendOtp_CustomPurpose_HitsSwitchDefaultArm_ThenThrowsOnConnect()
     {
-        // purpose is not "registration" or "password_reset" → hits the _ arm (L107)
-        // SmtpConfig is non-empty → gets past the no-SMTP early return → reaches the switch
-        // Then fails at ConnectAsync (no real SMTP server) as expected.
+        // An unrecognised purpose has to fall through to the generic template rather than be
+        // rejected. SMTP is configured so the send gets past the no-SMTP early return, and the
+        // throw asserted below is the connect failure, not a purpose-lookup failure.
         var (org, _) = await SeedOrgWithSmtpAsync();
         var svc = new SmtpEmailService(SmtpConfig(), fixture.Db,
             NullLogger<SmtpEmailService>.Instance);

@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { rowActivation } from '../../components/iam/rowActivation';
+import { useEffect, useState } from 'react';
 import { IamChip, IamAvatar } from '@/components/iam';
 import { searchUsers, adminGetUser, adminUpdateUser, unlockUser, getUserSessions, revokeAllUserSessions } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
@@ -21,6 +22,15 @@ function MoreMenu({ onEdit, onSessions, onUnlock, locked }: Readonly<{
   onEdit: () => void; onSessions: () => void; onUnlock: () => void; locked: boolean;
 }>) {
   const [open, setOpen] = useState(false);
+
+  // On the document, not on the scrim below — see the same note in system/Organisations.tsx.
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [open]);
+
   return (
     <div style={{ position: 'relative' }}>
       <button className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm"
@@ -29,7 +39,7 @@ function MoreMenu({ onEdit, onSessions, onUnlock, locked }: Readonly<{
       </button>
       {open && (
         <>
-          <div role="none" style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }} />
+          <div role="none" style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} />
           <div style={{ position: 'absolute', right: 0, top: '100%', zIndex: 50, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-md)', minWidth: 140, padding: 4 }}>
             <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }}
               onClick={() => { setOpen(false); onEdit(); }}>Edit</button>
@@ -205,7 +215,7 @@ export default function SystemUsers() {
                     </td></tr>
                   );
                   return users.map(user => (
-                    <tr key={user.id} style={{ cursor: 'pointer' }} onClick={() => openEdit(user)}>
+                    <tr key={user.id} {...rowActivation(() => openEdit(user))}>
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           <IamAvatar name={user.display_name ?? user.username} size="sm" />

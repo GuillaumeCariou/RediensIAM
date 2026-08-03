@@ -1,4 +1,3 @@
-using Bogus;
 using RediensIAM.Config;
 using RediensIAM.Services;
 
@@ -13,9 +12,6 @@ public class SeedData
     private readonly RediensIamDbContext _db;
     private readonly HydraStub          _hydra;
     private readonly PasswordService    _pwd;
-
-    // Shared Bogus faker for generating plausible-looking data
-    private static readonly Faker Faker = new("en");
 
     public SeedData(RediensIamDbContext db, HydraStub hydra, PasswordService pwd)
     {
@@ -36,7 +32,9 @@ public class SeedData
     {
         var slug = UniqueSlug();
 
-        // Step 1: create the org list first (no OrgId yet — circular FK)
+        // Organisation and UserList reference each other, so the list has to be written first with
+        // no OrgId, the org second, and the OrgId back-filled last. Collapsing this into one save
+        // trips the foreign key.
         var list = new UserList
         {
             Id        = Guid.NewGuid(),
@@ -47,7 +45,6 @@ public class SeedData
         _db.UserLists.Add(list);
         await _db.SaveChangesAsync();
 
-        // Step 2: create the org pointing at the list
         var org = new Organisation
         {
             Id        = Guid.NewGuid(),
@@ -61,7 +58,6 @@ public class SeedData
         _db.Organisations.Add(org);
         await _db.SaveChangesAsync();
 
-        // Step 3: back-fill OrgId on the list
         list.OrgId = org.Id;
         await _db.SaveChangesAsync();
 
@@ -108,10 +104,14 @@ public class SeedData
 
     // ── User ──────────────────────────────────────────────────────────────────
 
+    /// <summary>Password every seeded user gets unless overridden — MFA mutations now
+    /// re-authenticate, so tests need to know it.</summary>
+    public const string DefaultPassword = "P@ssw0rd!Test";
+
     public async Task<User> CreateUserAsync(
         Guid   userListId,
         string? email    = null,
-        string  password = "P@ssw0rd!Test",
+        string  password = DefaultPassword,
         bool    active   = true)
     {
         email ??= UniqueEmail();

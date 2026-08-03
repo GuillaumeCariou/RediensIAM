@@ -231,10 +231,17 @@ public class AuditLogConfiguration : IEntityTypeConfiguration<AuditLog>
                    v => JsonSerializer.Deserialize<Dictionary<string, object>>(v, JsonOptions) ?? new Dictionary<string, object>(),
                    DictComparer);
 
+        // 80, not 64: a keyed hash carries a "k{keyId}:" envelope in front of the 64 hex digits.
+        builder.Property(x => x.Hash).IsRequired().HasMaxLength(AuditChain.MaxHashLength).HasDefaultValue("");
+        builder.Property(x => x.PrevHash).HasMaxLength(AuditChain.MaxHashLength);
+
         builder.HasIndex(x => new { x.OrgId, x.CreatedAt });
         builder.HasIndex(x => new { x.ProjectId, x.CreatedAt });
         builder.HasIndex(x => new { x.ActorId, x.CreatedAt });
         builder.HasIndex(x => new { x.Action, x.CreatedAt });
+        // The chain is walked per organisation in id order; verification would otherwise be a
+        // full scan of the table for every org.
+        builder.HasIndex(x => new { x.OrgId, x.Id });
     }
 }
 

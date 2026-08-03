@@ -9,13 +9,14 @@
     <NoWarn>$(NoWarn);CA1861</NoWarn>
   </PropertyGroup>
 
-  <ItemGroup>
-    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-37gx-xxp4-5rgx" />
-    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-w3x6-4m5h-cxqf" />
-  </ItemGroup>
 
-  <!-- Override vulnerable transitive OpenTelemetry deps pulled in by WireMock.Net -->
+  <!-- Override vulnerable transitive deps.
+       Scriban.Signed + OpenTelemetry come from WireMock.Net, System.Security.Cryptography.Xml
+       from ITfoxtec.Identity.Saml2, Microsoft.OpenApi from Swashbuckle (kept on 2.x — see src). -->
   <ItemGroup>
+    <PackageReference Include="Microsoft.OpenApi" Version="3.9.0" />
+    <PackageReference Include="Scriban.Signed" Version="7.2.5" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
     <PackageReference Include="OpenTelemetry" Version="1.15.3" />
     <PackageReference Include="OpenTelemetry.Api" Version="1.15.3" />
     <PackageReference Include="OpenTelemetry.Api.ProviderBuilderExtensions" Version="1.15.3" />
@@ -38,7 +39,6 @@
     </PackageReference>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.4.0" />
     <PackageReference Include="FluentAssertions" Version="8.9.0" />
-    <PackageReference Include="Bogus" Version="35.*" />
     <PackageReference Include="Otp.NET" Version="1.4.1" />
     <PackageReference Include="coverlet.collector" Version="8.*">
       <PrivateAssets>all</PrivateAssets>

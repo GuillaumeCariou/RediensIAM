@@ -32,18 +32,26 @@ public class ProjectController(
         get
         {
 #pragma warning disable S6932 // model binding not available in a property getter
-            if (Claims.GetManagementLevel() <= ManagementLevel.OrgAdmin)
+            // The ?project_id= escalation branch: deciding it from a claim is the same defect
+            // one tier down from R-22, so it reads the live-verified grant (S-1).
+            if (HttpContext.GetGrantedLevel() is { } grant && grant.IsAtLeast(ManagementLevel.OrgAdmin))
             {
                 var q = HttpContext.Request.Query["project_id"].FirstOrDefault();
                 if (q != null && Guid.TryParse(q, out var g)) return g;
             }
 #pragma warning restore S6932
-            return Guid.Parse(Claims.ProjectId);
+            // Guid.Parse threw a FormatException — surfacing as a 500 — when a super admin
+            // called /project/* without ?project_id=. Empty means "no project context", which
+            // GetProjectAsync turns into a clean 404.
+            return Guid.TryParse(Claims.ProjectId, out var fromClaims) ? fromClaims : Guid.Empty;
         }
     }
 
-    // H1: every project load goes through this — returns null (→ 404) if the project
-    // belongs to a different org, preventing cross-tenant access.
+    /// <summary>
+    /// H1: every project load goes through this — returns null (→ 404) if the project belongs to a
+    /// different org, preventing cross-tenant access. A handler that queries <c>db.Projects</c>
+    /// directly bypasses the only tenant check on this controller.
+    /// </summary>
     private async Task<Project?> GetProjectAsync()
     {
         var isSuperAdmin = IsSuperAdmin;
@@ -74,6 +82,21 @@ public class ProjectController(
             project.PasswordRequireLowercase,
             project.PasswordRequireDigit,
             project.PasswordRequireSpecial,
+            // Everything below is accepted by the PATCH on this same route, and the console's
+            // Authentication screen round-trips all of it: it reads the project, edits one field
+            // and writes the whole set back. While the read omitted these the page fell back to
+            // hardcoded defaults that looked exactly like a real configuration, so pressing Save
+            // replaced the tenant's branding, providers and security settings with them. A read
+            // that returns less than its own write accepts is a data-loss bug.
+            project.LoginTheme,
+            project.AllowSelfRegistration,
+            project.CheckBreachedPasswords,
+            project.EmailVerificationEnabled,
+            project.SmsVerificationEnabled,
+            project.AllowedEmailDomains,
+            project.EmailFromName,
+            project.IpAllowlist,
+            project.AllowedScopes,
         });
     }
 
@@ -82,6 +105,10 @@ public class ProjectController(
     {
         var project = await GetProjectAsync();
         if (project == null) return NotFound();
+        var allowlistErr = ApplyIpAllowlist(project, body.IpAllowlist);
+        if (allowlistErr != null) return allowlistErr;
+        if (await MfaDowngradeGuard.CheckAsync(db, audit, ActorId, project, body.RequireMfa, body.ConfirmMfaDowngrade) is { } mfaErr)
+            return mfaErr;
         ApplyProjectFields(project, body);
         var roleErr = await ApplyDefaultRoleAsync(project, body.ClearDefaultRole, body.DefaultRoleId);
         if (roleErr != null) return roleErr;
@@ -104,11 +131,59 @@ public class ProjectController(
         if (body.EmailVerificationEnabled.HasValue) project.EmailVerificationEnabled = body.EmailVerificationEnabled.Value;
         if (body.SmsVerificationEnabled.HasValue)   project.SmsVerificationEnabled  = body.SmsVerificationEnabled.Value;
         if (body.AllowedEmailDomains != null)       project.AllowedEmailDomains     = body.AllowedEmailDomains;
+        if (body.AllowedScopes != null)             project.AllowedScopes           = body.AllowedScopes;
+        ApplyPasswordPolicyFields(project, body);
+        if (body.ClearEmailFromName == true)          project.EmailFromName              = null;
+        else if (body.EmailFromName != null)          project.EmailFromName              = body.EmailFromName;
+    }
+
+    /// <summary>
+    /// The password-policy half of <see cref="ApplyProjectFields"/>. Split out for readability
+    /// only — the same fields are copied, under the same conditions, at the same point.
+    /// </summary>
+    private static void ApplyPasswordPolicyFields(Project project, UpdateProjectInfoRequest body)
+    {
         if (body.MinPasswordLength.HasValue)          project.MinPasswordLength          = Math.Max(0, body.MinPasswordLength.Value);
         if (body.PasswordRequireUppercase.HasValue)   project.PasswordRequireUppercase   = body.PasswordRequireUppercase.Value;
         if (body.PasswordRequireLowercase.HasValue)   project.PasswordRequireLowercase   = body.PasswordRequireLowercase.Value;
         if (body.PasswordRequireDigit.HasValue)       project.PasswordRequireDigit       = body.PasswordRequireDigit.Value;
         if (body.PasswordRequireSpecial.HasValue)     project.PasswordRequireSpecial     = body.PasswordRequireSpecial.Value;
+        if (body.CheckBreachedPasswords.HasValue)     project.CheckBreachedPasswords     = body.CheckBreachedPasswords.Value;
+    }
+
+    /// <summary>
+    /// Validates every entry before storing. An unparseable CIDR silently matches nothing in
+    /// <c>IpInRange</c>, which locks the whole tenant out of its own project instead of
+    /// reporting the typo.
+    /// </summary>
+    private BadRequestObjectResult? ApplyIpAllowlist(Project project, string[]? allowlist)
+    {
+        if (allowlist == null) return null;
+
+        var invalid = allowlist.Where(entry => !IsValidCidr(entry)).ToArray();
+        if (invalid.Length > 0)
+            return BadRequest(new { error = "invalid_ip_allowlist", invalid });
+
+        project.IpAllowlist = allowlist;
+        return null;
+    }
+
+    /// <summary>
+    /// Shared with the org and admin project-update paths, which took the allowlist unchecked. An
+    /// entry that does not parse makes IpInRange answer false for every address, so a typo locks
+    /// the tenant out of its own project instead of reporting itself.
+    /// </summary>
+    internal static bool IsValidCidr(string entry)
+    {
+        if (string.IsNullOrWhiteSpace(entry)) return false;
+        var parts = entry.Split('/');
+        if (parts.Length > 2) return false;
+        if (!System.Net.IPAddress.TryParse(parts[0], out var address)) return false;
+        if (parts.Length == 1) return true;
+
+        if (!int.TryParse(parts[1], out var prefix)) return false;
+        var maxPrefix = address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 ? 128 : 32;
+        return prefix >= 0 && prefix <= maxPrefix;
     }
 
     private async Task<IActionResult?> ApplyDefaultRoleAsync(Project project, bool? clearRole, Guid? newRoleId)
@@ -126,15 +201,8 @@ public class ProjectController(
         return null;
     }
 
-    private BadRequestObjectResult? ValidateLoginTheme(Dictionary<string, object>? theme)
-    {
-        if (theme == null) return null;
-        if (theme.TryGetValue("logo_url", out var logoVal) && logoVal is string logoUrl
-            && !string.IsNullOrEmpty(logoUrl)
-            && (!Uri.TryCreate(logoUrl, UriKind.Absolute, out var uri) || uri.Scheme != "https"))
-            return BadRequest(new { error = "logo_url_must_be_https" });
-        return null;
-    }
+    private BadRequestObjectResult? ValidateLoginTheme(Dictionary<string, object>? theme) =>
+        LoginThemeValidator.Validate(theme) is { } error ? BadRequest(new { error }) : null;
 
     private void ApplyLoginTheme(Project project, Dictionary<string, object>? theme)
     {
@@ -148,7 +216,14 @@ public class ProjectController(
     public async Task<IActionResult> ListUsers()
     {
         var project = await GetProjectAsync();
-        if (project?.AssignedUserListId == null) return NotFound();
+        if (project == null) return NotFound();
+
+        // Third instance of the same shape as the two stats handlers: no user list assigned means
+        // no users, which is a fact about a project that exists. The console fetches this beside
+        // the role list in one Promise.all, so a 404 here took the roles down with it and left the
+        // whole members panel empty on every freshly created project.
+        if (project.AssignedUserListId == null) return Ok(Array.Empty<object>());
+
         var users = await db.Users
             .Where(u => u.UserListId == project.AssignedUserListId)
             .Select(u => new
@@ -161,10 +236,14 @@ public class ProjectController(
         return Ok(users);
     }
 
+    /// <summary>
+    /// H2: the user id is caller-supplied, so it is matched against this project's own user list
+    /// rather than looked up globally — otherwise any project admin could read any user in the
+    /// deployment by guessing an id.
+    /// </summary>
     [HttpGet("users/{id}")]
     public async Task<IActionResult> GetUser(Guid id)
     {
-        // H2: verify the user belongs to this project's user list
         var project = await GetProjectAsync();
         if (project?.AssignedUserListId == null) return NotFound();
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id && u.UserListId == project.AssignedUserListId);
@@ -175,11 +254,14 @@ public class ProjectController(
         return Ok(new { user.Id, user.Username, user.Discriminator, user.Email, user.DisplayName, user.Active, roles });
     }
 
+    /// <summary>
+    /// KetoService re-validates the caller's authority, so the <see cref="GetProjectAsync"/> call
+    /// here is not the authorisation check — it is what stops the response distinguishing "not
+    /// allowed" from "no such project" across tenants.
+    /// </summary>
     [HttpPost("users/{id}/roles")]
     public async Task<IActionResult> AssignRole(Guid id, [FromBody] AssignRoleRequest body)
     {
-        // KetoService re-validates authority; the org check here prevents
-        // leaking project existence across tenants.
         var project = await GetProjectAsync();
         if (project == null) return NotFound();
         try
@@ -216,19 +298,28 @@ public class ProjectController(
         var project = await GetProjectAsync();
         if (project?.AssignedUserListId == null) return BadRequest(new { error = "no_user_list" });
 
-        // M1: enforce project-level password policy
-        if (project.MinPasswordLength > 0 && body.Password.Length < project.MinPasswordLength)
-            return BadRequest(new { error = "password_too_short",     min_length = project.MinPasswordLength });
-        if (project.PasswordRequireUppercase && !body.Password.Any(char.IsUpper))
-            return BadRequest(new { error = "password_requires_uppercase" });
-        if (project.PasswordRequireLowercase && !body.Password.Any(char.IsLower))
-            return BadRequest(new { error = "password_requires_lowercase" });
-        if (project.PasswordRequireDigit && !body.Password.Any(char.IsDigit))
-            return BadRequest(new { error = "password_requires_digit" });
-        if (project.PasswordRequireSpecial && !body.Password.Any(c => !char.IsLetterOrDigit(c)))
-            return BadRequest(new { error = "password_requires_special" });
+        // M1: enforce project-level password policy. The minimum is the project's own setting or
+        // the absolute floor, whichever is higher — reading MinPasswordLength directly let an
+        // admin-created user start below the floor every self-service path enforces. The breach
+        // check is deliberately not run here: this route never made that outbound call.
+        var policy = PasswordPolicyService.CheckComposition(project, body.Password);
+        if (policy == PasswordPolicyResult.TooShort)
+            return BadRequest(new
+            {
+                error = "password_too_short",
+                min_length = PasswordPolicyService.EffectiveMinimumLength(project),
+            });
+        if (policy != PasswordPolicyResult.Ok)
+            return BadRequest(new { error = PasswordPolicyService.ErrorCode(policy) });
 
         var listId = project.AssignedUserListId.Value;
+
+        // Third copy of the check the /admin path has. The unique index on (UserListId, Email)
+        // would otherwise surface as a 500 rather than a conflict the caller can act on.
+        var normalizedEmail = body.Email.ToLowerInvariant();
+        if (await db.Users.AnyAsync(u => u.UserListId == listId && u.Email == normalizedEmail))
+            return Conflict(new { error = "email_already_exists" });
+
         var username = body.Username ?? body.Email.Split('@')[0];
         string discriminator;
         var discIter = 0;
@@ -259,7 +350,8 @@ public class ProjectController(
     {
         var project = await GetProjectAsync();
         if (project?.AssignedUserListId == null) return NotFound();
-        // Verify the target user belongs to this project before revoking (L2 fix)
+        // L2: the Hydra subject is built from the caller's project, so without this membership
+        // check a project admin could revoke the sessions of any user id in the deployment.
         if (!await db.Users.AnyAsync(u => u.Id == id && u.UserListId == project.AssignedUserListId))
             return NotFound();
         await hydra.RevokeAllConsentSessionsAsync($"{project.OrgId}:{id}");
@@ -271,7 +363,11 @@ public class ProjectController(
     public async Task<IActionResult> GetStats()
     {
         var project = await GetProjectAsync();
-        if (project?.AssignedUserListId == null) return NotFound();
+        if (project == null) return NotFound();
+
+        // Same as the admin route: no user list means no users, not a missing project.
+        if (project.AssignedUserListId == null)
+            return Ok(new { total_users = 0, active_users = 0, users_by_role = Array.Empty<object>() });
 
         var totalUsers  = await db.Users.CountAsync(u => u.UserListId == project.AssignedUserListId);
         var activeUsers = await db.Users.CountAsync(u => u.UserListId == project.AssignedUserListId && u.Active);
@@ -301,6 +397,8 @@ public class ProjectController(
     [HttpPost("roles")]
     public async Task<IActionResult> CreateRole([FromBody] CreateRoleRequest body)
     {
+        if (Roles.ProjectRoleNameError(body.Name) is { } nameErr)
+            return BadRequest(new { error = nameErr, reserved = Roles.Management });
         var project = await GetProjectAsync();
         if (project == null) return NotFound();
         var role = new Role
@@ -392,7 +490,17 @@ public record UpdateProjectInfoRequest(string? Name, bool? Active, bool? Require
     string[]? AllowedEmailDomains, Guid? DefaultRoleId, bool? ClearDefaultRole,
     Dictionary<string, object>? LoginTheme, int? MinPasswordLength,
     bool? PasswordRequireUppercase, bool? PasswordRequireLowercase,
-    bool? PasswordRequireDigit, bool? PasswordRequireSpecial);
+    bool? PasswordRequireDigit, bool? PasswordRequireSpecial,
+    // Sent by the admin console. Previously absent from this record, so System.Text.Json
+    // dropped them and the API answered 200 while applying nothing — an operator could
+    // enable an IP allowlist that never took effect.
+    string[]? IpAllowlist, bool? CheckBreachedPasswords,
+    // Same defect as IpAllowlist above, one release later: the console sends allowed_scopes, the
+    // record did not name it, so custom OAuth2 scopes answered 200 and were empty on reload.
+    string[]? AllowedScopes,
+    string? EmailFromName, bool? ClearEmailFromName,
+    // Acknowledges the 409 from MfaDowngradeGuard. Only read when require_mfa goes true → false.
+    bool? ConfirmMfaDowngrade = null);
 public record CreateProjectUserRequest(string Email, string? Username, string Password);
 public record AssignRoleRequest([property: System.Text.Json.Serialization.JsonRequired] Guid RoleId);
 public record CreateRoleRequest(string Name, string? Description, int? Rank);

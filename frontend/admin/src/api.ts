@@ -1,4 +1,5 @@
 import { apiFetch } from './auth';
+import type { MfaReauth } from './auth';
 
 // ── Organisations ─────────────────────────────────────────────────
 export async function listOrgs() {
@@ -13,7 +14,7 @@ export async function getOrg(id: string) {
 export async function getOrgInfo() {
   return (await apiFetch('/org/info')).json();
 }
-export async function updateOrg(id: string, body: { name?: string; metadata?: Record<string, string> }) {
+export async function updateOrg(id: string, body: { name?: string; metadata?: Record<string, string>; audit_retention_days?: number | null }) {
   return (await apiFetch(`/admin/organizations/${id}`, { method: 'PATCH', body: JSON.stringify(body) })).json();
 }
 export async function deleteOrg(id: string) {
@@ -29,15 +30,6 @@ export async function unsuspendOrg(id: string) {
 // ── Users (global) ────────────────────────────────────────────────
 export async function searchUsers(q: string) {
   return (await apiFetch(`/admin/users?q=${encodeURIComponent(q)}`)).json();
-}
-export async function disableUser(id: string) {
-  return (await apiFetch(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ active: false }) })).json();
-}
-export async function enableUser(id: string) {
-  return (await apiFetch(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ active: true }) })).json();
-}
-export async function forceLogoutUser(id: string) {
-  return (await apiFetch(`/admin/users/${id}/sessions`, { method: 'DELETE' })).json();
 }
 export async function adminGetUser(id: string) {
   return (await apiFetch(`/admin/users/${id}`)).json();
@@ -69,9 +61,6 @@ export async function createUserList(body: { name: string; org_id: string }) {
 export async function getUserList(id: string) {
   return (await apiFetch(`/org/userlists/${id}`)).json();
 }
-export async function deleteUserList(id: string) {
-  return apiFetch(`/org/userlists/${id}`, { method: 'DELETE' });
-}
 export async function listUserListMembers(id: string) {
   return (await apiFetch(`/org/userlists/${id}/users`)).json();
 }
@@ -102,11 +91,11 @@ export async function createProject(body: {
   org_id: string; name: string; slug: string;
   require_role_to_login?: boolean;
   redirect_uris: string[];
+  // Hydra refuses any post_logout_redirect_uri the client has not whitelisted, so a project
+  // created without one can be signed into and not out of.
+  post_logout_redirect_uris?: string[];
 }) {
   return (await apiFetch('/org/projects', { method: 'POST', body: JSON.stringify(body) })).json();
-}
-export async function getProject(id: string) {
-  return (await apiFetch(`/org/projects/${id}`)).json();
 }
 export async function getProjectInfo(projectId: string) {
   return (await apiFetch(`/project/info?project_id=${projectId}`)).json();
@@ -130,8 +119,11 @@ export async function listSamlProviders(projectId: string) {
   return (await apiFetch(`/admin/projects/${projectId}/saml-providers`)).json();
 }
 export async function createSamlProvider(projectId: string, body: {
-  entity_id: string; metadata_url?: string; email_attribute_name?: string;
-  name_attribute_name?: string; jit_provisioning?: boolean; active?: boolean;
+  entity_id: string; metadata_url?: string; sso_url?: string; certificate_pem?: string;
+  email_attribute_name?: string;
+  /** Backend field is `display_name_attribute_name`; `name_attribute_name` was silently dropped. */
+  display_name_attribute_name?: string;
+  jit_provisioning?: boolean; default_role_id?: string;
 }) {
   return (await apiFetch(`/admin/projects/${projectId}/saml-providers`, { method: 'POST', body: JSON.stringify(body) })).json();
 }
@@ -143,9 +135,6 @@ export async function deleteProject(id: string) {
 }
 export async function getProjectStats(projectId: string) {
   return (await apiFetch(`/project/stats?project_id=${projectId}`)).json();
-}
-export async function createProjectUser(projectId: string, body: { email: string; username?: string; password: string }) {
-  return (await apiFetch(`/project/users?project_id=${projectId}`, { method: 'POST', body: JSON.stringify(body) })).json();
 }
 export async function assignUserList(projectId: string, userListId: string) {
   return (await apiFetch(`/org/projects/${projectId}/userlist`, { method: 'PUT', body: JSON.stringify({ user_list_id: userListId }) })).json();
@@ -163,9 +152,6 @@ export async function assignRole(projectId: string, userId: string, roleId: stri
 }
 export async function removeRole(projectId: string, userId: string, roleId: string) {
   return apiFetch(`/project/users/${userId}/roles/${roleId}?project_id=${projectId}`, { method: 'DELETE' });
-}
-export async function forceLogoutProjectUser(projectId: string, userId: string) {
-  return apiFetch(`/project/users/${userId}/sessions?project_id=${projectId}`, { method: 'DELETE' });
 }
 
 // ── Role definitions ──────────────────────────────────────────────
@@ -200,9 +186,6 @@ export async function generatePat(saId: string, body: { name: string; expires_at
 }
 export async function revokePat(saId: string, patId: string) {
   return apiFetch(`/service-accounts/${saId}/pat/${patId}`, { method: 'DELETE' });
-}
-export async function listSaRoles(saId: string) {
-  return (await apiFetch(`/service-accounts/${saId}/roles`)).json();
 }
 export async function assignSaRole(saId: string, body: { role: string; org_id?: string; project_id?: string }) {
   return (await apiFetch(`/service-accounts/${saId}/roles`, { method: 'POST', body: JSON.stringify(body) })).json();
@@ -239,25 +222,36 @@ export async function changePassword(body: { current_password: string; new_passw
 export async function setupPhone(phone: string) {
   return (await apiFetch('/account/mfa/phone/setup', { method: 'POST', body: JSON.stringify({ phone }) })).json();
 }
-export async function verifyPhone(code: string) {
-  return (await apiFetch('/account/mfa/phone/verify', { method: 'POST', body: JSON.stringify({ code }) })).json();
+export async function verifyPhone(code: string, reauth?: MfaReauth) {
+  return (await apiFetch('/account/mfa/phone/verify', { method: 'POST', body: JSON.stringify({ code, reauth }) })).json();
 }
-export async function removePhone() {
-  return apiFetch('/account/mfa/phone', { method: 'DELETE' });
+// ── MFA mutations that add, replace or destroy a factor ───────────────────
+/**
+ * Every mutation that adds, replaces or destroys an MFA factor — this one and every other
+ * `reauth?: MfaReauth` signature in this file — takes a re-authentication proof. A bearer token
+ * alone must not be enough to overwrite the victim's second factor (R-24), nor to enrol the
+ * attacker's own alongside it. Do not drop the parameter to simplify a call site.
+ *
+ * The proof is omitted on the first attempt: the backend answers 401 reauthentication_required
+ * with the methods this account can actually supply, and only then is the user prompted.
+ * Enrolling the FIRST factor on an account that has none needs no proof. See ReauthDialog.
+ */
+export async function removePhone(reauth?: MfaReauth) {
+  return apiFetch('/account/mfa/phone', { method: 'DELETE', body: JSON.stringify(reauth ?? {}) });
 }
 
 // ── WebAuthn / Passkeys ────────────────────────────────────────────────────
 export async function beginWebAuthnRegistration() {
   return (await apiFetch('/account/mfa/webauthn/register/begin', { method: 'POST' })).json();
 }
-export async function completeWebAuthnRegistration(body: Record<string, unknown>) {
-  return (await apiFetch('/account/mfa/webauthn/register/complete', { method: 'POST', body: JSON.stringify(body) })).json();
+export async function completeWebAuthnRegistration(body: Record<string, unknown>, reauth?: MfaReauth) {
+  return (await apiFetch('/account/mfa/webauthn/register/complete', { method: 'POST', body: JSON.stringify({ ...body, reauth }) })).json();
 }
 export async function listWebAuthnCredentials() {
   return (await apiFetch('/account/mfa/webauthn/credentials')).json();
 }
-export async function deleteWebAuthnCredential(id: string) {
-  return apiFetch(`/account/mfa/webauthn/credentials/${id}`, { method: 'DELETE' });
+export async function deleteWebAuthnCredential(id: string, reauth?: MfaReauth) {
+  return apiFetch(`/account/mfa/webauthn/credentials/${id}`, { method: 'DELETE', body: JSON.stringify(reauth ?? {}) });
 }
 
 // ── SA API keys (JWK) ─────────────────────────────────────────────────────
@@ -276,20 +270,33 @@ export async function getMfaStatus() {
 export async function setupTotp() {
   return (await apiFetch('/account/mfa/totp/setup', { method: 'POST' })).json();
 }
-export async function confirmTotp(body: { code: string }) {
-  return (await apiFetch('/account/mfa/totp/confirm', { method: 'POST', body: JSON.stringify(body) })).json();
+export async function confirmTotp(body: { code: string }, reauth?: MfaReauth) {
+  return (await apiFetch('/account/mfa/totp/confirm', { method: 'POST', body: JSON.stringify({ ...body, reauth }) })).json();
 }
-export async function regenerateBackupCodes() {
-  return (await apiFetch('/account/mfa/backup-codes', { method: 'POST' })).json();
+export async function regenerateBackupCodes(reauth?: MfaReauth) {
+  return (await apiFetch('/account/mfa/backup-codes', { method: 'POST', body: JSON.stringify(reauth ?? {}) })).json();
 }
 
 // ── Audit log ─────────────────────────────────────────────────────
-export async function getAuditLog(params?: { org_id?: string; project_id?: string; limit?: number; offset?: number }) {
+/**
+ * The audit log for one scope.
+ *
+ * `scope: 'org'` is not a convenience — it is a different route. `/admin/audit-log` is
+ * super-admin-only and binds nothing but limit/offset, so passing `org_id` to it filtered
+ * nothing: an org admin got a 403, and a super admin browsing an organisation saw *every*
+ * tenant's entries under a heading that said otherwise.
+ */
+export async function getAuditLog(
+  params?: { org_id?: string; project_id?: string; limit?: number; offset?: number; scope?: 'system' | 'org' },
+) {
   const q = new URLSearchParams();
-  if (params?.org_id) q.set('org_id', params.org_id);
   if (params?.project_id) q.set('project_id', params.project_id);
   if (params?.limit) q.set('limit', String(params.limit));
   if (params?.offset) q.set('offset', String(params.offset));
+  if (params?.scope === 'org') {
+    return (await apiFetch(`/org/audit-log?${q}`)).json();
+  }
+  if (params?.org_id) q.set('org_id', params.org_id);
   return (await apiFetch(`/admin/audit-log?${q}`)).json();
 }
 
@@ -300,7 +307,9 @@ export async function getMetrics() {
 
 // ── Org info (update) ─────────────────────────────────────────────
 export async function updateOrgInfo(patch: { audit_retention_days?: number | null }) {
-  return (await apiFetch('/org/info', { method: 'PATCH', body: JSON.stringify(patch) })).json();
+  // PATCH /org/settings, not /org/info: the latter is registered GET-only, so this answered 405
+  // and the caller — which has no catch — showed nothing. Retention could never be saved.
+  return (await apiFetch('/org/settings', { method: 'PATCH', body: JSON.stringify(patch) })).json();
 }
 
 // ── Webhooks ──────────────────────────────────────────────────────
@@ -327,14 +336,18 @@ export async function listWebhookDeliveries(id: string) {
 export async function exportUserList(listId: string): Promise<Blob> {
   return (await apiFetch(`/org/userlists/${listId}/export?format=csv`)).blob();
 }
+/**
+ * The two branches below are not symmetrical: the org-scoped route is `/org/audit-log/export`
+ * (OrgController), not `/org/export/audit-log`. Do not "tidy" it to match the system-scoped path.
+ */
 export async function exportOrgAuditLog(orgId: string, isSystemCtx: boolean): Promise<Blob> {
   const path = isSystemCtx
     ? `/admin/organizations/${orgId}/export/audit-log?format=csv`
-    : `/org/export/audit-log?format=csv`;
+    : `/org/audit-log/export?format=csv`;
   return (await apiFetch(path)).blob();
 }
 export async function exportSystemAuditLog(): Promise<Blob> {
-  return (await apiFetch('/admin/export/audit-log?format=csv')).blob();
+  return (await apiFetch('/admin/audit-log/export?format=csv')).blob();
 }
 
 // ── Org-list manager (org-scoped) ─────────────────────────────────
@@ -343,9 +356,6 @@ export async function listOrgListManagers() {
 }
 export async function assignOrgListManager(body: { user_id: string; role: string; scope_id?: string }) {
   return (await apiFetch('/org/admins', { method: 'POST', body: JSON.stringify(body) })).json();
-}
-export async function updateOrgListManager(id: string, body: { role?: string; scope_id?: string }) {
-  return (await apiFetch(`/org/admins/${id}`, { method: 'PATCH', body: JSON.stringify(body) })).json();
 }
 export async function removeOrgListManager(id: string) {
   return apiFetch(`/org/admins/${id}`, { method: 'DELETE' });
@@ -366,10 +376,7 @@ export async function removeOrgAdmin(orgId: string, roleId: string) {
 export async function adminCreateUserList(body: { name: string; org_id: string }) {
   return (await apiFetch('/admin/userlists', { method: 'POST', body: JSON.stringify(body) })).json();
 }
-export async function listAdminOrgProjects(orgId: string) {
-  return (await apiFetch(`/org/projects?org_id=${orgId}`)).json();
-}
-export async function adminCreateProject(orgId: string, body: { name: string; slug: string; redirect_uris?: string[]; require_role_to_login?: boolean }) {
+export async function adminCreateProject(orgId: string, body: { name: string; slug: string; redirect_uris?: string[]; post_logout_redirect_uris?: string[]; require_role_to_login?: boolean }) {
   return (await apiFetch(`/admin/organizations/${orgId}/projects`, { method: 'POST', body: JSON.stringify(body) })).json();
 }
 
@@ -390,16 +397,6 @@ export async function adminUnassignUserList(projectId: string) {
   return apiFetch(`/admin/projects/${projectId}/userlist`, { method: 'DELETE' });
 }
 
-// ── Admin-scoped role management ──────────────────────────────────
-export async function adminListRoles(projectId: string) {
-  return (await apiFetch(`/admin/projects/${projectId}/roles`)).json();
-}
-export async function adminCreateRole(projectId: string, body: { name: string; description?: string; rank?: number }) {
-  return (await apiFetch(`/admin/projects/${projectId}/roles`, { method: 'POST', body: JSON.stringify(body) })).json();
-}
-export async function adminDeleteRole(projectId: string, roleId: string) {
-  return apiFetch(`/admin/projects/${projectId}/roles/${roleId}`, { method: 'DELETE' });
-}
 export async function adminDeleteProject(projectId: string) {
   return apiFetch(`/admin/projects/${projectId}`, { method: 'DELETE' });
 }

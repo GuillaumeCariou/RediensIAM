@@ -1,15 +1,32 @@
 # RediensIAM
 
-Multi-tenant Identity & Access Management system built on Ory Hydra + Keto, ASP.NET Core 10, and React.
+Multi-tenant Identity & Access Management built on Ory Hydra + Keto, ASP.NET Core 10, and React.
 
 - **Login SPA** — user-facing login, registration, MFA, password reset
-- **Admin SPA** — super-admin, org-admin, and project-manager management console
-- **Backend API** — ASP.NET Core 10, two ports: public `:5000` / admin `:5001`
+- **Admin SPA** — super-admin, org-admin and project-manager console, served at `/console/`
+- **Backend API** — ASP.NET Core 10, one process, two listeners: public `:5000` / admin `:5001`
 - **Ory Hydra** — OAuth2/OIDC token issuance and consent
-- **Ory Keto** — fine-grained permission checks
-- **PostgreSQL + Dragonfly** — persistence and cache
+- **Ory Keto** — the authorisation store, re-checked live on every privileged request
+- **PostgreSQL + Dragonfly** — durable state and ephemeral shared state
 
-> See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design philosophy, statelessness model, and configuration flow.
+---
+
+## Documentation
+
+| Read this | For |
+|---|---|
+| [CHANGELOG.md](CHANGELOG.md) | **what breaks when you upgrade.** 0.2.0 changes the wire contract in four places and deploy order is load-bearing — read this first |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | how the system is put together and where authority lives |
+| [docs/DIAGRAMS.md](docs/DIAGRAMS.md) | the same thing drawn — deployment topology, request pipeline, authorisation decision, OIDC and introspection sequences, data model and RLS coverage, key material, audit chain |
+| [docs/SECURITY.md](docs/SECURITY.md) | what protects what, and what is deliberately still open — **read before trusting it with anything** |
+| [docs/API.md](docs/API.md) | all 187 routes: method, path, required authority, where each is reachable |
+| [docs/INTEGRATION.md](docs/INTEGRATION.md) | plugging an application in — the wire contract, the SDKs, and what changes between releases |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | bare cluster to working IdP, plus the day-2 runbooks |
+| [docs/CONSOLE.md](docs/CONSOLE.md) | the admin console: the three scopes, what each page does, and the order a first run has to happen in |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | every environment variable, what it controls, and where each value actually comes from |
+| [docs/TESTING.md](docs/TESTING.md) | running the suites, and what has no tests |
+| [sdk/README.md](sdk/README.md) | which SDK, and why |
+| `SECURITY-AUDIT-LOG.md` | the audit trail, finding by finding |
 
 ---
 
@@ -18,288 +35,223 @@ Multi-tenant Identity & Access Management system built on Ory Hydra + Keto, ASP.
 | Tool | Version |
 |------|---------|
 | Docker | 20+ |
-| k3s (or any k8s) | 1.28+ |
-| kubectl | matching cluster |
+| k3s (or any Kubernetes) | 1.28+ |
+| kubectl | matching the cluster |
 | Helm | 3.12+ |
 | .NET SDK | 10.0 |
 | Node.js | 20+ |
+
+The cluster also needs a default StorageClass, an IngressClass, Traefik's `Middleware` CRD and
+cert-manager. `./deploy/preflight.sh --dev` checks every one and names the fix; it can install
+cert-manager with `--install-cert-manager`.
 
 ---
 
 ## Deployment
 
-### 1. Create `values.secret.yaml`
+**Full guide: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).** Short version below.
 
-The deploy script reads secrets from `deploy/rediensiam/values.secret.yaml`.  
-**This file must never be committed.**
-
-Copy the template and fill in real values:
+### Development
 
 ```bash
-cp deploy/rediensiam/values.secret.yaml deploy/rediensiam/values.secret.yaml.bak  # keep the example
+./deploy/setup.sh --dev
 ```
 
-Full annotated `values.secret.yaml`:
+One command, no manual steps, **nothing to fill in first**. It runs preflight, builds both SPAs and
+the image, pushes to a loopback-only registry, deploys the chart pinned to the image digest, runs
+`verify-deployment.sh`, and prints the bootstrap credentials.
 
-```yaml
-# ── Bootstrap super-admin account (created on first start) ──────────────────
-env:
-  IAM_BOOTSTRAP_EMAIL: "admin@example.com"
-  IAM_BOOTSTRAP_PASSWORD: "ChangeMe123!"   # min 8 chars; change immediately after first login
+Do not hand-write `values.secret.yaml`. Every credential — the four Postgres role passwords, the
+cache password, the encryption root, the Argon2 pepper, the Hydra system secret and the bootstrap
+admin password — is generated per machine into `deploy/rediensiam/values.secret.yaml` (mode 600,
+gitignored). Earlier versions of this README shipped a template full of `CHANGE_ME_…` placeholders;
+every copy of the repository knew those values, and `deploy.sh` now refuses to deploy them to
+production.
 
-# ── Secrets injected as env vars ────────────────────────────────────────────
-secrets:
-  # PostgreSQL connection string for the IAM database
-  databaseUrl: "Host=rediensiam-postgres;Database=rediensiam;Username=iam;Password=STRONG_PASSWORD"
+What you get:
 
-  # Dragonfly/Redis connection string
-  cacheUrl: "rediensiam-dragonfly:6379,abortConnect=false"
-
-  # 32-byte key (base64-encoded) used to encrypt TOTP secrets at rest
-  # Generate: openssl rand -base64 32
-  totpEncryptionKey: "CHANGE_ME_32_BYTE_KEY_BASE64_ENC="
-
-  # Random hex string used as Argon2 pepper for password hashing
-  # Generate: openssl rand -hex 32
-  argon2Pepper: "CHANGE_ME_64_HEX_CHARS"
-
-  # Global SMTP password (leave blank to use per-org SMTP only)
-  smtpPassword: ""
-
-# ── PostgreSQL password (must match the one in databaseUrl above) ────────────
-postgres:
-  password: STRONG_PASSWORD
-
-# ── Ory Hydra ────────────────────────────────────────────────────────────────
-hydra:
-  hydra:
-    config:
-      # Hydra's own database (can share the same Postgres instance)
-      dsn: "postgres://iam:STRONG_PASSWORD@rediensiam-postgres:5432/hydra?sslmode=disable"
-      secrets:
-        system:
-          # At least 32 characters; used to sign Hydra tokens
-          # Generate: openssl rand -hex 32
-          - "CHANGE_ME_HYDRA_SYSTEM_SECRET_AT_LEAST_32_CHARS"
-
-# ── Ory Keto ─────────────────────────────────────────────────────────────────
-keto:
-  keto:
-    config:
-      dsn: "postgres://iam:STRONG_PASSWORD@rediensiam-postgres:5432/keto?sslmode=disable"
+```
+Login          http://iam.localhost/login
+Admin console  http://localhost:30501/console/
+OIDC discovery http://iam.localhost/.well-known/openid-configuration
 ```
 
-> **Tip:** Run `openssl rand -hex 32` to generate each secret value.
+Clean slate: `./deploy/reset-dev.sh` (lists exactly what it destroys, then asks).
 
----
-
-### 2. Deploy
+### Production
 
 ```bash
-# Dev — local k3s, HTTP, Hydra dev mode
-bash deploy/deploy.sh --dev
-
-# Dev — upgrade Helm dependencies first (after chart.yaml changes)
-bash deploy/deploy.sh --dev --upgrade
-
-# Prod — uses values.prod.secret.yaml (generated interactively if missing)
-bash deploy/deploy.sh --prod
+./deploy/setup.sh --prod --plan     # interview only — writes the answers, deploys nothing
+./deploy/setup.sh --prod
 ```
 
-The script does the following in order:
+The interview asks for the things nothing can default — public and admin hostnames, TLS issuer,
+CloudNativePG or the built-in StatefulSet, where the off-node backup copy goes — and fails rather
+than guessing. [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) covers what each answer costs you.
 
-1. Starts the local Docker registry at `localhost:5000`
-2. Builds both SPAs (`npm ci && npm run build`)
-3. Builds and pushes the Docker image
-4. Resolves Helm chart dependencies (Hydra, Keto)
-5. Runs `helm upgrade --install` with the appropriate values
-6. Bootstraps the `client_admin_system` Hydra OAuth2 client
+**No production cluster has ever run this.** The production *profile* has been installed once —
+`setup.sh --prod`, driven through a real interview, into a scratch namespace on the single-node dev
+cluster, then destroyed. It found six defects, five of which made a first-ever install fail outright
+or report a control it had not measured; all six are fixed
+(`SECURITY-AUDIT-LOG.md` step 33). That establishes that the chart, the scripts and
+the values files agree with each other. It does not establish that production works: ACME has never
+been executed, no publicly trusted certificate has ever been issued, no backup has been restored, no
+upgrade has been run across a schema migration, and nothing has been up for longer than an hour. A
+scratch namespace is not production.
 
-After deployment:
+#### Encrypt Kubernetes secrets at rest
 
+The chart cannot do this for you — it is a flag on the cluster, not on the release. Without it
+every Secret this deployment creates, including the database passwords, the Argon2 pepper and the
+encryption root, sits in plaintext in the k3s datastore, readable by anyone who can read the file.
+
+```bash
+# On the k3s server node, as root
+sudo sed -i 's|^ExecStart=.*k3s server|& --secrets-encryption|' /etc/systemd/system/k3s.service
+sudo systemctl daemon-reload && sudo systemctl restart k3s
+
+sudo k3s secrets-encrypt status          # expect: Encryption Status: Enabled
+sudo k3s secrets-encrypt reencrypt       # rewrites Secrets that predate the flag
 ```
-Login  →  http://localhost/login
-Admin  →  http://localhost/admin/
+
+Fifteen minutes and a restart of the API server. Existing Secrets stay in plaintext until the
+`reencrypt` — enabling the flag alone protects only what is written afterwards, which is the part
+that is easy to miss.
+
+### The stages, individually
+
+```bash
+./deploy/preflight.sh --dev          # can this host and cluster run the chart?
+./deploy/deploy.sh --dev             # build and deploy only
+./deploy/verify-deployment.sh --dev  # are the security controls live in the cluster?
+NAMESPACE=rediensiam ./deploy/setup.sh --prod   # install into its own namespace
 ```
 
 ---
 
-### Stateless config (env vs DB)
+## Configuration
 
-Most runtime config keys (every `env.App__*`, `env.Hydra__*`, `env.Keto__*`, `env.Smtp__*`, `env.Security__MaxLoginAttempts`, etc. — anything that is not a cryptographic secret) is read from the Postgres **`instances`** table at startup. On first boot the row is seeded from env vars; subsequent boots ignore env. To push a config change after first boot:
+### Where settings live
 
-```bash
-# edit the env value in values.yaml, then
-yq -i '.rediensiam.env.RECONFIGURE_FROM_ENV = "true"' values.prod.yaml
-helm upgrade ...                  # writes env → DB row, bumps config_version
-yq -i 'del(.rediensiam.env.RECONFIGURE_FROM_ENV)' values.prod.yaml
-helm upgrade ...                  # next routine deploy
-```
+Most runtime configuration is read from a single-row **`instances`** table in Postgres, not from the
+environment. On first boot the row is seeded from environment variables; subsequent boots read the
+row and ignore the environment. Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#configuration-model--zitadel-style).
 
-True secrets (`secrets.databaseUrl`, `secrets.totpEncryptionKey`, `secrets.argon2Pepper`, `secrets.bootstrapPassword`) stay env-only. Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#configuration-model--zitadel-style).
+Trust anchors are deliberately excluded from that layer — `Hydra:*Url`, `Keto:*Url` and
+`App:TrustedProxies` are env-only, so a database write cannot redirect the deployment's
+authorisation store.
 
-### `values.yaml` — Full reference
+⚠ **The chart has no generic environment passthrough.** `templates/deployment.yaml` sets a fixed
+list of variables; there is no `rediensiam.env` map. `INSTANCE_ID` and `RECONFIGURE_FROM_ENV` are
+read by the application but **cannot be set through the chart as it ships**. Reconfiguring a running
+instance means editing `templates/deployment.yaml` or writing the `instances` row directly.
 
-All keys below can be overridden in `values.secret.yaml` or via `--set` on the command line.
+### `values.yaml` — the keys you will actually set
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `appUrl` | `http://localhost` | Public base URL (login SPA, Hydra issuer, user-facing endpoints) |
-| `image.repository` | `rediensiam` | Docker image name |
-| `image.tag` | `"0.0.1"` | Docker image tag |
-| `image.pullPolicy` | `IfNotPresent` | Kubernetes pull policy |
-| `replicaCount` | `1` | Number of app replicas |
-| `service.public.port` | `5000` | Public API port |
-| `service.admin.port` | `5001` | Admin API port |
-| `service.admin.nodePort` | `30501` | NodePort for admin SPA/API |
-| `ingress.host` | `localhost` | Ingress hostname |
-| `env.IAM_ADMIN_PATH` | `/admin` | Path prefix for the admin SPA |
-| `env.App__PublicUrl` | `http://localhost` | Must match `appUrl` |
-| `env.App__AdminSpaOrigin` | `http://localhost` | CORS origin and OIDC redirect base for the admin SPA — must match the origin the browser uses to load it |
-| `env.App__Domain` | `localhost` | Cookie domain |
-| `env.Smtp__Host` | `""` | Global SMTP host (optional) |
-| `env.Smtp__Port` | `587` | Global SMTP port |
-| `env.Smtp__StartTls` | `true` | Use STARTTLS |
-| `env.Smtp__Username` | `""` | Global SMTP username |
-| `env.Smtp__FromAddress` | `noreply@localhost` | Sender address for system emails |
-| `env.Smtp__FromName` | `RediensIAM` | Sender display name |
-| `env.Hydra__AdminUrl` | `http://rediensiam-hydra-admin:4445` | Hydra admin API URL (in-cluster) |
-| `env.Hydra__PublicUrl` | `http://rediensiam-hydra-public:4444` | Hydra public API URL (in-cluster) |
-| `env.Keto__ReadUrl` | `http://rediensiam-keto-read:4466` | Keto read API URL |
-| `env.Keto__WriteUrl` | `http://rediensiam-keto-write:4467` | Keto write API URL |
-| `secrets.databaseUrl` | `""` | **Required.** PostgreSQL connection string |
-| `secrets.cacheUrl` | `""` | **Required.** Dragonfly/Redis connection string |
-| `secrets.totpEncryptionKey` | `""` | **Required.** 32-byte base64 key for TOTP secret encryption |
-| `secrets.argon2Pepper` | `""` | **Required.** Hex pepper for Argon2 password hashing |
-| `secrets.smtpPassword` | `""` | Global SMTP password |
-| `postgres.password` | `""` | **Required.** PostgreSQL root password |
-| `postgres.storage` | `2Gi` | PVC size for PostgreSQL |
-| `hydra.hydra.config.dsn` | `""` | **Required.** Hydra database connection string |
-| `hydra.hydra.config.secrets.system` | `[]` | **Required.** Hydra signing secrets (≥32 chars) |
-| `keto.keto.config.dsn` | `""` | **Required.** Keto database connection string |
+`deploy/rediensiam/values.yaml` is heavily commented and is the source of truth; each key there
+explains why it has the default it has. This table covers the ones an operator touches. It is
+**not** exhaustive, and it deliberately no longer tries to be — the previous version of this table
+listed an `env.*` structure the chart has not had for three revisions.
+
+Everything is under the top-level `rediensiam:` key unless noted.
+
+#### App and networking
+
+| Key | Default | Notes |
+|---|---|---|
+| `app.extraEnv` | `{}` | any environment variable this table does not name — see [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full list. Non-secret values only |
+| `app.trustedProxies` | `10.42.0.0/16,10.43.0.0/16` | **The app refuses to start on an empty value.** CSV of CIDRs whose `X-Forwarded-*` headers are honoured. Silently trusting RFC1918 would let any in-cluster pod spoof `X-Forwarded-For` and bypass every IP-based control. The default is the k3s pod and service CIDR |
+| `image.digest` | `""` | set by `deploy.sh` from `docker push`. When set it replaces `image.tag`, so a restart re-runs the exact bytes deployed |
+| `image.pullPolicy` | `IfNotPresent` | only safe *because* of the digest pin |
+| `replicaCount` | `1` | |
+| `service.public.port` / `service.admin.port` | `5000` / `5001` | |
+| `service.admin.type` | `ClusterIP` | `values.dev.yaml` opts into `NodePort` (`30501`) for local development |
+| `ingress.className` | `traefik` | |
+| `ingress.public.host` | `""` | set per environment |
+| `ingress.public.tls.enabled` | `false` | on in prod; off in dev because `iam.localhost` cannot be certified |
+| `ingress.public.adminOnlyPaths` | `[/admin, /org, /project, /service-accounts]` | denied on the public hostname by an unconditional Traefik `ipAllowList`. `/api` is deliberately absent — see [docs/API.md](docs/API.md) |
+| `ingress.public.rateLimit` / `.maxBodyBytes` | 50/s burst 100 · 1 MiB | ingress-layer |
+| `ingress.admin.tls.enabled` / `.clusterIssuer` | `true` / `selfsigned` | disable when TLS is terminated upstream. The self-signed default is a known defect — see [docs/SECURITY.md](docs/SECURITY.md) |
+| `networkPolicy.defaultDenyScope` | `namespace` | set to `release` if you share the namespace with anything that has no policy of its own |
+
+#### Secrets — generated, not hand-written
+
+| Key | Notes |
+|---|---|
+| `secrets.encryptionKey` | **Required.** 64 hex chars (`openssl rand -hex 32`). Not base64. Every at-rest subkey is HKDF-derived from it |
+| `secrets.encryptionKeys` | Key **ring** for rotation: `"id:hex,id:hex"`, active key first. Supersedes `encryptionKey`. Never reuse an id. Runbook: `SECURITY-AUDIT-LOG.md` step 16 §7 |
+| `secrets.databaseUrl` | **Required.** Npgsql connection string, user `iam_app` |
+| `secrets.cacheUrl` | **Required.** Must carry `ssl=true` exactly when `dragonfly.local.tls.enabled` is on — the chart fails the render if they disagree |
+| `secrets.smtpPassword`, `secrets.bootstrapEmail`, `secrets.bootstrapPassword` | |
+| `security.argon2Pepper` | Optional hex pepper |
+| `security.argon2Peppers` | Pepper **ring**: `"id:hex,id:hex"`, active first. No sweep is possible — accounts re-pepper on next login |
+
+#### PostgreSQL
+
+| Key | Default | Notes |
+|---|---|---|
+| `postgres.local.enabled` | `true` | `false` swaps in an external CloudNativePG cluster |
+| `postgres.local.password` | `""` | the bootstrap SUPERUSER `iam`. Used by **nothing** at runtime — initdb's owner and the break-glass account. Do not put it in a DSN |
+| `postgres.local.roles.{app,hydra,keto,backup}Password` | `""` | the four least-privilege roles. `deploy.sh` generates all four. **Created only on a first-ever start** — an existing installation needs the migration in `SECURITY-AUDIT-LOG.md` step 15c |
+| `postgres.local.tls.enabled` | `false` | **on in both shipped environments.** Needs cert-manager |
+| `postgres.local.tls.requireSsl` | `false` | **on in both shipped environments.** Rewrites `pg_hba.conf` to `hostssl`, so the *server* refuses cleartext. Takes effect only at initdb |
+| `postgres.rls.enabled` | `false` | Row-level security. **On in both dev and prod** — the chart default is off so an existing install is never switched by an upgrade alone. Fail-closed policies: enabling it before verifying the application half on a live connection is a total outage. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#turning-rls-on) |
+| `postgres.external.podSelector` | `cnpg.io/cluster: rediensiam-db` | which pods the NetworkPolicies should target in CNPG mode |
+| `backup.enabled` / `.schedule` / `.retainCopies` | `true` · `0 3 * * *` · `14` | nightly `pg_dumpall` to a PVC **on the same node as the data**. Copy it off-node yourself |
+
+#### Cache
+
+| Key | Default | Notes |
+|---|---|---|
+| `dragonfly.local.enabled` | `true` | |
+| `dragonfly.local.password` | `""` | required when TLS is on |
+| `dragonfly.local.tls.enabled` | `false` | **on in both dev and prod**; the chart default stays off for the same reason as RLS. A hard cutover — `--tls` makes Dragonfly stop answering cleartext, so `cacheUrl` must gain `ssl=true` in the same `helm upgrade` |
+
+#### Hydra and Keto
+
+`hydra.*` and `keto.*` under `rediensiam:` select local subchart or external URLs. The subcharts
+themselves are configured at the **top level**, outside `rediensiam:`:
+
+| Key | Notes |
+|---|---|
+| `hydra.hydra.config.secrets.system` | **Required**, ≥32 chars. A list — prepend to rotate, never replace |
+| `hydra.hydra.config.dsn` | **Required.** User `iam_hydra`, database `hydra` |
+| `hydra.hydra.config.ttl.access_token` | `15m` — the residual window after a revocation |
+| `hydra.hydra.config.ttl.refresh_token` | `168h` — the outer bound on a stolen, unrotated chain |
+| `hydra.maester.enabled` | `false`, deliberately: it holds a ClusterRole granting cluster-wide `create` on Secrets for a reconciliation loop with nothing to reconcile |
+| `keto.keto.config.dsn` | **Required.** User `iam_keto`, database `keto` |
 
 ---
 
-## Running Tests
-
-### Backend — integration tests (.NET)
-
-The integration tests use Testcontainers (PostgreSQL + Redis) and WireMock (Hydra/Keto stubs). No external services needed.
+## Tests
 
 ```bash
-# Run all integration tests
-dotnet test tests/RediensIAM.IntegrationTests/
-
-# Run a specific test class
-dotnet test tests/RediensIAM.IntegrationTests/ --filter "FullyQualifiedName~LoginTests"
-
-# Run with verbose output
-dotnet test tests/RediensIAM.IntegrationTests/ --logger "console;verbosity=detailed"
-
-# Run in parallel (default) with a specific number of workers
-dotnet test tests/RediensIAM.IntegrationTests/ -- xunit.maxParallelThreads=4
+dotnet test tests/RediensIAM.IntegrationTests -p:SonarQubeTargetsImported=true
 ```
 
-The test suite covers 367 tests across auth flows, org/project management, service accounts, webhooks, and security.
+**1460 tests** against real Postgres and Dragonfly containers (Testcontainers) with WireMock Hydra
+and Keto stubs. The `-p:SonarQubeTargetsImported=true` flag suppresses a user-global MSBuild hook
+that a stale `.sonarqube/` directory at the repository root arms — pass it whenever you run `dotnet`
+from the repository root.
+
+`Tests/Regression/` holds one suite per audit finding: 16 files, 241 executed tests, each written to
+fail against the pre-fix build.
+
+Everything else — the SDK suites, `verify-deployment.sh`, the detection rules and their self-test,
+the Playwright E2E suite, and **the fact that neither SPA has a single test** — is in
+[docs/TESTING.md](docs/TESTING.md).
 
 ---
 
-### Frontend — E2E tests (Playwright)
-
-E2E tests live in `tests/e2e/` and cover both SPAs (Login and Admin).
-
-#### First-time setup
+## Static analysis
 
 ```bash
-cd tests/e2e
-npm install
-npx playwright install chromium
+bash sonar-scan.sh
 ```
 
-#### Configure credentials
+Publishes a single SonarQube project, `RediensIAM`, covering the backend and both SPAs. The backend
+also references `SecurityCodeScan.VS2019` and `SonarAnalyzer.CSharp` directly, so most C# issues
+surface at build time.
 
-```bash
-cp .env.example .env
-```
-
-Edit `.env`:
-
-```env
-TEST_BASE_URL=http://localhost          # public ingress URL (login SPA, admin SPA, OIDC flow)
-TEST_ADMIN_URL=http://localhost:30501   # direct NodePort URL for smoke tests only
-TEST_SUPER_ADMIN_EMAIL=admin@local      # must match IAM_BOOTSTRAP_EMAIL in values.secret.yaml
-TEST_SUPER_ADMIN_PASSWORD=Admin1234!    # must match IAM_BOOTSTRAP_PASSWORD
-```
-
-> **Important:** `App__AdminSpaOrigin` in `values.yaml` (and the Hydra `redirect_uri` registered at deploy time) must match `TEST_BASE_URL`. Both default to `http://localhost`. Mismatching origins will cause the OIDC callback to fail with an empty session.
-
-> The dev stack must be running (`bash deploy/deploy.sh --dev`) before the E2E tests can be executed.  
-> The global setup will log in once via the full OIDC flow and cache the session in `.auth/admin-session.json`.
-
-#### Run tests
-
-```bash
-# All tests
-npm test
-
-# Watch mode (interactive UI)
-npm run test:ui
-
-# Headed browser (useful for debugging)
-npm run test:headed
-
-# Login SPA tests only (no auth required)
-npm run test:login
-
-# Admin SPA tests only (uses cached auth session)
-npm run test:admin
-
-# Single spec file
-npx playwright test tests/login/login.spec.ts
-
-# With full trace on failure
-npx playwright test --trace on
-
-# Open the HTML report
-npm run report
-```
-
-#### Test architecture
-
-| Project | Files | Auth | Strategy |
-|---------|-------|------|----------|
-| `login` | `tests/login/*.spec.ts` | None | Hits real backend; API calls mocked via `page.route()` |
-| `admin` | `tests/admin/*.spec.ts` | OIDC session injected | All API calls mocked via `page.route()` |
-| `account` | `tests/account/*.spec.ts` | OIDC session injected | All API calls mocked |
-
-**Admin SPA authentication:** The admin SPA stores its OIDC token in `sessionStorage` (via `oidc-client-ts`). Playwright's native `storageState` only covers cookies and `localStorage`, so the global setup captures `sessionStorage` after a real login and writes it to `.auth/admin-session.json`. The `adminPage` fixture re-injects these keys via `page.addInitScript` before each test.
-
-#### Test coverage (50 tests across 13 files)
-
-| File | Area |
-|------|------|
-| `login/login.spec.ts` | Credential validation, lockout, MFA redirect, success flow |
-| `login/register.spec.ts` | Form validation, breach check, OTP verification step |
-| `login/password-reset.spec.ts` | Three-step reset flow, breach/policy/expiry errors |
-| `login/mfa.spec.ts` | TOTP, SMS OTP, backup codes, WebAuthn (mocked `credentials.get`) |
-| `login/invite.spec.ts` | Set-password from invite link, policy/breach/expiry errors |
-| `account/account.spec.ts` | Profile, password change, TOTP setup, sessions, social links |
-| `admin/system-users.spec.ts` | Global user search, edit dialog, sessions dialog, unlock |
-| `admin/org-lifecycle.spec.ts` | Org CRUD, suspend/unsuspend, navigate to detail |
-| `admin/user-lists.spec.ts` | Global vs org-context view, columns, search, create, navigate |
-| `admin/webhooks.spec.ts` | CRUD, test button, delivery log, secret rotation |
-| `admin/service-accounts.spec.ts` | PAT generation/revocation, API key management, delete SA |
-| `admin/project-authentication.spec.ts` | SAML providers, OAuth2 providers, password policy, login theme |
-| `admin/deployment-smoke.spec.ts` | Public ingress and NodePort reachability for /admin/ |
-| `org/org-email.spec.ts` | SMTP configure, test, delete, super-admin context |
-
-#### What requires manual testing
-
-Some features cannot be reliably automated due to external dependencies:
-
-- **WebAuthn with real hardware** (YubiKey, TouchID) — `mfa.spec.ts` mocks `navigator.credentials.get`
-- **Real email delivery** — use MailHog in dev; run `bash deploy/deploy.sh --dev` and check `http://localhost:8025`
-- **Real SMS delivery** — stub service returns OTP via logs in dev mode
-- **Social OAuth2 login** (Google, GitHub, etc.) — requires live provider consent screen
-- **SAML login with external IdP** — configure a test IdP (e.g. SimpleSAMLphp) separately
-- **Webhook delivery to external endpoint** — use `ngrok` or `webhook.site` manually
+Neither analyser models cross-tenant authorisation. **A clean quality gate is not evidence of tenant
+isolation.**

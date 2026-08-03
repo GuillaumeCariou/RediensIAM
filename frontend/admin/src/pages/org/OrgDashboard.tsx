@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { IamChip, StatCard } from '@/components/iam';
 import { getOrgInfo, listProjects, listUserLists } from '@/api';
 import { useOrgContext } from '@/hooks/useOrgContext';
@@ -15,10 +15,12 @@ export default function OrgDashboard() {
   const [org, setOrg] = useState<Org | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [lists, setLists] = useState<UserList[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Starts false when there is no org: the effect below has nothing to fetch, and flipping the
+  // flag from inside it is a synchronous setState in an effect (react-hooks/set-state-in-effect).
+  const [loading, setLoading] = useState(Boolean(orgId));
 
   useEffect(() => {
-    if (!orgId) { setLoading(false); return; }
+    if (!orgId) return;
     Promise.all([
       getOrgInfo().then(setOrg),
       listProjects(orgId).then(r => setProjects(r.projects ?? r ?? [])),
@@ -37,9 +39,10 @@ export default function OrgDashboard() {
 
   let orgStatusChip = null;
   if (org) {
-    if (org.suspended_at) orgStatusChip = <IamChip tone="danger">Suspended</IamChip>;
-    else if (org.active) orgStatusChip = <IamChip tone="success">Active</IamChip>;
-    else orgStatusChip = <IamChip tone="default">Inactive</IamChip>;
+    // `actions` is an array, so the chip needs a key of its own — React warns without one.
+    if (org.suspended_at) orgStatusChip = <IamChip key="status" tone="danger">Suspended</IamChip>;
+    else if (org.active) orgStatusChip = <IamChip key="status" tone="success">Active</IamChip>;
+    else orgStatusChip = <IamChip key="status" tone="default">Inactive</IamChip>;
   }
 
   return (
