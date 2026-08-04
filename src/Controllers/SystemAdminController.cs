@@ -45,7 +45,6 @@ public class SystemAdminController(
     private static readonly string[] OAuth2GrantTypes   = ["authorization_code", "refresh_token"];
     private static readonly string[] OAuth2ResponseTypes = ["code"];
     private const string AuditOrg = "organisation";
-    private const string KindInvite = "invite";
 
     /// <summary>Management role names accepted by the role-assignment endpoints.</summary>
     internal static readonly string[] KnownManagementRoles = Roles.Management;
@@ -430,126 +429,41 @@ var query = db.UserLists.AsQueryable();
     [HttpGet("userlists/{id}")]
     public async Task<IActionResult> GetUserList(Guid id)
     {
-var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(ul => ul.Id == id);
+var ul = await UserListOperations.FindAsync(db, id);
         if (ul == null) return NotFound();
-        return Ok(new
-        {
-            ul.Id, ul.Name, ul.OrgId, ul.Immovable, ul.CreatedAt,
-            org_name   = ul.Organisation?.Name,
-            user_count = await db.Users.CountAsync(u => u.UserListId == id)
-        });
+        return await UserListOperations.ReadAsync(db, ul);
     }
 
     [HttpGet("userlists/{id}/users")]
     public async Task<IActionResult> ListUsersInList(Guid id)
     {
         if (!await db.UserLists.AnyAsync(ul => ul.Id == id)) return NotFound();
-        var users = await db.Users
-            .Where(u => u.UserListId == id)
-            .Select(u => new { u.Id, u.Username, u.Discriminator, u.Email, u.DisplayName, u.Active, u.LastLoginAt })
-            .ToListAsync();
-        return Ok(users);
+        return await UserListOperations.ListUsersAsync(db, id);
     }
 
     [HttpPost("userlists/{id}/users")]
-    public async Task<IActionResult> AddUserToList(Guid id, [FromBody] AdminCreateUserRequest body)
+    public async Task<IActionResult> AddUserToList(Guid id, [FromBody] UserListOperations.NewUser body)
     {
-        var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(ul => ul.Id == id);
+        var ul = await UserListOperations.FindAsync(db, id);
         if (ul == null) return NotFound();
-        // Only the ManagedApi copy of this handler had the uniqueness check, so the /admin path
-        // happily created a second user with the same email in the same list — two rows the
-        // login lookup then cannot tell apart.
-        var normalizedEmail = body.Email.ToLowerInvariant();
-        if (await db.Users.AnyAsync(u => u.UserListId == id && u.Email == normalizedEmail))
-            return Conflict(new { error = "email_already_exists" });
-        if (UserHelpers.PasswordFloorError(body.Password) is { } floorErr) return floorErr;
-        var username = body.Username ?? body.Email.Split('@')[0];
-        var discriminator = await UserHelpers.GenerateDiscriminatorAsync(db, id, username);
-        var emailVerified = body.EmailVerified ?? false;
-        var isInvite = string.IsNullOrEmpty(body.Password);
-        var user = new User
-        {
-            UserListId = id, Username = username,
-            Discriminator = discriminator, Email = body.Email.ToLowerInvariant(),
-            PasswordHash = isInvite ? null : passwords.Hash(body.Password!),
-            EmailVerified = emailVerified,
-            EmailVerifiedAt = emailVerified ? DateTimeOffset.UtcNow : null,
-            Active = !isInvite, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
-        };
-        db.Users.Add(user);
-        await db.SaveChangesAsync();
-        await keto.WriteRelationTupleAsync(Roles.KetoUserListsNamespace, id.ToString(), "member", $"user:{user.Id}");
-        if (ul.OrgId == null && ul.Immovable)
-            await keto.WriteRelationTupleAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{user.Id}");
-        var assignedProjects = await db.Projects.Where(p => p.AssignedUserListId == id).ToListAsync();
-        foreach (var project in assignedProjects)
-            await keto.AssignDefaultRoleAsync(project, user);
-
-        if (isInvite)
-        {
-            var raw  = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
-            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
-                System.Text.Encoding.UTF8.GetBytes(raw)));
-            db.EmailTokens.Add(new EmailToken
-            {
-                UserId    = user.Id,
-                Kind      = KindInvite,
-                TokenHash = hash,
-                ExpiresAt = DateTimeOffset.UtcNow.AddHours(appConfig.InviteExpiryHours),
-                CreatedAt = DateTimeOffset.UtcNow
-            });
-            await db.SaveChangesAsync();
-            var inviteUrl = appConfig.InviteUrl(raw);
-            var orgName   = ul.Organisation?.Name ?? "the organization";
-            await emailService.SendInviteAsync(user.Email, inviteUrl, orgName, ul.OrgId);
-        }
-
-        // Neither this nor the removal below wrote anything to the audit log, and adding a user to
-        // the system list grants System:rediensiam#super_admin — deployment-wide administration,
-        // recorded nowhere, with a hash chain that had nothing to protect. The org-scoped
-        // equivalent has always audited.
-        var grantsSuperAdmin = ul.OrgId == null && ul.Immovable;
-        await audit.RecordAsync(ul.OrgId, null, GetActorId(),
-            grantsSuperAdmin ? "user.super_admin_granted" : "userlist.user_added",
-            "user", user.Id.ToString(),
-            new() { ["user_list_id"] = id.ToString() });
-
-        return Created($"/admin/userlists/{id}/users/{user.Id}", new
-        {
-            user.Id, username = $"{user.Username}#{user.Discriminator}", user.Email,
-            invite_pending = isInvite
-        });
+        return await UserListOperations.AddUserAsync(
+            db, keto, audit, passwords, emailService, appConfig, GetActorId(), ul, body, "/admin/userlists");
     }
 
     [HttpDelete("userlists/{id}/users/{uid}")]
     public async Task<IActionResult> RemoveUserFromList(Guid id, Guid uid)
     {
-var ul   = await db.UserLists.FindAsync(id);
+var ul = await UserListOperations.FindAsync(db, id);
+        if (ul == null) return NotFound();
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == uid && u.UserListId == id);
         if (user == null) return NotFound();
-        await keto.DeleteRelationTupleAsync(Roles.KetoUserListsNamespace, id.ToString(), "member", $"user:{uid}");
-        if (ul?.OrgId == null && ul?.Immovable == true)
-            await keto.DeleteRelationTupleAsync(Roles.KetoSystemNamespace, Roles.KetoSystemObject, Roles.KetoSuperAdminRelation, $"user:{uid}");
-        db.Users.Remove(user);
-        await db.SaveChangesAsync();
-
-        var revokedSuperAdmin = ul?.OrgId == null && ul?.Immovable == true;
-        await audit.RecordAsync(ul?.OrgId, null, GetActorId(),
-            revokedSuperAdmin ? "user.super_admin_revoked" : "userlist.user_removed",
-            "user", uid.ToString(),
-            new() { ["user_list_id"] = id.ToString() });
-
-        return NoContent();
+        return await UserListOperations.RemoveUserAsync(db, keto, audit, GetActorId(), ul, user);
     }
 
     [HttpPost("userlists")]
     public async Task<IActionResult> AdminCreateUserList([FromBody] AdminCreateUserListRequest body)
     {
-var ul = new UserList { Name = body.Name, OrgId = body.OrgId, Immovable = false, CreatedAt = DateTimeOffset.UtcNow };
-        db.UserLists.Add(ul);
-        await db.SaveChangesAsync();
-        await audit.RecordAsync(body.OrgId, null, GetActorId(), "userlist.created", "userlist", ul.Id.ToString());
-        return Created($"/admin/userlists/{ul.Id}", new { ul.Id, ul.Name });
+return await UserListOperations.CreateAsync(db, audit, GetActorId(), body.Name, body.OrgId, "/admin/userlists");
     }
 
     // ── Org Admins ────────────────────────────────────────────────────────────

@@ -239,21 +239,15 @@ public class OrgController(
     [HttpPost("userlists")]
     public async Task<IActionResult> CreateUserList([FromBody] CreateUserListRequest body)
     {
-        var ul = new UserList { Name = body.Name, OrgId = OrgId, Immovable = false, CreatedAt = DateTimeOffset.UtcNow };
-        db.UserLists.Add(ul);
-        await db.SaveChangesAsync();
-        return Created($"/org/userlists/{ul.Id}", new { ul.Id, ul.Name });
+        return await UserListOperations.CreateAsync(db, audit, ActorId, body.Name, OrgId, "/org/userlists");
     }
 
     [HttpGet("userlists/{id}")]
     public async Task<IActionResult> GetUserList(Guid id)
     {
-        var ul = await db.UserLists.Include(ul => ul.Users)
-            .FirstOrDefaultAsync(ul => ul.Id == id && ul.OrgId == OrgId);
-        if (ul == null) return NotFound();
-        var assignedProjects = await db.Projects.Where(p => p.AssignedUserListId == id)
-            .Select(p => new { p.Id, p.Name }).ToListAsync();
-        return Ok(new { ul.Id, ul.Name, ul.Immovable, user_count = ul.Users.Count, assigned_projects = assignedProjects });
+        var ul = await UserListOperations.FindAsync(db, id);
+        if (ul == null || ul.OrgId != OrgId) return NotFound();
+        return await UserListOperations.ReadAsync(db, ul);
     }
 
     [HttpDelete("userlists/{id}")]
@@ -331,75 +325,16 @@ public class OrgController(
     public async Task<IActionResult> ListUsersInList(Guid id)
     {
         if (!await db.UserLists.AnyAsync(ul => ul.Id == id && ul.OrgId == OrgId)) return NotFound();
-        var userIds = await db.Users.Where(u => u.UserListId == id).Select(u => u.Id).ToListAsync();
-        var pendingInvites = await db.EmailTokens
-            .Where(t => userIds.Contains(t.UserId) && t.Kind == KindInvite && t.UsedAt == null && t.ExpiresAt > DateTimeOffset.UtcNow)
-            .Select(t => t.UserId).ToHashSetAsync();
-        var users = await db.Users
-            .Where(u => u.UserListId == id)
-            .Select(u => new { u.Id, u.Username, u.Discriminator, u.Email, u.DisplayName, u.Active, u.LastLoginAt })
-            .ToListAsync();
-        return Ok(users.Select(u => new { u.Id, u.Username, u.Discriminator, u.Email, u.DisplayName, u.Active, u.LastLoginAt, invite_pending = pendingInvites.Contains(u.Id) }));
+        return await UserListOperations.ListUsersAsync(db, id);
     }
 
     [HttpPost("userlists/{id}/users")]
-    public async Task<IActionResult> AddUserToList(Guid id, [FromBody] CreateUserRequest body)
+    public async Task<IActionResult> AddUserToList(Guid id, [FromBody] UserListOperations.NewUser body)
     {
-        var ul = await db.UserLists.Include(ul => ul.Organisation).FirstOrDefaultAsync(ul => ul.Id == id && ul.OrgId == OrgId);
-        if (ul == null) return NotFound();
-
-        // The same check the /admin path already had. Without it the unique index on
-        // (UserListId, Email) surfaced as a DbUpdateException and a 500 internal_error, which tells
-        // the caller nothing about the one thing they can fix.
-        var normalizedEmail = body.Email.ToLowerInvariant();
-        if (await db.Users.AnyAsync(u => u.UserListId == id && u.Email == normalizedEmail))
-            return Conflict(new { error = "email_already_exists" });
-
-        if (UserHelpers.PasswordFloorError(body.Password) is { } floorErr) return floorErr;
-
-        var username = body.Username ?? body.Email.Split('@')[0];
-        var discriminator = await UserHelpers.GenerateDiscriminatorAsync(db, id, username);
-
-        var isInvite = string.IsNullOrEmpty(body.Password);
-        var user = new User
-        {
-            UserListId = id, Username = username,
-            Discriminator = discriminator, Email = body.Email.ToLowerInvariant(),
-            PasswordHash = isInvite ? null : passwords.Hash(body.Password!),
-            Active = !isInvite, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
-        };
-        db.Users.Add(user);
-        await db.SaveChangesAsync();
-        await keto.WriteRelationTupleAsync(Roles.KetoUserListsNamespace, id.ToString(), "member", $"user:{user.Id}");
-        var assignedProjects = await db.Projects.Where(p => p.AssignedUserListId == id && p.OrgId == OrgId).ToListAsync();
-        foreach (var project in assignedProjects)
-            await keto.AssignDefaultRoleAsync(project, user);
-
-        string? inviteUrl = null;
-        if (isInvite)
-        {
-            var raw  = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
-            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw)));
-            db.EmailTokens.Add(new EmailToken
-            {
-                UserId    = user.Id,
-                Kind      = KindInvite,
-                TokenHash = hash,
-                ExpiresAt = DateTimeOffset.UtcNow.AddHours(appConfig.InviteExpiryHours),
-                CreatedAt = DateTimeOffset.UtcNow
-            });
-            await db.SaveChangesAsync();
-            inviteUrl = appConfig.InviteUrl(raw);
-            var orgName = ul.Organisation?.Name ?? "the organization";
-            await emailService.SendInviteAsync(user.Email, inviteUrl, orgName, OrgId);
-        }
-
-        await audit.RecordAsync(OrgId, null, ActorId, isInvite ? "user.invited" : "user.created", "user", user.Id.ToString());
-        return Created($"/org/userlists/{id}/users/{user.Id}", new
-        {
-            user.Id, username = $"{user.Username}#{user.Discriminator}", user.Email,
-            invite_pending = isInvite
-        });
+        var ul = await UserListOperations.FindAsync(db, id);
+        if (ul == null || ul.OrgId != OrgId) return NotFound();
+        return await UserListOperations.AddUserAsync(
+            db, keto, audit, passwords, emailService, appConfig, ActorId, ul, body, "/org/userlists");
     }
 
     [HttpPost("userlists/{id}/users/{uid}/resend-invite")]
@@ -519,13 +454,11 @@ public class OrgController(
     [HttpDelete("userlists/{id}/users/{uid}")]
     public async Task<IActionResult> RemoveUser(Guid id, Guid uid)
     {
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == uid && u.UserListId == id && u.UserList.OrgId == OrgId);
+        var ul = await UserListOperations.FindAsync(db, id);
+        if (ul == null || ul.OrgId != OrgId) return NotFound();
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == uid && u.UserListId == id);
         if (user == null) return NotFound();
-        await keto.DeleteRelationTupleAsync(Roles.KetoUserListsNamespace, id.ToString(), "member", $"user:{uid}");
-        db.Users.Remove(user);
-        await db.SaveChangesAsync();
-        await audit.RecordAsync(OrgId, null, ActorId, "user.deleted", "user", uid.ToString());
-        return NoContent();
+        return await UserListOperations.RemoveUserAsync(db, keto, audit, ActorId, ul, user);
     }
 
     // ── Org-list managers ─────────────────────────────────────────────────────
