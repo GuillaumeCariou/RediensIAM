@@ -581,15 +581,37 @@ describe('creating a project in this organisation', () => {
   it('creates it against the named organisation, not the caller\'s own', async () => {
     const user = await openCreate();
 
-    await user.fill(screen.getByLabelText('Redirect URI'), 'https://r.test/cb');
-    await user.fill(screen.getByLabelText('Post-logout redirect URI'), 'https://r.test/');
+    await user.fill(screen.getByLabelText(/Redirect URIs/), 'https://r.test/cb');
+    await user.fill(screen.getByLabelText(/Post-logout redirect URIs/), 'https://r.test/');
     await user.click(screen.getByRole('button', { name: 'Create' }));
 
     await vi.waitFor(() => expect(api.adminCreateProject).toHaveBeenCalledWith('o1', {
       name: 'Reporting', slug: 'reporting',
       redirect_uris: ['https://r.test/cb'], post_logout_redirect_uris: ['https://r.test/'],
+      require_role_to_login: false,
     }));
     expect(api.getOrg).toHaveBeenCalledTimes(2);
+  });
+
+  // Two copies of the project form drifted: this page kept single <input> fields, so a project
+  // created from the system scope could hold exactly one redirect URI and one post-logout URI,
+  // while the same project created from the organisation's own Projects page could hold any
+  // number. Nothing announced it — the second URI was simply impossible to type. Both pages render
+  // components/iam/ProjectFields now.
+  it('accepts more than one redirect URI, and more than one post-logout URI', async () => {
+    const user = await openCreate();
+
+    await user.fill(screen.getByLabelText(/Redirect URIs/),
+      'https://a.test/cb\nhttps://b.test/cb');
+    await user.fill(screen.getByLabelText(/Post-logout redirect URIs/),
+      'https://a.test/\nhttps://b.test/');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    await vi.waitFor(() => expect(api.adminCreateProject).toHaveBeenCalledWith('o1',
+      expect.objectContaining({
+        redirect_uris: ['https://a.test/cb', 'https://b.test/cb'],
+        post_logout_redirect_uris: ['https://a.test/', 'https://b.test/'],
+      })));
   });
 
   it('sends empty lists rather than lists holding an empty string', async () => {

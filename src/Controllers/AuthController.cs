@@ -32,6 +32,7 @@ public class AuthController(
     PasswordPolicyService passwordPolicy,
     RediensIAM.Data.TenantScopeInterceptor tenantScope,
     AppConfig appConfig,
+    ClientOriginsService clientOrigins,
     Microsoft.Extensions.Caching.Distributed.IDistributedCache cache,
     ILogger<AuthController> logger) : ControllerBase
 #pragma warning restore S107
@@ -139,10 +140,11 @@ public class AuthController(
     /// </summary>
     private IActionResult SafeRedirect(string url, params string[] additionalTrustedOrigins)
     {
-        var trusted = new List<string>(3 + additionalTrustedOrigins.Length)
-        {
-            appConfig.PublicUrl, appConfig.AdminSpaOrigin, appConfig.HydraPublicUrl,
-        };
+        // ClientOriginsService is the only list of trusted origins in this codebase. It already
+        // carries PublicUrl, AdminSpaOrigin and HydraPublicUrl, and it also carries every
+        // redirect_uri a project registered — which is what Hydra hands back when it accepts or
+        // rejects a login, and what this method used to turn into a 400.
+        var trusted = new List<string>(clientOrigins.Snapshot);
         trusted.AddRange(additionalTrustedOrigins);
         if (!RedirectValidator.TryReconstruct(url, trusted, out var safeUrl))
         {

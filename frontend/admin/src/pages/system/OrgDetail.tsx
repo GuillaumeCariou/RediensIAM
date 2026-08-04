@@ -1,4 +1,7 @@
 import { rowActivation } from '../../components/iam/rowActivation';
+import ProjectFields from '@/components/iam/ProjectFields';
+import { emptyProjectForm, toProjectPayload } from '@/lib/projectForm';
+import type { ProjectFormState } from '@/lib/projectForm';
 import { useEffect, useState, useCallback } from 'react';
 import { ApiError } from '@/auth';
 import { useParams, useNavigate } from 'react-router';
@@ -59,7 +62,7 @@ export default function OrgDetail() {
   const [createListSaving, setCreateListSaving] = useState(false);
 
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
-  const [newProject, setNewProject] = useState({ name: '', slug: '', redirect_uri: '', post_logout_redirect_uri: '' });
+  const [newProject, setNewProject] = useState<ProjectFormState>(emptyProjectForm);
   const [createProjectSaving, setCreateProjectSaving] = useState(false);
   const [createProjectError, setCreateProjectError] = useState('');
 
@@ -167,14 +170,9 @@ export default function OrgDetail() {
     setCreateProjectSaving(true);
     setCreateProjectError('');
     try {
-      await adminCreateProject(id, {
-        name: newProject.name,
-        slug: newProject.slug,
-        redirect_uris: newProject.redirect_uri ? [newProject.redirect_uri] : [],
-        post_logout_redirect_uris: newProject.post_logout_redirect_uri ? [newProject.post_logout_redirect_uri] : [],
-      });
+      await adminCreateProject(id, toProjectPayload(newProject));
       setCreateProjectOpen(false);
-      setNewProject({ name: '', slug: '', redirect_uri: '', post_logout_redirect_uri: '' });
+      setNewProject(emptyProjectForm);
       load();
     } catch (err) {
       const body = err instanceof ApiError ? (err.body as Record<string, string> | null) : null;
@@ -525,25 +523,8 @@ export default function OrgDetail() {
     >
 <form id="orgdetail-form" onSubmit={handleCreateProject} className="space-y-4">
             {createProjectError && <p className="text-sm text-destructive">{createProjectError}</p>}
-            <div className="space-y-2">
-              <label className="iam-label" htmlFor="org-new-project-name">Name</label>
-              <input className="iam-input" id="org-new-project-name" value={newProject.name} onChange={e => setNewProject(p => ({ ...p, name: e.target.value }))} required placeholder="Main App" />
-            </div>
-            <div className="space-y-2">
-              <label className="iam-label" htmlFor="org-new-project-slug">Slug</label>
-              <input className="iam-input" id="org-new-project-slug" value={newProject.slug} onChange={e => setNewProject(p => ({ ...p, slug: e.target.value.toLowerCase().replaceAll(/\s+/g, '-') }))} required placeholder="main-app" pattern="[a-z0-9]+(-[a-z0-9]+)*" />
-              <p className="text-xs text-muted-foreground">Lowercase letters, numbers and hyphens only.</p>
-            </div>
-            <div className="space-y-2">
-              <label className="iam-label" htmlFor="org-new-project-redirect-uri">Redirect URI</label>
-              <input className="iam-input" id="org-new-project-redirect-uri" value={newProject.redirect_uri} onChange={e => setNewProject(p => ({ ...p, redirect_uri: e.target.value }))} placeholder="https://app.example.com/callback" />
-            </div>
-            <div>
-              <label className="iam-label" htmlFor="org-proj-logout-uri">Post-logout redirect URI</label>
-              <input id="org-proj-logout-uri" className="iam-input" value={newProject.post_logout_redirect_uri} onChange={e => setNewProject(p => ({ ...p, post_logout_redirect_uri: e.target.value }))} placeholder="https://app.example.com/" />
-              <p className="iam-help">Where sign-out may return the user. A target not listed here is refused, and the sign-out fails.</p>
-            </div>
-            
+            <ProjectFields idPrefix="org-new-project" form={newProject} onChange={setNewProject} />
+
           </form>
     </IamDialog>
 

@@ -101,6 +101,8 @@ builder.Services.AddScoped<PasswordService>();
 builder.Services.AddScoped<OtpCacheService>();
 builder.Services.AddScoped<LoginRateLimiter>();
 builder.Services.AddScoped<HydraService>();
+// Singleton: the set of origins it caches belongs to the deployment, not to a request.
+builder.Services.AddSingleton<ClientOriginsService>();
 builder.Services.AddScoped<KetoService>();
 builder.Services.AddScoped<AuditLogService>();
 builder.Services.AddScoped<BreachCheckService>();
@@ -185,12 +187,12 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 // ── CORS ───────────────────────────────────────────────────────────────────
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AdminSpa", policy => policy
-        .WithOrigins(appConfig.AdminSpaOrigin)
-        .AllowAnyHeader().AllowAnyMethod().AllowCredentials());
-});
+// No policy is registered here: a policy built at startup can only ever name the two configured
+// origins, which is what made every new front a values-file edit. ProjectCorsPolicyProvider is
+// asked per request and reads the registered clients instead — the same authority the CSP header
+// below answers to. Registered after AddCors so it wins over the default provider.
+builder.Services.AddCors();
+builder.Services.AddSingleton<Microsoft.AspNetCore.Cors.Infrastructure.ICorsPolicyProvider, ProjectCorsPolicyProvider>();
 
 // ── Dual-port via Kestrel ──────────────────────────────────────────────────
 builder.WebHost.ConfigureKestrel(kestrel =>
@@ -379,7 +381,14 @@ app.UseForwardedHeaders();
 var issuerOrigin = Uri.TryCreate(appConfig.PublicUrl, UriKind.Absolute, out var issuerUri)
     ? issuerUri.GetLeftPart(UriPartial.Authority)
     : "";
-app.Use((ctx, next) => { AddSecurityHeaders(ctx, issuerOrigin); return next(); });
+// Awaited at the head of the pipeline, which is also what keeps the CORS provider and
+// SafeRedirect on a set this request has already refreshed. See ClientOriginsService.Snapshot.
+app.Use(async (ctx, next) =>
+{
+    var origins = ctx.RequestServices.GetRequiredService<ClientOriginsService>();
+    AddSecurityHeaders(ctx, issuerOrigin, await origins.ForRequestAsync(ctx));
+    await next();
+});
 
 // ── Swagger UI — admin port only ───────────────────────────────────────────
 app.UseWhen(ctx => ctx.Connection.LocalPort == appConfig.AdminPort, branch =>
@@ -392,7 +401,9 @@ app.UseWhen(ctx => ctx.Connection.LocalPort == appConfig.AdminPort, branch =>
 app.UseHttpMetrics();
 
 app.UseSession();
-app.UseCors("AdminSpa");
+// No policy name: ProjectCorsPolicyProvider answers one question, and naming it twice would be
+// two ways to ask it.
+app.UseCors();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 app.UseRouting();
@@ -504,7 +515,7 @@ static void ValidateEncryptionKey(AppConfig cfg, IWebHostEnvironment env)
             "The encryption root must not be the default all-zero dev placeholder in production.");
 }
 
-static void AddSecurityHeaders(HttpContext ctx, string issuerOrigin)
+static void AddSecurityHeaders(HttpContext ctx, string issuerOrigin, string[] projectOrigins)
 {
     ctx.Response.Headers.XContentTypeOptions   = "nosniff";
     ctx.Response.Headers["Referrer-Policy"]    = "strict-origin-when-cross-origin";
@@ -540,14 +551,26 @@ static void AddSecurityHeaders(HttpContext ctx, string issuerOrigin)
     // is 'self' with no inline escape — and the CSS sink itself is guarded server-side by
     // LoginThemeValidator, which is what makes widening this safe (C-6).
     var issuerConnect = string.IsNullOrEmpty(issuerOrigin) ? "'self'" : $"'self' {issuerOrigin}";
+    // The login page's own connect-src. 'self' can never cover what the flow requires: the SPA
+    // fetches /auth/login, that endpoint answers 302 on the skip and reject branches, and the
+    // browser follows the chain through Hydra onto the client's registered redirect_uri — a
+    // cross-origin hop inside a fetch, which is exactly what connect-src governs. The origins come
+    // from the registered clients, narrowed to one project when the request named one; every token
+    // is rebuilt from a parsed host in ClientOriginsService.ToPolicyOrigin, so nothing a tenant
+    // administrator typed reaches this header as syntax.
+    var loginConnect = projectOrigins.Length > 0
+        ? $"'self' {string.Join(' ', projectOrigins)}"
+        : "'self'";
     ctx.Response.Headers.ContentSecurityPolicy = ctx.Request.Path.StartsWithSegments($"/{Roles.ConsoleBasePath}")
+        // The console stays on the issuer alone: its own redirect_uri is same-origin by
+        // construction, so every tenant origin added here would be reach it never needs.
         ? "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
           $"font-src 'self'; img-src 'self' data:; connect-src {issuerConnect}; " +
           "object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
         // The login page renders tenant branding: a project logo and social-provider icons, both
         // remote HTTPS URLs the operator does not control. Images execute nothing.
         : "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-          "font-src 'self'; img-src 'self' data: https:; connect-src 'self'; " +
+          $"font-src 'self'; img-src 'self' data: https:; connect-src {loginConnect}; " +
           $"object-src 'none'; frame-ancestors {frameAncestors}; " +
           "base-uri 'self'; form-action 'self';";
 }

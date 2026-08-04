@@ -54,7 +54,7 @@ public class HydraConsentSessionRequest
     [JsonPropertyName("subject")]      public string Subject { get; set; } = "";
 }
 
-public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistributedCache cache)
+public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistributedCache cache, ClientOriginsService origins)
 {
     private static readonly string[] BaseScopes = ["openid", "profile", "offline_access"];
     private const string RedirectToKey = "redirect_to";
@@ -186,6 +186,7 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
     {
         var resp = await Client.PostAsJsonAsync($"{_adminUrl}/admin/clients", client);
         resp.EnsureSuccessStatusCode();
+        origins.Invalidate();
         return await resp.Content.ReadFromJsonAsync<JsonElement>(_json);
     }
 
@@ -198,6 +199,7 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
             $"{_adminUrl}/admin/clients/{Uri.EscapeDataString(clientId)}",
             new { scope });
         resp.EnsureSuccessStatusCode();
+        origins.Invalidate();
     }
 
     public async Task DeleteOAuth2ClientAsync(string clientId)
@@ -205,6 +207,7 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
         var resp = await Client.DeleteAsync($"{_adminUrl}/admin/clients/{clientId}");
         if (resp.StatusCode != System.Net.HttpStatusCode.NotFound)
             resp.EnsureSuccessStatusCode();
+        origins.Invalidate();
     }
 
     public async Task<JsonElement?> GetOAuth2ClientAsync(string clientId)
@@ -231,6 +234,7 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
             scope                      = "openid offline",
             redirect_uris              = redirectUris,
             post_logout_redirect_uris  = postLogoutUris,
+            allowed_cors_origins       = ClientOriginsService.CorsOriginsFor(redirectUris, postLogoutUris),
             token_endpoint_auth_method = "none",
             subject_type               = "public"
         };
@@ -241,6 +245,7 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
         else
             resp = await Client.PostAsJsonAsync($"{_adminUrl}/admin/clients", body);
         resp.EnsureSuccessStatusCode();
+        origins.Invalidate();
     }
 
     public async Task CreateOrUpdateServiceAccountClientAsync(string clientId, string saName, JsonElement jwk)
@@ -260,6 +265,7 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
         else
             resp = await Client.PostAsJsonAsync($"{_adminUrl}/admin/clients", body);
         resp.EnsureSuccessStatusCode();
+        origins.Invalidate();
     }
 
     // ── Sessions ──────────────────────────────────────────────────────────────

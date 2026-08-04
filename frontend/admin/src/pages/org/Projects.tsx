@@ -1,4 +1,7 @@
 import { rowActivation } from '../../components/iam/rowActivation';
+import ProjectFields from '@/components/iam/ProjectFields';
+import { emptyProjectForm, toProjectPayload } from '@/lib/projectForm';
+import type { ProjectFormState } from '@/lib/projectForm';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { IamChip, IamDialog } from '@/components/iam';
@@ -69,7 +72,7 @@ export default function Projects() {
   // '__none__' is the option that means "no user list"; '' matches no option at all, so it would
   // paint the first entry as chosen while state said otherwise.
   const [selectedList, setSelectedList] = useState('__none__');
-  const [form, setForm] = useState({ name: '', slug: '', redirect_uris: '', post_logout_redirect_uris: '', require_role_to_login: false });
+  const [form, setForm] = useState<ProjectFormState>(emptyProjectForm);
   const [saving, setSaving] = useState(false);
   const [createError, setCreateError] = useState('');
 
@@ -87,13 +90,8 @@ export default function Projects() {
     e.preventDefault();
     setSaving(true); setCreateError('');
     try {
-      await createProject({
-        org_id: orgId, name: form.name, slug: form.slug,
-        require_role_to_login: form.require_role_to_login,
-        redirect_uris: form.redirect_uris.split('\n').map(s => s.trim()).filter(Boolean),
-        post_logout_redirect_uris: form.post_logout_redirect_uris.split('\n').map(s => s.trim()).filter(Boolean),
-      });
-      setCreateOpen(false); setForm({ name: '', slug: '', redirect_uris: '', post_logout_redirect_uris: '', require_role_to_login: false }); load();
+      await createProject({ org_id: orgId, ...toProjectPayload(form) });
+      setCreateOpen(false); setForm(emptyProjectForm); load();
     } catch (err) {
       const body = err instanceof ApiError ? (err.body as Record<string, string> | null) : null;
       setCreateError(body?.detail ?? body?.error ?? 'Failed to create project.');
@@ -197,22 +195,7 @@ export default function Projects() {
       >
         <form id="create-project-form" onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {createError && <div style={{ padding: '8px 12px', background: 'var(--danger-soft)', color: 'var(--danger)', borderRadius: 6, fontSize: 13 }}>{createError}</div>}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div><label className="iam-label" htmlFor="proj-create-name">Name</label><input id="proj-create-name" className="iam-input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required placeholder="My Dashboard" /></div>
-            <div>
-              <label className="iam-label" htmlFor="proj-create-slug">Slug</label>
-              <input id="proj-create-slug" className="iam-input iam-mono" value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value.toLowerCase().replaceAll(/\s+/g, '-') }))} required placeholder="my-dashboard" pattern="[a-z0-9]+(-[a-z0-9]+)*" />
-            </div>
-          </div>
-          <div>
-            <label className="iam-label" htmlFor="proj-create-uris">Redirect URIs (one per line)</label>
-            <textarea id="proj-create-uris" className="iam-input" style={{ minHeight: 80, resize: 'vertical' }} value={form.redirect_uris} onChange={e => setForm(f => ({ ...f, redirect_uris: e.target.value }))} placeholder="https://dashboard.example.com/callback" />
-          </div>
-          <div>
-            <label className="iam-label" htmlFor="proj-create-logout-uris">Post-logout redirect URIs (one per line)</label>
-            <textarea id="proj-create-logout-uris" className="iam-input" style={{ minHeight: 60, resize: 'vertical' }} value={form.post_logout_redirect_uris} onChange={e => setForm(f => ({ ...f, post_logout_redirect_uris: e.target.value }))} placeholder="https://dashboard.example.com/" />
-            <p className="iam-help">Where sign-out may return the user. A target not listed here is refused, and the sign-out fails.</p>
-          </div>
+          <ProjectFields idPrefix="proj-create" form={form} onChange={setForm} />
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <Toggle checked={form.require_role_to_login} onChange={v => setForm(f => ({ ...f, require_role_to_login: v }))} />
             <div>

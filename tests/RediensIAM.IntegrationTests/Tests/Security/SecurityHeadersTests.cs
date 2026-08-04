@@ -99,7 +99,14 @@ public class SecurityHeadersTests(TestFixture fixture)
         // Tenant logos and social-provider icons are remote HTTPS images.
         policy.Should().Contain("img-src 'self' data: https:");
         policy.Should().Contain("script-src 'self';");
-        policy.Should().Contain("connect-src 'self';");
+        // connect-src used to be asserted as exactly "'self';". That assertion encoded the defect:
+        // the login flow's last hop lands on a client's registered redirect_uri, which 'self' can
+        // never cover, so the header has to be able to name origins this deployment did not know at
+        // startup. What must stay true is that it names them one by one — see
+        // ProjectOriginPolicyTests for the per-token shape.
+        policy.Should().Contain("connect-src 'self'");
+        policy.Should().NotContain("connect-src *");
+        policy.Should().NotContain("connect-src 'self' *");
     }
 
     // ── The /preview framing exemption, reinstated correctly ─────────────────

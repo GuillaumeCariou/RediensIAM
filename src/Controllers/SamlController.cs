@@ -23,6 +23,7 @@ public class SamlController(
     SamlService saml,
     KetoService keto,
     AppConfig appConfig,
+    ClientOriginsService clientOrigins,
     OtpCacheService pending,
     TenantScopeInterceptor tenantScope,
     ILogger<SamlController> logger) : ControllerBase
@@ -183,9 +184,8 @@ public class SamlController(
         await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.login.saml",
             metadata: new Dictionary<string, object> { ["idp_id"] = idp.Id.ToString() });
 
-        if (!RedirectValidator.TryReconstruct(redirectUrl,
-                [appConfig.PublicUrl, appConfig.AdminSpaOrigin, appConfig.HydraPublicUrl],
-                out var safeUrl))
+        // Same authority as SafeRedirect and the CSP header — one list, not a third copy of it.
+        if (!RedirectValidator.TryReconstruct(redirectUrl, clientOrigins.Snapshot, out var safeUrl))
         {
             logger.LogWarning("SAML ACS refused redirect URL {Url}", redirectUrl);
             return BadRequest(new { error = "invalid_redirect" });

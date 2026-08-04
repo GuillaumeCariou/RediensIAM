@@ -78,6 +78,22 @@ public class AppConfig(IConfiguration config)
     // Used for redirect_uri and post_logout_redirect in the OIDC flow.
     public string AdminSpaOrigin => config["App:AdminSpaOrigin"] ?? $"{PublicUrl}";
 
+    /// <summary>
+    /// Extra origins trusted before any project exists — comma separated.
+    ///
+    /// <para>
+    /// CORS and CSP are derived from the registered OAuth2 clients, which is right once the
+    /// deployment has projects and useless on the day it has none: the console has to be reachable
+    /// to create the first one. <see cref="AdminSpaOrigin"/> covers the ordinary case on its own;
+    /// this is for the setups where it does not — a console served from a second hostname, an
+    /// operator's workstation during bring-up, a staging front pointed at this issuer. Empty by
+    /// default, so it widens nothing until an operator asks for it.
+    /// </para>
+    /// </summary>
+    public string[] AdminCorsOrigins =>
+        (config["App:AdminCorsOrigins"] ?? "")
+            .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
     // ── SMTP ──────────────────────────────────────────────────────────────────
     public string? SmtpHost        => config["Smtp:Host"];
     public int     SmtpPort        => config.GetValue<int>("Smtp:Port", 587);

@@ -118,6 +118,10 @@ public class OrgController(
                 client_name = $"Project: {project.Name}",
                 redirect_uris = body.RedirectUris ?? [],
                 post_logout_redirect_uris = body.PostLogoutRedirectUris ?? [],
+                // Hydra's own CORS, carried by the client rather than by the chart — see
+                // ClientOriginsService.CorsOriginsFor. Without it the SPA's token call is blocked
+                // until someone edits apps/iam/values.yaml and restarts the pod.
+                allowed_cors_origins = ClientOriginsService.CorsOriginsFor(body.RedirectUris, body.PostLogoutRedirectUris),
                 grant_types = _hydraGrantTypes,
                 response_types = _hydraResponseTypes,
                 scope = "openid profile offline_access",

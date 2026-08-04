@@ -64,9 +64,12 @@ public sealed class HydraStub : IDisposable
             .Given(Request.Create().WithPath("/version").UsingGet())
             .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { version = "v2.0.0-stub" }));
 
-        // Clients — return empty list and accept any create/delete
+        // Clients — return empty list and accept any create/delete.
+        // Priority 100 so SetupRegisteredClients can override it: WireMock takes the lowest
+        // priority number among the mappings that match, and the default here has to lose.
         _server
             .Given(Request.Create().WithPath("/admin/clients").UsingGet())
+            .AtPriority(100)
             .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(Array.Empty<object>()));
 
         _server
@@ -551,6 +554,63 @@ public sealed class HydraStub : IDisposable
     // ── OAuth2 client helpers ─────────────────────────────────────────────────
 
     /// <summary>
+    /// Stubs GET /admin/clients — the deployment's registered OAuth2 clients — so a test can state
+    /// exactly which redirect_uris exist. Hydra is the only place those live, and CSP, CORS and the
+    /// server-side redirect allowlist are all derived from them, so this is the one input that
+    /// decides which origins the deployment will talk to.
+    /// </summary>
+    public void SetupRegisteredClients(params StubOAuth2Client[] clients)
+    {
+        _server
+            .Given(Request.Create().WithPath("/admin/clients").UsingGet())
+            .AtPriority(1)
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithBodyAsJson(clients.Select(c => new
+                {
+                    client_id                 = c.ClientId,
+                    redirect_uris             = c.RedirectUris,
+                    post_logout_redirect_uris = c.PostLogoutRedirectUris ?? [],
+                }).ToArray()));
+    }
+
+    /// <summary>
+    /// Overrides where Hydra says the browser goes once a login is accepted. In production that is
+    /// the client's own registered redirect_uri, which is exactly the case the default stub's
+    /// same-origin "http://localhost/callback" hides.
+    /// </summary>
+    public void SetupLoginAcceptRedirect(string redirectTo)
+    {
+        _server
+            .Given(Request.Create()
+                .WithPath("/admin/oauth2/auth/requests/login/accept")
+                .UsingPut())
+            .AtPriority(1)
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { redirect_to = redirectTo }));
+    }
+
+    /// <summary>Puts the login-accept redirect back to the default same-origin callback.</summary>
+    public void RestoreLoginAcceptRedirect()
+    {
+        _server
+            .Given(Request.Create()
+                .WithPath("/admin/oauth2/auth/requests/login/accept")
+                .UsingPut())
+            .AtPriority(1)
+            .RespondWith(Response.Create().WithStatusCode(200)
+                .WithBodyAsJson(new { redirect_to = "http://localhost/callback" }));
+    }
+
+    /// <summary>Puts GET /admin/clients back to the empty list, undoing SetupRegisteredClients.</summary>
+    public void RestoreRegisteredClients()
+    {
+        _server
+            .Given(Request.Create().WithPath("/admin/clients").UsingGet())
+            .AtPriority(1)
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(Array.Empty<object>()));
+    }
+
+    /// <summary>
     /// Stubs GET /admin/clients/{clientId} to return a client with a JWKS key.
     /// Needed to cover the GetKeysAsync has_key=true path in PatService.
     /// </summary>
@@ -732,3 +792,9 @@ public sealed class HydraStub : IDisposable
 
     public void Dispose() => _server.Dispose();
 }
+
+/// <summary>One OAuth2 client as Hydra reports it on GET /admin/clients.</summary>
+public sealed record StubOAuth2Client(
+    string ClientId,
+    string[] RedirectUris,
+    string[]? PostLogoutRedirectUris = null);

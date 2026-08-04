@@ -698,6 +698,7 @@ var actorId = GetActorId();
                 client_name  = $"Project: {project.Name}",
                 redirect_uris = body.RedirectUris ?? [],
                 post_logout_redirect_uris = body.PostLogoutRedirectUris ?? [],
+                allowed_cors_origins = ClientOriginsService.CorsOriginsFor(body.RedirectUris, body.PostLogoutRedirectUris),
                 grant_types  = OAuth2GrantTypes,
                 response_types = OAuth2ResponseTypes,
                 scope        = "openid profile offline_access",
@@ -1177,6 +1178,7 @@ var clients = await hydra.ListOAuth2ClientsAsync();
             ["grant_types"] = body.GrantTypes,
             ["redirect_uris"] = body.RedirectUris,
             ["post_logout_redirect_uris"] = body.PostLogoutRedirectUris ?? [],
+            ["allowed_cors_origins"] = ClientOriginsService.CorsOriginsFor(body.RedirectUris, body.PostLogoutRedirectUris),
             ["scope"] = body.Scope ?? "openid profile offline_access",
             ["token_endpoint_auth_method"] = body.GrantTypes.Contains("client_credentials") ? "private_key_jwt" : "none",
         };

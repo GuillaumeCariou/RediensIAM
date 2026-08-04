@@ -48,7 +48,11 @@ public class SsoSessionTests(TestFixture fixture)
         return new RediensIAM.Services.HydraService(
             scope.ServiceProvider.GetRequiredService<IHttpClientFactory>(),
             appConfig,
-            scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Caching.Distributed.IDistributedCache>());
+            scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Caching.Distributed.IDistributedCache>(),
+            // The host's own, not a fresh one: this service caches the deployment's registered
+            // origins, and every client mutation below has to invalidate the same instance the
+            // request pipeline reads.
+            scope.ServiceProvider.GetRequiredService<RediensIAM.Services.ClientOriginsService>());
     }
 
     [Fact]
