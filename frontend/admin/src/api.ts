@@ -118,6 +118,9 @@ export async function updateProject(id: string, body: {
   email_from_name?: string; clear_email_from_name?: boolean;
   require_mfa?: boolean; check_breached_passwords?: boolean;
   ip_allowlist?: string[]; allowed_scopes?: string[];
+  // Registered in Hydra rather than stored here, but written through this same route: a project's
+  // redirect URIs were settable at creation and never again.
+  redirect_uris?: string[]; post_logout_redirect_uris?: string[];
 }) {
   return (await apiFetch(`/project/info?project_id=${id}`, { method: 'PATCH', body: JSON.stringify(body) })).json();
 }

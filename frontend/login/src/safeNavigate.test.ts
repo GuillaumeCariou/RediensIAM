@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { isSafeRedirect, safeNavigate } from './safeNavigate';
+import { isSafeRedirect, safeNavigate, setAllowedRedirectOrigins } from './safeNavigate';
 
 /**
  * `redirect_to` comes back from the API and ends up in `location.href`. If an attacker can steer
@@ -125,5 +125,48 @@ describe('safeNavigate', () => {
     expect(safeNavigate(null)).toBe(false);
     expect(safeNavigate(undefined)).toBe(false);
     expect(assigned).toEqual([]);
+  });
+});
+
+/**
+ * The fourth frozen allowlist.
+ *
+ * `VITE_HYDRA_PUBLIC_ORIGIN` is a build-time constant, so this guard knew its own origin and one
+ * other — and refused the origin the authorization flow actually ends on. Hydra answers with the
+ * client's registered `redirect_uri`, and a project registered after the image was built could
+ * never be one of the two names compiled into it. The server now states which origins the current
+ * challenge's project registered; this is where that answer lands.
+ *
+ * It is stored rather than passed because `safeNavigate` is called from five pages, and a
+ * parameter threaded through all of them is five chances to forget it. sessionStorage rather than
+ * a module variable so a reload straight onto /mfa still knows, and so it dies with the tab.
+ */
+describe('origins the server declared for this project', () => {
+  afterEach(() => setAllowedRedirectOrigins([]));
+
+  it('accepts one the server named', () => {
+    setAllowedRedirectOrigins(['https://superadmin.test']);
+
+    expect(isSafeRedirect('https://superadmin.test/?code=abc')).toBe(true);
+  });
+
+  it('still refuses one it did not', () => {
+    setAllowedRedirectOrigins(['https://superadmin.test']);
+
+    expect(isSafeRedirect('https://evil.test/?code=abc')).toBe(false);
+  });
+
+  it('matches whole origins, never a prefix or a suffix', () => {
+    setAllowedRedirectOrigins(['https://app.test']);
+
+    expect(isSafeRedirect('https://app.test.evil.test/')).toBe(false);
+    expect(isSafeRedirect('https://evil-app.test/')).toBe(false);
+  });
+
+  it('ignores anything the server sent that is not an http(s) origin', () => {
+    setAllowedRedirectOrigins(['myapp://callback', 'https://ok.test', 'not a url']);
+
+    expect(isSafeRedirect('myapp://callback')).toBe(false);
+    expect(isSafeRedirect('https://ok.test/')).toBe(true);
   });
 });

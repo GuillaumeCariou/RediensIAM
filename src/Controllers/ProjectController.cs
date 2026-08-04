@@ -69,6 +69,9 @@ public class ProjectController(
             .Include(p => p.DefaultRole)
             .FirstOrDefaultAsync(p => p.Id == ProjectId && (IsSuperAdmin || p.OrgId == CallerOrgId));
         if (project == null) return NotFound();
+        var uris = project.HydraClientId is { } clientId
+            ? await hydra.GetClientRedirectUrisAsync(clientId)
+            : ([], []);
         return Ok(new
         {
             project.Id, project.Name, project.Slug, project.Active,
@@ -97,58 +100,23 @@ public class ProjectController(
             project.EmailFromName,
             project.IpAllowlist,
             project.AllowedScopes,
+            // The console's settings screen round-trips what it reads. A read that returns less
+            // than its own write accepts is a data-loss bug — the note above says so about the
+            // theme, and it holds for these too.
+            RedirectUris           = uris.RedirectUris,
+            PostLogoutRedirectUris = uris.PostLogoutUris,
         });
     }
 
     [HttpPatch("info")]
-    public async Task<IActionResult> UpdateInfo([FromBody] UpdateProjectInfoRequest body)
+    public async Task<IActionResult> UpdateInfo([FromBody] ProjectUpdateRequest body)
     {
         var project = await GetProjectAsync();
         if (project == null) return NotFound();
-        var allowlistErr = ApplyIpAllowlist(project, body.IpAllowlist);
-        if (allowlistErr != null) return allowlistErr;
-        if (await MfaDowngradeGuard.CheckAsync(db, audit, ActorId, project, body.RequireMfa, body.ConfirmMfaDowngrade) is { } mfaErr)
-            return mfaErr;
-        ApplyProjectFields(project, body);
-        var roleErr = await ApplyDefaultRoleAsync(project, body.ClearDefaultRole, body.DefaultRoleId);
-        if (roleErr != null) return roleErr;
-        var themeErr = ValidateLoginTheme(body.LoginTheme);
-        if (themeErr != null) return themeErr;
-        ApplyLoginTheme(project, body.LoginTheme);
-        project.UpdatedAt = DateTimeOffset.UtcNow;
+        if (await ProjectUpdate.ApplyAsync(db, hydra, audit, appConfig, ActorId, project, body) is { } err) return err;
         await db.SaveChangesAsync();
         await audit.RecordAsync(project.OrgId, project.Id, ActorId, "project.updated", "project", project.Id.ToString());
         return Ok(new { project.Id, project.Name });
-    }
-
-    private static void ApplyProjectFields(Project project, UpdateProjectInfoRequest body)
-    {
-        if (body.Name != null)                     project.Name                    = body.Name;
-        if (body.Active.HasValue)                  project.Active                  = body.Active.Value;
-        if (body.RequireRoleToLogin.HasValue)       project.RequireRoleToLogin      = body.RequireRoleToLogin.Value;
-        if (body.RequireMfa.HasValue)               project.RequireMfa              = body.RequireMfa.Value;
-        if (body.AllowSelfRegistration.HasValue)    project.AllowSelfRegistration   = body.AllowSelfRegistration.Value;
-        if (body.EmailVerificationEnabled.HasValue) project.EmailVerificationEnabled = body.EmailVerificationEnabled.Value;
-        if (body.SmsVerificationEnabled.HasValue)   project.SmsVerificationEnabled  = body.SmsVerificationEnabled.Value;
-        if (body.AllowedEmailDomains != null)       project.AllowedEmailDomains     = body.AllowedEmailDomains;
-        if (body.AllowedScopes != null)             project.AllowedScopes           = body.AllowedScopes;
-        ApplyPasswordPolicyFields(project, body);
-        if (body.ClearEmailFromName == true)          project.EmailFromName              = null;
-        else if (body.EmailFromName != null)          project.EmailFromName              = body.EmailFromName;
-    }
-
-    /// <summary>
-    /// The password-policy half of <see cref="ApplyProjectFields"/>. Split out for readability
-    /// only — the same fields are copied, under the same conditions, at the same point.
-    /// </summary>
-    private static void ApplyPasswordPolicyFields(Project project, UpdateProjectInfoRequest body)
-    {
-        if (body.MinPasswordLength.HasValue)          project.MinPasswordLength          = Math.Max(0, body.MinPasswordLength.Value);
-        if (body.PasswordRequireUppercase.HasValue)   project.PasswordRequireUppercase   = body.PasswordRequireUppercase.Value;
-        if (body.PasswordRequireLowercase.HasValue)   project.PasswordRequireLowercase   = body.PasswordRequireLowercase.Value;
-        if (body.PasswordRequireDigit.HasValue)       project.PasswordRequireDigit       = body.PasswordRequireDigit.Value;
-        if (body.PasswordRequireSpecial.HasValue)     project.PasswordRequireSpecial     = body.PasswordRequireSpecial.Value;
-        if (body.CheckBreachedPasswords.HasValue)     project.CheckBreachedPasswords     = body.CheckBreachedPasswords.Value;
     }
 
     /// <summary>
@@ -485,22 +453,6 @@ public class ProjectController(
     }
 }
 
-public record UpdateProjectInfoRequest(string? Name, bool? Active, bool? RequireRoleToLogin, bool? RequireMfa,
-    bool? AllowSelfRegistration, bool? EmailVerificationEnabled, bool? SmsVerificationEnabled,
-    string[]? AllowedEmailDomains, Guid? DefaultRoleId, bool? ClearDefaultRole,
-    Dictionary<string, object>? LoginTheme, int? MinPasswordLength,
-    bool? PasswordRequireUppercase, bool? PasswordRequireLowercase,
-    bool? PasswordRequireDigit, bool? PasswordRequireSpecial,
-    // Sent by the admin console. Previously absent from this record, so System.Text.Json
-    // dropped them and the API answered 200 while applying nothing — an operator could
-    // enable an IP allowlist that never took effect.
-    string[]? IpAllowlist, bool? CheckBreachedPasswords,
-    // Same defect as IpAllowlist above, one release later: the console sends allowed_scopes, the
-    // record did not name it, so custom OAuth2 scopes answered 200 and were empty on reload.
-    string[]? AllowedScopes,
-    string? EmailFromName, bool? ClearEmailFromName,
-    // Acknowledges the 409 from MfaDowngradeGuard. Only read when require_mfa goes true → false.
-    bool? ConfirmMfaDowngrade = null);
 public record CreateProjectUserRequest(string Email, string? Username, string Password);
 public record AssignRoleRequest([property: System.Text.Json.Serialization.JsonRequired] Guid RoleId);
 public record CreateRoleRequest(string Name, string? Description, int? Rank);

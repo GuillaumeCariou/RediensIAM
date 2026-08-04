@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { formatUriLines, parseUriLines } from '@/lib/projectForm';
 import { useNavigate } from 'react-router';
 import { useProjectContext } from '@/hooks/useOrgContext';
 import { IamDialog } from '@/components/iam';
@@ -35,6 +36,9 @@ export default function ProjectSettings() {
   const [name, setName] = useState('');
   const [active, setActive] = useState(true);
   const [requireRole, setRequireRole] = useState(false);
+  // Held as the textarea's own text, split only on save — the same rule the create forms use.
+  const [redirectUris, setRedirectUris] = useState('');
+  const [postLogoutUris, setPostLogoutUris] = useState('');
 
   const load = useCallback(() => {
     if (!projectId) { setLoading(false); return; }
@@ -45,6 +49,8 @@ export default function ProjectSettings() {
       setName(p.name);
       setActive(p.active);
       setRequireRole(p.require_role_to_login);
+      setRedirectUris(formatUriLines(p.redirect_uris));
+      setPostLogoutUris(formatUriLines(p.post_logout_redirect_uris));
     }).catch(err => { console.error(err); setLoadError(true); }).finally(() => setLoading(false));
   }, [projectId]);
 
@@ -54,7 +60,11 @@ export default function ProjectSettings() {
     setSaving(true);
     setActionError('');
     try {
-      await updateProject(projectId, { name, active, require_role_to_login: requireRole });
+      await updateProject(projectId, {
+        name, active, require_role_to_login: requireRole,
+        redirect_uris: parseUriLines(redirectUris),
+        post_logout_redirect_uris: parseUriLines(postLogoutUris),
+      });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch {
@@ -126,6 +136,23 @@ export default function ProjectSettings() {
             <div>
               <label className="iam-label" htmlFor="proj-name">Project Name</label>
               <input id="proj-name" className="iam-input" value={name} onChange={e => setName(e.target.value)} placeholder="My App" />
+            </div>
+            <div>
+              <label className="iam-label" htmlFor="proj-settings-uris">Redirect URIs (one per line)</label>
+              <textarea id="proj-settings-uris" className="iam-input" style={{ minHeight: 80, resize: 'vertical' }}
+                value={redirectUris} onChange={e => setRedirectUris(e.target.value)}
+                placeholder="https://dashboard.example.com/callback" />
+              <p className="iam-help">
+                Where sign-in returns the user. Each one also becomes an allowed origin for this
+                project — nothing else has to be configured for a new front to work.
+              </p>
+            </div>
+            <div>
+              <label className="iam-label" htmlFor="proj-settings-logout-uris">Post-logout redirect URIs (one per line)</label>
+              <textarea id="proj-settings-logout-uris" className="iam-input" style={{ minHeight: 60, resize: 'vertical' }}
+                value={postLogoutUris} onChange={e => setPostLogoutUris(e.target.value)}
+                placeholder="https://dashboard.example.com/" />
+              <p className="iam-help">Where sign-out may return the user. A target not listed here is refused, and the sign-out fails.</p>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>

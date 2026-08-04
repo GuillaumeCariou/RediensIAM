@@ -721,66 +721,13 @@ var actorId = GetActorId();
     }
 
     [HttpPatch("projects/{id}")]
-    public async Task<IActionResult> AdminUpdateProject(Guid id, [FromBody] AdminUpdateProjectRequest body)
+    public async Task<IActionResult> AdminUpdateProject(Guid id, [FromBody] ProjectUpdateRequest body)
     {
         var project = await db.Projects.FindAsync(id);
         if (project == null) return NotFound();
-        if (await MfaDowngradeGuard.CheckAsync(db, audit, GetActorId(), project, body.RequireMfa, body.ConfirmMfaDowngrade) is { } mfaErr)
-            return mfaErr;
-        ApplyPlainFields(project, body);
-        var roleErr = await ApplyDefaultRoleAsync(project, body.ClearDefaultRole, body.DefaultRoleId, id);
-        if (roleErr != null) return roleErr;
-        if (LoginThemeValidator.Validate(body.LoginTheme) is { } themeErr)
-            return BadRequest(new { error = themeErr });
-        ApplyLoginTheme(project, body.LoginTheme);
-        if (body.IpAllowlist != null)
-        {
-            var invalidCidrs = body.IpAllowlist.Where(entry => !ProjectController.IsValidCidr(entry)).ToArray();
-            if (invalidCidrs.Length > 0)
-                return BadRequest(new { error = "invalid_ip_allowlist", invalid = invalidCidrs });
-            project.IpAllowlist = body.IpAllowlist;
-        }
-        if (body.CheckBreachedPasswords.HasValue) project.CheckBreachedPasswords = body.CheckBreachedPasswords.Value;
-        project.UpdatedAt = DateTimeOffset.UtcNow;
+        if (await ProjectUpdate.ApplyAsync(db, hydra, audit, appConfig, GetActorId(), project, body) is { } err) return err;
         await db.SaveChangesAsync();
         return Ok(new { project.Id, project.Name });
-    }
-
-    /// <summary>
-    /// The fields that are simply "set it if the caller sent it" — no validation, no ordering
-    /// between them. Everything that can refuse the request stays in the handler, in its order.
-    /// </summary>
-    private static void ApplyPlainFields(Project project, AdminUpdateProjectRequest body)
-    {
-        if (body.Name != null) project.Name = body.Name;
-        if (body.RequireRoleToLogin.HasValue)       project.RequireRoleToLogin       = body.RequireRoleToLogin.Value;
-        if (body.RequireMfa.HasValue)               project.RequireMfa               = body.RequireMfa.Value;
-        if (body.AllowSelfRegistration.HasValue)    project.AllowSelfRegistration    = body.AllowSelfRegistration.Value;
-        if (body.EmailVerificationEnabled.HasValue) project.EmailVerificationEnabled = body.EmailVerificationEnabled.Value;
-        if (body.SmsVerificationEnabled.HasValue)   project.SmsVerificationEnabled   = body.SmsVerificationEnabled.Value;
-        if (body.Active.HasValue)                   project.Active                   = body.Active.Value;
-        if (body.AllowedEmailDomains != null)       project.AllowedEmailDomains      = body.AllowedEmailDomains;
-    }
-
-    private async Task<IActionResult?> ApplyDefaultRoleAsync(Project project, bool? clearRole, Guid? newRoleId, Guid projectId)
-    {
-        if (clearRole == true)
-        {
-            project.DefaultRoleId = null;
-        }
-        else if (newRoleId.HasValue)
-        {
-            var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == newRoleId && r.ProjectId == projectId);
-            if (role == null) return BadRequest(new { error = "invalid_default_role" });
-            project.DefaultRoleId = newRoleId;
-        }
-        return null;
-    }
-
-    private void ApplyLoginTheme(Project project, Dictionary<string, object>? theme)
-    {
-        if (theme == null) return;
-        project.LoginTheme = TotpEncryption.EncryptProviderSecretsInTheme(theme, project.LoginTheme, appConfig.ThemeEncKey)!;
     }
 
     [HttpGet("projects/{id}/scopes")]
@@ -1431,11 +1378,6 @@ public record AssignOrgAdminRequest([property: System.Text.Json.Serialization.Js
 public record AdminCreateUserListRequest(string Name, [property: System.Text.Json.Serialization.JsonRequired] Guid OrgId);
 public record AdminCreateProjectRequest(string Name, string Slug, bool? RequireRoleToLogin, string[]? RedirectUris,
     string[]? PostLogoutRedirectUris = null);
-public record AdminUpdateProjectRequest(string? Name, bool? RequireRoleToLogin, bool? RequireMfa, bool? AllowSelfRegistration, bool? EmailVerificationEnabled,
-    bool? SmsVerificationEnabled, bool? Active, Guid? DefaultRoleId, bool? ClearDefaultRole, string[]? AllowedEmailDomains, Dictionary<string, object>? LoginTheme,
-    string[]? IpAllowlist, bool? CheckBreachedPasswords,
-    // Acknowledges the 409 from MfaDowngradeGuard. Only read when require_mfa goes true → false.
-    bool? ConfirmMfaDowngrade = null);
 public record AdminAssignUserListRequest([property: System.Text.Json.Serialization.JsonRequired] Guid UserListId);
 public record AdminCreateRoleRequest(string Name, string? Description, int? Rank);
 public record CreateHydraClientRequest(string ClientName, string[] GrantTypes, string[] RedirectUris, string? Scope,

@@ -246,6 +246,13 @@ public class AuthController(
             password_require_lowercase   = project.PasswordRequireLowercase,
             password_require_digit       = project.PasswordRequireDigit,
             password_require_special     = project.PasswordRequireSpecial,
+            // The login SPA refuses to navigate anywhere it was not told about — safeNavigate.ts.
+            // It knew its own origin and one build-time VITE_HYDRA_PUBLIC_ORIGIN, which made it a
+            // fourth allowlist frozen at build time rather than at startup, and the one the
+            // authorization flow actually ends on: Hydra returns the client's registered
+            // redirect_uri, and the SPA refused it. Scoped to this challenge's project, so a page
+            // is told about the project it is serving and no other.
+            allowed_redirect_origins = await clientOrigins.ForProjectAsync(projectId),
         });
     }
 
@@ -266,7 +273,8 @@ public class AuthController(
             {
                 login_theme = StripSecretsFromTheme(project.LoginTheme),
                 has_custom_template = project.LoginTemplate != null,
-                project.Name
+                project.Name,
+                allowed_redirect_origins = await clientOrigins.ForProjectAsync(projectId),
             });
         }
         catch (Exception ex)

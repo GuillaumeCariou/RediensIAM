@@ -37,6 +37,14 @@ public class Project
     public bool CheckBreachedPasswords { get; set; } = true;
     public string[] AllowedScopes { get; set; } = [];
 
+    // Not columns: the redirect URIs live in Hydra, which is the registry that enforces them. They
+    // are carried here so a project reads as one object — a console that has to fetch them from a
+    // second place to edit them is a console that will forget to.
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public string[] RedirectUris { get; set; } = [];
+    [System.ComponentModel.DataAnnotations.Schema.NotMapped]
+    public string[] PostLogoutRedirectUris { get; set; } = [];
+
     public Organisation Organisation { get; set; } = null!;
     public UserList? AssignedUserList { get; set; }
     public Role? DefaultRole { get; set; }

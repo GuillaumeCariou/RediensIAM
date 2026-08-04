@@ -21,6 +21,8 @@ vi.mock('@/context/AuthContext', () => ({ useAuth: () => auth }));
 const PROJECT = {
   id: 'p1', name: 'Customer Portal', slug: 'portal', active: true,
   require_role_to_login: false, hydra_client_id: 'client-abc',
+  redirect_uris: ['https://a.test/cb', 'https://b.test/cb'],
+  post_logout_redirect_uris: ['https://a.test/'],
 };
 
 beforeEach(() => {
@@ -82,6 +84,10 @@ describe('saving', () => {
 
     await vi.waitFor(() => expect(api.updateProject).toHaveBeenCalledWith('p1', {
       name: 'Client Portal', active: true, require_role_to_login: true,
+      // Unchanged here, but sent: this route round-trips what it read, and omitting them would
+      // clear a project's redirect URIs every time someone renamed it.
+      redirect_uris: ['https://a.test/cb', 'https://b.test/cb'],
+      post_logout_redirect_uris: ['https://a.test/'],
     }));
   });
 
@@ -208,5 +214,38 @@ describe('dismissing the delete confirmation with Escape', () => {
 
     await vi.waitFor(() => expect(screen.queryByText('Delete "Customer Portal"?')).toBeNull());
     expect(api.deleteProject).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A project's redirect URIs could be set at creation and never again. They live in Hydra rather
+ * than in the database, and no route wrote them after the fact — so nothing in the product could
+ * add a second front, fix a typo in a callback, or withdraw one.
+ *
+ * It matters more now that CSP and CORS are derived from those same URIs: deriving them is
+ * worthless if the list they derive from cannot be edited.
+ */
+describe('a project\'s redirect URIs', () => {
+  it('renders what the project has registered', async () => {
+    show();
+    await vi.waitFor(() => expect(nameField()).toHaveValue('Customer Portal'));
+
+    expect(screen.getByLabelText(/Redirect URIs/)).toHaveValue('https://a.test/cb\nhttps://b.test/cb');
+    expect(screen.getByLabelText(/Post-logout redirect URIs/)).toHaveValue('https://a.test/');
+  });
+
+  it('saves an added one, one per line', async () => {
+    const user = show();
+    await vi.waitFor(() => expect(nameField()).toHaveValue('Customer Portal'));
+
+    await user.fill(screen.getByLabelText(/Redirect URIs/),
+      'https://a.test/cb\nhttps://b.test/cb\nhttps://c.test/cb');
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    await vi.waitFor(() => expect(api.updateProject).toHaveBeenCalledWith('p1',
+      expect.objectContaining({
+        redirect_uris: ['https://a.test/cb', 'https://b.test/cb', 'https://c.test/cb'],
+        post_logout_redirect_uris: ['https://a.test/'],
+      })));
   });
 });

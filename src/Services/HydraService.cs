@@ -190,17 +190,56 @@ public class HydraService(IHttpClientFactory http, AppConfig appConfig, IDistrib
         return await resp.Content.ReadFromJsonAsync<JsonElement>(_json);
     }
 
+    /// <summary>
+    /// Applies a JSON Patch to a client. The one place that speaks Hydra's PATCH dialect.
+    ///
+    /// <para>
+    /// <c>PATCH /admin/clients/{id}</c> takes an RFC 6902 array — <c>[{"op":…,"path":…,"value":…}]</c>
+    /// — not a partial client object. Sending the object was silently wrong: it is what
+    /// UpdateOAuth2ClientScopeAsync did, so every custom-scope change was rejected by Hydra and
+    /// nothing noticed, because the test stub answered 200 to any shape at all. The stub now
+    /// refuses a body that is not an array, which is what keeps this from returning.
+    /// </para>
+    /// </summary>
+    private async Task PatchClientAsync(string clientId, params (string Path, object Value)[] operations)
+    {
+        var patch = operations.Select(o => new { op = "replace", path = o.Path, value = o.Value }).ToArray();
+        var resp = await Client.PatchAsJsonAsync(
+            $"{_adminUrl}/admin/clients/{Uri.EscapeDataString(clientId)}", patch);
+        resp.EnsureSuccessStatusCode();
+        origins.Invalidate();
+    }
+
     public async Task UpdateOAuth2ClientScopeAsync(string clientId, string[] allowedScopes)
     {
         var scope = allowedScopes.Length > 0
             ? string.Join(" ", BaseScopes.Concat(allowedScopes).Distinct())
             : "openid profile offline_access";
-        var resp = await Client.PatchAsJsonAsync(
-            $"{_adminUrl}/admin/clients/{Uri.EscapeDataString(clientId)}",
-            new { scope });
-        resp.EnsureSuccessStatusCode();
-        origins.Invalidate();
+        await PatchClientAsync(clientId, ("/scope", scope));
     }
+
+    /// <summary>
+    /// Replaces where a project may send the browser, and — from the same lists — which origins may
+    /// call Hydra for it. The two are one registration: a redirect_uri without its origin leaves a
+    /// front that can be redirected to and cannot finish the exchange.
+    /// </summary>
+    public async Task UpdateClientRedirectUrisAsync(string clientId, string[] redirectUris, string[] postLogoutUris) =>
+        await PatchClientAsync(clientId,
+            ("/redirect_uris", redirectUris),
+            ("/post_logout_redirect_uris", postLogoutUris),
+            ("/allowed_cors_origins", ClientOriginsService.CorsOriginsFor(redirectUris, postLogoutUris)));
+
+    /// <summary>The URIs a client has registered, for a console that has to render them to edit them.</summary>
+    public async Task<(string[] RedirectUris, string[] PostLogoutUris)> GetClientRedirectUrisAsync(string clientId)
+    {
+        if (await GetOAuth2ClientAsync(clientId) is not { } client) return ([], []);
+        return (ReadUriArray(client, "redirect_uris"), ReadUriArray(client, "post_logout_redirect_uris"));
+    }
+
+    private static string[] ReadUriArray(JsonElement client, string field) =>
+        client.TryGetProperty(field, out var arr) && arr.ValueKind == JsonValueKind.Array
+            ? [.. arr.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String).Select(e => e.GetString()!)]
+            : [];
 
     public async Task DeleteOAuth2ClientAsync(string clientId)
     {

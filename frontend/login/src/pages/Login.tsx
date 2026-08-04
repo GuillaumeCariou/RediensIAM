@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router';
 import { getLoginChallenge, submitLogin } from '../api';
+import { setAllowedRedirectOrigins } from '../safeNavigate';
 import { useTheme, type Theme as ColorTheme } from '../useTheme';
 import { safeNavigate } from '../safeNavigate';
 import { sanitizeCss, safeCssValue } from '../lib/sanitizeCss';
@@ -40,6 +41,8 @@ interface Theme {
   email_verification_enabled?: boolean;
   sms_verification_enabled?: boolean;
   is_admin_login?: boolean;
+  /** Origins this project registered — where the flow is allowed to end. See safeNavigate.ts. */
+  allowed_redirect_origins?: string[];
 }
 
 /**
@@ -105,7 +108,12 @@ export default function Login() {
 
   useEffect(() => {
     if (!challenge) return;
-    getLoginChallenge(challenge).then(setLoginTheme).catch(() => setError('Invalid login link'));
+    // Recorded before any redirect can happen: this page is where the server states which origins
+    // the challenge's project registered, and every later page — MFA, enrolment — navigates on the
+    // strength of it.
+    getLoginChallenge(challenge)
+      .then((t: Theme) => { setAllowedRedirectOrigins(t.allowed_redirect_origins); setLoginTheme(t); })
+      .catch(() => setError('Invalid login link'));
   }, [challenge]);
 
   useEffect(() => {

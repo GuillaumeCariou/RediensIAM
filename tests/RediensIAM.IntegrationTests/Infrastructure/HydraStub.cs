@@ -44,6 +44,13 @@ public sealed class HydraStub : IDisposable
         return null;
     }
 
+    /// <summary>
+    /// True when the body is a JSON array, which is all Hydra's PATCH accepts. Deliberately shallow:
+    /// this is a stub asserting the shape RediensIAM must send, not a JSON Patch implementation.
+    /// </summary>
+    private static bool IsJsonPatchArray(string? body) =>
+        body?.TrimStart().StartsWith('[') == true;
+
     /// <summary>Resets all stubs back to the default safe no-ops.</summary>
     public void ResetDefaults()
     {
@@ -88,9 +95,21 @@ public sealed class HydraStub : IDisposable
             .Given(Request.Create().WithPath(new WildcardMatcher("/admin/clients/*")).UsingPut())
             .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { client_id = "stub-client" }));
 
+        // PATCH takes an RFC 6902 array, and Hydra 400s anything else. Answering 200 to a partial
+        // client object is what let UpdateOAuth2ClientScopeAsync send the wrong shape for as long
+        // as it existed: every custom-scope change was rejected in production and green here. The
+        // body matcher is the whole point of these two mappings — do not collapse them into one.
+        _server
+            .Given(Request.Create().WithPath(new WildcardMatcher("/admin/clients/*")).UsingPatch()
+                .WithBody(IsJsonPatchArray))
+            .AtPriority(1)
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { client_id = "stub-client" }));
+
         _server
             .Given(Request.Create().WithPath(new WildcardMatcher("/admin/clients/*")).UsingPatch())
-            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new { client_id = "stub-client" }));
+            .AtPriority(100)
+            .RespondWith(Response.Create().WithStatusCode(400)
+                .WithBodyAsJson(new { error = "json_patch_expected", error_description = "PATCH /admin/clients/{id} takes an RFC 6902 array." }));
 
         // Sessions — accept any revoke
         _server
@@ -599,6 +618,25 @@ public sealed class HydraStub : IDisposable
             .AtPriority(1)
             .RespondWith(Response.Create().WithStatusCode(200)
                 .WithBodyAsJson(new { redirect_to = "http://localhost/callback" }));
+    }
+
+    /// <summary>
+    /// Stubs GET /admin/clients/{clientId} with the URIs it has registered — what the console reads
+    /// before it can offer to edit them.
+    /// </summary>
+    public void SetupClientRedirectUris(string clientId, string[] redirectUris, string[] postLogoutUris)
+    {
+        _server
+            .Given(Request.Create()
+                .WithPath($"/admin/clients/{Uri.EscapeDataString(clientId)}")
+                .UsingGet())
+            .AtPriority(0)
+            .RespondWith(Response.Create().WithStatusCode(200).WithBodyAsJson(new
+            {
+                client_id                 = clientId,
+                redirect_uris             = redirectUris,
+                post_logout_redirect_uris = postLogoutUris,
+            }));
     }
 
     /// <summary>Puts GET /admin/clients back to the empty list, undoing SetupRegisteredClients.</summary>

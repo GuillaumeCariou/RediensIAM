@@ -24,6 +24,42 @@ const HYDRA = (import.meta.env.VITE_HYDRA_PUBLIC_ORIGIN ?? '').trim();
  * Compare full origins, never a hostname prefix or suffix: `evil-app.test` and
  * `app.test.evil.test` both pass a naive substring test.
  */
+const STORE_KEY = 'allowed_redirect_origins';
+
+/**
+ * Records the origins the server said this project registered.
+ *
+ * `HYDRA` above is a build-time constant, which made this guard a fourth allowlist frozen before
+ * the deployment existed — and it never named the origin the authorization flow actually ends on:
+ * Hydra answers with the client's own `redirect_uri`, and a project created after the image was
+ * built could not be one of the two names compiled into it. The server states them per login
+ * challenge (`allowed_redirect_origins`), scoped to the project the page is rendering.
+ *
+ * Stored rather than passed: `safeNavigate` is called from five pages, and a parameter threaded
+ * through all of them is five chances to forget it. sessionStorage rather than a module variable so
+ * a reload straight onto /mfa still knows, and so it dies with the tab.
+ */
+export function setAllowedRedirectOrigins(origins: readonly string[] | undefined): void {
+  const clean = (origins ?? [])
+    .map(o => { try { return new URL(o).origin; } catch { return ''; } })
+    .filter(o => o.startsWith('http://') || o.startsWith('https://'));
+  try {
+    globalThis.sessionStorage.setItem(STORE_KEY, JSON.stringify(clean));
+  } catch {
+    // A browser that refuses storage falls back to same-origin only, which is the safe direction.
+  }
+}
+
+function declaredOrigins(): string[] {
+  try {
+    const raw = globalThis.sessionStorage.getItem(STORE_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((o): o is string => typeof o === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 export function isSafeRedirect(target: string | null | undefined): boolean {
   if (!target) return false;
   if (target.includes('\\')) return false;
@@ -36,7 +72,9 @@ export function isSafeRedirect(target: string | null | undefined): boolean {
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
   if (u.origin === globalThis.location.origin) return true;
   if (HYDRA && u.origin === HYDRA) return true;
-  return false;
+  // Full origins, never a prefix or suffix: `evil-app.test` and `app.test.evil.test` both pass a
+  // naive substring test, which is why the server sends origins and this compares whole ones.
+  return declaredOrigins().includes(u.origin);
 }
 
 /**

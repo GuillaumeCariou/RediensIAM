@@ -152,78 +152,18 @@ public class OrgController(
             .FirstOrDefaultAsync(p => p.Id == id && (isSuperAdmin || p.OrgId == OrgId));
         if (project == null) return NotFound();
         project.LoginTheme = TotpEncryption.StripSecretsFromTheme(project.LoginTheme) ?? project.LoginTheme;
-        return Ok(project);
+        return Ok(await ProjectUpdate.WithRedirectUrisAsync(hydra, project));
     }
 
     [HttpPatch("projects/{id}")]
-    public async Task<IActionResult> UpdateProject(Guid id, [FromBody] UpdateProjectRequest body)
+    public async Task<IActionResult> UpdateProject(Guid id, [FromBody] ProjectUpdateRequest body)
     {
         var isSuperAdmin = Claims.Roles.Contains(Roles.SuperAdmin);
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && (isSuperAdmin || p.OrgId == OrgId));
         if (project == null) return NotFound();
-        if (await MfaDowngradeGuard.CheckAsync(db, audit, ActorId, project, body.RequireMfa, body.ConfirmMfaDowngrade) is { } mfaErr)
-            return mfaErr;
-        ApplyProjectFields(project, body);
-        var roleErr = await ApplyDefaultRoleAsync(project, body.ClearDefaultRole, body.DefaultRoleId, id);
-        if (roleErr != null) return roleErr;
-        // This route reached ApplyLoginTheme without any validation at all — so the org path
-        // accepted tenant CSS and a non-HTTPS logo that the project path refused.
-        if (LoginThemeValidator.Validate(body.LoginTheme) is { } themeErr)
-            return BadRequest(new { error = themeErr });
-        ApplyLoginTheme(project, body.LoginTheme);
-        ApplyEmailFromName(project, body.ClearEmailFromName, body.EmailFromName);
-        if (body.IpAllowlist != null)
-        {
-            var invalidCidrs = body.IpAllowlist.Where(entry => !ProjectController.IsValidCidr(entry)).ToArray();
-            if (invalidCidrs.Length > 0)
-                return BadRequest(new { error = "invalid_ip_allowlist", invalid = invalidCidrs });
-            project.IpAllowlist = body.IpAllowlist;
-        }
-        if (body.CheckBreachedPasswords.HasValue) project.CheckBreachedPasswords = body.CheckBreachedPasswords.Value;
-        project.UpdatedAt = DateTimeOffset.UtcNow;
+        if (await ProjectUpdate.ApplyAsync(db, hydra, audit, appConfig, ActorId, project, body) is { } err) return err;
         await db.SaveChangesAsync();
         return Ok(new { project.Id, project.Name });
-    }
-
-    /// <summary>
-    /// The plain field copies of <see cref="UpdateProject"/>. Split out for readability only —
-    /// same fields, same conditions, applied at the same point in the method.
-    /// </summary>
-    private static void ApplyProjectFields(Project project, UpdateProjectRequest body)
-    {
-        if (body.Name != null) project.Name = body.Name;
-        if (body.RequireRoleToLogin.HasValue) project.RequireRoleToLogin = body.RequireRoleToLogin.Value;
-        if (body.RequireMfa.HasValue) project.RequireMfa = body.RequireMfa.Value;
-        if (body.AllowSelfRegistration.HasValue) project.AllowSelfRegistration = body.AllowSelfRegistration.Value;
-        if (body.EmailVerificationEnabled.HasValue) project.EmailVerificationEnabled = body.EmailVerificationEnabled.Value;
-        if (body.SmsVerificationEnabled.HasValue) project.SmsVerificationEnabled = body.SmsVerificationEnabled.Value;
-        if (body.Active.HasValue) project.Active = body.Active.Value;
-        if (body.AllowedEmailDomains != null) project.AllowedEmailDomains = body.AllowedEmailDomains;
-    }
-
-    private async Task<IActionResult?> ApplyDefaultRoleAsync(Project project, bool? clearRole, Guid? newRoleId, Guid projectId)
-    {
-        if (clearRole == true)
-            project.DefaultRoleId = null;
-        else if (newRoleId.HasValue)
-        {
-            var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == newRoleId && r.ProjectId == projectId);
-            if (role == null) return BadRequest(new { error = "invalid_default_role" });
-            project.DefaultRoleId = newRoleId;
-        }
-        return null;
-    }
-
-    private void ApplyLoginTheme(Project project, Dictionary<string, object>? theme)
-    {
-        if (theme == null) return;
-        project.LoginTheme = TotpEncryption.EncryptProviderSecretsInTheme(theme, project.LoginTheme, appConfig.ThemeEncKey)!;
-    }
-
-    private static void ApplyEmailFromName(Project project, bool? clear, string? name)
-    {
-        if (clear == true) project.EmailFromName = null;
-        else if (name != null) project.EmailFromName = name;
     }
 
     // ── Scopes ────────────────────────────────────────────────────────────────
@@ -1003,24 +943,6 @@ public class OrgController(
     // one. A project registered without it can be signed into and not out of.
 public record CreateProjectRequest(string Name, string Slug, bool? RequireRoleToLogin, string[]? RedirectUris,
     string[]? PostLogoutRedirectUris = null);
-public record UpdateProjectRequest(
-    string? Name,
-    bool? RequireRoleToLogin,
-    bool? RequireMfa,
-    bool? AllowSelfRegistration,
-    bool? EmailVerificationEnabled,
-    bool? SmsVerificationEnabled,
-    bool? Active,
-    string[]? AllowedEmailDomains,
-    Guid? DefaultRoleId,
-    bool? ClearDefaultRole,
-    Dictionary<string, object>? LoginTheme,
-    string? EmailFromName,
-    bool? ClearEmailFromName,
-    string[]? IpAllowlist,
-    bool? CheckBreachedPasswords,
-    // Acknowledges the 409 from MfaDowngradeGuard. Only read when require_mfa goes true → false.
-    bool? ConfirmMfaDowngrade = null);
 public record UpdateScopesRequest(string[] Scopes);
 public record CreateSamlProviderRequest(string EntityId, string? MetadataUrl, string? SsoUrl, string? CertificatePem, string? EmailAttributeName, string? DisplayNameAttributeName, bool? JitProvisioning, Guid? DefaultRoleId);
 public record UpdateSamlProviderRequest(string? EntityId, string? MetadataUrl, string? SsoUrl, string? CertificatePem, string? EmailAttributeName, string? DisplayNameAttributeName, bool? JitProvisioning, Guid? DefaultRoleId, bool? Active);

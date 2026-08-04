@@ -84,6 +84,14 @@ public sealed class ClientOriginsService(
     public async ValueTask<string[]> GetAllAsync() => (await LoadIfStaleAsync()).All;
 
     /// <summary>
+    /// One project's origins, for the login page that is serving it. Narrower than
+    /// <see cref="ForRequestAsync"/> on purpose: the page knows exactly which project it renders,
+    /// so it is told about that one and no other.
+    /// </summary>
+    public async ValueTask<string[]> ForProjectAsync(string? projectId) =>
+        Narrow(await LoadIfStaleAsync(), projectId);
+
+    /// <summary>
     /// The set already loaded, with no Hydra round trip and no await, for the one caller that
     /// cannot await: <c>SafeRedirect</c>, reached from a dozen sites that would all have to change
     /// shape. It runs inside the request pipeline, and the security-headers middleware awaits
