@@ -162,6 +162,8 @@ describe('exporting', () => {
 
     await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Export CSV' })).toBeEnabled());
     expect(click).not.toHaveBeenCalled();
+    // Without this the failure is indistinguishable from a browser that blocked the download.
+    expect(await screen.findByText('Could not export this list. Nothing was downloaded.')).toBeInTheDocument();
   });
 });
 
@@ -267,6 +269,7 @@ describe('cleanup', () => {
     await user.click(screen.getByRole('button', { name: 'Preview' }));
 
     await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Preview' })).toBeEnabled());
+    expect(await screen.findByText('The cleanup could not run. Nothing was changed.')).toBeInTheDocument();
   });
 
   it('forgets the last result when reopened, so an old count cannot be read as new', async () => {

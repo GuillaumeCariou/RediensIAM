@@ -27,8 +27,14 @@ export default function AuditLog() {
   const [hasMore, setHasMore] = useState(false);
   const [exporting, setExporting] = useState(false);
 
+  // `try`/`finally` with no `catch` re-enabled the button and said nothing: a refused export was
+  // indistinguishable from a browser that blocked the download, and the rejection escaped as an
+  // unhandled promise. The failure now has a name on screen.
+  const [exportError, setExportError] = useState('');
+
   const handleExport = async () => {
     setExporting(true);
+    setExportError('');
     try {
       const blob = await exportSystemAuditLog();
       const url = URL.createObjectURL(blob);
@@ -37,6 +43,8 @@ export default function AuditLog() {
       a.download = `audit-log-${new Date().toISOString().slice(0, 10)}.csv`;
       a.click();
       URL.revokeObjectURL(url);
+    } catch {
+      setExportError('Could not export the audit log. Nothing was downloaded.');
     } finally { setExporting(false); }
   };
 
@@ -60,6 +68,9 @@ export default function AuditLog() {
   return (
     <div>
       <PageHeader title="Audit Log" description="Complete history of all administrative actions" />
+      {exportError && (
+        <div className="iam-alert iam-alert-danger" style={{ margin: '0 24px 12px' }}>{exportError}</div>
+      )}
       <AuditLogTable
         entries={entries}
         loading={loading}

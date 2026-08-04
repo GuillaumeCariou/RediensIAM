@@ -115,6 +115,7 @@ describe('saving', () => {
     await user.click(screen.getByRole('button', { name: 'Save Changes' }));
 
     await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Save Changes' })).toBeEnabled());
+    expect(await screen.findByText('Could not save. Nothing was changed.')).toBeInTheDocument();
   });
 });
 
@@ -178,6 +179,9 @@ describe('deleting the project', () => {
     await user.click(await screen.findByRole('button', { name: 'Delete Project' }));
 
     await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Delete Project' })).toBeEnabled());
+    // Inside the dialog, which stays open and covers the page: an alert in the body would be shown
+    // to nobody.
+    expect(await screen.findByText('Could not delete this project. It still exists.')).toBeInTheDocument();
   });
 
   it('does nothing on cancel', async () => {

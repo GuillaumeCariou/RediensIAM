@@ -268,6 +268,10 @@ export default function Authentication() {
 
   const [ipAllowlist,      setIpAllowlist]      = useState('');
   const [ipAllowlistError, setIpAllowlistError] = useState('');
+  // The save had `try`/`finally` and no `catch`: a refused PATCH re-enabled the button, left every
+  // field showing the edits it had NOT persisted, and escaped as an unhandled rejection. On this
+  // page in particular that is dangerous — the operator walks away believing MFA is now required.
+  const [saveError, setSaveError] = useState('');
 
   const [customScopes, setCustomScopes] = useState<string[]>([]);
   const [newScope,     setNewScope]     = useState('');
@@ -337,6 +341,7 @@ export default function Authentication() {
     const badIp = ipLines.find(s => !/^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$|^[0-9a-fA-F:]+\/\d{1,3}$/.test(s));
     if (badIp) { setIpAllowlistError(`Invalid CIDR: ${badIp}`); return; }
     setIpAllowlistError('');
+    setSaveError('');
     setSaving(true);
     try {
       const domains = allowedDomains.split(',').map(d => d.trim()).filter(Boolean);
@@ -375,6 +380,8 @@ export default function Authentication() {
       await updateProject(projectId, body);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+    } catch {
+      setSaveError('Could not save. None of these settings were changed.');
     } finally { setSaving(false); }
   };
 
@@ -512,6 +519,9 @@ export default function Authentication() {
       />
 
       <div className="iam-page" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 24 }}>
+        {saveError && (
+          <div className="iam-alert iam-alert-danger">{saveError}</div>
+        )}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 460px', gap: 24, alignItems: 'start' }}>
           <div>
             <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 20, gap: 0, flexWrap: 'wrap' }}>

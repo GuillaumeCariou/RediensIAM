@@ -32,6 +32,12 @@ export default function UserListDetail() {
   const [cleanupInactive, setCleanupInactive] = useState(false);
   const [cleanupDays, setCleanupDays]         = useState(90);
   const [cleanupRunning, setCleanupRunning]   = useState(false);
+  // `try`/`finally` with no `catch` re-enabled the button and told the operator nothing: a refused
+  // export looked exactly like a browser that blocked the download, and the rejection escaped
+  // unhandled. Two states because the two actions are read in two different places — the export
+  // from the page, the cleanup from inside its dialog, which covers the page.
+  const [exportError, setExportError]         = useState('');
+  const [cleanupError, setCleanupError]       = useState('');
   const [cleanupResult, setCleanupResult]     = useState<{
     orphaned_roles_found: number; inactive_users_found: number;
     orphaned_roles_removed: number; inactive_users_removed: number; dry_run: boolean;
@@ -46,6 +52,7 @@ export default function UserListDetail() {
   const handleExport = async () => {
     if (!resolvedId) return;
     setExporting(true);
+    setExportError('');
     try {
       const blob = await exportUserList(resolvedId);
       const url = URL.createObjectURL(blob);
@@ -54,12 +61,14 @@ export default function UserListDetail() {
       a.download = `userlist-${resolvedId.slice(0, 8)}-${new Date().toISOString().slice(0, 10)}.csv`;
       a.click();
       URL.revokeObjectURL(url);
+    } catch {
+      setExportError('Could not export this list. Nothing was downloaded.');
     } finally { setExporting(false); }
   };
 
   const handleCleanup = async () => {
     if (!resolvedId) return;
-    setCleanupRunning(true); setCleanupResult(null);
+    setCleanupRunning(true); setCleanupResult(null); setCleanupError('');
     try {
       const res = await cleanupUserList(resolvedId, {
         remove_orphaned_roles: true,
@@ -68,6 +77,8 @@ export default function UserListDetail() {
         dry_run: cleanupDryRun,
       });
       setCleanupResult(res);
+    } catch {
+      setCleanupError('The cleanup could not run. Nothing was changed.');
     } finally { setCleanupRunning(false); }
   };
 
@@ -98,6 +109,9 @@ export default function UserListDetail() {
       />
 
       <div className="p-6 space-y-4">
+        {exportError && (
+          <div className="iam-alert iam-alert-danger">{exportError}</div>
+        )}
         <button className="iam-btn iam-btn-ghost iam-btn-sm -ml-1" onClick={() => navigate(-1)}>
           <ArrowLeft className="h-4 w-4" />Back
         </button>
@@ -127,6 +141,9 @@ export default function UserListDetail() {
               <input type="checkbox" checked={cleanupDryRun} onChange={e => setCleanupDryRun(e.target.checked)} />
               {' '}Dry run (preview only, no deletions)
             </label>
+            {cleanupError && (
+              <div className="iam-alert iam-alert-danger">{cleanupError}</div>
+            )}
             {cleanupResult && (
               <div className="rounded-lg border bg-muted p-3 text-sm space-y-1">
                 {cleanupResult.dry_run && <p className="font-medium text-muted-foreground">Preview (dry run):</p>}

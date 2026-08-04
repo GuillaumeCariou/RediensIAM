@@ -265,13 +265,18 @@ describe('the passkey', () => {
   };
   /** What the browser throws when the operator dismisses the prompt or it times out. */
   const cancelled = () => Object.assign(new Error('cancelled'), { name: 'NotAllowedError' });
+  /** The argument `navigator.credentials.get` receives. Declaring it is what lets the
+   *  assertions below read `get.mock.calls[0][0]`: a `vi.fn(async () => …)` has no
+   *  parameters, so its call tuple is empty and indexing it is a type error — the
+   *  cast that used to sit there was casting `undefined`. */
+  const credentialsGet = async (_options: { publicKey: Record<string, unknown> }) => ASSERTION;
   const withCredentials = (get: ReturnType<typeof vi.fn>) =>
     vi.stubGlobal('navigator', new Proxy(globalThis.navigator, {
       get: (t, k) => k === 'credentials' ? { get } : Reflect.get(t, k),
     }));
 
   it('prompts as soon as the method is chosen, and only once', async () => {
-    const get = vi.fn(async () => ASSERTION);
+    const get = vi.fn(credentialsGet);
     withCredentials(get);
     api.getWebAuthnOptions.mockResolvedValue(OPTIONS);
     api.verifyWebAuthn.mockResolvedValue(OK);
@@ -282,14 +287,14 @@ describe('the passkey', () => {
   });
 
   it('never lets the server relax user verification', async () => {
-    const get = vi.fn(async () => ASSERTION);
+    const get = vi.fn(credentialsGet);
     withCredentials(get);
     api.getWebAuthnOptions.mockResolvedValue({ ...OPTIONS, userVerification: 'discouraged', extensions: { evil: true } });
     api.verifyWebAuthn.mockResolvedValue(OK);
     show('webauthn');
 
     await vi.waitFor(() => expect(get).toHaveBeenCalled());
-    const { publicKey } = get.mock.calls[0][0] as { publicKey: Record<string, unknown> };
+    const { publicKey } = get.mock.calls[0][0];
     expect(publicKey['userVerification']).toBe('required');
     // Nothing the server added travels through: the options are an allowlist, not a spread.
     expect(publicKey).not.toHaveProperty('extensions');
@@ -298,21 +303,21 @@ describe('the passkey', () => {
   });
 
   it('defaults the timeout and drops a non-string rpId rather than passing them on', async () => {
-    const get = vi.fn(async () => ASSERTION);
+    const get = vi.fn(credentialsGet);
     withCredentials(get);
     api.getWebAuthnOptions.mockResolvedValue({ challenge: 'AAAA', timeout: 'soon', rpId: 42 });
     api.verifyWebAuthn.mockResolvedValue(OK);
     show('webauthn');
 
     await vi.waitFor(() => expect(get).toHaveBeenCalled());
-    const { publicKey } = get.mock.calls[0][0] as { publicKey: Record<string, unknown> };
+    const { publicKey } = get.mock.calls[0][0];
     expect(publicKey['timeout']).toBe(60000);
     expect(publicKey['rpId']).toBeUndefined();
     expect(publicKey['allowCredentials']).toBeUndefined();
   });
 
   it('sends the assertion base64url-encoded', async () => {
-    const get = vi.fn(async () => ASSERTION);
+    const get = vi.fn(credentialsGet);
     withCredentials(get);
     api.getWebAuthnOptions.mockResolvedValue(OPTIONS);
     api.verifyWebAuthn.mockResolvedValue(OK);
@@ -345,7 +350,7 @@ describe('the passkey', () => {
       api.verifyWebAuthn.mockResolvedValue({ error: 'bad_signature' });
     }, 'Passkey verification failed. Try again.'],
   ])('says so when %s', async (_n, arrange, message) => {
-    withCredentials(vi.fn(async () => ASSERTION));
+    withCredentials(vi.fn(credentialsGet));
     arrange();
     show('webauthn');
 

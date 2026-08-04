@@ -22,6 +22,11 @@ export default function ProjectSettings() {
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  // A save or a delete that the server refuses used to leave `try`/`finally` with no `catch`: the
+  // button simply re-enabled itself, the operator read that as success, and the rejection escaped
+  // as an unhandled promise. Same treatment as OrgSettings — say what happened, and say that
+  // nothing changed.
+  const [actionError, setActionError] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -47,18 +52,24 @@ export default function ProjectSettings() {
 
   const handleSave = async () => {
     setSaving(true);
+    setActionError('');
     try {
       await updateProject(projectId, { name, active, require_role_to_login: requireRole });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+    } catch {
+      setActionError('Could not save. Nothing was changed.');
     } finally { setSaving(false); }
   };
 
   const handleDelete = async () => {
     setDeleting(true);
+    setActionError('');
     try {
       await deleteProject(projectId);
       navigate('/org/projects');
+    } catch {
+      setActionError('Could not delete this project. It still exists.');
     } finally { setDeleting(false); }
   };
 
@@ -105,6 +116,9 @@ export default function ProjectSettings() {
         ]}
       />
       <div className="iam-page" style={{ maxWidth: 640, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {actionError && !deleteOpen && (
+          <div className="iam-alert iam-alert-danger">{actionError}</div>
+        )}
 
         <div className="iam-card iam-card-pad">
           <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>General</div>
@@ -176,7 +190,11 @@ export default function ProjectSettings() {
           </>
         }
       >
-        <div />
+        {/* The delete error belongs INSIDE the dialog: the dialog stays open on failure and covers
+            the page, so an alert in the page body would be reported to nobody. */}
+        {deleteOpen && actionError
+          ? <div className="iam-alert iam-alert-danger">{actionError}</div>
+          : <div />}
       </IamDialog>
     </div>
   );

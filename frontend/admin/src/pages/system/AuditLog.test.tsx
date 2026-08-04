@@ -150,9 +150,9 @@ describe.each([
   });
 
   it('KNOWN GAP: a failed export says nothing, it only re-enables the button', async () => {
-    // handleExport has a `finally` and no `catch`, so a rejected export re-enables the button and
-    // leaves the operator with no way to tell a failure from a browser that blocked the download.
-    // The rejection also escapes as an unhandled promise. Documented, not asserted as desirable.
+    // handleExport used to have a `finally` and no `catch`: the button re-enabled itself, the
+    // operator could not tell a refusal from a browser that blocked the download, and the rejection
+    // escaped as an unhandled promise. Both pages now name the failure, and this asserts it.
     const failing = name === 'the system page' ? api.exportSystemAuditLog : api.exportOrgAuditLog;
     failing.mockRejectedValue(new Error('500'));
     const user = show();
@@ -162,6 +162,7 @@ describe.each([
 
     await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Export CSV' })).toBeEnabled());
     expect(click).not.toHaveBeenCalled();
+    expect(await screen.findByText('Could not export the audit log. Nothing was downloaded.')).toBeInTheDocument();
   });
 });
 

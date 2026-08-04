@@ -7,7 +7,11 @@ describe('cn', () => {
   });
 
   it('drops the falsy branches a conditional class produces', () => {
-    expect(cn('a', false && 'b', null, undefined, 'c')).toBe('a c');
+    // Named rather than written `false && 'b'` inline: a literal on the left of `&&` is a constant
+    // condition, which eslint flags — rightly, since that shape is usually a mistake. Here the
+    // switch being off is the point, so it gets a name instead of a suppression.
+    const active = false;
+    expect(cn('a', active && 'b', null, undefined, 'c')).toBe('a c');
   });
 
   it('lets the later Tailwind class win over the earlier one it contradicts', () => {

@@ -3,6 +3,7 @@ import { render, screen, within } from '@testing-library/react';
 import { userEvent } from 'vitest/browser';
 import { MemoryRouter } from 'react-router';
 import Authentication from './Authentication';
+import * as api from '@/api';
 
 /**
  * The project's whole login configuration on one page. Four things here are security-relevant and
@@ -18,11 +19,16 @@ import Authentication from './Authentication';
  *    page and can carry script.
  */
 
-const api = vi.hoisted(() => ({
-  getProjectInfo: vi.fn(), updateProject: vi.fn(), listRoles: vi.fn(),
-  listSamlProviders: vi.fn(), createSamlProvider: vi.fn(), deleteSamlProvider: vi.fn(),
-}));
-vi.mock('@/api', () => api);
+// `{ spy: true }` plutôt qu'une fabrique. En mode navigateur, Vitest exécute de l'ESM natif, dont
+// l'espace de noms est SCELLÉ : une fabrique REMPLACE le module, et tout export que l'arbre rendu
+// y cherche sans le trouver — `getMfaStatus`, via `MfaReminder` — échoue à se lier. Vitest le
+// journalisait 39 fois par exécution en SyntaxError non gérée, pendant que chaque assertion
+// passait : la forme même d'une suite qui a cessé de vérifier ce qu'elle annonce.
+//
+// L'option documentée pour ce cas garde TOUS les exports et les enveloppe en espions ; on ne
+// remplace donc plus le module, on l'instrumente. `beforeEach` donne ensuite une implémentation à
+// chacun de ceux que cette page appelle, sans quoi l'espion laisserait passer le vrai appel.
+vi.mock('@/api', { spy: true });
 
 const auth = vi.hoisted(() => ({ orgId: '', projectId: 'p1' }));
 // Only `useAuth` is replaced: the module also exports the context object and the role constants,
@@ -66,11 +72,22 @@ const SAML = [{
 }];
 
 beforeEach(() => {
+  // `clearAllMocks` forgets the CALLS, not the implementations: a `mockRejectedValue` set by one
+  // test stays in place for every test after it. The three reads below were already given a fresh
+  // default here, which is why their failure cases don't leak; the two writes were not, so the
+  // "save is refused" and "provider creation fails" tests left a rejected promise behind that
+  // later tests triggered and nobody awaited — 8 unhandled rejections per run, and Vitest warns
+  // that a suite in that state can report false passes.
   vi.clearAllMocks();
   auth.projectId = 'p1';
-  api.getProjectInfo.mockResolvedValue(PROJECT);
-  api.listRoles.mockResolvedValue({ roles: ROLES });
-  api.listSamlProviders.mockResolvedValue({ providers: SAML });
+  vi.mocked(api.getProjectInfo).mockResolvedValue(PROJECT);
+  vi.mocked(api.listRoles).mockResolvedValue({ roles: ROLES });
+  vi.mocked(api.listSamlProviders).mockResolvedValue({ providers: SAML });
+  vi.mocked(api.updateProject).mockResolvedValue({});
+  vi.mocked(api.createSamlProvider).mockResolvedValue({});
+  // Sous `{ spy: true }` un export sans implémentation laisse passer le VRAI appel : la suppression
+  // partait au réseau et le test échouait. L'espion doit être armé pour chaque fonction appelée.
+  vi.mocked(api.deleteSamlProvider).mockResolvedValue({});
 });
 
 function show() {
@@ -88,11 +105,11 @@ const tab = async (user: Awaited<ReturnType<typeof show>>, name: string) =>
  */
 const save = (user: Awaited<ReturnType<typeof show>>) =>
   user.click(document.querySelector<HTMLButtonElement>('.iam-page-header .iam-btn-primary')!);
-const body = () => api.updateProject.mock.calls.at(-1)![1] as Record<string, unknown>;
+const body = () => vi.mocked(api.updateProject).mock.calls.at(-1)![1] as Record<string, unknown>;
 
 describe('loading', () => {
   it('shows placeholders, and nothing to save, until the project has answered', () => {
-    api.getProjectInfo.mockReturnValue(new Promise(() => {}));
+    vi.mocked(api.getProjectInfo).mockReturnValue(new Promise(() => {}));
     show();
 
     expect(screen.queryByRole('button', { name: 'Save Changes' })).not.toBeInTheDocument();
@@ -102,7 +119,7 @@ describe('loading', () => {
   it('refuses to render the form at all when the read fails', async () => {
     // Otherwise the next Save writes the useState defaults over the real configuration.
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    api.getProjectInfo.mockRejectedValue(new Error('500'));
+    vi.mocked(api.getProjectInfo).mockRejectedValue(new Error('500'));
     show();
 
     expect(await screen.findByText('This configuration could not be loaded, so it is not safe to edit.'))
@@ -113,7 +130,7 @@ describe('loading', () => {
 
   it('retries by re-reading, not by reloading the page', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    api.getProjectInfo.mockRejectedValueOnce(new Error('500')).mockResolvedValue(PROJECT);
+    vi.mocked(api.getProjectInfo).mockRejectedValueOnce(new Error('500')).mockResolvedValue(PROJECT);
     const user = show();
     await screen.findByRole('button', { name: 'Retry' });
 
@@ -126,7 +143,7 @@ describe('loading', () => {
 
   it('still renders when the SAML endpoint is unavailable', async () => {
     // SAML is optional; losing it must not take the whole page down.
-    api.listSamlProviders.mockRejectedValue(new Error('501'));
+    vi.mocked(api.listSamlProviders).mockRejectedValue(new Error('501'));
     show();
 
     await loaded();
@@ -173,7 +190,7 @@ describe('the appearance tab', () => {
   });
 
   it('recognises a stored font that is not one of the presets as a custom one', async () => {
-    api.getProjectInfo.mockResolvedValue({
+    vi.mocked(api.getProjectInfo).mockResolvedValue({
       ...PROJECT, login_theme: { ...PROJECT.login_theme, font_family: 'Comic Sans' },
     });
     show();
@@ -184,7 +201,7 @@ describe('the appearance tab', () => {
   });
 
   it('falls back to the defaults for a project with no stored theme', async () => {
-    api.getProjectInfo.mockResolvedValue({ ...PROJECT, login_theme: null });
+    vi.mocked(api.getProjectInfo).mockResolvedValue({ ...PROJECT, login_theme: null });
     show();
     await loaded();
 
@@ -277,7 +294,7 @@ describe('the logo', () => {
   });
 
   it('lets the logo be cleared', async () => {
-    api.getProjectInfo.mockResolvedValue({
+    vi.mocked(api.getProjectInfo).mockResolvedValue({
       ...PROJECT, login_theme: { ...PROJECT.login_theme, logo_url: 'https://cdn.test/logo.png' },
     });
     const user = show();
@@ -290,7 +307,7 @@ describe('the logo', () => {
   });
 
   it('keeps the URL field empty for an embedded logo, which would not fit in it', async () => {
-    api.getProjectInfo.mockResolvedValue({
+    vi.mocked(api.getProjectInfo).mockResolvedValue({
       ...PROJECT, login_theme: { ...PROJECT.login_theme, logo_url: 'data:image/png;base64,AAAA' },
     });
     show();
@@ -426,7 +443,7 @@ describe('the SAML providers', () => {
   });
 
   it('accepts a bare array as well as an envelope', async () => {
-    api.listSamlProviders.mockResolvedValue(SAML);
+    vi.mocked(api.listSamlProviders).mockResolvedValue(SAML);
     const user = show();
     await providers(user);
 
@@ -434,7 +451,7 @@ describe('the SAML providers', () => {
   });
 
   it('adds one, defaulting the email attribute rather than sending a blank', async () => {
-    api.createSamlProvider.mockResolvedValue({ ...SAML[0], id: 'i2', entity_id: 'https://idp2.test' });
+    vi.mocked(api.createSamlProvider).mockResolvedValue({ ...SAML[0], id: 'i2', entity_id: 'https://idp2.test' });
     const user = show();
     await providers(user);
     await user.click(screen.getByRole('button', { name: 'Add IdP' }));
@@ -452,7 +469,7 @@ describe('the SAML providers', () => {
   });
 
   it('sends the optional fields when they were filled in', async () => {
-    api.createSamlProvider.mockResolvedValue({ ...SAML[0], id: 'i2' });
+    vi.mocked(api.createSamlProvider).mockResolvedValue({ ...SAML[0], id: 'i2' });
     const user = show();
     await providers(user);
     await user.click(screen.getByRole('button', { name: 'Add IdP' }));
@@ -470,7 +487,7 @@ describe('the SAML providers', () => {
 
   it('never sends `active`, which the create endpoint ignores', async () => {
     // Sending it looks like it works and silently does nothing.
-    api.createSamlProvider.mockResolvedValue({ ...SAML[0], id: 'i2' });
+    vi.mocked(api.createSamlProvider).mockResolvedValue({ ...SAML[0], id: 'i2' });
     const user = show();
     await providers(user);
     await user.click(screen.getByRole('button', { name: 'Add IdP' }));
@@ -479,11 +496,11 @@ describe('the SAML providers', () => {
     await user.click(document.querySelector<HTMLButtonElement>('button[form="add-saml-form"]')!);
 
     await vi.waitFor(() => expect(api.createSamlProvider).toHaveBeenCalled());
-    expect(api.createSamlProvider.mock.calls[0][1]).not.toHaveProperty('active');
+    expect(vi.mocked(api.createSamlProvider).mock.calls[0][1]).not.toHaveProperty('active');
   });
 
   it('reports what the server refused', async () => {
-    api.createSamlProvider.mockResolvedValue({ error: 'duplicate', error_description: 'Already registered.' });
+    vi.mocked(api.createSamlProvider).mockResolvedValue({ error: 'duplicate', error_description: 'Already registered.' });
     const user = show();
     await providers(user);
     await user.click(screen.getByRole('button', { name: 'Add IdP' }));
@@ -495,7 +512,7 @@ describe('the SAML providers', () => {
   });
 
   it('falls back to a generic message when it gave none', async () => {
-    api.createSamlProvider.mockResolvedValue({ error: 'duplicate' });
+    vi.mocked(api.createSamlProvider).mockResolvedValue({ error: 'duplicate' });
     const user = show();
     await providers(user);
     await user.click(screen.getByRole('button', { name: 'Add IdP' }));
@@ -507,7 +524,7 @@ describe('the SAML providers', () => {
   });
 
   it('reports a request that failed outright', async () => {
-    api.createSamlProvider.mockRejectedValue(new Error('network'));
+    vi.mocked(api.createSamlProvider).mockRejectedValue(new Error('network'));
     const user = show();
     await providers(user);
     await user.click(screen.getByRole('button', { name: 'Add IdP' }));
@@ -741,7 +758,7 @@ describe('the password policy, on the registration tab', () => {
   });
 
   it('accepts a bare role array as well as an envelope', async () => {
-    api.listRoles.mockResolvedValue(ROLES);
+    vi.mocked(api.listRoles).mockResolvedValue(ROLES);
     const user = show();
     await security(user);
 
@@ -938,13 +955,16 @@ describe('saving', () => {
   }, 10_000);
 
   it('re-enables the button when the save is refused', async () => {
-    api.updateProject.mockRejectedValue(new Error('500'));
+    vi.mocked(api.updateProject).mockRejectedValue(new Error('500'));
     const user = show();
     await loaded();
 
     await save(user);
 
     await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Save Changes' })).toBeEnabled());
+    // Re-enabling alone told the operator nothing: the fields still showed the edits the server had
+    // just refused, so this page in particular could be walked away from believing MFA was now on.
+    expect(await screen.findByText('Could not save. None of these settings were changed.')).toBeInTheDocument();
   });
 });
 
@@ -1086,7 +1106,7 @@ describe('the rest of the provider fields', () => {
   });
 
   it('shows a custom provider\'s logo once it has one', async () => {
-    api.getProjectInfo.mockResolvedValue({
+    vi.mocked(api.getProjectInfo).mockResolvedValue({
       ...PROJECT,
       login_theme: {
         ...PROJECT.login_theme,
@@ -1123,7 +1143,7 @@ describe('the rest of the SAML form, and dismissing it', () => {
   };
 
   it('can turn JIT provisioning off', async () => {
-    api.createSamlProvider.mockResolvedValue({ ...SAML[0], id: 'i2' });
+    vi.mocked(api.createSamlProvider).mockResolvedValue({ ...SAML[0], id: 'i2' });
     const user = await openSaml();
 
     await user.fill(screen.getByLabelText(/Entity ID/), 'https://idp2.test');
@@ -1135,7 +1155,7 @@ describe('the rest of the SAML form, and dismissing it', () => {
   });
 
   it('has an Active switch that is never sent', async () => {
-    api.createSamlProvider.mockResolvedValue({ ...SAML[0], id: 'i2' });
+    vi.mocked(api.createSamlProvider).mockResolvedValue({ ...SAML[0], id: 'i2' });
     const user = await openSaml();
 
     await user.fill(screen.getByLabelText(/Entity ID/), 'https://idp2.test');
@@ -1143,11 +1163,11 @@ describe('the rest of the SAML form, and dismissing it', () => {
     await user.click(document.querySelector<HTMLButtonElement>('button[form="add-saml-form"]')!);
 
     await vi.waitFor(() => expect(api.createSamlProvider).toHaveBeenCalled());
-    expect(api.createSamlProvider.mock.calls[0][1]).not.toHaveProperty('active');
+    expect(vi.mocked(api.createSamlProvider).mock.calls[0][1]).not.toHaveProperty('active');
   });
 
   it('closes on Escape, dropping the error it was showing', async () => {
-    api.createSamlProvider.mockResolvedValue({ error: 'duplicate' });
+    vi.mocked(api.createSamlProvider).mockResolvedValue({ error: 'duplicate' });
     const user = await openSaml();
     await user.fill(screen.getByLabelText(/Entity ID/), 'https://idp2.test');
     await user.click(document.querySelector<HTMLButtonElement>('button[form="add-saml-form"]')!);

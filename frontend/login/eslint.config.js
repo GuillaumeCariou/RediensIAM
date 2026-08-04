@@ -22,5 +22,14 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    rules: {
+      // A leading underscore is this codebase's way of saying "this parameter exists to hold a
+      // position, and is deliberately not read" — a mock that must accept the argument its real
+      // counterpart receives, a `describe.each` label consumed by the title. The default rule has
+      // no such convention and reported each of them as an error, so the build failed on code that
+      // was doing the right thing. Only ARGUMENTS are exempted: an unused local variable is still
+      // dead code, and stays an error.
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+    },
   },
 ])
