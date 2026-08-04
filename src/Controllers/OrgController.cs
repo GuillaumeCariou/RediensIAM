@@ -190,30 +190,15 @@ public class OrgController(
         var isSuperAdmin = Claims.Roles.Contains(Roles.SuperAdmin);
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && (isSuperAdmin || p.OrgId == OrgId));
         if (project == null) return NotFound();
-        if (project.HydraClientId != null)
-        {
-            try { await hydra.DeleteOAuth2ClientAsync(project.HydraClientId); }
-            catch (Exception ex) { logger.LogWarning(ex, "Failed to delete Hydra client {ClientId}", project.HydraClientId); }
-        }
-        await keto.DeleteAllProjectTuplesAsync(id.ToString());
-        db.Projects.Remove(project);
-        await db.SaveChangesAsync();
-        await audit.RecordAsync(OrgId, id, ActorId, "project.deleted", "project", id.ToString());
-        return NoContent();
+        return await ProjectOperations.DeleteAsync(db, hydra, keto, audit, logger, ActorId, project);
     }
 
     [HttpPut("projects/{id}/userlist")]
     public async Task<IActionResult> AssignUserList(Guid id, [FromBody] AssignUserListRequest body)
     {
-        var orgId = OrgId;
-        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == orgId);
+        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
         if (project == null) return NotFound();
-        var list = await db.UserLists.FirstOrDefaultAsync(ul => ul.Id == body.UserListId && ul.OrgId == orgId);
-        if (list == null) return BadRequest(new { error = "userlist_not_in_org" });
-        project.AssignedUserListId = body.UserListId;
-        project.UpdatedAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync();
-        return Ok(new { project.Id, project.AssignedUserListId });
+        return await ProjectOperations.AssignUserListAsync(db, audit, ActorId, project, body.UserListId);
     }
 
     [HttpDelete("projects/{id}/userlist")]
@@ -221,7 +206,7 @@ public class OrgController(
     {
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
         if (project == null) return NotFound();
-        return await ProjectOperations.UnassignUserListAsync(db, project);
+        return await ProjectOperations.UnassignUserListAsync(db, audit, ActorId, project);
     }
 
     // ── UserLists ─────────────────────────────────────────────────────────────

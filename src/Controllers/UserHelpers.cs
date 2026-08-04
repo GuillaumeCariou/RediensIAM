@@ -96,11 +96,7 @@ internal static class UserHelpers
         await db.SaveChangesAsync();
 
         if (passwordChanged || deactivated)
-        {
-            // The subject Hydra knows: "<org>:<user>" for a tenant user, a bare id for an admin.
-            var subject = user.UserList.OrgId.HasValue ? $"{user.UserList.OrgId}:{user.Id}" : user.Id.ToString();
-            await hydra.RevokeSessionsAsync(subject);
-        }
+            await hydra.RevokeSessionsAsync(HydraSubject(user));
 
         var orgId = user.UserList.OrgId;
         if (passwordChanged)
@@ -114,5 +110,31 @@ internal static class UserHelpers
             user.Id, user.Email, user.Username, user.Discriminator, user.DisplayName,
             user.Phone, user.Active, user.EmailVerified, user.LockedUntil, user.FailedLoginCount,
         });
+    }
+
+    /// <summary>
+    /// The subject Hydra issued this user's sessions under: <c>"&lt;org&gt;:&lt;user&gt;"</c> for a
+    /// tenant user, the bare id for an administrator, who has no organisation. It is what
+    /// CompleteLoginAsync mints and what ParseSubjectUserId reads back.
+    ///
+    /// <para>
+    /// Stated once because the force-logout route built it differently — <c>OrgId?.ToString() ?? ""</c>
+    /// interpolated into <c>"{org}:{id}"</c>, giving <c>":&lt;guid&gt;"</c> for an administrator.
+    /// No session was ever issued under that, so Hydra answered 204 to a revocation that revoked
+    /// nothing and the API reported success. The one account whose sessions most need ending on
+    /// demand was the one account the button could not end.
+    /// </para>
+    /// </summary>
+    internal static string HydraSubject(User user) =>
+        user.UserList.OrgId.HasValue ? $"{user.UserList.OrgId}:{user.Id}" : user.Id.ToString();
+
+    /// <summary>Ends every session this user holds, and records it.</summary>
+    internal static async Task<IActionResult> ForceLogoutAsync(
+        HydraService hydra, AuditLogService audit, Guid actorId, User user, Guid? projectId = null)
+    {
+        await hydra.RevokeSessionsAsync(HydraSubject(user));
+        await audit.RecordAsync(user.UserList.OrgId, projectId, actorId,
+            "session.revoked", "user", user.Id.ToString());
+        return new OkObjectResult(new { message = "sessions_revoked" });
     }
 }

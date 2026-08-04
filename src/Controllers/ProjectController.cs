@@ -279,11 +279,10 @@ public class ProjectController(
         if (project?.AssignedUserListId == null) return NotFound();
         // L2: the Hydra subject is built from the caller's project, so without this membership
         // check a project admin could revoke the sessions of any user id in the deployment.
-        if (!await db.Users.AnyAsync(u => u.Id == id && u.UserListId == project.AssignedUserListId))
-            return NotFound();
-        await hydra.RevokeAllConsentSessionsAsync($"{project.OrgId}:{id}");
-        await audit.RecordAsync(project.OrgId, project.Id, ActorId, "session.revoked", "user", id.ToString());
-        return Ok(new { message = "sessions_revoked" });
+        var user = await db.Users.Include(u => u.UserList)
+            .FirstOrDefaultAsync(u => u.Id == id && u.UserListId == project.AssignedUserListId);
+        if (user == null) return NotFound();
+        return await UserHelpers.ForceLogoutAsync(hydra, audit, ActorId, user, project.Id);
     }
 
     [HttpGet("stats")]

@@ -404,10 +404,7 @@ var user = await db.Users
     {
         var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id == id);
         if (user == null) return NotFound();
-        var orgId = user.UserList.OrgId?.ToString() ?? "";
-        await hydra.RevokeSessionsAsync($"{orgId}:{id}");
-        await audit.RecordAsync(user.UserList.OrgId, null, GetActorId(), "session.revoked", "user", id.ToString());
-        return Ok(new { message = "sessions_revoked" });
+        return await UserHelpers.ForceLogoutAsync(hydra, audit, GetActorId(), user);
     }
 
 
@@ -651,21 +648,7 @@ var actorId = GetActorId();
     {
 var project = await db.Projects.FindAsync(id);
         if (project == null) return NotFound();
-        if (!string.IsNullOrEmpty(project.HydraClientId))
-        {
-            try { await hydra.DeleteOAuth2ClientAsync(project.HydraClientId); }
-            catch (Exception ex) { logger.LogWarning(ex, "Hydra client deletion failed for {ClientId}", project.HydraClientId); }
-        }
-        // The org-scoped delete does this; this one did not, so every Projects:{id}#role:*@user:*
-        // tuple outlived the project row — a live grant with nothing left in the database to name
-        // who holds it, which is what the integrity monitor reports and cannot repair.
-        try { await keto.DeleteAllProjectTuplesAsync(id.ToString()); }
-        catch (Exception ex) { logger.LogWarning(ex, "Keto tuple cleanup failed for project {ProjectId}", id); }
-
-        db.Projects.Remove(project);
-        await db.SaveChangesAsync();
-        await audit.RecordAsync(project.OrgId, id, GetActorId(), "project.deleted", "project", id.ToString());
-        return NoContent();
+        return await ProjectOperations.DeleteAsync(db, hydra, keto, audit, logger, GetActorId(), project);
     }
 
     [HttpPut("projects/{id}/userlist")]
@@ -673,12 +656,7 @@ var project = await db.Projects.FindAsync(id);
     {
 var project = await db.Projects.FindAsync(id);
         if (project == null) return NotFound();
-        var list = await db.UserLists.FirstOrDefaultAsync(ul => ul.Id == body.UserListId && ul.OrgId == project.OrgId);
-        if (list == null) return BadRequest(new { error = "userlist_not_in_org" });
-        project.AssignedUserListId = body.UserListId;
-        project.UpdatedAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync();
-        return Ok(new { project.Id, project.AssignedUserListId });
+        return await ProjectOperations.AssignUserListAsync(db, audit, GetActorId(), project, body.UserListId);
     }
 
     [HttpDelete("projects/{id}/userlist")]
@@ -686,7 +664,7 @@ var project = await db.Projects.FindAsync(id);
     {
 var project = await db.Projects.FindAsync(id);
         if (project == null) return NotFound();
-        return await ProjectOperations.UnassignUserListAsync(db, project);
+        return await ProjectOperations.UnassignUserListAsync(db, audit, GetActorId(), project);
     }
 
     [HttpGet("projects/{id}/stats")]

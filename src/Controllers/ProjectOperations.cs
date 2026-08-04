@@ -69,12 +69,76 @@ public static class ProjectOperations
         return new OkObjectResult(new { project.Id, custom_scopes = project.AllowedScopes });
     }
 
-    public static async Task<IActionResult> UnassignUserListAsync(RediensIamDbContext db, Project project)
+    /// <summary>
+    /// Which user list a project draws its users from — that is, who may sign in to it at all.
+    /// Neither scope recorded this, in either direction.
+    /// </summary>
+    public static async Task<IActionResult> AssignUserListAsync(
+        RediensIamDbContext db, AuditLogService audit, Guid actorId, Project project, Guid userListId)
     {
+        var list = await db.UserLists.FirstOrDefaultAsync(ul => ul.Id == userListId && ul.OrgId == project.OrgId);
+        if (list == null) return new BadRequestObjectResult(new { error = "userlist_not_in_org" });
+
+        project.AssignedUserListId = userListId;
+        project.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+
+        await audit.RecordAsync(project.OrgId, project.Id, actorId,
+            "project.userlist_assigned", "project", project.Id.ToString(),
+            new() { ["user_list_id"] = userListId.ToString() });
+        return new OkObjectResult(new { project.Id, project.AssignedUserListId });
+    }
+
+    public static async Task<IActionResult> UnassignUserListAsync(
+        RediensIamDbContext db, AuditLogService audit, Guid actorId, Project project)
+    {
+        var previous = project.AssignedUserListId;
         project.AssignedUserListId = null;
         project.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync();
+
+        await audit.RecordAsync(project.OrgId, project.Id, actorId,
+            "project.userlist_unassigned", "project", project.Id.ToString(),
+            new() { ["user_list_id"] = previous?.ToString() ?? "" });
         return new OkObjectResult(new { project.Id, message = "userlist_unassigned" });
+    }
+
+    /// <summary>
+    /// Removes the project, its Hydra client and its Keto tuples.
+    ///
+    /// <para>
+    /// Recorded against <c>project.OrgId</c>, never the caller's. <c>/org/projects/{id}</c> admits
+    /// a super-admin deliberately — its lookup reads <c>isSuperAdmin || p.OrgId == OrgId</c> — and a
+    /// super-admin's token carries no organisation, so the deletion was written against
+    /// <c>Guid.Empty</c>: the tenant could not see in their own audit log that their project was
+    /// gone. This is the one place where "the caller's organisation" was not merely a coincidence
+    /// waiting to break but a live path.
+    /// </para>
+    /// </summary>
+    public static async Task<IActionResult> DeleteAsync(
+        RediensIamDbContext db, HydraService hydra, KetoService keto, AuditLogService audit,
+        ILogger logger, Guid actorId, Project project)
+    {
+        var orgId = project.OrgId;
+        var projectId = project.Id;
+
+        if (!string.IsNullOrEmpty(project.HydraClientId))
+        {
+            // Warned, not failed: the row must go even if Hydra is briefly unreachable, and the
+            // integrity monitor reports what is left behind.
+            try { await hydra.DeleteOAuth2ClientAsync(project.HydraClientId); }
+            catch (Exception ex) { logger.LogWarning(ex, "Hydra client deletion failed for {ClientId}", project.HydraClientId); }
+        }
+        // Without this every Projects:{id}#role:*@user:* tuple outlives the project row — a live
+        // grant with nothing left in the database to name who holds it.
+        try { await keto.DeleteAllProjectTuplesAsync(projectId.ToString()); }
+        catch (Exception ex) { logger.LogWarning(ex, "Keto tuple cleanup failed for project {ProjectId}", projectId); }
+
+        db.Projects.Remove(project);
+        await db.SaveChangesAsync();
+
+        await audit.RecordAsync(orgId, projectId, actorId, "project.deleted", "project", projectId.ToString());
+        return new NoContentResult();
     }
 
     /// <summary>
