@@ -87,7 +87,10 @@ beforeEach(() => {
   vi.mocked(api.createSamlProvider).mockResolvedValue({});
   // Sous `{ spy: true }` un export sans implémentation laisse passer le VRAI appel : la suppression
   // partait au réseau et le test échouait. L'espion doit être armé pour chaque fonction appelée.
-  vi.mocked(api.deleteSamlProvider).mockResolvedValue({});
+  // Une vraie `Response` : contrairement aux autres, `deleteSamlProvider` rend le résultat brut
+  // d'`apiFetch`, pas un corps JSON décodé. `{}` compilait sous `vi.fn()` — qui n'a aucun type de
+  // retour à respecter — et cassait `tsc -b`, que le build de l'image lance et que vitest non.
+  vi.mocked(api.deleteSamlProvider).mockResolvedValue(new Response(null, { status: 204 }));
 });
 
 function show() {

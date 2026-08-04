@@ -38,7 +38,7 @@ done
 [ -z "${ENVIRONMENT}" ] && { echo "ERROR: pass --dev or --prod (requirements differ)" >&2; exit 2; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# ROOT_DIR n'est lu nulle part dans ce script : supprimé plutôt que laissé à dériver.
 CHART="${SCRIPT_DIR}/rediensiam"
 ENV_FILE="${CHART}/values.${ENVIRONMENT}.yaml"
 OVERRIDE_FILE="${CHART}/values.${ENVIRONMENT}.override.yaml"

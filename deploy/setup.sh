@@ -324,7 +324,9 @@ EOF
 # ─────────────────────────────────────────────────────────────────────────────
 # Run
 # ─────────────────────────────────────────────────────────────────────────────
-cd "${ROOT_DIR}"
+# `|| exit` : sans garde, un `cd` qui échoue laisse la suite s'exécuter dans le mauvais
+# dossier — donc sur le mauvais dépôt, sans que rien ne le dise.
+cd "${ROOT_DIR}" || exit 1
 
 if [ "${ENVIRONMENT}" = prod ]; then
   if [ -f "${OVERRIDE_FILE}" ]; then
