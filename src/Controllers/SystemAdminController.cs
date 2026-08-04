@@ -44,7 +44,6 @@ public class SystemAdminController(
 {
     private static readonly string[] OAuth2GrantTypes   = ["authorization_code", "refresh_token"];
     private static readonly string[] OAuth2ResponseTypes = ["code"];
-    private static readonly string[] BuiltInScopes       = ["openid", "profile", "offline_access"];
     private const string AuditOrg = "organisation";
     private const string KindInvite = "invite";
 
@@ -368,21 +367,7 @@ var user = await db.Users
     {
         var user = await db.Users.Include(u => u.UserList).FirstOrDefaultAsync(u => u.Id == id);
         if (user == null) return NotFound();
-        if (UserHelpers.PasswordFloorError(body.NewPassword) is { } floorErr) return floorErr;
-        var (passwordChanged, deactivated) = UserHelpers.ApplyUpdate(user, body, passwords);
-        user.UpdatedAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync();
-        if (passwordChanged || deactivated)
-        {
-            var subject = user.UserList.OrgId.HasValue ? $"{user.UserList.OrgId}:{user.Id}" : user.Id.ToString();
-            await hydra.RevokeSessionsAsync(subject);
-        }
-        if (passwordChanged)
-            await audit.RecordAsync(user.UserList.OrgId, null, GetActorId(), "user.password_reset_by_admin", "user", id.ToString());
-        if (deactivated)
-            await audit.RecordAsync(user.UserList.OrgId, null, GetActorId(), "user.deactivated", "user", id.ToString());
-        await audit.RecordAsync(user.UserList.OrgId, null, GetActorId(), "user.updated", "user", id.ToString());
-        return Ok(new { user.Id, user.Email, user.Username, user.Discriminator, user.DisplayName, user.Phone, user.Active, user.EmailVerified, user.LockedUntil, user.FailedLoginCount });
+        return await UserHelpers.ApplyAdminUpdateAsync(db, hydra, audit, passwords, GetActorId(), user, body);
     }
 
     [HttpPost("users/{id}/unlock")]
@@ -735,7 +720,7 @@ var actorId = GetActorId();
     {
         var project = await db.Projects.FindAsync(id);
         if (project == null) return NotFound();
-        return Ok(new { custom_scopes = project.AllowedScopes, built_in = BuiltInScopes });
+        return ProjectOperations.ReadScopes(project);
     }
 
     [HttpPut("projects/{id}/scopes")]
@@ -744,23 +729,7 @@ var actorId = GetActorId();
         var project = await db.Projects.FindAsync(id);
         if (project == null) return NotFound();
 
-        var invalid = body.Scopes.Where(s => !System.Text.RegularExpressions.Regex.IsMatch(s, @"^[a-z0-9_:.-]+$", System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromMilliseconds(100))).ToArray();
-        if (invalid.Length > 0) return BadRequest(new { error = "invalid_scope_names", invalid });
-
-        project.AllowedScopes = body.Scopes;
-        project.UpdatedAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync();
-
-        if (project.HydraClientId != null)
-        {
-            try { await hydra.UpdateOAuth2ClientScopeAsync(project.HydraClientId, project.AllowedScopes); }
-            catch (Exception ex) { logger.LogWarning(ex, "Hydra scope update failed for project {ProjectId}", id); }
-        }
-
-        // OrgId, not null: a row written with a null org lands on the deployment-wide chain, so
-        // the tenant could never see in /org/audit-log that a super admin changed their scopes.
-        await audit.RecordAsync(project.OrgId, id, GetActorId(), "project.scopes_updated", "project", id.ToString());
-        return Ok(new { project.Id, custom_scopes = project.AllowedScopes });
+        return await ProjectOperations.UpdateScopesAsync(db, hydra, audit, logger, GetActorId(), project, body.Scopes);
     }
 
     [HttpDelete("projects/{id}")]
@@ -803,10 +772,7 @@ var project = await db.Projects.FindAsync(id);
     {
 var project = await db.Projects.FindAsync(id);
         if (project == null) return NotFound();
-        project.AssignedUserListId = null;
-        project.UpdatedAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync();
-        return Ok(new { project.Id, message = "userlist_unassigned" });
+        return await ProjectOperations.UnassignUserListAsync(db, project);
     }
 
     [HttpGet("projects/{id}/stats")]
@@ -1045,14 +1011,7 @@ var role = await db.Roles
     [HttpGet("audit-log")]
     public async Task<IActionResult> GetAuditLog([FromQuery] int limit = 50, [FromQuery] int offset = 0)
     {
-        limit  = Math.Clamp(limit, 1, 200);
-        offset = Math.Max(0, offset);
-        var logs = await db.AuditLogs
-            .OrderByDescending(l => l.CreatedAt)
-            .Skip(offset).Take(limit)
-            .Select(l => new { l.Id, l.Action, l.OrgId, l.ProjectId, l.ActorId, l.TargetType, l.TargetId, l.IpAddress, l.CreatedAt, l.Metadata })
-            .ToListAsync();
-        return Ok(logs);
+        return await AuditLogQuery.PageAsync(db, null, limit, offset);
     }
 
     [HttpGet("metrics")]
@@ -1290,17 +1249,7 @@ await hydra.DeleteOAuth2ClientAsync(id);
     {
         var project = await db.Projects.FindAsync(id);
         if (project == null) return NotFound();
-        var providers = await db.SamlIdpConfigs
-            .Where(x => x.ProjectId == id)
-            .OrderBy(x => x.CreatedAt)
-            .Select(x => new {
-                x.Id, x.EntityId, x.MetadataUrl, x.SsoUrl,
-                x.EmailAttributeName, x.DisplayNameAttributeName,
-                x.JitProvisioning, x.DefaultRoleId, x.Active,
-                x.CreatedAt, x.UpdatedAt
-            })
-            .ToListAsync();
-        return Ok(providers);
+        return await ProjectOperations.ListSamlProvidersAsync(db, id);
     }
 
     [HttpPost("projects/{id}/saml-providers")]
@@ -1326,7 +1275,7 @@ await hydra.DeleteOAuth2ClientAsync(id);
         };
         db.SamlIdpConfigs.Add(entity);
         await db.SaveChangesAsync();
-        await audit.RecordAsync(project.OrgId, id, GetActorId(), "saml_provider.created", "saml_idp_config", entity.Id.ToString());
+        await audit.RecordAsync(project.OrgId, id, GetActorId(), "saml_provider.created", "saml_provider", entity.Id.ToString());
         return Ok(new { entity.Id });
     }
 
@@ -1350,7 +1299,7 @@ await hydra.DeleteOAuth2ClientAsync(id);
         provider.UpdatedAt = DateTimeOffset.UtcNow;
 
         await db.SaveChangesAsync();
-        await audit.RecordAsync(provider.Project.OrgId, projectId, GetActorId(), "saml_provider.updated", "saml_idp_config", providerId.ToString());
+        await audit.RecordAsync(provider.Project.OrgId, projectId, GetActorId(), "saml_provider.updated", "saml_provider", providerId.ToString());
         return Ok();
     }
 
@@ -1364,7 +1313,7 @@ await hydra.DeleteOAuth2ClientAsync(id);
 
         db.SamlIdpConfigs.Remove(provider);
         await db.SaveChangesAsync();
-        await audit.RecordAsync(provider.Project.OrgId, projectId, GetActorId(), "saml_provider.deleted", "saml_idp_config", providerId.ToString());
+        await audit.RecordAsync(provider.Project.OrgId, projectId, GetActorId(), "saml_provider.deleted", "saml_provider", providerId.ToString());
         return NoContent();
     }
 

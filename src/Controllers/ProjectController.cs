@@ -120,23 +120,6 @@ public class ProjectController(
     }
 
     /// <summary>
-    /// Validates every entry before storing. An unparseable CIDR silently matches nothing in
-    /// <c>IpInRange</c>, which locks the whole tenant out of its own project instead of
-    /// reporting the typo.
-    /// </summary>
-    private BadRequestObjectResult? ApplyIpAllowlist(Project project, string[]? allowlist)
-    {
-        if (allowlist == null) return null;
-
-        var invalid = allowlist.Where(entry => !IsValidCidr(entry)).ToArray();
-        if (invalid.Length > 0)
-            return BadRequest(new { error = "invalid_ip_allowlist", invalid });
-
-        project.IpAllowlist = allowlist;
-        return null;
-    }
-
-    /// <summary>
     /// Shared with the org and admin project-update paths, which took the allowlist unchecked. An
     /// entry that does not parse makes IpInRange answer false for every address, so a typo locks
     /// the tenant out of its own project instead of reporting itself.
@@ -152,30 +135,6 @@ public class ProjectController(
         if (!int.TryParse(parts[1], out var prefix)) return false;
         var maxPrefix = address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 ? 128 : 32;
         return prefix >= 0 && prefix <= maxPrefix;
-    }
-
-    private async Task<IActionResult?> ApplyDefaultRoleAsync(Project project, bool? clearRole, Guid? newRoleId)
-    {
-        if (clearRole == true)
-        {
-            project.DefaultRoleId = null;
-        }
-        else if (newRoleId.HasValue)
-        {
-            var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == newRoleId && r.ProjectId == ProjectId);
-            if (role == null) return BadRequest(new { error = "invalid_default_role" });
-            project.DefaultRoleId = newRoleId;
-        }
-        return null;
-    }
-
-    private BadRequestObjectResult? ValidateLoginTheme(Dictionary<string, object>? theme) =>
-        LoginThemeValidator.Validate(theme) is { } error ? BadRequest(new { error }) : null;
-
-    private void ApplyLoginTheme(Project project, Dictionary<string, object>? theme)
-    {
-        if (theme == null) return;
-        project.LoginTheme = TotpEncryption.EncryptProviderSecretsInTheme(theme, project.LoginTheme, appConfig.ThemeEncKey)!;
     }
 
     // ── Users ─────────────────────────────────────────────────────────────────
@@ -419,16 +378,9 @@ public class ProjectController(
     [HttpGet("audit-log")]
     public async Task<IActionResult> GetAuditLog([FromQuery] int limit = 50, [FromQuery] int offset = 0)
     {
-        limit  = Math.Clamp(limit, 1, 200);
-        offset = Math.Max(0, offset);
         if (await GetProjectAsync() == null) return NotFound();
-        var logs = await db.AuditLogs
-            .Where(l => l.ProjectId == ProjectId)
-            .OrderByDescending(l => l.CreatedAt)
-            .Skip(offset).Take(limit)
-            .Select(l => new { l.Id, l.Action, l.OrgId, l.ProjectId, l.ActorId, l.TargetType, l.TargetId, l.IpAddress, l.CreatedAt, l.Metadata })
-            .ToListAsync();
-        return Ok(logs);
+        var projectId = ProjectId;
+        return await AuditLogQuery.PageAsync(db, l => l.ProjectId == projectId, limit, offset);
     }
 
     [HttpPost("cleanup")]

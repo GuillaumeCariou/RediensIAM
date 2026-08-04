@@ -32,7 +32,6 @@ public class OrgController(
     private static readonly string[] _hydraGrantTypes    = ["authorization_code", "refresh_token"];
     private static readonly string[] _hydraResponseTypes = ["code"];
 
-    private static readonly string[] BuiltInScopes = ["openid", "profile", "offline_access"];
     private const string KindInvite      = "invite";
     private const string AuditOrg        = "organisation";
 
@@ -173,7 +172,7 @@ public class OrgController(
     {
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
         if (project == null) return NotFound();
-        return Ok(new { custom_scopes = project.AllowedScopes, built_in = BuiltInScopes });
+        return ProjectOperations.ReadScopes(project);
     }
 
     [HttpPut("projects/{id}/scopes")]
@@ -182,21 +181,7 @@ public class OrgController(
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
         if (project == null) return NotFound();
 
-        var invalid = body.Scopes.Where(s => !System.Text.RegularExpressions.Regex.IsMatch(s, @"^[a-z0-9_:.-]+$", System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromMilliseconds(100))).ToArray();
-        if (invalid.Length > 0) return BadRequest(new { error = "invalid_scope_names", invalid });
-
-        project.AllowedScopes = body.Scopes;
-        project.UpdatedAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync();
-
-        if (project.HydraClientId != null)
-        {
-            try { await hydra.UpdateOAuth2ClientScopeAsync(project.HydraClientId, project.AllowedScopes); }
-            catch (Exception ex) { logger.LogWarning(ex, "Hydra scope update failed for project {ProjectId}", id); }
-        }
-
-        await audit.RecordAsync(OrgId, id, ActorId, "project.scopes_updated", "project", id.ToString());
-        return Ok(new { project.Id, custom_scopes = project.AllowedScopes });
+        return await ProjectOperations.UpdateScopesAsync(db, hydra, audit, logger, ActorId, project, body.Scopes);
     }
 
     [HttpDelete("projects/{id}")]
@@ -236,10 +221,7 @@ public class OrgController(
     {
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
         if (project == null) return NotFound();
-        project.AssignedUserListId = null;
-        project.UpdatedAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync();
-        return Ok(new { project.Id, message = "userlist_unassigned" });
+        return await ProjectOperations.UnassignUserListAsync(db, project);
     }
 
     // ── UserLists ─────────────────────────────────────────────────────────────
@@ -460,7 +442,7 @@ public class OrgController(
         var user = await db.Users.Include(u => u.UserList)
             .FirstOrDefaultAsync(u => u.Id == uid && u.UserListId == id && u.UserList.OrgId == OrgId);
         if (user == null) return NotFound();
-        return await ApplyUserUpdate(user, body);
+        return await UserHelpers.ApplyAdminUpdateAsync(db, hydra, audit, passwords, ActorId, user, body);
     }
 
     [HttpGet("users/{uid}")]
@@ -489,26 +471,7 @@ public class OrgController(
         var user = await db.Users.Include(u => u.UserList)
             .FirstOrDefaultAsync(u => u.Id == uid && u.UserList.OrgId == OrgId);
         if (user == null) return NotFound();
-        return await ApplyUserUpdate(user, body);
-    }
-
-    private async Task<IActionResult> ApplyUserUpdate(User user, UpdateUserRequest body)
-    {
-        if (UserHelpers.PasswordFloorError(body.NewPassword) is { } floorErr) return floorErr;
-        var (passwordChanged, deactivated) = UserHelpers.ApplyUpdate(user, body, passwords);
-        user.UpdatedAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync();
-        if (passwordChanged || deactivated)
-        {
-            var subject = user.UserList.OrgId.HasValue ? $"{user.UserList.OrgId}:{user.Id}" : user.Id.ToString();
-            await hydra.RevokeSessionsAsync(subject);
-        }
-        if (passwordChanged)
-            await audit.RecordAsync(OrgId, null, ActorId, "user.password_reset_by_admin", "user", user.Id.ToString());
-        if (deactivated)
-            await audit.RecordAsync(OrgId, null, ActorId, "user.deactivated", "user", user.Id.ToString());
-        await audit.RecordAsync(OrgId, null, ActorId, "user.updated", "user", user.Id.ToString());
-        return Ok(new { user.Id, user.Email, user.Username, user.Discriminator, user.DisplayName, user.Phone, user.Active, user.EmailVerified, user.LockedUntil, user.FailedLoginCount });
+        return await UserHelpers.ApplyAdminUpdateAsync(db, hydra, audit, passwords, ActorId, user, body);
     }
 
     [HttpGet("userlists/{id}/users/{uid}/sessions")]
@@ -770,16 +733,8 @@ public class OrgController(
     [HttpGet("audit-log")]
     public async Task<IActionResult> GetAuditLog([FromQuery] int limit = 50, [FromQuery] int offset = 0)
     {
-        limit  = Math.Clamp(limit, 1, 200);
-        offset = Math.Max(0, offset);
         var orgId = OrgId;
-        var logs = await db.AuditLogs
-            .Where(l => l.OrgId == orgId)
-            .OrderByDescending(l => l.CreatedAt)
-            .Skip(offset).Take(limit)
-            .Select(l => new { l.Id, l.Action, l.OrgId, l.ProjectId, l.ActorId, l.TargetType, l.TargetId, l.IpAddress, l.CreatedAt, l.Metadata })
-            .ToListAsync();
-        return Ok(logs);
+        return await AuditLogQuery.PageAsync(db, l => l.OrgId == orgId, limit, offset);
     }
 
     // ── SAML IdP configs ──────────────────────────────────────────────────────
@@ -789,11 +744,7 @@ public class OrgController(
     {
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
         if (project == null) return NotFound();
-        var providers = await db.SamlIdpConfigs
-            .Where(x => x.ProjectId == id)
-            .Select(x => new { x.Id, x.EntityId, x.MetadataUrl, x.SsoUrl, x.EmailAttributeName, x.DisplayNameAttributeName, x.JitProvisioning, x.DefaultRoleId, x.Active, x.CreatedAt })
-            .ToListAsync();
-        return Ok(providers);
+        return await ProjectOperations.ListSamlProvidersAsync(db, id);
     }
 
     [HttpPost("projects/{id}/saml-providers")]

@@ -76,4 +76,43 @@ internal static class UserHelpers
         if (next > 9999) throw new InvalidOperationException("discriminator_space_exhausted");
         return next.ToString("D4");
     }
+
+    /// <summary>
+    /// Applies an administrator's changes to a user, revokes what the change invalidates, and
+    /// records it. Both scopes call this: the organisation route and the system route differed
+    /// only in which organisation they attributed the audit entry to — the caller's on one side,
+    /// the user's own on the other. They were equal only because the organisation route's lookup
+    /// filters on that same id, which is a coincidence rather than a rule. The user's own is the
+    /// one that is always right: an entry on another chain is one the tenant cannot read.
+    /// </summary>
+    internal static async Task<IActionResult> ApplyAdminUpdateAsync(
+        RediensIamDbContext db, HydraService hydra, AuditLogService audit, PasswordService passwords,
+        Guid actorId, User user, UpdateUserRequest body)
+    {
+        if (PasswordFloorError(body.NewPassword) is { } floorErr) return floorErr;
+
+        var (passwordChanged, deactivated) = ApplyUpdate(user, body, passwords);
+        user.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
+
+        if (passwordChanged || deactivated)
+        {
+            // The subject Hydra knows: "<org>:<user>" for a tenant user, a bare id for an admin.
+            var subject = user.UserList.OrgId.HasValue ? $"{user.UserList.OrgId}:{user.Id}" : user.Id.ToString();
+            await hydra.RevokeSessionsAsync(subject);
+        }
+
+        var orgId = user.UserList.OrgId;
+        if (passwordChanged)
+            await audit.RecordAsync(orgId, null, actorId, "user.password_reset_by_admin", "user", user.Id.ToString());
+        if (deactivated)
+            await audit.RecordAsync(orgId, null, actorId, "user.deactivated", "user", user.Id.ToString());
+        await audit.RecordAsync(orgId, null, actorId, "user.updated", "user", user.Id.ToString());
+
+        return new OkObjectResult(new
+        {
+            user.Id, user.Email, user.Username, user.Discriminator, user.DisplayName,
+            user.Phone, user.Active, user.EmailVerified, user.LockedUntil, user.FailedLoginCount,
+        });
+    }
 }
