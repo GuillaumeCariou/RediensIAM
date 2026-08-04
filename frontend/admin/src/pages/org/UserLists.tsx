@@ -2,7 +2,7 @@ import { rowActivation } from '../../components/iam/rowActivation';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { IamChip, IamDialog } from '@/components/iam';
-import { listUserLists, createUserList } from '@/api';
+import { listUserLists, createUserList, createSystemUserList } from '@/api';
 import { useOrgContext } from '@/hooks/useOrgContext';
 import PageHeader from '@/components/layout/PageHeader';
 
@@ -13,7 +13,7 @@ interface UserList {
 
 export default function UserLists() {
   const navigate = useNavigate();
-  const { orgId, userListBase } = useOrgContext();
+  const { orgId, isSystemCtx, userListBase } = useOrgContext();
   const isGlobal = !orgId;
   const navigateBase = isGlobal ? '/system/userlists' : userListBase;
 
@@ -44,7 +44,11 @@ export default function UserLists() {
     e.preventDefault();
     setSaving(true);
     try {
-      await createUserList({ name: listForm.name, org_id: orgId });
+      // En portée système, l'organisation vient de l'URL et doit voyager dans le corps : le jeton
+      // d'un super-admin n'en porte aucune. En portée organisation, c'est le jeton qui fait foi.
+      await (isSystemCtx
+        ? createSystemUserList({ name: listForm.name, org_id: orgId! })
+        : createUserList({ name: listForm.name }));
       setCreateOpen(false); setListForm({ name: '' }); load();
     } finally { setSaving(false); }
   };

@@ -10,7 +10,12 @@ import UserLists from './UserLists';
  * "New list" button there would have no organisation to create in.
  */
 
-const api = vi.hoisted(() => ({ listUserLists: vi.fn(), createUserList: vi.fn() }));
+// `createSystemUserList` doit figurer ici même si aucun test ne l'appelle : la fabrique REMPLACE
+// `@/api`, donc tout export que la page importe et qui manque ici empêche le module de se lier —
+// le fichier entier ne se charge plus.
+const api = vi.hoisted(() => ({
+  listUserLists: vi.fn(), createUserList: vi.fn(), createSystemUserList: vi.fn(),
+}));
 vi.mock('@/api', () => api);
 
 const auth = vi.hoisted(() => ({ orgId: 'o1', projectId: '' }));
@@ -105,8 +110,12 @@ describe('an organisation\'s own lists', () => {
     await user.fill(screen.getByLabelText('Name'), 'Contractors');
     await user.click(screen.getByRole('button', { name: 'Create' }));
 
+    // Sans `org_id` : la route OrgAdmin prend l'organisation dans le JETON et jette le corps.
+    // L'envoyer donnait l'illusion qu'elle le lisait — et un super-admin, dont le jeton n'en porte
+    // aucune, y écrivait Guid.Empty puis recevait un 500 sur la clé étrangère.
     await vi.waitFor(() => expect(api.createUserList)
-      .toHaveBeenCalledWith({ name: 'Contractors', org_id: 'o1' }));
+      .toHaveBeenCalledWith({ name: 'Contractors' }));
+    expect(api.createSystemUserList).not.toHaveBeenCalled();
     expect(api.listUserLists).toHaveBeenCalledTimes(2);
   });
 

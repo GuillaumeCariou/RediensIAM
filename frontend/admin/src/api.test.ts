@@ -55,8 +55,13 @@ const ROUTES: readonly Route[] = [
   // ── User lists ──────────────────────────────────────────────────
   ['listUserLists (all orgs)', () => api.listUserLists(), '/admin/userlists'],
   ['listUserLists (one org)', () => api.listUserLists('o1'), '/admin/userlists?org_id=o1'],
-  ['createUserList', () => api.createUserList({ name: 'Staff', org_id: 'o1' }),
-    '/org/userlists', { method: 'POST', body: json({ name: 'Staff', org_id: 'o1' }) }],
+  // La route OrgAdmin prend l'organisation dans le JETON : lui envoyer `org_id` donnait
+  // l'illusion qu'elle le lisait, alors qu'elle le jette. Un super-admin y écrivait donc
+  // `Guid.Empty` et recevait un 500 sur la clé étrangère.
+  ['createUserList', () => api.createUserList({ name: 'Staff' }),
+    '/org/userlists', { method: 'POST', body: json({ name: 'Staff' }) }],
+  ['createSystemUserList', () => api.createSystemUserList({ name: 'Staff', org_id: 'o1' }),
+    '/admin/userlists', { method: 'POST', body: json({ name: 'Staff', org_id: 'o1' }) }],
   ['getUserList', () => api.getUserList('l1'), '/org/userlists/l1'],
   ['listUserListMembers', () => api.listUserListMembers('l1'), '/org/userlists/l1/users'],
   ['getSystemUserList', () => api.getSystemUserList('l1'), '/admin/userlists/l1'],

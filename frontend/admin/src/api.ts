@@ -55,8 +55,16 @@ export async function listUserLists(orgId?: string) {
   const q = orgId ? `?org_id=${orgId}` : '';
   return (await apiFetch(`/admin/userlists${q}`)).json();
 }
-export async function createUserList(body: { name: string; org_id: string }) {
+// Deux routes, comme pour la lecture (`getUserList` / `getSystemUserList`) : la création n'avait
+// que la variante OrgAdmin. `/org/userlists` prend l'organisation dans le JETON de l'appelant et
+// ignore le corps — un super-admin, dont le jeton n'en porte aucune, y écrivait `Guid.Empty`, ce
+// qui viole `FK_user_lists_organisations_OrgId` et rendait 500. Il envoyait pourtant `org_id` :
+// c'est la route qui ne pouvait pas le lire.
+export async function createUserList(body: { name: string }) {
   return (await apiFetch('/org/userlists', { method: 'POST', body: JSON.stringify(body) })).json();
+}
+export async function createSystemUserList(body: { name: string; org_id: string }) {
+  return (await apiFetch('/admin/userlists', { method: 'POST', body: JSON.stringify(body) })).json();
 }
 export async function getUserList(id: string) {
   return (await apiFetch(`/org/userlists/${id}`)).json();
