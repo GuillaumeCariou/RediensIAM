@@ -748,69 +748,27 @@ public class OrgController(
     }
 
     [HttpPost("projects/{id}/saml-providers")]
-    public async Task<IActionResult> CreateSamlProvider(Guid id, [FromBody] CreateSamlProviderRequest body)
+    public async Task<IActionResult> CreateSamlProvider(Guid id, [FromBody] SamlProviderInput body)
     {
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
         if (project == null) return NotFound();
-        if (string.IsNullOrEmpty(body.EntityId)) return BadRequest(new { error = "entity_id_required" });
-        if (string.IsNullOrEmpty(body.MetadataUrl) && string.IsNullOrEmpty(body.SsoUrl))
-            return BadRequest(new { error = "metadata_url_or_sso_url_required" });
-        // Without metadata there is no way to discover the signing key, so it must be supplied.
-        if (string.IsNullOrEmpty(body.MetadataUrl) && string.IsNullOrEmpty(body.CertificatePem))
-            return BadRequest(new { error = "certificate_pem_required_without_metadata_url" });
-
-        var provider = new SamlIdpConfig
-        {
-            ProjectId                 = id,
-            EntityId                  = body.EntityId,
-            MetadataUrl               = body.MetadataUrl,
-            SsoUrl                    = body.SsoUrl,
-            CertificatePem            = body.CertificatePem,
-            EmailAttributeName        = body.EmailAttributeName ?? "email",
-            DisplayNameAttributeName  = body.DisplayNameAttributeName,
-            JitProvisioning           = body.JitProvisioning ?? true,
-            DefaultRoleId             = body.DefaultRoleId,
-            Active                    = true,
-            CreatedAt                 = DateTimeOffset.UtcNow,
-            UpdatedAt                 = DateTimeOffset.UtcNow
-        };
-        db.SamlIdpConfigs.Add(provider);
-        await db.SaveChangesAsync();
-        await audit.RecordAsync(OrgId, id, ActorId, "saml_provider.created", "saml_provider", provider.Id.ToString());
-        return Created($"/org/projects/{id}/saml-providers/{provider.Id}", new { provider.Id, provider.EntityId });
+        return await SamlProviderOperations.CreateAsync(db, audit, ActorId, project, body);
     }
 
     [HttpPatch("projects/{id}/saml-providers/{pid}")]
-    public async Task<IActionResult> UpdateSamlProvider(Guid id, Guid pid, [FromBody] UpdateSamlProviderRequest body)
+    public async Task<IActionResult> UpdateSamlProvider(Guid id, Guid pid, [FromBody] SamlProviderInput body)
     {
-        var provider = await db.SamlIdpConfigs.Include(x => x.Project)
-            .FirstOrDefaultAsync(x => x.Id == pid && x.ProjectId == id);
+        var provider = await SamlProviderOperations.FindAsync(db, id, pid);
         if (provider == null || provider.Project.OrgId != OrgId) return NotFound();
-        if (body.EntityId != null) provider.EntityId = body.EntityId;
-        if (body.MetadataUrl != null) provider.MetadataUrl = body.MetadataUrl;
-        if (body.SsoUrl != null) provider.SsoUrl = body.SsoUrl;
-        if (body.CertificatePem != null) provider.CertificatePem = body.CertificatePem;
-        if (body.EmailAttributeName != null) provider.EmailAttributeName = body.EmailAttributeName;
-        if (body.DisplayNameAttributeName != null) provider.DisplayNameAttributeName = body.DisplayNameAttributeName;
-        if (body.JitProvisioning.HasValue) provider.JitProvisioning = body.JitProvisioning.Value;
-        if (body.DefaultRoleId.HasValue) provider.DefaultRoleId = body.DefaultRoleId;
-        if (body.Active.HasValue) provider.Active = body.Active.Value;
-        provider.UpdatedAt = DateTimeOffset.UtcNow;
-        await db.SaveChangesAsync();
-        return Ok(new { provider.Id, provider.EntityId, provider.Active });
+        return await SamlProviderOperations.UpdateAsync(db, audit, ActorId, provider, body);
     }
 
     [HttpDelete("projects/{id}/saml-providers/{pid}")]
     public async Task<IActionResult> DeleteSamlProvider(Guid id, Guid pid)
     {
-        var provider = await db.SamlIdpConfigs
-            .Include(x => x.Project)
-            .FirstOrDefaultAsync(x => x.Id == pid && x.ProjectId == id);
+        var provider = await SamlProviderOperations.FindAsync(db, id, pid);
         if (provider == null || provider.Project.OrgId != OrgId) return NotFound();
-        db.SamlIdpConfigs.Remove(provider);
-        await db.SaveChangesAsync();
-        await audit.RecordAsync(OrgId, id, ActorId, "saml_provider.deleted", "saml_provider", pid.ToString());
-        return NoContent();
+        return await SamlProviderOperations.DeleteAsync(db, audit, ActorId, provider);
     }
 
     // ── Export ────────────────────────────────────────────────────────────────
@@ -895,8 +853,6 @@ public class OrgController(
 public record CreateProjectRequest(string Name, string Slug, bool? RequireRoleToLogin, string[]? RedirectUris,
     string[]? PostLogoutRedirectUris = null);
 public record UpdateScopesRequest(string[] Scopes);
-public record CreateSamlProviderRequest(string EntityId, string? MetadataUrl, string? SsoUrl, string? CertificatePem, string? EmailAttributeName, string? DisplayNameAttributeName, bool? JitProvisioning, Guid? DefaultRoleId);
-public record UpdateSamlProviderRequest(string? EntityId, string? MetadataUrl, string? SsoUrl, string? CertificatePem, string? EmailAttributeName, string? DisplayNameAttributeName, bool? JitProvisioning, Guid? DefaultRoleId, bool? Active);
 public record UpdateOrgSettingsRequest(int? AuditRetentionDays);
 public record AssignUserListRequest([property: JsonRequired] Guid UserListId);
 public record CreateUserListRequest(string Name);

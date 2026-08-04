@@ -1391,7 +1391,7 @@ public class SystemAdminExtendedTests(TestFixture fixture)
     // ── POST /admin/projects/{id}/saml-providers ──────────────────────────────
 
     [Fact]
-    public async Task CreateSamlProvider_ValidPayload_Returns200WithId()
+    public async Task CreateSamlProvider_ValidPayload_ReturnsCreatedWithId()
     {
         var (org, _, client) = await SuperAdminAsync();
         var project = await fixture.Seed.CreateProjectAsync(org.Id);
@@ -1403,7 +1403,9 @@ public class SystemAdminExtendedTests(TestFixture fixture)
             certificate_pem = "-----BEGIN CERTIFICATE-----\nMIID...\n-----END CERTIFICATE-----"
         });
 
-        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        // 201, as the organisation route always answered: the two disagreed on the status code
+        // for the same registration.
+        res.StatusCode.Should().Be(HttpStatusCode.Created);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
         body.TryGetProperty("id", out _).Should().BeTrue();
     }
@@ -1431,7 +1433,12 @@ public class SystemAdminExtendedTests(TestFixture fixture)
 
         var createRes = await client.PostAsJsonAsync($"/admin/projects/{project.Id}/saml-providers", new
         {
-            entity_id = "https://idp.example.com/original"
+            // sso_url and certificate_pem are not decoration: without metadata to discover a key
+            // from, an assertion signed by this provider could never be verified. Both scopes
+            // refuse the registration now — see SamlProviderParityTests.
+            entity_id       = "https://idp.example.com/original",
+            sso_url         = "https://idp.example.com/sso",
+            certificate_pem = "-----BEGIN CERTIFICATE-----\nMIID...\n-----END CERTIFICATE-----",
         });
         var createBody = await createRes.Content.ReadFromJsonAsync<JsonElement>();
         var providerId = createBody.GetProperty("id").GetString();
@@ -1456,7 +1463,9 @@ public class SystemAdminExtendedTests(TestFixture fixture)
 
         var createRes = await client.PostAsJsonAsync($"/admin/projects/{project.Id}/saml-providers", new
         {
-            entity_id = "https://idp.delete-me.com"
+            entity_id       = "https://idp.delete-me.com",
+            sso_url         = "https://idp.delete-me.com/sso",
+            certificate_pem = "-----BEGIN CERTIFICATE-----\nMIID...\n-----END CERTIFICATE-----",
         });
         var createBody = await createRes.Content.ReadFromJsonAsync<JsonElement>();
         var providerId = createBody.GetProperty("id").GetString();
@@ -1477,7 +1486,9 @@ public class SystemAdminExtendedTests(TestFixture fixture)
 
         var createRes = await client.PostAsJsonAsync($"/admin/projects/{project.Id}/saml-providers", new
         {
-            entity_id = "https://idp.example.com/set-role"
+            entity_id       = "https://idp.example.com/set-role",
+            sso_url         = "https://idp.example.com/sso",
+            certificate_pem = "-----BEGIN CERTIFICATE-----\nMIID...\n-----END CERTIFICATE-----",
         });
         var createBody = await createRes.Content.ReadFromJsonAsync<JsonElement>();
         var providerId = createBody.GetProperty("id").GetString();
@@ -1498,7 +1509,9 @@ public class SystemAdminExtendedTests(TestFixture fixture)
 
         var createRes = await client.PostAsJsonAsync($"/admin/projects/{project.Id}/saml-providers", new
         {
-            entity_id = "https://idp.example.com/clear-role"
+            entity_id       = "https://idp.example.com/clear-role",
+            sso_url         = "https://idp.example.com/sso",
+            certificate_pem = "-----BEGIN CERTIFICATE-----\nMIID...\n-----END CERTIFICATE-----",
         });
         var createBody = await createRes.Content.ReadFromJsonAsync<JsonElement>();
         var providerId = createBody.GetProperty("id").GetString();

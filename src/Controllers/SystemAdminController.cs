@@ -1253,68 +1253,27 @@ await hydra.DeleteOAuth2ClientAsync(id);
     }
 
     [HttpPost("projects/{id}/saml-providers")]
-    public async Task<IActionResult> AdminCreateSamlProvider(Guid id, [FromBody] AdminCreateSamlProviderRequest req)
+    public async Task<IActionResult> AdminCreateSamlProvider(Guid id, [FromBody] SamlProviderInput req)
     {
         var project = await db.Projects.FindAsync(id);
         if (project == null) return NotFound();
-
-        var entity = new SamlIdpConfig
-        {
-            ProjectId                = id,
-            EntityId                 = req.EntityId,
-            MetadataUrl              = req.MetadataUrl,
-            SsoUrl                   = req.SsoUrl,
-            CertificatePem           = req.CertificatePem,
-            EmailAttributeName       = req.EmailAttributeName ?? "email",
-            DisplayNameAttributeName = req.DisplayNameAttributeName,
-            JitProvisioning          = req.JitProvisioning ?? true,
-            DefaultRoleId            = req.DefaultRoleId,
-            Active                   = true,
-            CreatedAt                = DateTimeOffset.UtcNow,
-            UpdatedAt                = DateTimeOffset.UtcNow
-        };
-        db.SamlIdpConfigs.Add(entity);
-        await db.SaveChangesAsync();
-        await audit.RecordAsync(project.OrgId, id, GetActorId(), "saml_provider.created", "saml_provider", entity.Id.ToString());
-        return Ok(new { entity.Id });
+        return await SamlProviderOperations.CreateAsync(db, audit, GetActorId(), project, req);
     }
 
     [HttpPatch("projects/{projectId}/saml-providers/{providerId}")]
-    public async Task<IActionResult> AdminUpdateSamlProvider(Guid projectId, Guid providerId, [FromBody] AdminUpdateSamlProviderRequest req)
+    public async Task<IActionResult> AdminUpdateSamlProvider(Guid projectId, Guid providerId, [FromBody] SamlProviderInput req)
     {
-        var provider = await db.SamlIdpConfigs
-            .Include(x => x.Project)
-            .FirstOrDefaultAsync(x => x.Id == providerId && x.ProjectId == projectId);
+        var provider = await SamlProviderOperations.FindAsync(db, projectId, providerId);
         if (provider == null) return NotFound();
-
-        if (req.EntityId != null)                 provider.EntityId                 = req.EntityId;
-        if (req.MetadataUrl != null)               provider.MetadataUrl               = req.MetadataUrl;
-        if (req.SsoUrl != null)                    provider.SsoUrl                    = req.SsoUrl;
-        if (req.CertificatePem != null)            provider.CertificatePem            = req.CertificatePem;
-        if (req.EmailAttributeName != null)        provider.EmailAttributeName        = req.EmailAttributeName;
-        if (req.DisplayNameAttributeName != null)  provider.DisplayNameAttributeName  = req.DisplayNameAttributeName;
-        if (req.JitProvisioning.HasValue)          provider.JitProvisioning           = req.JitProvisioning.Value;
-        if (req.DefaultRoleId.HasValue)            provider.DefaultRoleId             = req.DefaultRoleId == Guid.Empty ? null : req.DefaultRoleId;
-        if (req.Active.HasValue)                   provider.Active                    = req.Active.Value;
-        provider.UpdatedAt = DateTimeOffset.UtcNow;
-
-        await db.SaveChangesAsync();
-        await audit.RecordAsync(provider.Project.OrgId, projectId, GetActorId(), "saml_provider.updated", "saml_provider", providerId.ToString());
-        return Ok();
+        return await SamlProviderOperations.UpdateAsync(db, audit, GetActorId(), provider, req);
     }
 
     [HttpDelete("projects/{projectId}/saml-providers/{providerId}")]
     public async Task<IActionResult> AdminDeleteSamlProvider(Guid projectId, Guid providerId)
     {
-        var provider = await db.SamlIdpConfigs
-            .Include(x => x.Project)
-            .FirstOrDefaultAsync(x => x.Id == providerId && x.ProjectId == projectId);
+        var provider = await SamlProviderOperations.FindAsync(db, projectId, providerId);
         if (provider == null) return NotFound();
-
-        db.SamlIdpConfigs.Remove(provider);
-        await db.SaveChangesAsync();
-        await audit.RecordAsync(provider.Project.OrgId, projectId, GetActorId(), "saml_provider.deleted", "saml_provider", providerId.ToString());
-        return NoContent();
+        return await SamlProviderOperations.DeleteAsync(db, audit, GetActorId(), provider);
     }
 
 }
@@ -1332,5 +1291,3 @@ public record AdminCreateRoleRequest(string Name, string? Description, int? Rank
 public record CreateHydraClientRequest(string ClientName, string[] GrantTypes, string[] RedirectUris, string? Scope,
     string? ClientId = null, string[]? PostLogoutRedirectUris = null);
 public record AdminUpsertSmtpRequest(string Host, [property: System.Text.Json.Serialization.JsonRequired] int Port, [property: System.Text.Json.Serialization.JsonRequired] bool StartTls, string? Username, string? Password, string FromAddress, string FromName);
-public record AdminCreateSamlProviderRequest(string EntityId, string? MetadataUrl, string? SsoUrl, string? CertificatePem, string? EmailAttributeName, string? DisplayNameAttributeName, bool? JitProvisioning, Guid? DefaultRoleId);
-public record AdminUpdateSamlProviderRequest(string? EntityId, string? MetadataUrl, string? SsoUrl, string? CertificatePem, string? EmailAttributeName, string? DisplayNameAttributeName, bool? JitProvisioning, Guid? DefaultRoleId, bool? Active);
