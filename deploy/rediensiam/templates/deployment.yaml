@@ -106,11 +106,6 @@ spec:
                 secretKeyRef:
                   name: {{ include "rediensiam.secretName" . }}
                   key: database-url
-            - name: Cache__ConnectionString
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "rediensiam.secretName" . }}
-                  key: cache-url
             # Off by default (see values.yaml): a first launch must not gate the bootstrap admin's
             # own login on a factor it has no way to deliver yet.
             # The chart drives containerPort, the Services and all three probes from these, but
@@ -178,7 +173,7 @@ spec:
             periodSeconds: 5
           readinessProbe:
             httpGet:
-              # /health/ready also checks the database and the cache. /health stays process-only,
+              # /health/ready also checks the database. /health stays process-only,
               # because a liveness probe that fails on a database blip restarts every replica at
               # once and turns an outage into a crash loop.
               path: /health/ready
@@ -200,25 +195,8 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-            {{- if .Values.rediensiam.dragonfly.local.tls.enabled }}
-            # R-15. CacheTls pins the cache connection to this CA rather than the OS trust
-            # store, which is what lets the app reject a certificate the cluster issued for
-            # some other service. The path is CacheTls.DefaultCaBundlePath, so nothing has to
-            # be configured at install time. Only ca.crt is projected — never the key.
-            - name: cache-tls-ca
-              mountPath: /etc/cache-tls
-              readOnly: true
-            {{- end }}
           resources:
             {{- toYaml .Values.rediensiam.resources | nindent 12 }}
       volumes:
         - name: tmp
           emptyDir: {}
-        {{- if .Values.rediensiam.dragonfly.local.tls.enabled }}
-        - name: cache-tls-ca
-          secret:
-            secretName: {{ .Release.Name }}-dragonfly-tls
-            items:
-              - key: ca.crt
-                path: ca.crt
-        {{- end }}

@@ -7,7 +7,6 @@ Multi-tenant Identity & Access Management built on Ory Hydra + Keto, ASP.NET Cor
 - **Backend API** — ASP.NET Core 10, one process, two listeners: public `:5000` / admin `:5001`
 - **Ory Hydra** — OAuth2/OIDC token issuance and consent
 - **Ory Keto** — the authorisation store, re-checked live on every privileged request
-- **PostgreSQL + Dragonfly** — durable state and ephemeral shared state
 
 ---
 
@@ -181,7 +180,6 @@ Everything is under the top-level `rediensiam:` key unless noted.
 | `secrets.encryptionKey` | **Required.** 64 hex chars (`openssl rand -hex 32`). Not base64. Every at-rest subkey is HKDF-derived from it |
 | `secrets.encryptionKeys` | Key **ring** for rotation: `"id:hex,id:hex"`, active key first. Supersedes `encryptionKey`. Never reuse an id. Runbook: `SECURITY-AUDIT-LOG.md` step 16 §7 |
 | `secrets.databaseUrl` | **Required.** Npgsql connection string, user `iam_app` |
-| `secrets.cacheUrl` | **Required.** Must carry `ssl=true` exactly when `dragonfly.local.tls.enabled` is on — the chart fails the render if they disagree |
 | `secrets.smtpPassword`, `secrets.bootstrapEmail`, `secrets.bootstrapPassword` | |
 | `security.argon2Pepper` | Optional hex pepper |
 | `security.argon2Peppers` | Pepper **ring**: `"id:hex,id:hex"`, active first. No sweep is possible — accounts re-pepper on next login |
@@ -198,14 +196,6 @@ Everything is under the top-level `rediensiam:` key unless noted.
 | `postgres.rls.enabled` | `false` | Row-level security. **On in both dev and prod** — the chart default is off so an existing install is never switched by an upgrade alone. Fail-closed policies: enabling it before verifying the application half on a live connection is a total outage. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#turning-rls-on) |
 | `postgres.external.podSelector` | `cnpg.io/cluster: rediensiam-db` | which pods the NetworkPolicies should target in CNPG mode |
 | `backup.enabled` / `.schedule` / `.retainCopies` | `true` · `0 3 * * *` · `14` | nightly `pg_dumpall` to a PVC **on the same node as the data**. Copy it off-node yourself |
-
-#### Cache
-
-| Key | Default | Notes |
-|---|---|---|
-| `dragonfly.local.enabled` | `true` | |
-| `dragonfly.local.password` | `""` | required when TLS is on |
-| `dragonfly.local.tls.enabled` | `false` | **on in both dev and prod**; the chart default stays off for the same reason as RLS. A hard cutover — `--tls` makes Dragonfly stop answering cleartext, so `cacheUrl` must gain `ssl=true` in the same `helm upgrade` |
 
 #### Hydra and Keto
 
@@ -229,7 +219,7 @@ themselves are configured at the **top level**, outside `rediensiam:`:
 dotnet test tests/RediensIAM.IntegrationTests -p:SonarQubeTargetsImported=true
 ```
 
-**1460 tests** against real Postgres and Dragonfly containers (Testcontainers) with WireMock Hydra
+**1545 tests** against a real PostgreSQL container (Testcontainers) with WireMock Hydra
 and Keto stubs. The `-p:SonarQubeTargetsImported=true` flag suppresses a user-global MSBuild hook
 that a stale `.sonarqube/` directory at the repository root arms — pass it whenever you run `dotnet`
 from the repository root.

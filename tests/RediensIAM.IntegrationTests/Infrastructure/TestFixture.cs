@@ -12,9 +12,8 @@ using Microsoft.Extensions.Http.Resilience;
 using RediensIAM.Controllers;
 using RediensIAM.Services;
 using ISmsService = RediensIAM.Services.ISmsService;
-using StackExchange.Redis;
+using Npgsql;
 using Testcontainers.PostgreSql;
-using Testcontainers.Redis;
 
 namespace RediensIAM.IntegrationTests.Infrastructure;
 
@@ -34,7 +33,6 @@ public sealed class TestFixture : IAsyncLifetime
         .WithPassword("test")
         .Build();
 
-    private readonly RedisContainer _redis = new RedisBuilder("docker.dragonflydb.io/dragonflydb/dragonfly:latest").Build();
 
     private readonly IContainer _mailhog = new ContainerBuilder("mailhog/mailhog:v1.0.1")
         .WithPortBinding(1025, true)
@@ -50,7 +48,7 @@ public sealed class TestFixture : IAsyncLifetime
     public HibpStubHandler  HibpStub   { get; } = new();
 
     // ── Cache connection (for flush between tests) ────────────────────────────
-    private ConnectionMultiplexer? _mux;
+
 
     // ── App under test ────────────────────────────────────────────────────────
     private WebApplicationFactory<Program> _factory = null!;
@@ -87,12 +85,10 @@ public sealed class TestFixture : IAsyncLifetime
     public async Task InitializeAsync()
     {
         // MailHog is here for the tests that exercise real SMTP.
-        await Task.WhenAll(_postgres.StartAsync(), _redis.StartAsync(), _mailhog.StartAsync());
+        await Task.WhenAll(_postgres.StartAsync(), _mailhog.StartAsync());
 
-        _mux = await ConnectionMultiplexer.ConnectAsync(_redis.GetConnectionString());
 
         SetTestEnvVar("ConnectionStrings__Default",        _postgres.GetConnectionString());
-        SetTestEnvVar("Cache__ConnectionString",           _redis.GetConnectionString());
         SetTestEnvVar("Hydra__AdminUrl",                   Hydra.Url);
         SetTestEnvVar("Hydra__PublicUrl",                  Hydra.Url);
         SetTestEnvVar("Keto__ReadUrl",                     Keto.ReadUrl);
@@ -115,10 +111,6 @@ public sealed class TestFixture : IAsyncLifetime
                         // Database
                         ["ConnectionStrings:Default"]           = _postgres.GetConnectionString(),
 
-                        // Redis
-                        ["Cache:ConnectionString"]              = _redis.GetConnectionString(),
-                        ["Cache:InstanceName"]                  = "test:",
-                        ["Cache:PatTtlMinutes"]                 = "5",
 
                         // App
                         ["App:PublicUrl"]                       = "http://localhost",
@@ -215,10 +207,9 @@ public sealed class TestFixture : IAsyncLifetime
     {
         Hydra.Dispose();
         Keto.Dispose();
-        _mux?.Dispose();
         Client.Dispose();
         await _factory.DisposeAsync();
-        await Task.WhenAll(_postgres.DisposeAsync().AsTask(), _redis.DisposeAsync().AsTask(), _mailhog.DisposeAsync().AsTask());
+        await Task.WhenAll(_postgres.DisposeAsync().AsTask(), _mailhog.DisposeAsync().AsTask());
         foreach (var key in _testEnvVars)
             Environment.SetEnvironmentVariable(key, null);
     }
@@ -251,10 +242,17 @@ public sealed class TestFixture : IAsyncLifetime
     public HttpClient NewSessionClient() =>
         _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-    /// <summary>Flushes the Dragonfly/Redis cache — resets rate limiters and session state between tests.</summary>
+    /// <summary>
+    /// Empties the shared state — rate-limit counters, one-time codes, pending flow state, cached
+    /// verdicts — between tests. Two <c>TRUNCATE</c>s where a <c>FLUSHALL</c> used to be.
+    /// </summary>
     public async Task FlushCacheAsync()
     {
-        await _mux!.GetDatabase().ExecuteAsync("FLUSHALL");
+        await using var conn = new NpgsqlConnection(_postgres.GetConnectionString());
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(
+            "TRUNCATE shared_state, rate_counters, webhook_pending", conn);
+        await cmd.ExecuteNonQueryAsync();
     }
 
     /// <summary>Resolves a scoped service from the app's DI container.</summary>
@@ -280,9 +278,6 @@ public sealed class TestFixture : IAsyncLifetime
                     cfg.AddInMemoryCollection(new Dictionary<string, string?>
                     {
                         ["ConnectionStrings:Default"]           = _postgres.GetConnectionString(),
-                        ["Cache:ConnectionString"]              = _redis.GetConnectionString(),
-                        ["Cache:InstanceName"]                  = "test2:",
-                        ["Cache:PatTtlMinutes"]                 = "5",
                         ["App:PublicUrl"]                       = "http://localhost",
                         ["App:Domain"]                          = "localhost",
                         ["App:AdminSpaOrigin"]                  = "http://localhost",
@@ -353,9 +348,6 @@ public sealed class TestFixture : IAsyncLifetime
                     cfg.AddInMemoryCollection(new Dictionary<string, string?>
                     {
                         ["ConnectionStrings:Default"]           = _postgres.GetConnectionString(),
-                        ["Cache:ConnectionString"]              = _redis.GetConnectionString(),
-                        ["Cache:InstanceName"]                  = "test3:",
-                        ["Cache:PatTtlMinutes"]                 = "5",
                         ["App:PublicUrl"]                       = "http://localhost",
                         ["App:Domain"]                          = "localhost",
                         ["App:AdminSpaOrigin"]                  = "http://localhost",
@@ -430,9 +422,6 @@ public sealed class TestFixture : IAsyncLifetime
                     cfg.AddInMemoryCollection(new Dictionary<string, string?>
                     {
                         ["ConnectionStrings:Default"]           = _postgres.GetConnectionString(),
-                        ["Cache:ConnectionString"]              = _redis.GetConnectionString(),
-                        ["Cache:InstanceName"]                  = "test4:",
-                        ["Cache:PatTtlMinutes"]                 = "5",
                         ["App:PublicUrl"]                       = "http://localhost",
                         ["App:Domain"]                          = "localhost",
                         ["App:AdminSpaOrigin"]                  = "http://localhost",

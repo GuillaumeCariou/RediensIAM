@@ -36,7 +36,6 @@ containers per run via Testcontainers:
 | Container | Purpose |
 |---|---|
 | `postgres:17` | the real database, real migrations |
-| `docker.dragonflydb.io/dragonflydb/dragonfly:latest` | the real cache, not an in-memory fake |
 | `mailhog/mailhog:v1.0.1` | outbound mail |
 
 Ory Hydra and Ory Keto are stubbed with **WireMock.Net** (`Infrastructure/HydraStub.cs`,

@@ -83,6 +83,7 @@ Three groups never come from that row, deliberately:
 | `Security__PatPrefix` | `rediens_pat_` | — | Literal prefix on personal-access tokens, so a leaked one is recognisable in a log |
 | `Security__MaxPatLifetimeDays` | `365` | 1–730 | Ceiling on a requested token lifetime |
 | `Security__NewDeviceCacheDays` | `90` | — | How long a device is remembered before signing in from it notifies the user again |
+| `Security__PatCacheTtlMinutes` | `5` | 0–15 | Ceiling on how long a revoked personal-access token keeps working. `0` disables the cache and makes revocation immediate. Bounds the freshness of the token's *role set* only — liveness (account active, organisation not suspended, token unexpired) is re-checked on **every** hit |
 | `Security__ManagementClientIds` | `client_admin_system` | CSV | Which OAuth2 clients may call the management API at all. An audience boundary, checked before any role is |
 
 ---
@@ -94,17 +95,6 @@ Three groups never come from that row, deliberately:
 | `ConnectionStrings__Default` | **none — required** | The application's PostgreSQL DSN. Startup refuses `No Reset On Close=true` and `Multiplexing=true`: both break the per-connection tenant scope that row-level security reads, which would leak across tenants rather than fail |
 | `Database__MigrateOnStartup` | `true` | Whether EF migrations run at boot. `false` starts anyway and logs how many are pending; `true` retries twelve times before giving up and aborting |
 | `ConnectionStrings__DefaultConnection` | localhost | **Design-time only** — `dotnet ef migrations`. Never read by the running application, and note the different name |
-
----
-
-## Cache
-
-| Variable | Default | What it controls |
-|---|---|---|
-| `Cache__ConnectionString` | `localhost:6379,abortConnect=false` | Dragonfly/Redis. Holds the DataProtection key ring, sessions, one-time codes, the webhook queue and the token cache. The chart refuses to render if its `ssl=true` and the server's TLS toggle disagree |
-| `Cache__TlsCaFile` | `/etc/cache-tls/ca.crt` | The CA the cache's certificate must chain to. Pins verification to the cluster CA rather than the OS trust store; a no-op on a plaintext connection |
-| `Cache__InstanceName` | `rediensiam:` | Key prefix |
-| `Cache__PatTtlMinutes` | `5` | Ceiling on how long a revoked personal-access token keeps working. `0` disables the cache and makes revocation immediate |
 
 ---
 

@@ -119,8 +119,7 @@ public sealed class InstanceConfigurationProvider(InstanceBootstrapOptions opts)
         i.SmtpFromAddress = S("Smtp:FromAddress",    i.SmtpFromAddress);
         i.SmtpFromName    = S("Smtp:FromName",       i.SmtpFromName);
 
-        i.CacheInstanceName  = S("Cache:InstanceName",  i.CacheInstanceName);
-        i.PatCacheTtlMinutes = I("Cache:PatTtlMinutes", i.PatCacheTtlMinutes);
+        i.PatCacheTtlMinutes = I("Security:PatCacheTtlMinutes", i.PatCacheTtlMinutes);
 
         i.MaxLoginAttempts  = I("Security:MaxLoginAttempts",  i.MaxLoginAttempts);
         i.LockoutMinutes    = I("Security:LockoutMinutes",    i.LockoutMinutes);
@@ -171,8 +170,7 @@ public sealed class InstanceConfigurationProvider(InstanceBootstrapOptions opts)
         ["Smtp:FromAddress"]            = i.SmtpFromAddress,
         ["Smtp:FromName"]               = i.SmtpFromName,
 
-        ["Cache:InstanceName"]          = i.CacheInstanceName,
-        ["Cache:PatTtlMinutes"]         = i.PatCacheTtlMinutes.ToString(),
+        ["Security:PatCacheTtlMinutes"] = i.PatCacheTtlMinutes.ToString(),
 
         ["Security:MaxLoginAttempts"]   = i.MaxLoginAttempts.ToString(),
         ["Security:LockoutMinutes"]     = i.LockoutMinutes.ToString(),

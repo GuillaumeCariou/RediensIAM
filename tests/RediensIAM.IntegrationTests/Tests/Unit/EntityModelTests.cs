@@ -378,8 +378,6 @@ public class EntityModelTests
             })
             .Build());
 
-        cfg.CacheConnectionString.Should().Contain("localhost");
-        cfg.CacheInstanceName.Should().Be("rediensiam:");
         cfg.PublicUrl.Should().Be("http://localhost");
         cfg.SmtpFromName.Should().Be("RediensIAM");
         cfg.SmtpFromAddress.Should().Be("noreply@localhost");

@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using StackExchange.Redis;
+using Microsoft.Extensions.Caching.Distributed;
 using RediensIAM.Config;
 using RediensIAM.Data;
 using RediensIAM.Data.Entities;
@@ -11,13 +11,12 @@ namespace RediensIAM.Services;
 
 public class PatService(
     RediensIamDbContext db,
-    IConnectionMultiplexer redis,
+    PostgresSharedState state,
     AppConfig appConfig,
     IServiceScopeFactory scopeFactory,
     HydraService hydra,
     ILogger<PatService> logger)
 {
-    private readonly IDatabase _cache = redis.GetDatabase();
     private readonly TimeSpan _ttl = TimeSpan.FromMinutes(appConfig.PatCacheTtlMinutes);
     private readonly string _prefix = appConfig.PatPrefix;
 
@@ -51,10 +50,10 @@ public class PatService(
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
         var cacheKey = $"pat:{hash}";
 
-        var cached = await _cache.StringGetAsync(cacheKey);
-        if (!cached.IsNull)
+        var cached = await state.GetStringAsync(cacheKey);
+        if (cached is not null)
         {
-            var hit = JsonSerializer.Deserialize<IntrospectionResponse>(cached.ToString());
+            var hit = JsonSerializer.Deserialize<IntrospectionResponse>(cached);
             // The cache exists to skip the expensive join, never the authorisation decision.
             // Re-check liveness on every call so deactivating a service account or suspending
             // an organisation cuts access immediately instead of after the TTL.
@@ -62,7 +61,7 @@ public class PatService(
             // but a PAT that expired while this entry was warm would otherwise keep working for
             // the rest of the TTL.
             if (hit != null && !IsExpired(hit) && await IsStillLiveAsync(hit.Sub)) return hit;
-            await _cache.KeyDeleteAsync(cacheKey);
+            await state.RemoveAsync(cacheKey);
             return null;
         }
 
@@ -124,13 +123,16 @@ public class PatService(
             IsServiceAccount: true,
             ExpiresAt: pat.ExpiresAt);
 
-        await _cache.StringSetAsync(cacheKey, JsonSerializer.Serialize(result), _ttl);
+        // A zero TTL means the operator asked for no cache at all — revocation immediate.
+        if (_ttl > TimeSpan.Zero)
+            await state.SetStringAsync(cacheKey, JsonSerializer.Serialize(result),
+                new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = _ttl });
         return result;
     }
 
     public async Task InvalidateAsync(string tokenHash)
     {
-        await _cache.KeyDeleteAsync($"pat:{tokenHash}");
+        await state.RemoveAsync($"pat:{tokenHash}");
     }
 
     /// <summary>
@@ -144,7 +146,7 @@ public class PatService(
             .Select(p => p.TokenHash)
             .ToListAsync();
         foreach (var hash in hashes)
-            await _cache.KeyDeleteAsync($"pat:{hash}");
+            await state.RemoveAsync($"pat:{hash}");
     }
 
     private static bool IsExpired(IntrospectionResponse hit) =>

@@ -8,7 +8,6 @@ using RediensIAM.Config;
 using RediensIAM.Controllers;
 using RediensIAM.Data;
 using RediensIAM.Data.Entities;
-using StackExchange.Redis;
 
 namespace RediensIAM.Services;
 
@@ -54,19 +53,22 @@ public interface IWebhookQueue
     Task RemoveAsync(string jobJson);
 }
 
-public sealed class RedisWebhookQueue(IConnectionMultiplexer redis) : IWebhookQueue
+/// <summary>
+/// The durable half of the delivery queue, on PostgreSQL.
+///
+/// <para>
+/// It was a Redis sorted set — score = earliest retry time — on a Dragonfly with no PVC, so every
+/// in-flight delivery was lost on any rollout. A table indexed on the score answers the same
+/// question and survives a restart, which is the whole reason a queue is persisted at all.
+/// </para>
+/// </summary>
+public sealed class PostgresWebhookQueue(PostgresSharedState state) : IWebhookQueue
 {
-    public Task PersistAsync(string jobJson, long score)
-        => redis.GetDatabase().SortedSetAddAsync(WebhookService.PendingKey, jobJson, score);
+    public Task PersistAsync(string jobJson, long score) => state.QueueWebhookAsync(jobJson, score);
 
-    public async Task<string[]> RecoverAllAsync()
-    {
-        var entries = await redis.GetDatabase().SortedSetRangeByScoreAsync(WebhookService.PendingKey);
-        return entries.Select(e => e.ToString()).ToArray();
-    }
+    public Task<string[]> RecoverAllAsync() => state.PendingWebhooksAsync();
 
-    public Task RemoveAsync(string jobJson)
-        => redis.GetDatabase().SortedSetRemoveAsync(WebhookService.PendingKey, jobJson);
+    public Task RemoveAsync(string jobJson) => state.DequeueWebhookAsync(jobJson);
 }
 
 // ── Channel job ───────────────────────────────────────────────────────────────
@@ -98,7 +100,6 @@ public class WebhookService(
         { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 
     internal static readonly JsonSerializerOptions JobOpts = new();
-    internal const string PendingKey = "webhook:pending";
 
     public async Task DispatchAsync(
         string eventType,

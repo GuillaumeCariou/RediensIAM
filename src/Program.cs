@@ -7,7 +7,8 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Prometheus;
 using Microsoft.EntityFrameworkCore;
-using StackExchange.Redis;
+using Npgsql;
+using Microsoft.Extensions.Caching.Distributed;
 using RediensIAM.Config;
 using RediensIAM.Data;
 using RediensIAM.Data.Entities;
@@ -48,29 +49,33 @@ builder.Services.AddDbContext<RediensIamDbContext>((sp, options) =>
            .AddInterceptors(sp.GetRequiredService<TenantScopeInterceptor>()),
     ServiceLifetime.Scoped);
 
-// ── Redis / Dragonfly ──────────────────────────────────────────────────────
 builder.Services.Configure<ForwardedHeadersOptions>(o => ConfigureForwardedHeaders(o, builder.Configuration, builder.Environment));
 
-// ConnectAsync(string) validates the server certificate against the OS trust store and nothing in
-// the connection string changes that, which is what blocked cache TLS in step 18. CacheTls pins to
-// the mounted cluster CA instead; on a plaintext connection string it is a no-op.
-var cacheOptions = CacheTls.BuildOptions(appConfig.CacheConnectionString, appConfig.CacheTlsCaFile, Console.Error.WriteLine);
-var cacheMultiplexer = await ConnectionMultiplexer.ConnectAsync(cacheOptions);
-builder.Services.AddSingleton<IConnectionMultiplexer>(cacheMultiplexer);
-builder.Services.AddStackExchangeRedisCache(o =>
-{
-    // Its own options instance: the cache builds a second multiplexer from these.
-    o.ConfigurationOptions = CacheTls.BuildOptions(appConfig.CacheConnectionString, appConfig.CacheTlsCaFile);
-    o.InstanceName         = appConfig.CacheInstanceName;
-});
+// ── Shared state ───────────────────────────────────────────────────────────
+// One datastore, not two. Dragonfly carried the DataProtection key ring, the pending-MFA session,
+// the OAuth2 social state, the TOTP anti-replay set, the lockout counters and the webhook queue —
+// none of which is a cache, and all of which break or weaken when a second replica has its own
+// copy. Postgres already holds every durable thing this system owns and is already replicated,
+// backed up, TLS-terminated and NetworkPolicy-locked; the second store cost a secret, a
+// certificate, a health check, two client abstractions and four settings, and bought nothing.
+//
+// Its own NpgsqlDataSource rather than the application DbContext: this state is deployment-wide,
+// and TenantScopeInterceptor would put a session cookie and a rate-limit counter behind a tenant
+// scope. See PostgresSharedState.
+var sharedStateSource = NpgsqlDataSource.Create(appConfig.ConnectionString);
+builder.Services.AddSingleton(sharedStateSource);
+builder.Services.AddSingleton<PostgresSharedState>();
+builder.Services.AddSingleton<IDistributedCache>(sp => sp.GetRequiredService<PostgresSharedState>());
+builder.Services.AddHostedService<ExpiredStateSweeper>();
 
-// ── Data Protection — persist keys to Redis so pod restarts don't invalidate sessions ──
-// The ring is what mints session cookies, and by default it is written to the cache in the clear.
-// ProtectKeysWithRootKey encrypts it under a purpose-derived subkey of the HKDF root and refuses
-// to read a key that arrived unencrypted — see Config/KeyRingProtection.cs. This is deliberately
-// independent of cache TLS: TLS protects the wire, this protects the stored bytes.
+// ── Data Protection — persisted to Postgres so pod restarts don't invalidate sessions ──
+// The ring is what mints session cookies. ProtectKeysWithRootKey encrypts it under a
+// purpose-derived subkey of the HKDF root and refuses to read a key that arrived unencrypted —
+// see Config/KeyRingProtection.cs. Moving the store from Dragonfly to Postgres does not move that
+// guarantee: EncryptedOnlyXmlRepository still wraps whatever repository is configured, so a
+// planted plaintext key is still refused rather than adopted.
 builder.Services.AddDataProtection()
-    .PersistKeysToStackExchangeRedis(cacheMultiplexer, "rediensiam:dataprotection:keys")
+    .PersistKeysToDbContext<RediensIamDbContext>()
     .ProtectKeysWithRootKey(appConfig)
     .SetApplicationName("rediensiam");
 
@@ -110,7 +115,7 @@ builder.Services.AddScoped<PasswordPolicyService>();
 builder.Services.AddScoped<LiveAuthorizationService>();
 builder.Services.AddScoped<SamlService>();
 builder.Services.AddSingleton(_ => System.Threading.Channels.Channel.CreateUnbounded<RediensIAM.Services.WebhookJob>());
-builder.Services.AddSingleton<IWebhookQueue, RedisWebhookQueue>();
+builder.Services.AddSingleton<IWebhookQueue, PostgresWebhookQueue>();
 builder.Services.AddSingleton<IWebhookSsrfValidator, WebhookSsrfValidator>();
 builder.Services.AddScoped<WebhookService>();
 builder.Services.AddScoped<KeyRotationService>();
@@ -156,8 +161,7 @@ builder.Services.AddControllers()
 // remains process-only, because a liveness probe that fails on a database blip restarts every
 // replica at once and turns an outage into a crash loop.
 builder.Services.AddHealthChecks()
-    .AddCheck<DatabaseHealthCheck>("database", tags: ["ready"])
-    .AddCheck<CacheHealthCheck>("cache", tags: ["ready"]);
+    .AddCheck<DatabaseHealthCheck>("database", tags: ["ready"]);
 
 // ── OpenAPI / Swagger (admin port only) ────────────────────────────────────
 builder.Services.AddEndpointsApiExplorer();

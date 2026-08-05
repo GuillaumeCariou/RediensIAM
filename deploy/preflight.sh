@@ -227,7 +227,6 @@ render() {
       --set 'rediensiam.secrets.databaseUrl=Host=p;Database=d;Username=u;Password=x;SSL Mode=Require'
       --set 'hydra.hydra.config.dsn=postgres://u:x@p:5432/hydra?sslmode=require'
       --set 'keto.keto.config.dsn=postgres://u:x@p:5432/keto?sslmode=require'
-      --set 'rediensiam.dragonfly.local.password=placeholder'
       --set 'hydra.hydra.config.secrets.system={placeholder}'
     )
   fi

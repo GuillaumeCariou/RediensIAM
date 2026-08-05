@@ -4,7 +4,7 @@ The built-in self-signed issuer also signs the optional Postgres / Dragonfly ser
 it is rendered whenever anything needs it, not only for the admin ingress. It is namespaced
 and release-named — see rediensiam.selfSignedIssuer in _helpers.tpl for why.
 */}}
-{{- if or (and .Values.rediensiam.ingress.admin.enabled .Values.rediensiam.ingress.admin.tls.enabled (not .Values.rediensiam.ingress.admin.tls.clusterIssuer)) .Values.rediensiam.postgres.local.tls.enabled .Values.rediensiam.dragonfly.local.tls.enabled }}
+{{- if or (and .Values.rediensiam.ingress.admin.enabled .Values.rediensiam.ingress.admin.tls.enabled (not .Values.rediensiam.ingress.admin.tls.clusterIssuer)) .Values.rediensiam.postgres.local.tls.enabled }}
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:

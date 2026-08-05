@@ -14,7 +14,7 @@ namespace RediensIAM.Data;
 /// builds.
 /// </param>
 public class RediensIamDbContext(DbContextOptions<RediensIamDbContext> options, AppConfig? appConfig = null)
-    : DbContext(options)
+    : DbContext(options), Microsoft.AspNetCore.DataProtection.EntityFrameworkCore.IDataProtectionKeyContext
 {
     public DbSet<Organisation> Organisations => Set<Organisation>();
     public DbSet<UserList> UserLists => Set<UserList>();
@@ -36,6 +36,15 @@ public class RediensIamDbContext(DbContextOptions<RediensIamDbContext> options, 
     public DbSet<WebhookDelivery> WebhookDeliveries => Set<WebhookDelivery>();
     public DbSet<SamlIdpConfig> SamlIdpConfigs => Set<SamlIdpConfig>();
     public DbSet<Instance> Instances => Set<Instance>();
+
+    // ── Shared state, formerly Dragonfly ──────────────────────────────────────
+    // Deployment-wide, never tenant-scoped: a session cookie and a rate-limit counter belong to
+    // no organisation. Declared deployment-global in files/rls.sql for the same reason.
+    public DbSet<SharedStateEntry> SharedState => Set<SharedStateEntry>();
+    public DbSet<RateCounter> RateCounters => Set<RateCounter>();
+    public DbSet<WebhookPending> WebhookPendings => Set<WebhookPending>();
+    public DbSet<Microsoft.AspNetCore.DataProtection.EntityFrameworkCore.DataProtectionKey> DataProtectionKeys
+        => Set<Microsoft.AspNetCore.DataProtection.EntityFrameworkCore.DataProtectionKey>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

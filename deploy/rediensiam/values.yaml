@@ -213,7 +213,6 @@ rediensiam:
   # ── Secrets — override via values.secret.yaml / values.prod.secret.yaml ───────
   # encryptionKey : 64-char hex — encrypts TOTP secrets, SMTP passwords, webhook secrets
   # databaseUrl   : full PostgreSQL connection string
-  # cacheUrl      : full Redis/Dragonfly connection string
   #
   # encryptionKeys : S-10 rotation. Empty until you rotate. Format "id:hex,id:hex" with the
   #   ACTIVE key first — everything new is encrypted under it, everything listed can decrypt.
@@ -230,13 +229,10 @@ rediensiam:
     # never read, and the two remaining options are both wrong: commit the passwords, or seal a
     # Secret that Helm immediately overwrites with empty strings on the next sync.
     #
-    # Setting this ALSO disables the three render-time guards in templates/dragonfly.yaml, which
-    # are conditioned on a non-empty cacheUrl — see the note at the top of that file.
     existingSecret: ""
     encryptionKey: ""
     encryptionKeys: ""
     databaseUrl: ""
-    cacheUrl: ""
     smtpPassword: ""
     bootstrapEmail: ""
     bootstrapPassword: ""
@@ -390,38 +386,6 @@ rediensiam:
       # schemas, have no tenant column, and are isolated by the T-04 role split.
       database: rediensiam
 
-  # ── Dragonfly (Redis-compatible cache) ────────────────────────────────────────
-  dragonfly:
-    local:
-      enabled: true
-      image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.25.0
-      password: ""
-      # Cache transport encryption. Same cert-manager prerequisite as Postgres, but this one
-      # is a HARD cutover: with --tls Dragonfly stops accepting cleartext, so the cacheUrl
-      # secret must gain `ssl=true` in the same change or the app cannot reach the cache —
-      # and the cache holds the DataProtection key ring.
-      #
-      # deploy.sh derives that `ssl=true` from this flag, and templates/dragonfly.yaml fails
-      # the render if the flag and the DSN ever disagree in either direction, so the pair
-      # cannot be split by accident. On the reuse path (a secrets file that already exists)
-      # deploy.sh stops and prints the one-line edit instead.
-      #
-      # Still off by default only because cert-manager is not this chart's to install; it is
-      # on in values.dev.yaml. `enabled: true` also requires `password` to be set — Dragonfly
-      # refuses to start with TLS and no auth method. Runbook: SECURITY-AUDIT-LOG.md step 09 §6.5.
-      tls:
-        enabled: false
-      resources:
-        requests:
-          cpu: 50m
-          memory: 128Mi
-          ephemeral-storage: 100Mi
-        limits:
-          cpu: 500m
-          memory: 512Mi
-          ephemeral-storage: 500Mi
-
-  # ── Hydra ─────────────────────────────────────────────────────────────────────
   hydra:
     local:
       enabled: true

@@ -46,11 +46,6 @@ spec:
     - ports: [{port: 5432}]
       to:
 {{ include "rediensiam.postgresPeer" . | indent 8 }}
-    - ports: [{port: 6379}]
-      to:
-        - podSelector:
-            matchLabels:
-              app: {{ .Release.Name }}-dragonfly
     # 4445 is the admin API. 4444 is the public API — the app calls it for the Hydra health
     # probe (SystemHealthController) and it was missing from this list, so that probe was
     # being denied at the network layer.
@@ -203,28 +198,5 @@ spec:
   egress:
     # The database originates nothing. DNS only, so a write primitive inside Postgres has no
     # outbound channel.
-{{ include "rediensiam.dnsEgress" . | indent 4 }}
-{{- end }}
-{{- if .Values.rediensiam.dragonfly.local.enabled }}
----
-# ── Dragonfly ─────────────────────────────────────────────────────────────────────────────
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: {{ .Release.Name }}-dragonfly-lockdown
-  namespace: {{ .Release.Namespace }}
-spec:
-  podSelector:
-    matchLabels:
-      app: {{ .Release.Name }}-dragonfly
-  policyTypes: [Ingress, Egress]
-  ingress:
-    # Only the app talks to the cache; lock out everything else.
-    - from:
-        - podSelector:
-            matchLabels:
-              app: {{ .Release.Name }}
-      ports: [{port: 6379}]
-  egress:
 {{ include "rediensiam.dnsEgress" . | indent 4 }}
 {{- end }}

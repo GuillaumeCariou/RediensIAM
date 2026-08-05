@@ -6,8 +6,9 @@ using Microsoft.AspNetCore.DataProtection.Repositories;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using RediensIAM.Config;
+using Microsoft.EntityFrameworkCore;
+using RediensIAM.Data;
 using RediensIAM.IntegrationTests.Infrastructure;
-using StackExchange.Redis;
 
 namespace RediensIAM.IntegrationTests.Tests.Security;
 
@@ -71,30 +72,25 @@ public class KeyRingProtectionTests(TestFixture fixture)
     }
 
     [Fact]
-    public async Task Key_Ring_In_The_Real_Cache_Round_Trips_Across_A_Restart()
+    public void Key_Ring_In_The_Real_Store_Round_Trips_Across_A_Restart()
     {
-        // The same assertion against the fixture's Dragonfly container and the real
-        // StackExchangeRedis repository, because "it works over a List<XElement>" is not the claim.
-        var mux = fixture.Services.GetRequiredService<IConnectionMultiplexer>();
-        var key = $"test:dataprotection:{Guid.NewGuid():N}";
-        try
-        {
-            string ciphertext;
-            using (var first = Protected(b => b.PersistKeysToStackExchangeRedis(mux, key), RootA))
-                ciphertext = first.GetRequiredService<IDataProtectionProvider>().CreateProtector("session").Protect("alice");
+        // The same assertion against the fixture's PostgreSQL and the real EF repository, because
+        // "it works over a List<XElement>" is not the claim. The store moved off Dragonfly; the
+        // guarantee — the ring is actually persisted, and the master key never lands in it as
+        // plaintext — did not.
+        var db = fixture.GetService<RediensIamDbContext>();
 
-            var raw = string.Concat((await mux.GetDatabase().ListRangeAsync(key)).Select(v => v.ToString()));
-            raw.Should().NotBeEmpty("the ring must actually have been written to the cache");
-            raw.Should().NotContain("masterKey");
+        string ciphertext;
+        using (var first = Protected(b => b.PersistKeysToDbContext<RediensIamDbContext>(), RootA))
+            ciphertext = first.GetRequiredService<IDataProtectionProvider>().CreateProtector("session").Protect("alice");
 
-            using var second = Protected(b => b.PersistKeysToStackExchangeRedis(mux, key), RootA);
-            second.GetRequiredService<IDataProtectionProvider>().CreateProtector("session")
-                  .Unprotect(ciphertext).Should().Be("alice");
-        }
-        finally
-        {
-            await mux.GetDatabase().KeyDeleteAsync(key);
-        }
+        var raw = string.Concat(db.DataProtectionKeys.Select(k => k.Xml).ToList());
+        raw.Should().NotBeEmpty("the ring must actually have been written to the database");
+        raw.Should().NotContain("masterKey");
+
+        using var second = Protected(b => b.PersistKeysToDbContext<RediensIamDbContext>(), RootA);
+        second.GetRequiredService<IDataProtectionProvider>().CreateProtector("session")
+              .Unprotect(ciphertext).Should().Be("alice");
     }
 
     // ── An unprotected ring is not silently accepted ──────────────────────────
@@ -234,21 +230,24 @@ public class KeyRingProtectionTests(TestFixture fixture)
         return new AppConfig(new ConfigurationBuilder().AddInMemoryCollection(values).Build());
     }
 
-    private static ServiceProvider Protected(IXmlRepository store, string root) =>
+    private ServiceProvider Protected(IXmlRepository store, string root) =>
         Protected(store, cfg => cfg["Security:TotpSecretEncryptionKey"] = root);
 
-    private static ServiceProvider Protected(IXmlRepository store, Action<Dictionary<string, string?>> tweak) =>
+    private ServiceProvider Protected(IXmlRepository store, Action<Dictionary<string, string?>> tweak) =>
         Protected(b => b.PersistKeysTo(store), tweak);
 
-    private static ServiceProvider Protected(Func<IDataProtectionBuilder, IDataProtectionBuilder> persist, string root) =>
+    private ServiceProvider Protected(Func<IDataProtectionBuilder, IDataProtectionBuilder> persist, string root) =>
         Protected(persist, cfg => cfg["Security:TotpSecretEncryptionKey"] = root);
 
-    private static ServiceProvider Protected(
+    private ServiceProvider Protected(
         Func<IDataProtectionBuilder, IDataProtectionBuilder> persist, Action<Dictionary<string, string?>> tweak)
     {
         var services = new ServiceCollection();
         var appConfig = Config(tweak);
         services.AddSingleton(appConfig);
+        // PersistKeysToDbContext resolves the context out of this provider, so the EF-backed
+        // variant needs it registered here — the fixture's own container is a different one.
+        services.AddDbContext<RediensIamDbContext>(o => o.UseNpgsql(fixture.PostgresConnectionString));
         persist(services.AddDataProtection()).ProtectKeysWithRootKey(appConfig).SetApplicationName("rediensiam");
         return services.BuildServiceProvider();
     }

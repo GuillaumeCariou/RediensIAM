@@ -129,7 +129,7 @@ implementation: `KetoService.IsManagementLevelGrantedAsync`.
   (`Roles.ProjectRoleClaim`, `src/Config/Roles.cs:45-46`). Two tenants both naming a role `admin`
   used to be byte-identical in every consumer's claims. Management role names (`super_admin`,
   `org_admin`, `project_admin`) are reserved case-insensitively and refused as tenant role names.
-- **Audience binding on introspection.** `aud` is mandatory; a deployment-scoped gateway credential
+- **Audience binding on introspection.** `project_id` is mandatory; a deployment-scoped gateway credential
   no longer gets `active: true` for every tenant in the deployment.
 - **Object scoping on `/api/authorize`.** The object must belong to the answer's tenant;
   `Organisations`, `Projects` and `UserLists` are checked against the database and **any other
@@ -288,8 +288,8 @@ All four are breaking. Integrators must read
 | # | Break | What fails if you ignore it |
 |---|---|---|
 | 1 | **`ext.roles` is project-qualified.** Tenant roles are `{project_id}/{name}`; management names are reserved. | `roles.contains("admin")` matches nothing — fails **closed**, which is the intended direction. In the .NET SDK the qualified string is what lands in `ClaimTypes.Role`, so `[Authorize(Roles = "admin")]` stops matching every tenant at once. |
-| 2 | **`aud` is mandatory on `POST /api/introspect`.** | `400 {"error":"audience_required","ver":1}` on every call. No grace period, no opt-out. |
-| 3 | **`aud` is mandatory on `POST /api/authorize`**, same terms. | Same. |
+| 2 | **`project_id` is mandatory on `POST /api/introspect`.** | `400 {"error":"project_id_required","ver":2}` on every call. No grace period, no opt-out. |
+| 3 | **`project_id` is mandatory on `POST /api/authorize`**, same terms. | Same. |
 | 4 | **`object` on `/api/authorize` is tenant-scoped**, and unknown Keto namespaces are refused. | `{"allowed": false}` — deliberately the same shape as a genuine deny, so the endpoint cannot be used to probe which objects exist. Every refusal writes `api.authorize.object_out_of_scope`. |
 
 Backend SDKs (.NET, Rust) now take a **required** `Audience`/`audience` option with no default — a
@@ -302,11 +302,11 @@ browser is readable by anyone with devtools.
 
 These do not change the security properties, but a document that says "always" should mean it:
 
-- **`ver` is not on *every* response.** It is on the 200s and on the `audience_required` 400. It is
+- **`ver` is not on *every* response.** It is on the 200s and on the `project_id_required` 400. It is
   **not** on the `403 service_account_required`, nor on ASP.NET Core's own
   `ValidationProblemDetails` 400 for a missing `token`/`namespace`/`object`/`relation` (there is no
   `InvalidModelStateResponseFactory` override in `src/`), nor on the middleware `401`. An SDK
-  enforcing "`ver >= 1` or fail closed" is unaffected — all of these are non-200s.
+  enforcing "`ver >= 2` or fail closed" is unaffected — all of these are non-200s.
 - **Object scoping still has a narrower fail-open edge.** `IsObjectInScopeAsync` computes
   `scope = CallerOrgScope ?? subject.OrgId`. When both are absent — a deployment-level service
   account asking about a token whose `org_id` is also empty — there is no ownership to compare, so
@@ -374,7 +374,6 @@ appears.
 
 ### The DataProtection key ring
 
-Persisted to Dragonfly, so session cookies survive a pod restart, and **encrypted at rest** under a
 purpose-derived HKDF subkey. The load-bearing half is the *read* side: an unwrapped `<key>` element
 causes a startup exception rather than being adopted
 (`src/Config/KeyRingProtection.cs:122-140`). An attacker with cache *write* access could otherwise
@@ -455,7 +454,6 @@ Neither runs on a schedule by default. See [`TESTING.md`](TESTING.md#detection-r
 | Admin ingress TLS | on in prod, but self-signed by the release's own `Issuer` — a known defect, see below |
 | Postgres server TLS + `hostssl` | **on in both shipped environments** |
 | Postgres roles | four least-privilege login roles, `scram-sha-256`, no shared superuser in any DSN |
-| Dragonfly TLS | set in **both** values files; executed in dev, and once under the prod profile in a scratch namespace — see below |
 | NetworkPolicy | namespace-wide default-deny plus five lockdown policies; CGNAT (`100.64.0.0/10`) egress blocked |
 | Pod hardening | non-root, drop `ALL` caps, no priv-esc, read-only root, `seccompProfile: RuntimeDefault`, `automountServiceAccountToken: false` |
 | Image | pinned by `@sha256:` digest, `pullPolicy: IfNotPresent` |
@@ -464,9 +462,7 @@ Neither runs on a schedule by default. See [`TESTING.md`](TESTING.md#detection-r
 
 Two of these need their qualifier stated, because a summary table elsewhere reads as unconditional:
 
-- **Dragonfly TLS is set in both values files. It has run in dev, and once under the prod profile in
   a scratch namespace — never on a production cluster.**
-  `values.prod.yaml` sets `dragonfly.local.tls.enabled: true`; the chart default in
   `values.yaml:339-340` remains `false`. The prod-profile install described in
   `SECURITY-AUDIT-LOG.md` step 33 did exercise it: cleartext `PING` was refused by the
   server, a TLS `PING` against the mounted CA succeeded, the same connection against the OS trust
@@ -477,7 +473,6 @@ Two of these need their qualifier stated, because a summary table elsewhere read
   ring — remains reasoned about, not observed. The application side is complete and *pinned*
   — `src/Config/CacheTls.cs` builds an `X509Chain` with `CustomRootTrust` over only the mounted CA,
   keeps name mismatch fatal, and requires the serverAuth EKU; it is not a `return true`. The chart
-  mount exists. It is a **hard cutover** — `--tls` makes Dragonfly stop
   answering cleartext — so `cacheUrl` must gain `ssl=true` in the same `helm upgrade`, which the
   chart enforces as a render failure in both directions.
 - **NetworkPolicy is decorative unless your CNI enforces it.** Verify that before trusting any row
@@ -571,7 +566,6 @@ assumed unaddressed.
 | Item | Severity | State | Why it is open |
 |---|---|---|---|
 | **npm advisories in both SPAs** | High | **7 high per SPA**, down from 8 high + 1 low. `react-router` and `brace-expansion` among them; remaining fixes need `npm audit fix --force`, i.e. breaking major bumps | The forced upgrades were judged riskier than the advisories as reached by these SPAs. That judgement has not been re-tested since the SPAs were rewritten |
-| **The Dragonfly TLS *cutover* in prod is untested** | Medium | the control itself has now been observed live under the prod profile in a scratch namespace (§6). What has never been run is the upgrade path: a cache that already holds an unprotected DataProtection key ring | A hard cutover. It costs every session at the moment it happens, and a prod Dragonfly whose key ring survives the upgrade needs `DEL rediensiam:dataprotection:keys` first — see `DEPLOYMENT.md` |
 | **Registry unauthenticated, no TLS, no signature verification** | Low **today**, Medium in production | Bound to loopback and digest-pinned, so the reachable attack is narrow: it needs local access to the host already. **No production deployment exists**, so this is currently a development-only exposure. It becomes Medium the day a registry is reachable off-host — at which point binding and authentication move together, never one without the other | needs a registry with auth, or an image pull from somewhere that has one |
 | **Prod admin certificate is self-signed** | Medium, **in production only** | `values.prod.yaml` leaves `clusterIssuer: ""`, so the chart issues the admin ingress a certificate from its own Issuer. The cost is not the cryptography — it is that the operator is trained to click through a browser warning to reach the most privileged UI in the system, which is the habit an attacker relies on. No production deployment exists yet, so nobody has been trained into it | needs an internal CA the browsers already trust, or ACME DNS-01 on the Tailscale domain |
 | **ACME / Let's Encrypt has never been executed** | Medium, **in production only** | The `letsencrypt` ClusterIssuer renders and lints, and has never issued a certificate. Dev serves `iam.localhost`, which no CA will certify, and the prod-profile proof ran in a scratch namespace with no public DNS. So the path is untested rather than known-broken — and an issuance failure at first production install is discovered at the worst moment | needs a real hostname, public DNS, and port 80 reaching Traefik for HTTP-01 |

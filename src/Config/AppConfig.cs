@@ -58,19 +58,6 @@ public class AppConfig(IConfiguration config)
         return dsn;
     }
 
-    // ── Cache / Redis ─────────────────────────────────────────────────────────
-    public string CacheConnectionString => config["Cache:ConnectionString"] ?? "localhost:6379,abortConnect=false";
-    /// <summary>
-    /// PEM bundle holding the root the cache's TLS certificate must chain to. Defaults to the path
-    /// the chart is expected to mount the cert-manager CA at, so enabling cache TLS needs no
-    /// application configuration; absent, the file is simply not there and nothing changes.
-    /// See <see cref="CacheTls"/>.
-    /// </summary>
-    public string CacheTlsCaFile        => config["Cache:TlsCaFile"] ?? CacheTls.DefaultCaBundlePath;
-    public string CacheInstanceName     => config["Cache:InstanceName"] ?? "rediensiam:";
-    // Upper bound on how long a revoked PAT keeps working — see MaxLoginAttempts on clamping.
-    public int    PatCacheTtlMinutes    => Math.Clamp(config.GetValue<int>("Cache:PatTtlMinutes", 5), 0, 15);
-
     // ── App URLs ──────────────────────────────────────────────────────────────
     public string PublicUrl      => config["App:PublicUrl"] ?? "http://localhost";
     public string Domain         => config["App:Domain"] ?? throw new InvalidOperationException("App:Domain configuration is required");
@@ -155,6 +142,21 @@ public class AppConfig(IConfiguration config)
     /// <summary>Upper bound on a service-account PAT's lifetime. A credential that never expires
     /// outlives every revocation path the deployment has.</summary>
     public int    MaxPatLifetimeDays      => Math.Clamp(config.GetValue<int>("Security:MaxPatLifetimeDays", 365), 1, 730);
+
+    /// <summary>
+    /// Upper bound on how long a revoked personal access token keeps working, in minutes. Zero
+    /// disables the cache and makes revocation immediate.
+    ///
+    /// <para>
+    /// It was <c>Cache__PatTtlMinutes</c>, which named the mechanism rather than the control. The
+    /// mechanism is gone — the shared store is PostgreSQL now — and the control is a revocation
+    /// window, which is a security setting. Note that this bounds the freshness of the token's
+    /// <i>role set</i> only: liveness (the service account is active, its organisation is not
+    /// suspended, the token has not expired) is re-checked on <b>every</b> cache hit, so
+    /// deactivating a service account takes effect immediately whatever this says.
+    /// </para>
+    /// </summary>
+    public int    PatCacheTtlMinutes      => Math.Clamp(config.GetValue<int>("Security:PatCacheTtlMinutes", 5), 0, 15);
 
     /// <summary>
     /// OAuth2 client IDs allowed to call the management surfaces (/admin, /org, /project,

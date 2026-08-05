@@ -1,144 +1,135 @@
 using System.Security.Cryptography;
 using System.Text;
-using StackExchange.Redis;
+using Microsoft.Extensions.Caching.Distributed;
 using RediensIAM.Config;
 using RediensIAM.Exceptions;
 
 namespace RediensIAM.Services;
 
-public class OtpCacheService(IConnectionMultiplexer redis, AppConfig appConfig)
+/// <summary>
+/// One-time codes and short-lived flow state: registration, password reset, phone and TOTP
+/// enrolment, and the TOTP anti-replay set.
+///
+/// <para>
+/// Backed by <see cref="PostgresSharedState"/>. This <b>must</b> be shared across replicas: the
+/// anti-replay set is a security control — a per-pod copy makes an observed TOTP code replayable
+/// on the other replica — and every flow here spans more than one request.
+/// </para>
+/// </summary>
+public class OtpCacheService(PostgresSharedState state, AppConfig appConfig)
 {
     private const int MaxOtpAttempts = 5;
 
-    private readonly IDatabase _db = redis.GetDatabase();
     private readonly int _ttlSeconds = appConfig.OtpTtlSeconds;
     private readonly int _maxSmsPerWindow = appConfig.MaxSmsPerWindow;
     private readonly int _smsWindowMinutes = appConfig.SmsWindowMinutes;
 
-    public async Task StoreOtpAsync(string prefix, Guid userId, string code)
-    {
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code)));
-        await _db.StringSetAsync($"otp:{prefix}:{userId}", hash, TimeSpan.FromSeconds(_ttlSeconds));
-    }
+    /// <summary>TTL for enrolment flows (TOTP/WebAuthn/phone setup).</summary>
+    public const int EnrolmentTtlSeconds = 900;
 
-    public async Task<bool> VerifyOtpAsync(string prefix, Guid userId, string code)
-    {
-        var key     = $"otp:{prefix}:{userId}";
-        var failKey = $"otp:{prefix}:{userId}:fails";
+    private static string Digest(string value) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 
-        var stored = await _db.StringGetAsync(key);
-        if (stored.IsNull) return false;
-
-        var fails = (long?)await _db.StringGetAsync(failKey) ?? 0;
-        if (fails >= MaxOtpAttempts)
+    private Task SetAsync(string key, string value, int ttlSeconds) =>
+        state.SetStringAsync(key, value, new DistributedCacheEntryOptions
         {
-            await _db.KeyDeleteAsync(key);
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(ttlSeconds),
+        });
+
+    // ── User-keyed OTP ────────────────────────────────────────────────────────
+
+    public Task StoreOtpAsync(string prefix, Guid userId, string code)
+        => SetAsync($"otp:{prefix}:{userId}", Digest(code), _ttlSeconds);
+
+    public Task<bool> VerifyOtpAsync(string prefix, Guid userId, string code)
+        => VerifyAsync($"otp:{prefix}:{userId}", code);
+
+    // ── Session-keyed OTP (no userId — pending registrations and resets) ──────
+
+    public Task StoreSessionOtpAsync(string prefix, string sessionId, string code)
+        => SetAsync($"otp:{prefix}:{sessionId}", Digest(code), _ttlSeconds);
+
+    public Task<bool> VerifySessionOtpAsync(string prefix, string sessionId, string code)
+        => VerifyAsync($"otp:{prefix}:{sessionId}", code);
+
+    /// <summary>
+    /// One verification path for both key shapes. The attempt counter and the constant-time
+    /// comparison <i>are</i> this method; duplicating them per shape is how one copy loses the
+    /// counter, or loses <see cref="CryptographicOperations.FixedTimeEquals"/>.
+    /// </summary>
+    private async Task<bool> VerifyAsync(string key, string code)
+    {
+        var failKey = $"{key}:fails";
+
+        var stored = await state.GetStringAsync(key);
+        if (stored is null) return false;
+
+        if (await state.CounterAsync(failKey) >= MaxOtpAttempts)
+        {
+            await state.RemoveAsync(key);
             return false;
         }
 
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code)));
         if (!CryptographicOperations.FixedTimeEquals(
-            Encoding.UTF8.GetBytes(stored.ToString()),
-            Encoding.UTF8.GetBytes(hash)))
+                Encoding.UTF8.GetBytes(stored), Encoding.UTF8.GetBytes(Digest(code))))
         {
-            var newCount = await _db.StringIncrementAsync(failKey);
-            if (newCount == 1) await _db.KeyExpireAsync(failKey, TimeSpan.FromSeconds(_ttlSeconds));
+            await state.IncrementAsync(failKey, TimeSpan.FromSeconds(_ttlSeconds));
             return false;
         }
 
-        await _db.KeyDeleteAsync(key);
-        await _db.KeyDeleteAsync(failKey);
+        await state.RemoveAsync(key);
+        await state.ResetCounterAsync(failKey);
         return true;
     }
 
+    // ── SMS rate limit ────────────────────────────────────────────────────────
+
     public async Task EnforceSmsRateLimitAsync(Guid userId)
     {
-        var key = $"rate:otp:sms:{userId}";
-        var count = await _db.StringIncrementAsync(key);
-        if (count == 1) await _db.KeyExpireAsync(key, TimeSpan.FromMinutes(_smsWindowMinutes));
+        var count = await state.IncrementAsync(
+            $"rate:otp:sms:{userId}", TimeSpan.FromMinutes(_smsWindowMinutes));
         if (count > _maxSmsPerWindow)
             throw new RateLimitException("Too many SMS requests. Try again later.");
     }
 
-    // ── Session-keyed OTP (no userId — for pending registrations and resets) ──
+    // ── Pending flow state ────────────────────────────────────────────────────
 
     /// <summary>
     /// Stores short-lived flow state server-side. <paramref name="ttlSeconds"/> overrides the OTP
     /// TTL for flows that legitimately take longer than a one-time code — enrolling an
     /// authenticator means scanning a QR code and waiting for the next window.
     /// </summary>
-    public async Task StorePendingAsync(string prefix, string sessionId, string data, int? ttlSeconds = null)
-        => await _db.StringSetAsync($"pending:{prefix}:{sessionId}", data,
-            TimeSpan.FromSeconds(ttlSeconds ?? _ttlSeconds));
+    public Task StorePendingAsync(string prefix, string sessionId, string data, int? ttlSeconds = null)
+        => SetAsync($"pending:{prefix}:{sessionId}", data, ttlSeconds ?? _ttlSeconds);
 
-    /// <summary>TTL for enrolment flows (TOTP/WebAuthn/phone setup).</summary>
-    public const int EnrolmentTtlSeconds = 900;
+    /// <summary>
+    /// Reads pending state without consuming it — for flows where a wrong code should let the user
+    /// retry rather than restart enrolment.
+    /// </summary>
+    public Task<string?> PeekPendingAsync(string prefix, string sessionId)
+        => state.GetStringAsync($"pending:{prefix}:{sessionId}");
 
-    /// <summary>Reads pending state without consuming it — for flows where a wrong code should
-    /// let the user retry rather than restart enrolment.</summary>
-    public async Task<string?> PeekPendingAsync(string prefix, string sessionId)
-    {
-        var val = await _db.StringGetAsync($"pending:{prefix}:{sessionId}");
-        return val.IsNull ? null : val.ToString();
-    }
-
-    public async Task DeletePendingAsync(string prefix, string sessionId)
-        => await _db.KeyDeleteAsync($"pending:{prefix}:{sessionId}");
+    public Task DeletePendingAsync(string prefix, string sessionId)
+        => state.RemoveAsync($"pending:{prefix}:{sessionId}");
 
     public async Task<string?> GetAndDeletePendingAsync(string prefix, string sessionId)
     {
         var key = $"pending:{prefix}:{sessionId}";
-        var val = await _db.StringGetAsync(key);
-        if (val.IsNull) return null;
-        await _db.KeyDeleteAsync(key);
-        return val.ToString();
+        var value = await state.GetStringAsync(key);
+        if (value is null) return null;
+        await state.RemoveAsync(key);
+        return value;
     }
 
-    public async Task StoreSessionOtpAsync(string prefix, string sessionId, string code)
-    {
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code)));
-        await _db.StringSetAsync($"otp:{prefix}:{sessionId}", hash, TimeSpan.FromSeconds(_ttlSeconds));
-    }
+    // ── TOTP anti-replay ──────────────────────────────────────────────────────
+    //
+    // A security control, not a cache: a code observed once must not be reusable, and a per-pod
+    // copy would make it replayable on the other replica. 90 s covers VerificationWindow(1,1)
+    // either side of a 30 s step with room to spare.
 
-    public async Task<bool> VerifySessionOtpAsync(string prefix, string sessionId, string code)
-    {
-        var key     = $"otp:{prefix}:{sessionId}";
-        var failKey = $"otp:{prefix}:{sessionId}:fails";
+    public Task StoreTotpUsedAsync(Guid userId, string code)
+        => SetAsync($"otp:totp_used:{userId}:{Digest(code)}", "1", 90);
 
-        var stored = await _db.StringGetAsync(key);
-        if (stored.IsNull) return false;
-
-        var fails = (long?)await _db.StringGetAsync(failKey) ?? 0;
-        if (fails >= MaxOtpAttempts)
-        {
-            await _db.KeyDeleteAsync(key);
-            return false;
-        }
-
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code)));
-        if (!CryptographicOperations.FixedTimeEquals(
-            Encoding.UTF8.GetBytes(stored.ToString()),
-            Encoding.UTF8.GetBytes(hash)))
-        {
-            var newCount = await _db.StringIncrementAsync(failKey);
-            if (newCount == 1) await _db.KeyExpireAsync(failKey, TimeSpan.FromSeconds(_ttlSeconds));
-            return false;
-        }
-
-        await _db.KeyDeleteAsync(key);
-        await _db.KeyDeleteAsync(failKey);
-        return true;
-    }
-
-    public async Task StoreTotpUsedAsync(Guid userId, string code)
-    {
-        var keyCode = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code)));
-        await _db.StringSetAsync($"otp:totp_used:{userId}:{keyCode}", "1", TimeSpan.FromSeconds(90));
-    }
-
-    public async Task<bool> IsTotpUsedAsync(Guid userId, string code)
-    {
-        var keyCode = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code)));
-        return await _db.KeyExistsAsync($"otp:totp_used:{userId}:{keyCode}");
-    }
+    public Task<bool> IsTotpUsedAsync(Guid userId, string code)
+        => state.ExistsAsync($"otp:totp_used:{userId}:{Digest(code)}");
 }

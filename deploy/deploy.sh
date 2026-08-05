@@ -108,11 +108,10 @@ wait_workloads() {
   local rc=0 kind
   for kind in "statefulset/${RELEASE}-postgres" \
               "deployment/${RELEASE}" \
-              "deployment/${RELEASE}-dragonfly" \
               "deployment/${RELEASE}-hydra" \
               "deployment/${RELEASE}-keto"
   do
-    # Not every workload renders in every configuration: postgres and dragonfly stand down in
+    # Not every workload renders in every configuration: postgres stands down in
     # external mode, and hydra/keto are subchart-conditional. A missing one is not a failure.
     kubectl get "${kind}" -n "${NAMESPACE}" >/dev/null 2>&1 || continue
     kubectl rollout status "${kind}" -n "${NAMESPACE}" --timeout=5m || rc=1
@@ -206,43 +205,9 @@ if [ -f "${OVERRIDE_FILE}" ] && grep -Eqs '^[[:space:]]*requireSsl:' "${OVERRIDE
   grep -Eqs '^[[:space:]]*requireSsl:[[:space:]]*true' "${OVERRIDE_FILE}" && REQUIRE_SSL=true || REQUIRE_SSL=false
 fi
 
-# R-15, the cache half. Same obligation as REQUIRE_SSL above and a harder one: with
-# `--tls` Dragonfly stops answering cleartext entirely, so a cacheUrl without `ssl=true`
-# does not degrade — it disconnects the app from the cache, and the cache holds the
-# DataProtection key ring.
-#
-# `dragonfly.local.tls.enabled` has no unique key name to grep — there are three `tls:`
-# blocks in these files and `enabled:` under the wrong one is how a check like this
-# becomes a lie. So the block is cut out by indentation first (the `dragonfly:` key down
-# to the next sibling at the same indent) and only then is `enabled:` matched inside its
-# `tls:` sub-block. `templates/dragonfly.yaml` carries a matching `fail` guard in both
-# directions, so if this reader is ever wrong the deploy stops at template time rather
-# than at connection time.
-cache_tls_in() {
-  [ -f "$1" ] || return 1
-  sed -n '/^[[:space:]]\{2\}dragonfly:/,/^[[:space:]]\{2\}[a-zA-Z]/p' "$1" \
-    | sed -n '/^[[:space:]]*tls:/,/^[[:space:]]\{0,6\}[a-zA-Z]/p' \
-    | grep -Eq '^[[:space:]]*enabled:[[:space:]]*true'
-}
-CACHE_TLS=false
-if cache_tls_in "${CHART}/values.yaml" || cache_tls_in "${ENV_FILE}"; then
-  CACHE_TLS=true
-fi
-# The override file layers last, so it can turn cache TLS back OFF as well as on.
-if [ -f "${OVERRIDE_FILE}" ] && sed -n '/^[[:space:]]\{2\}dragonfly:/,/^[[:space:]]\{2\}[a-zA-Z]/p' "${OVERRIDE_FILE}" | grep -Eq '^[[:space:]]*enabled:'; then
-  cache_tls_in "${OVERRIDE_FILE}" && CACHE_TLS=true || CACHE_TLS=false
-fi
-
 write_secrets_file() {
   local file="$1" email="$2" password="$3"
-  local app_ssl="" ory_ssl="disable" cache_ssl=""
-  # StackExchange.Redis spells it `ssl=true`. CacheTls.BuildOptions turns that into a
-  # certificate-validation callback pinned to the CA the chart mounts at
-  # /etc/cache-tls/ca.crt — it is not `TrustServerCertificate`'s cache equivalent, and
-  # there is deliberately no knob here that would make it one.
-  if [ "${CACHE_TLS}" = "true" ]; then
-    cache_ssl=",ssl=true"
-  fi
+  local app_ssl="" ory_ssl="disable"
   if [ "${REQUIRE_SSL}" = "true" ]; then
     # `Trust Server Certificate=true` is the honest ceiling while the issuer is the
     # `selfsigned` ClusterIssuer: encryption, no server authentication. `verify-full`
@@ -250,7 +215,7 @@ write_secrets_file() {
     app_ssl=";SSL Mode=Require;Trust Server Certificate=true"
     ory_ssl="require"
   fi
-  local db db_app db_hydra db_keto db_backup dfly hydra_sys enc_key pepper
+  local db db_app db_hydra db_keto db_backup hydra_sys enc_key pepper
   # The prod password is operator-chosen, so it can contain " \ or $, all of which break a
   # double-quoted YAML scalar. A single-quoted scalar only needs ' doubled.
   local password_yaml="'${password//\'/\'\'}'"
@@ -262,14 +227,6 @@ write_secrets_file() {
   db_hydra=$(openssl rand -hex 20)
   db_keto=$(openssl rand -hex 20)
   db_backup=$(openssl rand -hex 20)
-  # R-15. This was never generated. `dragonfly.local.password` defaulted to "" and this
-  # function never set it, so the chart rendered `--requirepass=` and the cache ran with
-  # NO authentication — protected only by `dragonfly-lockdown`, one NetworkPolicy away
-  # from being open to every pod in the namespace. It also holds the DataProtection key
-  # ring, so an unauthenticated writer there can mint session cookies.
-  # Found because Dragonfly refuses to start with TLS and no auth method:
-  #   E server_family.cc:292] TLS configured but no authentication method is used!
-  dfly=$(openssl rand -hex 24)
   hydra_sys=$(openssl rand -hex 32)
   enc_key=$(openssl rand -hex 32)   # must be exactly 64 hex chars (32 bytes) — HKDF root
   pepper=$(openssl rand -hex 32)    # Security__Argon2Pepper; was generated and then dropped
@@ -287,7 +244,6 @@ write_secrets_file() {
 rediensiam:
   secrets:
     databaseUrl: "Host=${PG_HOST};Database=rediensiam;Username=iam_app;Password=${db_app}${app_ssl}"
-    cacheUrl: "rediensiam-dragonfly:6379${cache_ssl},abortConnect=false,password=${dfly}"
     encryptionKey: "${enc_key}"
     smtpPassword: ""
     bootstrapEmail: "${email}"
@@ -302,11 +258,6 @@ rediensiam:
         hydraPassword: ${db_hydra}
         ketoPassword: ${db_keto}
         backupPassword: ${db_backup}
-  dragonfly:
-    local:
-      password: ${dfly}
-
-hydra:
   hydra:
     config:
       dsn: "postgres://iam_hydra:${db_hydra}@${PG_HOST}:5432/hydra?sslmode=${ory_ssl}"
@@ -418,48 +369,6 @@ else
     echo ""
   fi
 
-  # R-15. A secrets file written before the cache had a password renders
-  # `--requirepass=` and an unauthenticated Dragonfly. Unlike the T-04 case this is
-  # recoverable in place: add the two lines, redeploy, and the cache restarts.
-  if ! grep -q '^      password:.*' <(sed -n '/^  dragonfly:/,/^[a-z]/p' "${SECRETS_FILE}") 2>/dev/null; then
-    echo ""
-    echo "  ┌─ R-15: this install has no cache password ─────────────────────────"
-    echo "  │  ${SECRETS_FILE} sets no rediensiam.dragonfly.local.password, so"
-    echo "  │  Dragonfly runs with --requirepass= (no authentication) and cannot"
-    echo "  │  have TLS enabled at all — it refuses to start without an auth method."
-    echo "  │  Fix (dev or prod, no data loss beyond the cache itself):"
-    echo "  │    PW=\$(openssl rand -hex 24)"
-    echo "  │    add to ${SECRETS_FILE}:"
-    echo "  │      rediensiam.dragonfly.local.password: \$PW"
-    echo "  │    and append ',password='\$PW to rediensiam.secrets.cacheUrl"
-    echo "  └────────────────────────────────────────────────────────────────────"
-    if [ "${PROD}" = "true" ]; then
-      echo "  ERROR: refusing to deploy prod with an unauthenticated cache."
-      exit 1
-    fi
-    echo "  WARNING: continuing (dev) with an unauthenticated cache."
-    echo ""
-  fi
-
-  # R-15, the cache TLS cutover on the reuse path. `cache_ssl` above only reaches a
-  # secrets file this run generates; an existing one keeps whatever cacheUrl it was
-  # written with, and the operator flipping dragonfly.local.tls.enabled has no reason
-  # to know a second file has to move with it. The chart `fail`s on the mismatch, so
-  # this cannot ship broken either way — but helm's message names a values key, and
-  # what the operator needs is the file and the edit.
-  if [ "${CACHE_TLS}" = "true" ] && ! grep -Eq 'cacheUrl:.*(^|,) *ssl *= *true' "${SECRETS_FILE}"; then
-    echo ""
-    echo "  ┌─ R-15: cache TLS is on but this install's DSN is cleartext ────────"
-    echo "  │  rediensiam.dragonfly.local.tls.enabled renders Dragonfly with --tls,"
-    echo "  │  which makes it stop answering cleartext. ${SECRETS_FILE}"
-    echo "  │  still has a cacheUrl without ssl=true, so the app would lose the cache"
-    echo "  │  — and with it the DataProtection key ring, i.e. every session."
-    echo "  │  Fix (edit in place, the password on that line is not reprinted here):"
-    echo "  │    sed -i 's|\\(cacheUrl: \"[^\"]*:6379\\)|\\1,ssl=true|' ${SECRETS_FILE}"
-    echo "  └────────────────────────────────────────────────────────────────────"
-    echo "  ERROR: refusing to deploy a TLS cache with a cleartext DSN."
-    exit 1
-  fi
 fi
 
 # ── 2. Build ───────────────────────────────────────────────────────────────────

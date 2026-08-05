@@ -304,7 +304,6 @@ Full runbook, both verification queries and the rollback SQL:
 
 ### Turning cache TLS on in production
 
-`values.prod.yaml` sets `dragonfly.local.tls.enabled: true`. **This has never been run against a
 production cluster.** It has been observed working under the prod profile on a from-scratch install
 in a scratch namespace (`SECURITY-AUDIT-LOG.md` step 33 §3): cleartext refused by the
 server, TLS accepted against the mounted CA, the same connection rejected against the OS trust
@@ -314,14 +313,9 @@ observed anywhere.
 
 It is a hard cutover, and the cost is not avoidable by ordering:
 
-1. `--tls` makes Dragonfly **refuse cleartext**. The `,ssl=true` half of `cacheUrl` must land in the
    same upgrade. `deploy.sh` writes it from this flag on a fresh install and stops with the exact
-   `sed` on the reuse path; `templates/dragonfly.yaml` fails the render if the two disagree in
    either direction. You cannot split them by accident.
-2. **Every session is invalidated.** The Dragonfly pod flips immediately while the Deployment keeps
-   the old app pod serving, so that pod loses its cache for ~30 s; and Dragonfly has no PVC, so the
    restart empties the DataProtection key ring. There is no version of this that is invisible.
-3. **If this prod release predates step 23 and its Dragonfly survives the upgrade**, delete the key
    ring first:
 
    ```
@@ -331,7 +325,6 @@ It is a hard cutover, and the cost is not avoidable by ordering:
    The old ring is stored **unprotected**, and `EncryptedOnlyXmlRepository` refuses an unprotected
    key rather than adopting one — a plaintext key in a shared cache can be *planted*, and it mints
    session cookies. Skip this and the session path 500s with the remedy in the exception message.
-   Dev never hit it because the cutover restarted a memory-only Dragonfly, so the old ring was gone
    anyway. Point 2 has the same effect for a cutover done in one upgrade; this step matters when the
    cache is upgraded separately, or has been given persistence.
 
@@ -379,7 +372,6 @@ Carried forward deliberately; each has a runbook and a cost.
 |---|---|---|
 | Admin console served with a self-signed certificate | `09 §6.3` | internal CA, or ACME DNS-01 |
 | Local registry has no authentication and no TLS | `09 §6.2` | 2h; **required** if k3s is not on this host — bind and auth move together, never one without the other |
-| The Dragonfly TLS **cutover** in prod is untested | `09 §6.5` / `18 §2` / `29` / `33 §3` | The control itself has been observed live under the prod profile in a scratch namespace. What has never been run is the cutover on a cache that is already up and already holds a key ring. It is atomic and user-visible either way, and it costs every session; see [Turning cache TLS on in production](#turning-cache-tls-on-in-production) for the key-ring pre-step |
 | ACME / Let's Encrypt has **never been executed** | `33 §4` | The `letsencrypt` ClusterIssuer has never been applied to any cluster; HTTP-01 needs public DNS and port 80 reachable from the internet, and the prod-profile install used a self-signed ClusterIssuer instead. Whether a publicly trusted certificate can be issued here is unknown |
 | RLS off **in prod only** | `18 §3` / `29` / `33 §2.6` | Live and verified in dev: 19 tables `ENABLE` + `FORCE`, cross-tenant read/insert/update/delete refused at the database, backup still succeeding. Also turned on once on a from-scratch prod-profile install (V-25, 19 tables). `values.prod.yaml` does not override the `false` default, because on an existing prod database this is a migration, not an upgrade. **A database initdb'd before 2026-08-01 still needs `ALTER ROLE iam_backup BYPASSRLS` applied by hand** — the grant used to be conditional on RLS already being on, which no `setup.sh --prod` install ever was. RLS *does* now cover the tenant login path; the admin console, the token-keyed endpoints and the SAML ACS remain unscoped — [`SECURITY.md`](SECURITY.md#what-is-scoped-and-what-still-is-not) |
 | No WAF | `09 §6.6` | load the Traefik plugin **before** attaching the middleware, or Traefik answers 503 for the whole router |
@@ -392,7 +384,6 @@ Carried forward deliberately; each has a runbook and a cost.
 scratch namespace on the single-node dev cluster, and destroyed — see
 `SECURITY-AUDIT-LOG.md` step 33, whose §8 lists in full what that does *not* prove.
 The paths it could not touch are precisely the ones this guide warns about in prose: Postgres
-`requireSsl` against an existing `pg_hba.conf`, and the Dragonfly TLS cutover against a cache that
 already holds a key ring. Both remain reasoned about, not observed.
 
 Three things that install changed and that affect an existing installation, including dev:
@@ -409,8 +400,6 @@ Three things that install changed and that affect an existing installation, incl
 - **The self-signed issuer is renamed.** It was a cluster-scoped `ClusterIssuer` with the fixed name
   `selfsigned`, which meant two releases could not coexist in one cluster and `helm uninstall` of
   either deleted the issuer the other renewed against. It is now a namespaced
-  `Issuer/{{ .Release.Name }}-selfsigned`. `helm upgrade` re-issues the Postgres and Dragonfly
-  certificates, which restarts Dragonfly, which empties the DataProtection key ring — every session
   is invalidated once. Same price the cache TLS cutover already documented.
 - **`helm --wait` is gone.** It waited for the backup PVC to reach `Bound`, and on a
   `WaitForFirstConsumer` StorageClass — k3s local-path's default — that does not happen until the

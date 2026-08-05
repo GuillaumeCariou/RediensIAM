@@ -105,7 +105,13 @@ DO $do$
 DECLARE
   -- Tables with no tenant column, by design. Anything in `public` that is neither
   -- here nor in the policy table below aborts this script.
-  global_tables constant text[] := ARRAY['Instances', '__EFMigrationsHistory'];
+  -- Deployment-global by construction: they carry no OrgId and belong to no tenant.
+  -- shared_state / rate_counters / webhook_pending / data_protection_keys replaced Dragonfly —
+  -- a session cookie, a lockout counter and a delivery job are the deployment's, not an
+  -- organisation's. Scoping them would be a fail-closed outage the moment RLS is switched on.
+  global_tables constant text[] := ARRAY[
+    'Instances', '__EFMigrationsHistory',
+    'shared_state', 'rate_counters', 'webhook_pending', 'data_protection_keys'];
   t      record;
   scoped text[] := '{}';
   stray  text;

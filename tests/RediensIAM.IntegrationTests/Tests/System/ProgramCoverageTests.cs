@@ -46,7 +46,6 @@ public class ProgramCoverageTests(TestFixture fixture)
         const string bootstrapEmail = "bootstrap-cov@testcoverage.dev";
 
         var connStr   = GetConnectionString();
-        var redisStr  = GetRedisString();
         var hibp      = fixture.HibpStub;
         var emailStub = fixture.EmailStub;
         var smsStub   = fixture.SmsStub;
@@ -61,9 +60,6 @@ public class ProgramCoverageTests(TestFixture fixture)
                     cfg.AddInMemoryCollection(new Dictionary<string, string?>
                     {
                         ["ConnectionStrings:Default"]          = connStr,
-                        ["Cache:ConnectionString"]             = redisStr,
-                        ["Cache:InstanceName"]                 = "boot-test:",
-                        ["Cache:PatTtlMinutes"]                = "5",
                         ["App:PublicUrl"]                      = "http://localhost",
                         ["App:Domain"]                         = "localhost",
                         ["App:AdminSpaOrigin"]                 = "http://localhost",
@@ -177,9 +173,4 @@ public class ProgramCoverageTests(TestFixture fixture)
             .GetRequiredService<RediensIAM.Data.RediensIamDbContext>()
             .Database.GetConnectionString()!;
 
-    private string GetRedisString() =>
-        fixture.Services.CreateScope()
-            .ServiceProvider
-            .GetRequiredService<StackExchange.Redis.IConnectionMultiplexer>()
-            .Configuration;
 }

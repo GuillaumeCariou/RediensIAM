@@ -210,7 +210,7 @@ if kubectl get networkpolicy -n "${NS}" "${RELEASE}-default-deny-ingress" >/dev/
 else
   fail V-15 "${RELEASE}-default-deny-ingress is absent — pods accept traffic from anywhere in the namespace"
 fi
-for np in hydra-lockdown keto-lockdown postgres-lockdown dragonfly-lockdown; do
+for np in hydra-lockdown keto-lockdown postgres-lockdown; do
   kubectl get networkpolicy -n "${NS}" "${RELEASE}-${np}" >/dev/null 2>&1 \
     && pass "V-15/${np%%-*}" "${RELEASE}-${np} exists" \
     || fail "V-15/${np%%-*}" "${RELEASE}-${np} is absent"
@@ -371,66 +371,6 @@ if kubectl get pod -n "${NS}" "${PGPOD}" >/dev/null 2>&1; then
   fi
 else
   skip V-23 "no ${PGPOD} pod — Postgres TLS assertions not evaluated (external database?)"
-fi
-
-# ── V-24 · R-15 — the cache is authenticated ────────────────────────────────
-# `dragonfly.local.password` defaulted to "" and deploy.sh never generated one, so
-# the chart rendered `--requirepass=` and the cache — which holds the DataProtection
-# key ring, i.e. the ability to mint session cookies — accepted anyone who could
-# reach :6379. Only `dragonfly-lockdown` stood between that and the namespace.
-if kubectl get deploy -n "${NS}" "${RELEASE}-dragonfly" >/dev/null 2>&1; then
-  DFLYPW=$(kubectl get secret -n "${NS}" "${RELEASE}-secrets" -o jsonpath='{.data.dragonfly-password}' 2>/dev/null | base64 -d 2>/dev/null | wc -c)
-  [ "${DFLYPW:-0}" -ge 16 ] && pass V-24 "cache requires a password (${DFLYPW} chars)" \
-                            || fail V-24 "cache password is ${DFLYPW:-0} chars — Dragonfly runs with --requirepass= and accepts anyone who reaches :6379"
-else
-  skip V-24 "no ${RELEASE}-dragonfly deployment"
-fi
-
-# ── V-26 · R-15 — the cache connection is encrypted, and pinned ──────────────
-# Three assertions because any one of them alone is satisfiable while the traffic is
-# still cleartext, or encrypted against anything that answers:
-#   /server  Dragonfly runs with --tls, so it does not answer cleartext at all. This
-#            is the assertion that makes the other two unnecessary to trust.
-#   /dsn     the app asks for TLS. Without it the app simply loses the cache — and the
-#            cache holds the DataProtection key ring — so this is also an outage check.
-#   /pin     the issuing CA is mounted at CacheTls.DefaultCaBundlePath. Without it the
-#            connection is encrypted against whatever the OS trust store accepts, which
-#            for a cluster-issued certificate is nothing — but a future "fix" that
-#            reaches for TrustServerCertificate would pass /server and /dsn and be
-#            worse than the plaintext it replaced.
-if kubectl get deploy -n "${NS}" "${RELEASE}-dragonfly" >/dev/null 2>&1; then
-  DFLYARGS=$(kubectl get deploy -n "${NS}" "${RELEASE}-dragonfly" -o jsonpath='{.spec.template.spec.containers[0].args}' 2>/dev/null)
-  case "${DFLYARGS}" in
-    *--tls*) pass V-26/server "Dragonfly runs with --tls (cleartext is refused, not merely unused)" ;;
-    *)       fail V-26/server "Dragonfly has no --tls — every cache round trip, including the DataProtection key ring, is cleartext on the wire" ;;
-  esac
-
-  # The password on this line is never printed; only the ssl keyword is looked at.
-  CACHEDSN=$(kubectl get secret -n "${NS}" "${RELEASE}-secrets" -o jsonpath='{.data.cache-url}' 2>/dev/null | base64 -d 2>/dev/null)
-  if [ -z "${CACHEDSN}" ]; then
-    skip V-26/dsn "could not read the cache DSN — assertion not evaluated"
-  elif printf '%s' "${CACHEDSN}" | grep -qiE '(^|,) *ssl *= *true'; then
-    pass V-26/dsn "app cache DSN requests TLS (ssl=true)"
-  else
-    fail V-26/dsn "app cache DSN has no ssl=true — the app connects in cleartext"
-  fi
-
-  CAMOUNT=$(kubectl get deploy -n "${NS}" "${RELEASE}" \
-              -o jsonpath='{.spec.template.spec.containers[0].volumeMounts[?(@.mountPath=="/etc/cache-tls")].name}' 2>/dev/null)
-  if [ -n "${CAMOUNT}" ]; then
-    # Positive evidence from the running process rather than from the manifest: CacheTls
-    # prints this line only after it has actually loaded roots out of the mounted file.
-    PINLOG=$(kubectl logs -n "${NS}" "${POD}" --tail=-1 2>/dev/null | grep -m1 'Cache TLS: server certificate pinned')
-    if [ -n "${PINLOG}" ]; then
-      pass V-26/pin "app pinned the cache certificate — ${PINLOG#*Cache TLS: }"
-    else
-      fail V-26/pin "the CA is mounted but the app never logged 'Cache TLS: server certificate pinned' — validation fell back to the OS trust store"
-    fi
-  else
-    fail V-26/pin "no /etc/cache-tls mount on ${RELEASE} — the app cannot verify who it is encrypting to"
-  fi
-else
-  skip V-26 "no ${RELEASE}-dragonfly deployment"
 fi
 
 # ── V-25 · S-5 — RLS is applied when the chart says it is ───────────────────

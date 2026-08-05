@@ -17,10 +17,32 @@ namespace RediensIAM.Data.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.6")
+                .HasAnnotation("ProductVersion", "10.0.7")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+
+            modelBuilder.Entity("Microsoft.AspNetCore.DataProtection.EntityFrameworkCore.DataProtectionKey", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("FriendlyName")
+                        .HasColumnType("text")
+                        .HasColumnName("friendly_name");
+
+                    b.Property<string>("Xml")
+                        .HasColumnType("text")
+                        .HasColumnName("xml");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("data_protection_keys", (string)null);
+                });
 
             modelBuilder.Entity("RediensIAM.Data.Entities.AuditLog", b =>
                 {
@@ -613,6 +635,29 @@ namespace RediensIAM.Data.Migrations
                     b.ToTable("projects", (string)null);
                 });
 
+            modelBuilder.Entity("RediensIAM.Data.Entities.RateCounter", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("key");
+
+                    b.Property<long>("Count")
+                        .HasColumnType("bigint")
+                        .HasColumnName("count");
+
+                    b.Property<DateTimeOffset>("WindowEnd")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("window_end");
+
+                    b.HasKey("Key");
+
+                    b.HasIndex("WindowEnd")
+                        .HasDatabaseName("ix_rate_counters_window_end");
+
+                    b.ToTable("rate_counters", (string)null);
+                });
+
             modelBuilder.Entity("RediensIAM.Data.Entities.Role", b =>
                 {
                     b.Property<Guid>("Id")
@@ -805,6 +850,30 @@ namespace RediensIAM.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("service_account_roles", (string)null);
+                });
+
+            modelBuilder.Entity("RediensIAM.Data.Entities.SharedStateEntry", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("key");
+
+                    b.Property<DateTimeOffset?>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<byte[]>("Value")
+                        .IsRequired()
+                        .HasColumnType("bytea")
+                        .HasColumnName("value");
+
+                    b.HasKey("Key");
+
+                    b.HasIndex("ExpiresAt")
+                        .HasDatabaseName("ix_shared_state_expires_at");
+
+                    b.ToTable("shared_state", (string)null);
                 });
 
             modelBuilder.Entity("RediensIAM.Data.Entities.User", b =>
@@ -1154,6 +1223,24 @@ namespace RediensIAM.Data.Migrations
                     b.HasIndex("WebhookId");
 
                     b.ToTable("webhook_deliveries", (string)null);
+                });
+
+            modelBuilder.Entity("RediensIAM.Data.Entities.WebhookPending", b =>
+                {
+                    b.Property<string>("JobJson")
+                        .HasColumnType("text")
+                        .HasColumnName("job_json");
+
+                    b.Property<long>("Score")
+                        .HasColumnType("bigint")
+                        .HasColumnName("score");
+
+                    b.HasKey("JobJson");
+
+                    b.HasIndex("Score")
+                        .HasDatabaseName("ix_webhook_pending_score");
+
+                    b.ToTable("webhook_pending", (string)null);
                 });
 
             modelBuilder.Entity("RediensIAM.Data.Entities.BackupCode", b =>

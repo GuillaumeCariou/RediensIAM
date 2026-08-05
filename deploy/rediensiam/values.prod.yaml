@@ -74,38 +74,6 @@ rediensiam:
         enabled: true
         requireSsl: true
 
-  # R-15, cache half. Same cert-manager prerequisite as the database certificate above, so
-  # again no new dependency. UNLIKE Postgres this is a HARD cutover, in three ways prod has
-  # to plan for and dev did not:
-  #
-  #   1. --tls makes Dragonfly REFUSE cleartext. The `,ssl=true` half of cacheUrl must land in
-  #      the same upgrade. deploy.sh writes it from this flag on a fresh install and stops with
-  #      the one-line sed on the reuse path; templates/dragonfly.yaml fails the render if the
-  #      two ever disagree in either direction. So this cannot be split by accident.
-  #
-  #   2. The rollout is not seamless and no ordering makes it so. The Dragonfly pod flips
-  #      immediately while the Deployment keeps the OLD app pod serving, so that pod loses its
-  #      cache for the ~30 s before it terminates. Dragonfly has no PVC, so the restart also
-  #      empties the DataProtection key ring: every session is invalidated. That is the price.
-  #
-  #   3. ONLY IF THIS PROD RELEASE PREDATES STEP 23 AND ITS DRAGONFLY SURVIVES THE UPGRADE:
-  #      the key ring on disk is unprotected, and EncryptedOnlyXmlRepository refuses an
-  #      unprotected key rather than adopting one (a plaintext key in a shared cache can be
-  #      PLANTED, and it mints session cookies). The session path then 500s. Dev never hit this
-  #      because the cutover restarted a memory-only Dragonfly. Delete the ring first —
-  #        redis-cli … DEL rediensiam:dataprotection:keys
-  #      — and accept the same one-time session loss (2) already costs you. Item 3 is a no-op
-  #      for a cutover done in one upgrade, because (2) empties the ring anyway; it matters
-  #      when the cache is upgraded separately or has been given persistence.
-  #
-  # NOT YET RUN AGAINST A REAL PROD CLUSTER — this is `helm template`-verified and reasoned
-  # from the dev cutover in SECURITY-AUDIT-LOG.md step 23, not observed in prod.
-  dragonfly:
-    local:
-      tls:
-        enabled: true
-
-  # cert-manager must already be installed in the cluster; this chart does not install it.
   certManager:
     # This file names `letsencrypt` on the public ingress while ACME is off, which means the
     # ClusterIssuer must already exist in the cluster — the chart does not create it. Saying so

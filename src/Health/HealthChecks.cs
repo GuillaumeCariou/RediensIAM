@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using RediensIAM.Data;
-using StackExchange.Redis;
 
 namespace RediensIAM.Health;
 
@@ -27,11 +26,3 @@ public sealed class DatabaseHealthCheck(RediensIamDbContext db) : IHealthCheck
 }
 
 /// <summary>Answers unhealthy when the cache multiplexer has lost its connection.</summary>
-public sealed class CacheHealthCheck(IConnectionMultiplexer cache) : IHealthCheck
-{
-    public Task<HealthCheckResult> CheckHealthAsync(
-        HealthCheckContext context, CancellationToken cancellationToken = default)
-        => Task.FromResult(cache.IsConnected
-            ? HealthCheckResult.Healthy()
-            : HealthCheckResult.Unhealthy("cache disconnected"));
-}

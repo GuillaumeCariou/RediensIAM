@@ -47,7 +47,6 @@ flowchart TB
         hydra["Ory Hydra<br/>public :4444 - admin :4445"]
         keto["Ory Keto<br/>read :4466 - write :4467"]
         pg[("Postgres<br/>rediensiam / hydra / keto")]
-        df[("Dragonfly<br/>Redis-compatible :6379")]
     end
 
     browser -->|"prod TLS letsencrypt<br/>dev cleartext - iam.localhost"| traefik
@@ -121,25 +120,19 @@ the same live Keto re-check.
 | Admin ingress TLS | — (`ingress.admin.enabled: false`) | not used — NodePort instead | **on**, self-signed by the release's own `Issuer` | prod profile in scratch: ingress, cert and ClusterIP-only Service all worked; reachability is a Tailscale property, not a chart one |
 | Postgres server TLS | off | **on** | **on** | dev, and once under the prod profile in a scratch namespace |
 | Postgres `requireSsl` (`hostssl`) | off | **on** | **on** | dev, and once from scratch under the prod profile. **Never against an existing `pg_hba.conf`** |
-| Dragonfly TLS | off | **on** | **on** | dev, and once from scratch under the prod profile. **The cutover on a live cache is still unobserved** |
 | `postgres.rls.enabled` | off | **on** | **not overridden → off** | dev only |
 
 Two things this table exists to keep straight:
 
-1. **Dragonfly TLS is `true` in *both* values files.** It was dev-only when the cache-hardening
    work was written up; `values.prod.yaml` has since set it. It has now run in dev and once under
    the prod profile in a scratch namespace — never on a production cluster, and never as a
-   *cutover* on a cache that was already up. It is a **hard cutover** — `--tls` makes Dragonfly
    refuse cleartext, so `cacheUrl` must gain `ssl=true` in the same `helm upgrade`.
-   `templates/dragonfly.yaml:31-36` fails the render in **both** directions, so the pair cannot be
    split by accident.
 2. **RLS is on in dev and off in prod**, not off everywhere. 19 tables carry a policy; see §6.
 
 ```mermaid
 flowchart LR
-    flag["values.*.yaml<br/>dragonfly.local.tls.enabled"]
     url["values.secret.yaml<br/>secrets.cacheUrl contains ssl=true"]
-    render{"templates/dragonfly.yaml<br/>render-time guard"}
     ok["Rendered manifests"]
     fail["helm fail - both directions:<br/>tls without ssl=true, or ssl=true without tls"]
 
@@ -169,7 +162,6 @@ flowchart LR
     hydra["hydra"]
     keto["keto"]
     pg["postgres"]
-    df["dragonfly"]
     backup["backup CronJob"]
     rls["rls hook Job"]
 
@@ -194,7 +186,6 @@ flowchart LR
 Refused by these policies, and worth naming because each was a real finding:
 
 - Nothing but the app pod reaches Hydra `:4445` or Keto `:4467`.
-- Nothing but the app pod reaches Dragonfly `:6379`.
 - Postgres originates **nothing** but DNS — a write primitive inside the database has no outbound
   channel.
 - The app's `443` and SMTP egress carries an `except:` list of `networkPolicy.privateRanges`
@@ -222,7 +213,6 @@ flowchart TD
     swag{"LocalPort == AdminPort ?"}
     swagui["Swagger UI"]
     met["UseHttpMetrics"]
-    sess["UseSession - Dragonfly-backed<br/>SameSite=Strict, Secure, HttpOnly"]
     cors["UseCors AdminSpa"]
     stat["UseDefaultFiles + UseStaticFiles"]
     route["UseRouting<br/>endpoint is now resolvable"]
@@ -248,7 +238,6 @@ Two facts a reader should take from the branching:
 
 - **`/admin/system/*` matches both `UseWhen` predicates**, so `GatewayAuthMiddleware` runs twice for
   it. `UseWhen` branches rejoin the main pipeline, so the second pass is a second full run. It is
-  correct — just redundant — and the cost is a Dragonfly cache hit on the introspection, not a
   second Hydra round-trip.
 - **`/account/*` is authenticated but is not a management surface.** It never sees the audience gate
   or the default-deny gate, which is deliberate: a tenant application's own token is exactly who
@@ -262,7 +251,6 @@ flowchart TD
     b{"starts with Bearer ?"}
     r401a["401"]
     c{"token starts with<br/>Security:PatPrefix<br/>default rediens_pat_ ?"}
-    pat["PatService.IntrospectAsync<br/>SHA-256 hash lookup, 5 min Dragonfly cache.<br/>Cache skips the JOIN, never the decision:<br/>expiry, service account Active and org Active<br/>are re-checked on every hit"]
     jwt["HydraService.ValidateJwtAsync<br/>POST /admin/oauth2/introspect<br/>token_type_hint=access_token + token_use recheck<br/>cached up to 60 s, clamped by exp"]
     d{"claims resolved ?"}
     r401b["401"]
@@ -394,7 +382,6 @@ flowchart TD
     sa{"claims.IsServiceAccount ?"}
     saok["true — PAT roles came from the DB and<br/>PatService re-checked account + org this request"]
     uid{"ParsedUserId == Guid.Empty ?"}
-    cache["Dragonfly key authz:userId:level<br/>value verdict + scope<br/>scope = empty for SuperAdmin, else orgId/projectId<br/>TTL 30 s - CacheTtlSeconds"]
     hit{"cached AND scope matches ?"}
     chk["CheckAsync"]
     susp{"level != SuperAdmin AND<br/>Organisations row for claimed org has Active = false ?"}
@@ -457,7 +444,6 @@ sequenceDiagram
     participant H as Ory Hydra
     participant R as RediensIAM :5000
     participant DB as Postgres
-    participant DF as Dragonfly
     participant K as Ory Keto
 
     SPA->>H: GET /oauth2/auth - PKCE
@@ -485,7 +471,6 @@ sequenceDiagram
             R->>DF: session: pending user, challenge, project
             R-->>SPA: requires_mfa, mfa_type totp / sms / webauthn
             SPA->>R: POST /auth/mfa/...
-            R->>R: verify - TOTP anti-replay set in Dragonfly,<br/>WebAuthn UserVerification Required,<br/>backup code sha256 keyId hex
             R->>R: rotate the session cookie - session fixation
         end
         R->>H: AcceptLogin  subject = ORG_ID colon USER_ID,<br/>context = org_id, project_id, user_id
@@ -586,7 +571,7 @@ sequenceDiagram
     Note over GW: /api is a management prefix, so BOTH gates run.<br/>Audience gate passes because the caller is a PAT<br/>or its client_id starts sa_.<br/>Default deny passes because ControllerName<br/>Introspection is the single SelfGatedControllers entry.
     GW->>IC: action
     IC->>IC: IsServiceAccountCaller ? else 403 service_account_required
-    IC->>IC: aud blank ? then 400 audience_required + ver
+    IC->>IC: aud blank ? then 400 project_id_required + ver
     Note over IC: 400, not an inactive answer. A missing aud is a defect<br/>in the CALLER's request. Answering inactive would let an<br/>un-migrated integration keep running while believing<br/>it had merely been handed a dead token.
     IC->>P: resolve the SUBJECT token - PAT prefix
     IC->>H: or introspect it as a JWT
@@ -632,7 +617,7 @@ flowchart TD
     a-->b
     b-->|"no"| x1["403 service_account_required"]
     b-->|"yes"| c
-    c-->|"no"| x2["400 audience_required + ver"]
+    c-->|"no"| x2["400 project_id_required + ver"]
     c-->|"yes"| d --> e
     e-->|"yes"| f
     e-->|"no"| g --> h --> i
@@ -649,7 +634,7 @@ flowchart TD
 
 `ContractVersion = 1` rides on **every** answer, including `{"active": false}` and both 400s. It
 exists so a client can tell an audience-enforcing server from one that silently drops the `aud`
-field it was sent: an older RediensIAM answers without `ver`, so an SDK requiring `ver >= 1` fails
+field it was sent: an older RediensIAM answers without `ver`, so an SDK requiring `ver >= 2` fails
 closed rather than believing it is bound when it is not.
 
 ```mermaid
@@ -823,7 +808,6 @@ flowchart TB
     k2 --> p2[("webhooks.SecretEnc")]
     k3 --> p3[("org_smtp_configs.PasswordEnc")]
     k4 --> p4[("projects.LoginTheme jsonb<br/>providers[].client_secret_enc")]
-    k5 --> p5[("Dragonfly key<br/>rediensiam:dataprotection:keys")]
     k6 --> p6["HMAC device fingerprints<br/>one-way, no key id, no ciphertext"]
 
     sep["Independent subkeys: compromise of one purpose<br/>exposes nothing under another. Each purpose's ring<br/>decrypts under EVERY configured root and encrypts<br/>only under the ACTIVE one."]

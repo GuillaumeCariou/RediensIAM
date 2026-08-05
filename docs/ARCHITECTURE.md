@@ -17,10 +17,12 @@ material and the audit chain), [`SECURITY.md`](SECURITY.md) (what protects what,
 
 ## Philosophy
 
-1. **Stateless app, stateful infrastructure.** Pods carry no per-instance data. Postgres holds the
-   durable state (users, orgs, projects, audit log). Dragonfly (Redis-compatible) holds ephemeral
-   shared state (sessions, rate-limit counters, OTP challenges, the DataProtection key ring). Any
-   number of replicas can run side by side.
+1. **Stateless app, stateful infrastructure.** Pods carry no per-instance data. Postgres holds all of it —
+   the durable state (users, orgs, projects, audit log) **and** the shared short-lived state
+   (sessions, rate-limit counters, OTP challenges, the DataProtection key ring, the webhook queue).
+   One datastore, not two: none of that second list was a cache, and every item in it either
+   breaks or weakens when a replica keeps its own copy. Any number of replicas can run side by
+   side.
 2. **Standards over re-invention.** OAuth2/OIDC = Ory Hydra. Fine-grained authorisation = Ory Keto.
    Argon2id for passwords. WebAuthn level 2 for passkeys. We do not re-implement these.
 3. **Authority is a type, not a convention.** A level read out of a token is a *claim*. A level
@@ -50,8 +52,7 @@ material and the audit chain), [`SECURITY.md`](SECURITY.md) (what protects what,
                  └──────┬──────────────┬────────────┘
                         │              │
                  ┌──────▼──────┐┌──────▼──────┐┌──────────────┐
-                 │  Ory Hydra  ││  Ory Keto   ││  Postgres +  │
-                 │ OAuth2/OIDC ││ Permissions ││  Dragonfly   │
+                 │  Ory Hydra  ││  Ory Keto   ││  PostgreSQL  │
                  └─────────────┘└─────────────┘└──────────────┘
 ```
 
@@ -368,7 +369,6 @@ Durable state: users, orgs, projects, roles and assignments; hashed PATs; servic
 WebAuthn credentials; webhooks and delivery history; the audit log; and the single-row `instances`
 configuration table.
 
-### Dragonfly — ephemeral shared state
 
 Sessions (the MFA challenge step), the DataProtection key ring, rate-limit counters, the OTP store,
 the PAT introspection cache (5 min TTL), the Hydra introspect cache (≤ 60 s, clamped by token
@@ -381,7 +381,6 @@ so deactivating a service account takes effect immediately rather than at TTL.
 ### Per-pod state
 
 HTTP request scope, in-process caches (OIDC discovery, the dummy Argon2 hash), and the webhook
-dispatcher's in-memory worker queue. Everything else is in Postgres or Dragonfly; a pod can die and
 be replaced without losing anything user-visible.
 
 ---
@@ -511,7 +510,6 @@ CSRF token.
 
 ### MFA
 
-- **TOTP** — Otp.NET, anti-replay through a Dragonfly `TotpUsed` set.
 - **SMS OTP** — rate-limited per user (default 3 / 10 min). The shipped provider is
   `StubSmsService` and **does not deliver**; it reports `IsConfigured => false` so the server does
   not offer an undeliverable factor.
@@ -548,7 +546,6 @@ handled explicitly rather than falling through.
 | Backend → Hydra admin `:4445` | In-cluster only; NetworkPolicy-locked. **Verify your CNI enforces NetworkPolicy** — if it does not, Hydra's admin API is open to the whole cluster |
 | Backend → Keto write `:4467` | Same |
 | Backend → Postgres `:5432` | Role `iam_app`, own database only; TLS on in both shipped environments; NetworkPolicy locked to {app, hydra, keto} |
-| Backend → Dragonfly `:6379` | Password-protected; TLS set in both values files, executed in dev and once under the prod profile in a scratch namespace, **never on a production cluster** (see below); NetworkPolicy locked to the app pod |
 | Hydra → public listener (consent) | Browser-mediated redirect; allowlist via `RedirectValidator` |
 | External IdP → `/auth/saml/acs` | SAML assertion verified against the pinned IdP certificate |
 | Operator / machine → management API | Bearer PAT or `client_credentials` token; audience gate, then live Keto re-check per request |
@@ -563,15 +560,12 @@ handled explicitly rather than falling through.
 | Admin ingress TLS | — | NodePort, no ingress | on, but self-signed by the release's own namespaced `Issuer` |
 | Postgres server TLS (`postgres.local.tls.enabled`) | off | **on** | **on** |
 | Postgres `requireSsl` (`hostssl` in `pg_hba.conf`) | off | **on** | **on** |
-| Dragonfly TLS (`dragonfly.local.tls.enabled`) | off | **on** | **on**; executed in dev and once under the prod profile in a scratch namespace — see below |
 | `postgres.rls.enabled` | off | **on** | off |
 
 Dev being cleartext on the ingress is the one place finding R-02 is not fixed, and it is gated to
 dev so prod cannot inherit it.
 
-Dragonfly TLS is a **hard cutover**: `--tls` makes Dragonfly stop answering cleartext, so
 `cacheUrl` must gain `ssl=true` in the same change. `deploy.sh` derives it from the flag and
-`templates/dragonfly.yaml` fails the render if the two ever disagree, so the pair cannot be split
 by accident. It is set in **both** `values.dev.yaml` and `values.prod.yaml`. It has been executed in
 dev, and once under the prod profile in a scratch namespace on the dev cluster, where the server was
 confirmed to refuse cleartext and the app to read and write through the pinned tunnel
@@ -588,7 +582,6 @@ the whole thing is a no-op (`:68`).
 
 ### The DataProtection key ring
 
-The key ring is persisted to Dragonfly under `rediensiam:dataprotection:keys` so session cookies
 survive a pod restart, and it is **encrypted at rest** (`src/Program.cs:68-71`):
 
 ```csharp

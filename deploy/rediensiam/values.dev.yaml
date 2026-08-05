@@ -56,39 +56,6 @@ rediensiam:
     rls:
       enabled: true
 
-  # Cache TLS, on since step 23. Step 18 stopped here because the client could not trust a
-  # cert-manager root; src/Config/CacheTls.cs now pins to the CA the app Deployment mounts at
-  # /etc/cache-tls/ca.crt, so the connection is both encrypted and authenticated.
-  #
-  # Unlike Postgres this is not a preference the DSN can decline: --tls makes Dragonfly stop
-  # answering cleartext, so deploy.sh writes `,ssl=true` into cacheUrl from this same flag and
-  # templates/dragonfly.yaml fails the render if the two ever disagree in either direction.
-  dragonfly:
-    local:
-      tls:
-        enabled: true
-
-  ingress:
-    public:
-      tls:
-        # `iam.localhost` cannot be certified by any CA and k3s Traefik would fall back to its
-        # own default cert, so dev stays on cleartext. This is the one place R-02 is not fixed,
-        # and it is gated to dev precisely so prod cannot inherit it.
-        enabled: false
-    admin:
-      # The console gets a host of its own under the issuer's domain — see adminUrl above for why
-      # a NodePort on localhost could not work. Prod already had this ingress; dev now has it too.
-      enabled: true
-      host: "admin.iam.localhost"
-      entrypoints: "web"        # dev serves plain http
-      tls:
-        enabled: false          # nothing can certify a .localhost name
-
-  smtp:
-    fromAddress: "noreply@localhost"
-    fromName: "RediensIAM"
-
-hydra:
   hydra:
     dev: true
     dangerousForceHttp: true

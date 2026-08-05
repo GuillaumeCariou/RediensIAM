@@ -9,7 +9,6 @@ using System.Security.Cryptography;
 using System.Text;
 using OtpNet;
 using RediensIAM.Data.Entities;
-using StackExchange.Redis;
 
 namespace RediensIAM.IntegrationTests.Tests.Auth;
 
@@ -1338,9 +1337,12 @@ public class AuthRateLimiterCoverageTests(TestFixture fixture)
     /// </summary>
     private async Task BlockIpAsync()
     {
-        var redis = fixture.GetService<IConnectionMultiplexer>();
-        await redis.GetDatabase().StringSetAsync("rate:login:127.0.0.1", "5",
-            TimeSpan.FromMinutes(15));
+        // Drives the counter through the real API rather than writing the row: the atomicity of
+        // the increment is the property under test everywhere else, and a test that pokes the
+        // storage directly stops noticing when that property breaks.
+        var state = fixture.GetService<PostgresSharedState>();
+        for (var i = 0; i < 5; i++)
+            await state.IncrementAsync("rate:login:127.0.0.1", TimeSpan.FromMinutes(15));
     }
 
     private async Task<(Organisation org, Project project, UserList list)> ScaffoldProjectAsync()

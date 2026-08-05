@@ -266,3 +266,69 @@ public class SamlIdpConfigConfiguration : IEntityTypeConfiguration<SamlIdpConfig
         builder.HasOne(x => x.DefaultRole).WithMany().HasForeignKey(x => x.DefaultRoleId).OnDelete(DeleteBehavior.SetNull);
     }
 }
+
+/// <summary>
+/// The shared key/value store, the rate counters, the webhook queue and the DataProtection key
+/// ring — everything that used to live in Dragonfly.
+///
+/// <para>
+/// None of these carries an <c>OrgId</c>, and that is the point: they are deployment-wide. They
+/// are listed as deployment-global in <c>deploy/rediensiam/files/rls.sql</c>, which <i>raises</i>
+/// on a public table that is neither policied nor declared — so adding a table here without
+/// declaring it there fails the deploy rather than silently escaping row-level security.
+/// </para>
+/// </summary>
+public class SharedStateConfiguration : IEntityTypeConfiguration<SharedStateEntry>
+{
+    public void Configure(EntityTypeBuilder<SharedStateEntry> b)
+    {
+        b.ToTable("shared_state");
+        b.HasKey(e => e.Key);
+        b.Property(e => e.Key).HasColumnName("key").HasMaxLength(512);
+        b.Property(e => e.Value).HasColumnName("value").IsRequired();
+        b.Property(e => e.ExpiresAt).HasColumnName("expires_at");
+        // Only the sweeper scans by expiry; every read is a primary-key lookup that also filters
+        // on it. The index exists for the sweep, not for the hot path.
+        b.HasIndex(e => e.ExpiresAt).HasDatabaseName("ix_shared_state_expires_at");
+    }
+}
+
+public class RateCounterConfiguration : IEntityTypeConfiguration<RateCounter>
+{
+    public void Configure(EntityTypeBuilder<RateCounter> b)
+    {
+        b.ToTable("rate_counters");
+        b.HasKey(e => e.Key);
+        b.Property(e => e.Key).HasColumnName("key").HasMaxLength(512);
+        b.Property(e => e.Count).HasColumnName("count");
+        b.Property(e => e.WindowEnd).HasColumnName("window_end");
+        b.HasIndex(e => e.WindowEnd).HasDatabaseName("ix_rate_counters_window_end");
+    }
+}
+
+public class WebhookPendingConfiguration : IEntityTypeConfiguration<WebhookPending>
+{
+    public void Configure(EntityTypeBuilder<WebhookPending> b)
+    {
+        b.ToTable("webhook_pending");
+        b.HasKey(e => e.JobJson);
+        b.Property(e => e.JobJson).HasColumnName("job_json");
+        b.Property(e => e.Score).HasColumnName("score");
+        // The dispatcher drains in score order — that is what the Redis sorted set was for.
+        b.HasIndex(e => e.Score).HasDatabaseName("ix_webhook_pending_score");
+    }
+}
+
+public class DataProtectionKeyConfiguration
+    : IEntityTypeConfiguration<Microsoft.AspNetCore.DataProtection.EntityFrameworkCore.DataProtectionKey>
+{
+    public void Configure(
+        EntityTypeBuilder<Microsoft.AspNetCore.DataProtection.EntityFrameworkCore.DataProtectionKey> b)
+    {
+        b.ToTable("data_protection_keys");
+        b.HasKey(e => e.Id);
+        b.Property(e => e.Id).HasColumnName("id");
+        b.Property(e => e.FriendlyName).HasColumnName("friendly_name");
+        b.Property(e => e.Xml).HasColumnName("xml");
+    }
+}
