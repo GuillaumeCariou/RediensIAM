@@ -32,13 +32,13 @@ public class IntrospectionController(
     AppConfig appConfig) : ControllerBase
 {
     /// <summary>
-    /// Contract version of this surface. It exists so a client can tell an audience-enforcing
-    /// server from one that silently ignores the <c>aud</c> it sent: an older RediensIAM drops
-    /// the unknown field and answers without <c>ver</c>, so an SDK that requires
-    /// <c>ver &gt;= 1</c> fails closed instead of believing it is bound when it is not. Every
+    /// Contract version of this surface. It exists so a client can tell a server that enforces
+    /// <c>project_id</c> from one that silently ignores it: a RediensIAM older than this contract
+    /// drops the unknown field and answers without <c>ver</c>, so an SDK that requires
+    /// <c>ver &gt;= 2</c> fails closed instead of believing it is bound when it is not. Every
     /// answer carries it, including <c>{"active": false}</c>.
     /// </summary>
-    public const int ContractVersion = 1;
+    public const int ContractVersion = 2;
 
     private TokenClaims Caller => HttpContext.GetClaims()!;
 
@@ -60,11 +60,16 @@ public class IntrospectionController(
     /// Answers <c>{ "active": false }</c> for anything not currently valid — never an error,
     /// so a caller cannot distinguish "malformed" from "revoked" from "expired".
     ///
-    /// <para><b>Breaking:</b> <c>aud</c> is required. A resource server that does not declare
-    /// which tenant it serves is refused with 400, because the alternative — the pre-1 behaviour
-    /// — is that a deployment-scoped gateway credential resolves every tenant's token as
-    /// <c>active: true</c> and the resource server has to remember to compare
-    /// <c>project_id</c> itself. Nobody remembers. See P-06.</para>
+    /// <para><b>Breaking:</b> <c>project_id</c> is required. A resource server that does not
+    /// declare which tenant it serves is refused with 400, because the alternative is that a
+    /// deployment-scoped gateway credential resolves every tenant's token as <c>active: true</c>
+    /// and the resource server has to remember to compare <c>project_id</c> itself. Nobody
+    /// remembers. See P-06.</para>
+    ///
+    /// <para>The field is named for the value an integrator already holds: the project id that
+    /// also gives them <c>client_&lt;project_id&gt;</c>. It was called <c>aud</c> until contract 2,
+    /// which meant one value travelled the stack under two names and a deployment needed a test
+    /// whose whole job was to check the two agreed.</para>
     /// </summary>
     // SCS0016 fires on any [FromForm] POST without an anti-forgery token. It does not apply
     // here: CSRF needs an ambient credential the browser attaches by itself, and this endpoint
@@ -74,7 +79,9 @@ public class IntrospectionController(
 #pragma warning disable SCS0016 // bearer-only surface: no ambient credential to forge against
     [HttpPost("introspect")]
     [ProducesResponseType(typeof(IntrospectionResult), StatusCodes.Status200OK)]
-    public async Task<IActionResult> Introspect([FromForm] IntrospectionRequest body)
+    public async Task<IActionResult> Introspect(
+        [FromForm(Name = "token")] string? token,
+        [FromForm(Name = "project_id")] string? projectId)
 #pragma warning restore SCS0016
     {
         if (!IsServiceAccountCaller())
@@ -83,16 +90,16 @@ public class IntrospectionController(
         // 400, not {"active":false}: this is a defect in the caller's own request, not a
         // statement about the token, and answering "inactive" would let an un-migrated
         // integration keep running while believing it had merely been handed a dead token.
-        if (string.IsNullOrWhiteSpace(body.Aud))
-            return BadRequest(new { error = "audience_required", ver = ContractVersion });
+        if (string.IsNullOrWhiteSpace(projectId))
+            return BadRequest(new { error = "project_id_required", ver = ContractVersion });
 
-        if (string.IsNullOrWhiteSpace(body.Token))
+        if (string.IsNullOrWhiteSpace(token))
             return Ok(IntrospectionResult.Inactive);
 
-        var claims = await ResolveAsync(body.Token);
+        var claims = await ResolveAsync(token);
         if (claims is null) return Ok(IntrospectionResult.Inactive);
 
-        if (!await IsBoundToAudienceAsync(claims, body.Aud, "api.introspect.audience_mismatch"))
+        if (!await IsBoundToTenantAsync(claims, projectId, "api.introspect.project_mismatch"))
             return Ok(IntrospectionResult.Inactive);
 
         // Out of scope answers "inactive", not "forbidden": the RFC 7662 contract here is that a
@@ -118,8 +125,7 @@ public class IntrospectionController(
             ProjectId: NullIfEmpty(claims.ProjectId),
             Roles:     roles,
             ClientId:  NullIfEmpty(claims.ClientId),
-            IsServiceAccount: claims.IsServiceAccount,
-            Aud:       body.Aud));
+            IsServiceAccount: claims.IsServiceAccount));
     }
 
     /// <summary>
@@ -127,7 +133,7 @@ public class IntrospectionController(
     /// Keto relation check. Keeps the policy in one place instead of every gateway
     /// reimplementing its own interpretation of the roles claim.
     ///
-    /// <para><b>Breaking:</b> <c>aud</c> is required here too, and the <c>object</c> is now
+    /// <para><b>Breaking:</b> <c>project_id</c> is required here too, and the <c>object</c> is
     /// scoped to the tenant the answer is about (P-05).</para>
     /// </summary>
     [HttpPost("authorize")]
@@ -137,13 +143,13 @@ public class IntrospectionController(
         if (!IsServiceAccountCaller())
             return StatusCode(403, new { error = "service_account_required" });
 
-        if (string.IsNullOrWhiteSpace(body.Aud))
-            return BadRequest(new { error = "audience_required", ver = ContractVersion });
+        if (string.IsNullOrWhiteSpace(body.ProjectId))
+            return BadRequest(new { error = "project_id_required", ver = ContractVersion });
 
         var claims = await ResolveAsync(body.Token);
         if (claims is null) return Ok(AuthorizationResult.Denied);
 
-        if (!await IsBoundToAudienceAsync(claims, body.Aud, "api.authorize.audience_mismatch"))
+        if (!await IsBoundToTenantAsync(claims, body.ProjectId, "api.authorize.project_mismatch"))
             return Ok(AuthorizationResult.Denied);
 
         if (!await IsInCallerScopeAsync(claims, "api.authorize.out_of_scope"))
@@ -178,28 +184,27 @@ public class IntrospectionController(
     /// P-06. The resource server names the tenant it serves; a token from anywhere else is not
     /// its business and reads inactive.
     ///
-    /// A token is bound to <paramref name="aud"/> when the value is the token's
+    /// A token is bound to <paramref name="projectId"/> when the value is the token's
     /// <c>project_id</c>, its <c>org_id</c> (the only tenant a token without a project has), or
-    /// one of the OAuth2 audiences Hydra minted it for. Both id forms are accepted because a
-    /// service-account PAT carries no project — a gateway fronting a whole organisation declares
-    /// the org id, one fronting a single application declares the project id, and neither can
-    /// name a tenant it does not belong to.
+    /// one of the OAuth2 audiences Hydra minted it for. The organisation id is accepted under the
+    /// same field because a gateway fronting a whole organisation serves exactly one tenant too —
+    /// and neither form lets a caller name a tenant it does not belong to.
     ///
     /// The comparison is fail-closed on emptiness: a token whose <c>project_id</c> and
-    /// <c>org_id</c> are both blank matches no audience at all and can only be introspected by
-    /// naming an explicit <c>aud</c> claim on it.
+    /// <c>org_id</c> are both blank matches nothing here and can only be introspected by naming
+    /// an explicit OAuth2 <c>aud</c> claim minted onto it.
     /// </summary>
-    private async Task<bool> IsBoundToAudienceAsync(TokenClaims subject, string aud, string auditAction)
+    private async Task<bool> IsBoundToTenantAsync(TokenClaims subject, string projectId, string auditAction)
     {
         if (Matches(subject.ProjectId) || Matches(subject.OrgId)
-            || subject.Audiences.Contains(aud, StringComparer.Ordinal))
+            || subject.Audiences.Contains(projectId, StringComparer.Ordinal))
             return true;
 
-        await audit.RecordAsync(CallerOrgScope, null, Caller.ParsedUserId, auditAction, "audience", aud);
+        await audit.RecordAsync(CallerOrgScope, null, Caller.ParsedUserId, auditAction, "project", projectId);
         return false;
 
         bool Matches(string? value) =>
-            !string.IsNullOrEmpty(value) && value.Equals(aud, StringComparison.OrdinalIgnoreCase);
+            !string.IsNullOrEmpty(value) && value.Equals(projectId, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -222,7 +227,7 @@ public class IntrospectionController(
 
         // No scope on either side — a deployment-level caller asking about a token that names
         // no organisation. Reaching it needs a token carrying neither org_id nor project_id,
-        // which IsBoundToAudienceAsync admits only through subject.Audiences: a Hydra client
+        // which IsBoundToTenantAsync admits only through subject.Audiences: a Hydra client
         // with grant_access_token_audience set. RediensIAM does not mint one, but Hydra will
         // honour one written into its client store directly, so this is a narrow live path
         // rather than the dead code the earlier fix took it for. Answering the Keto question
@@ -311,19 +316,42 @@ public class IntrospectionController(
 /// during model binding exactly as it was before.
 /// </summary>
 /// <summary>
-/// <c>aud</c> is <b>required</b> and is the tenant this resource server serves — a project id,
-/// or an organisation id for a gateway that fronts a whole organisation. RFC 7662 §2.1 does not
-/// define it; RFC 8693 and the OAuth2 audience-restriction model do, and without it this
-/// endpoint answers for every tenant in the deployment at once.
+/// <c>project_id</c> is <b>required</b> and is the tenant this resource server serves. It is the
+/// same value that gives the caller its <c>client_&lt;project_id&gt;</c>, so an integrator
+/// configures one identifier and nothing else; an organisation id is accepted under the same
+/// field for a gateway that fronts a whole organisation.
+///
+/// <para>Without it this endpoint answers for every tenant in the deployment at once: a
+/// multi-tenant gateway must hold a deployment-scoped service account, which has no organisation
+/// and is therefore unscoped by construction (P-06).</para>
+///
+/// <para>The field was called <c>aud</c> until contract 2. One value under two names is what
+/// produced a deployment test whose entire job was to check that <c>OIDC_PROJECT_ID</c> and
+/// <c>IAM_AUDIENCE</c> agreed; a test that verifies a tautology is a naming bug with extra
+/// steps.</para>
 /// </summary>
-public record IntrospectionRequest(string Token, string? Aud = null);
+/// <remarks>
+/// <c>/api/introspect</c> binds its two fields as plain action parameters rather than as a record,
+/// and the explicit <c>Name</c> on each is load-bearing.
+///
+/// <para>Form binding resolves a record through its <b>constructor</b>. An attribute written
+/// <c>[property: FromForm(Name = "project_id")]</c> lands on the generated property, where the
+/// binder never looks — so <c>project_id</c> bound to nothing, <c>ProjectId</c> stayed null, and
+/// every request answered <c>400 project_id_required</c>. That is the same silent failure that made
+/// <c>token_type_hint</c> a field nobody could set. Two parameters, two explicit names, nothing
+/// left to get wrong.</para>
+///
+/// <para>Form binding also does <b>not</b> apply the global <c>SnakeCaseLower</c> JSON naming
+/// policy: it matches names ignoring case, never underscores.</para>
+/// </remarks>
 
 /// <summary>
 /// RFC 7662 response. Field names are serialised snake_case by the global JSON options.
 ///
-/// <para><c>Aud</c> echoes the audience the answer was scoped to and is null on an inactive
-/// answer. <c>Ver</c> is always present — see
-/// <see cref="IntrospectionController.ContractVersion"/>.</para>
+/// <para><c>ProjectId</c> is the <b>token's</b> project, not the one the caller asked about — the
+/// two are equal on an active answer, which is why the request value is not echoed back. Contract
+/// 1 echoed it as <c>aud</c>; that field is gone, and <c>Ver</c> is what tells a client the server
+/// enforced the binding. See <see cref="IntrospectionController.ContractVersion"/>.</para>
 /// </summary>
 public record IntrospectionResult(
     bool Active,
@@ -334,7 +362,6 @@ public record IntrospectionResult(
     List<string>? Roles = null,
     string? ClientId = null,
     bool IsServiceAccount = false,
-    string? Aud = null,
     int Ver = IntrospectionController.ContractVersion)
 {
     /// <summary>
@@ -357,7 +384,7 @@ public record AuthorizationRequest(
     [property: System.Text.Json.Serialization.JsonRequired] string Namespace,
     [property: System.Text.Json.Serialization.JsonRequired] string Object,
     [property: System.Text.Json.Serialization.JsonRequired] string Relation,
-    string? Aud = null);
+    string? ProjectId = null);
 
 public record AuthorizationResult(bool Allowed, string? UserId, int Ver = IntrospectionController.ContractVersion)
 {

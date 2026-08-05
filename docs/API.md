@@ -218,8 +218,8 @@ rest of `/api`.
 | POST | `/api/introspect` | `Introspect` | `application/x-www-form-urlencoded` (RFC 7662) |
 | POST | `/api/authorize` | `Authorize` | `application/json` |
 
-`aud` is **mandatory** on both (`400 {"error":"audience_required","ver":1}`). Successful and
-negative answers both carry `ver: 1`. A plain user token is refused with
+`project_id` is **mandatory** on both (`400 {"error":"project_id_required","ver":2}`). Successful and
+negative answers both carry `ver: 2`. A plain user token is refused with
 `403 service_account_required` — otherwise the endpoint is an oracle any bearer could use to probe
 token validity.
 

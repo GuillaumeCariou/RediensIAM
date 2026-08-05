@@ -16,10 +16,10 @@ namespace RediensIAM.IntegrationTests.Tests.Regression;
 [Collection("RediensIAM")]
 public class ApiSurfaceIntrospectionTests(TestFixture fixture)
 {
-    private static FormUrlEncodedContent Form(string token, string? aud)
+    private static FormUrlEncodedContent Form(string token, string? projectId)
     {
         var fields = new List<KeyValuePair<string, string>> { new("token", token) };
-        if (aud != null) fields.Add(new("aud", aud));
+        if (projectId != null) fields.Add(new("project_id", projectId));
         return new FormUrlEncodedContent(fields);
     }
 
@@ -49,10 +49,10 @@ public class ApiSurfaceIntrospectionTests(TestFixture fixture)
         return (org, project, list);
     }
 
-    // ── P-06: audience binding ───────────────────────────────────────────────
+    // ── P-06: tenant binding ───────────────────────────────────────────────
 
     /// <summary>
-    /// The breaking half of the change. A resource server that declares no audience is refused
+    /// The breaking half of the change. A resource server that declares no project id is refused
     /// outright rather than served the pre-1 answer, because being served is what let it believe
     /// a token from another tenant was its own.
     /// </summary>
@@ -67,10 +67,10 @@ public class ApiSurfaceIntrospectionTests(TestFixture fixture)
         var res = await gateway.PostAsync("/api/introspect", Form(token, null));
 
         res.StatusCode.Should().Be(HttpStatusCode.BadRequest,
-            "an undeclared audience is a defect in the caller, not a statement about the token");
+            "an undeclared project id is a defect in the caller, not a statement about the token");
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
-        body.GetProperty("error").GetString().Should().Be("audience_required");
-        body.GetProperty("ver").GetInt32().Should().Be(1);
+        body.GetProperty("error").GetString().Should().Be("project_id_required");
+        body.GetProperty("ver").GetInt32().Should().Be(2);
     }
 
     [Fact]
@@ -89,7 +89,7 @@ public class ApiSurfaceIntrospectionTests(TestFixture fixture)
 
         res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await res.Content.ReadFromJsonAsync<JsonElement>())
-            .GetProperty("error").GetString().Should().Be("audience_required");
+            .GetProperty("error").GetString().Should().Be("project_id_required");
     }
 
     /// <summary>
@@ -98,7 +98,7 @@ public class ApiSurfaceIntrospectionTests(TestFixture fixture)
     /// resource server was expected to notice the project_id mismatch on its own.
     /// </summary>
     [Fact]
-    public async Task Introspect_SystemGateway_ResolvesOnlyTheAudienceItDeclares()
+    public async Task Introspect_SystemGateway_ResolvesOnlyTheTenantItDeclares()
     {
         fixture.Keto.AllowAll();
         var gateway = await SystemGatewayAsync();
@@ -112,17 +112,17 @@ public class ApiSurfaceIntrospectionTests(TestFixture fixture)
             .Content.ReadFromJsonAsync<JsonElement>();
         wrong.GetProperty("active").GetBoolean().Should().BeFalse(
             "a deployment-scoped gateway credential must not resolve every tenant's token at once");
-        wrong.GetProperty("ver").GetInt32().Should().Be(1);
+        wrong.GetProperty("ver").GetInt32().Should().Be(2);
 
         var right = await (await gateway.PostAsync("/api/introspect", Form(theirToken, theirs.Project.Id.ToString())))
             .Content.ReadFromJsonAsync<JsonElement>();
         right.GetProperty("active").GetBoolean().Should().BeTrue(
             "the same credential still serves the tenant it names");
-        right.GetProperty("aud").GetString().Should().Be(theirs.Project.Id.ToString());
+        right.GetProperty("project_id").GetString().Should().Be(theirs.Project.Id.ToString());
     }
 
     /// <summary>
-    /// The org id is the other accepted audience — a gateway fronting a whole organisation
+    /// The org id is the other accepted form — a gateway fronting a whole organisation
     /// rather than one application. It is still a tenant, so it still cannot name someone else's.
     /// </summary>
     [Fact]
@@ -151,8 +151,8 @@ public class ApiSurfaceIntrospectionTests(TestFixture fixture)
         await gateway.PostAsync("/api/introspect", Form(token, mine.Project.Id.ToString()));
 
         await fixture.RefreshDbAsync();
-        fixture.Db.AuditLogs.Any(a => a.Action == "api.introspect.audience_mismatch").Should().BeTrue(
-            "probing tenants by audience must leave a trace");
+        fixture.Db.AuditLogs.Any(a => a.Action == "api.introspect.project_mismatch").Should().BeTrue(
+            "probing tenants by project id must leave a trace");
     }
 
     // ── P-05: /api/authorize object scoping ──────────────────────────────────
@@ -184,7 +184,7 @@ public class ApiSurfaceIntrospectionTests(TestFixture fixture)
             @namespace = Roles.KetoProjectsNamespace,
             @object    = theirs.Project.Id.ToString(),
             relation   = Roles.KetoManagerRelation,
-            aud        = mine.Project.Id,
+            project_id = mine.Project.Id,
         });
         (await foreign.Content.ReadFromJsonAsync<JsonElement>())
             .GetProperty("allowed").GetBoolean().Should().BeFalse(
@@ -196,7 +196,7 @@ public class ApiSurfaceIntrospectionTests(TestFixture fixture)
             @namespace = Roles.KetoProjectsNamespace,
             @object    = mine.Project.Id.ToString(),
             relation   = Roles.KetoManagerRelation,
-            aud        = mine.Project.Id,
+            project_id = mine.Project.Id,
         });
         (await own.Content.ReadFromJsonAsync<JsonElement>())
             .GetProperty("allowed").GetBoolean().Should().BeTrue(
@@ -207,8 +207,8 @@ public class ApiSurfaceIntrospectionTests(TestFixture fixture)
     }
 
     /// <summary>
-    /// The deployment-scoped credential is scoped by the audience it declared rather than left
-    /// unscoped, which is where P-05 and P-06 meet: without the audience there is no tenant to
+    /// The deployment-scoped credential is scoped by the project id it declared rather than left
+    /// unscoped, which is where P-05 and P-06 meet: without the project id there is no tenant to
     /// scope the object to.
     /// </summary>
     /// <summary>
@@ -220,7 +220,7 @@ public class ApiSurfaceIntrospectionTests(TestFixture fixture)
     /// System refusal above it was conditioned on the caller having a scope. Reaching it needs a
     /// token carrying neither <c>org_id</c> nor <c>project_id</c>, which
     /// <c>IsBoundToAudienceAsync</c> can only admit through <c>subject.Audiences</c> — and
-    /// nothing in this codebase populates <c>grant_access_token_audience</c>. P-06's audience
+    /// nothing in this codebase populates <c>grant_access_token_audience</c>. P-06's tenant
     /// requirement, added in the same release, refuses that token shape upstream, so the
     /// fail-open is unreachable today.</para>
     ///
@@ -245,7 +245,7 @@ public class ApiSurfaceIntrospectionTests(TestFixture fixture)
             @namespace = Roles.KetoSystemNamespace,
             @object    = Roles.KetoSystemObject,
             relation   = Roles.SuperAdmin,
-            aud        = tenant.Project.Id,
+            project_id = tenant.Project.Id,
         });
 
         (await res.Content.ReadFromJsonAsync<JsonElement>())
@@ -286,7 +286,7 @@ public class ApiSurfaceIntrospectionTests(TestFixture fixture)
             @namespace = Roles.KetoOrgsNamespace,
             @object    = tenant.Org.Id.ToString(),
             relation   = Roles.KetoOrgAdminRelation,
-            aud        = audience,
+            project_id = audience,
         });
 
         (await res.Content.ReadFromJsonAsync<JsonElement>())
@@ -317,7 +317,7 @@ public class ApiSurfaceIntrospectionTests(TestFixture fixture)
             @namespace = Roles.KetoOrgsNamespace,
             @object    = theirs.Org.Id.ToString(),
             relation   = Roles.KetoOrgAdminRelation,
-            aud        = mine.Project.Id,
+            project_id = mine.Project.Id,
         });
 
         (await res.Content.ReadFromJsonAsync<JsonElement>())
@@ -345,7 +345,7 @@ public class ApiSurfaceIntrospectionTests(TestFixture fixture)
             @namespace = "SomethingElse",
             @object    = mine.Project.Id.ToString(),
             relation   = "x",
-            aud        = mine.Project.Id,
+            project_id = mine.Project.Id,
         });
 
         (await res.Content.ReadFromJsonAsync<JsonElement>())

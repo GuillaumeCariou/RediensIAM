@@ -6,24 +6,24 @@ using Xunit;
 namespace RediensIAM.Client.Tests;
 
 /// <summary>
-/// P-06. RediensIAM requires <c>aud</c> on <c>/api/introspect</c> and <c>/api/authorize</c>, and
+/// P-06. RediensIAM requires <c>project_id</c> on <c>/api/introspect</c> and <c>/api/authorize</c>, and
 /// stamps <c>ver</c> on every answer so a client can tell an enforcing server from one that
 /// silently ignored the field.
 ///
 /// These assert on the bytes the client actually writes, not on a mock it was handed: an
-/// un-upgraded server discards the unknown <c>aud</c> without complaint, so nothing short of
+/// un-upgraded server discards the unknown <c>project_id</c> without complaint, so nothing short of
 /// reading the request proves the field is there.
 /// </summary>
-public class AudienceBindingTests
+public class ProjectBindingTests
 {
-    private const string Audience = "proj-1";
+    private const string ProjectId = "proj-1";
 
     /// <summary>A configuration that works, for tests that vary one field of it.</summary>
     private static RediensIamOptions Options() => new()
     {
         BaseUrl             = "https://auth.example.com",
         ServiceAccountToken = "rediens_pat_x",
-        Audience            = Audience,
+        ProjectId           = ProjectId,
     };
 
     private static (RediensIamClient Client, StubHandler Handler) ClientAnswering(
@@ -34,49 +34,49 @@ public class AudienceBindingTests
         return (new RediensIamClient(http, options ?? Options(), new MemoryCache(new MemoryCacheOptions())), handler);
     }
 
-    // ── The audience reaches the wire ─────────────────────────────────────────
+    // ── The project id reaches the wire ─────────────────────────────────────────
 
     [Fact]
-    public async Task Introspect_sends_the_audience()
+    public async Task Introspect_sends_the_project_id()
     {
-        var (client, handler) = ClientAnswering("""{"active":true,"ver":1}""");
+        var (client, handler) = ClientAnswering("""{"active":true,"ver":2}""");
 
         var info = await client.IntrospectAsync("rediens_pat_x");
 
         Assert.True(info.Active);
-        Assert.Contains("aud=proj-1", handler.LastBody);
+        Assert.Contains("project_id=proj-1", handler.LastBody);
     }
 
     [Fact]
-    public async Task Authorize_sends_the_audience()
+    public async Task Authorize_sends_the_project_id()
     {
-        var (client, handler) = ClientAnswering("""{"allowed":true,"ver":1}""");
+        var (client, handler) = ClientAnswering("""{"allowed":true,"ver":2}""");
 
         Assert.True(await client.AuthorizeAsync("t", "Organisations", "org-1", "org_admin"));
-        Assert.Contains("\"aud\":\"proj-1\"", handler.LastBody);
+        Assert.Contains("\"project_id\":\"proj-1\"", handler.LastBody);
     }
 
-    // ── A client with no audience does not exist ──────────────────────────────
+    // ── A client with no project id does not exist ──────────────────────────────
 
     /// <summary>
-    /// The server answers <c>400 audience_required</c>. Refusing at construction turns that into
+    /// The server answers <c>400 project_id_required</c>. Refusing at construction turns that into
     /// a startup failure naming the fix, instead of a 400 on every request once traffic arrives —
     /// the same shape as the pre-existing https check on <c>BaseUrl</c>.
     /// </summary>
     [Fact]
-    public void Client_without_an_audience_cannot_be_constructed()
+    public void Client_without_a_project_id_cannot_be_constructed()
     {
         var options = Options();
-        options.Audience = "";
+        options.ProjectId = "";
 
         var error = Assert.Throws<ArgumentException>(() =>
             new RediensIamClient(new HttpClient(), options, new MemoryCache(new MemoryCacheOptions())));
 
-        Assert.Contains("Audience", error.Message);
+        Assert.Contains("ProjectId", error.Message);
     }
 
     [Fact]
-    public void Registration_without_an_audience_fails_at_startup()
+    public void Registration_without_a_project_id_fails_at_startup()
     {
         var services = new ServiceCollection();
 
@@ -86,7 +86,7 @@ public class AudienceBindingTests
             o.ServiceAccountToken = "rediens_pat_x";
         }));
 
-        Assert.Contains("Audience", error.Message);
+        Assert.Contains("ProjectId", error.Message);
     }
 
     /// <summary>R-30, kept passing through the move into <c>RediensIamOptions.Validated()</c>.</summary>
@@ -108,7 +108,7 @@ public class AudienceBindingTests
     // ── An answer without `ver` is not trusted ────────────────────────────────
 
     /// <summary>
-    /// The anti-downgrade signal. An un-upgraded RediensIAM drops the unknown <c>aud</c> and
+    /// The anti-downgrade signal. An un-upgraded RediensIAM drops the unknown <c>project_id</c> and
     /// answers without <c>ver</c> — byte-for-byte what it always answered. Accepting that would
     /// mean believing a deployment-wide result was scoped to one tenant.
     /// </summary>
@@ -165,7 +165,7 @@ public class AudienceBindingTests
     public async Task Inactive_answer_with_null_roles_still_has_an_empty_role_list()
     {
         var (client, _) = ClientAnswering(
-            """{"active":false,"sub":null,"user_id":null,"org_id":null,"project_id":null,"roles":null,"client_id":null,"is_service_account":false,"aud":null,"ver":1}""");
+            """{"active":false,"sub":null,"user_id":null,"org_id":null,"project_id":null,"roles":null,"client_id":null,"is_service_account":false,"project_id":null,"ver":2}""");
 
         var info = await client.IntrospectAsync("rediens_pat_expired");
 
@@ -176,26 +176,26 @@ public class AudienceBindingTests
     }
 
     /// <summary>
-    /// One token, two audiences, two different answers — the whole point of the `aud` contract.
+    /// One token, two projects, two different answers — the whole point of the `project_id` contract.
     /// The cache key hashed the token alone, so with a shared IMemoryCache (which
     /// <c>AddRediensIam</c> resolves from the host) the first tenant's `active: true` was served
     /// to the second, roles and all, with no round trip.
     /// </summary>
     [Fact]
-    public async Task Cached_answers_are_not_shared_across_audiences()
+    public async Task Cached_answers_are_not_shared_across_projects()
     {
         var cache = new MemoryCache(new MemoryCacheOptions());
 
         var clientA = new RediensIamClient(
-            new HttpClient(new StubHandler("""{"active":true,"org_id":"org-a","roles":["org_admin"],"aud":"proj-a","ver":1}"""))
+            new HttpClient(new StubHandler("""{"active":true,"org_id":"org-a","roles":["org_admin"],"project_id":"proj-a","ver":2}"""))
             { BaseAddress = new Uri("https://auth.example.com/") },
-            new RediensIamOptions { BaseUrl = "https://auth.example.com", ServiceAccountToken = "t", Audience = "proj-a" },
+            new RediensIamOptions { BaseUrl = "https://auth.example.com", ServiceAccountToken = "t", ProjectId = "proj-a" },
             cache);
 
         var clientB = new RediensIamClient(
-            new HttpClient(new StubHandler("""{"active":false,"roles":[],"ver":1}"""))
+            new HttpClient(new StubHandler("""{"active":false,"roles":[],"ver":2}"""))
             { BaseAddress = new Uri("https://auth.example.com/") },
-            new RediensIamOptions { BaseUrl = "https://auth.example.com", ServiceAccountToken = "t", Audience = "proj-b" },
+            new RediensIamOptions { BaseUrl = "https://auth.example.com", ServiceAccountToken = "t", ProjectId = "proj-b" },
             cache);
 
         var a = await clientA.IntrospectAsync("the-same-token");
@@ -213,7 +213,7 @@ public class AudienceBindingTests
     [Fact]
     public void Timeout_option_is_applied_when_the_client_is_constructed_directly()
     {
-        var http = new HttpClient(new StubHandler("""{"active":true,"ver":1}"""))
+        var http = new HttpClient(new StubHandler("""{"active":true,"ver":2}"""))
         {
             BaseAddress = new Uri("https://auth.example.com/"),
         };
@@ -222,7 +222,7 @@ public class AudienceBindingTests
         {
             BaseUrl             = "https://auth.example.com",
             ServiceAccountToken = "t",
-            Audience            = Audience,
+            ProjectId           = ProjectId,
             Timeout             = TimeSpan.FromSeconds(5),
         }, new MemoryCache(new MemoryCacheOptions()));
 
@@ -251,7 +251,7 @@ public class AudienceBindingTests
         services.AddRediensIam(o =>
         {
             o.BaseUrl             = configured;
-            o.Audience            = "resource-server";
+            o.ProjectId            = "resource-server";
             o.ServiceAccountToken = "rediens_pat_x";
         });
 

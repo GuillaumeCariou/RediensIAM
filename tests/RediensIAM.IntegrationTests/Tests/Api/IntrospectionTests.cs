@@ -11,10 +11,10 @@ namespace RediensIAM.IntegrationTests.Tests.Api;
 [Collection("RediensIAM")]
 public class IntrospectionTests(TestFixture fixture)
 {
-    // `aud` names the tenant the calling resource server serves. Mandatory since the P-06 fix.
-    private static FormUrlEncodedContent Form(string token, Guid aud) =>
+    // `project_id` names the tenant the calling resource server serves. Mandatory since the P-06 fix.
+    private static FormUrlEncodedContent Form(string token, Guid projectId) =>
         new([new KeyValuePair<string, string>("token", token),
-             new KeyValuePair<string, string>("aud", aud.ToString()),
+             new KeyValuePair<string, string>("project_id", projectId.ToString()),
              new KeyValuePair<string, string>("token_type_hint", "access_token")]);
 
     /// <summary>Creates a service account with a PAT — the credential a gateway presents.</summary>
@@ -182,7 +182,7 @@ public class IntrospectionTests(TestFixture fixture)
             @namespace = Roles.KetoOrgsNamespace,
             @object    = org.Id.ToString(),
             relation   = Roles.KetoOrgAdminRelation,
-            aud        = org.Id,
+            project_id = org.Id,
         });
         allowed.StatusCode.Should().Be(HttpStatusCode.OK);
         (await allowed.Content.ReadFromJsonAsync<JsonElement>())
@@ -197,7 +197,7 @@ public class IntrospectionTests(TestFixture fixture)
                 @namespace = Roles.KetoOrgsNamespace,
                 @object    = org.Id.ToString(),
                 relation   = Roles.KetoOrgAdminRelation,
-                aud        = org.Id,
+                project_id = org.Id,
             });
 
             (await denied.Content.ReadFromJsonAsync<JsonElement>())
@@ -222,7 +222,7 @@ public class IntrospectionTests(TestFixture fixture)
             @namespace = Roles.KetoOrgsNamespace,
             @object    = org.Id.ToString(),
             relation   = Roles.KetoOrgAdminRelation,
-            aud        = org.Id,
+            project_id = org.Id,
         });
 
         (await res.Content.ReadFromJsonAsync<JsonElement>())

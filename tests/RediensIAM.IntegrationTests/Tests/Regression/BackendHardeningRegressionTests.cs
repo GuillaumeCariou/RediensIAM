@@ -175,10 +175,10 @@ public class BackendHardeningRegressionTests(TestFixture fixture)
         return (fixture.ClientWithToken(raw), org, list);
     }
 
-    // `aud` is mandatory since the P-06 fix — the resource server names the tenant it serves.
-    private static FormUrlEncodedContent Form(string token, Guid aud) =>
+    // `project_id` is mandatory since the P-06 fix — the resource server names the tenant it serves.
+    private static FormUrlEncodedContent Form(string token, Guid projectId) =>
         new([new KeyValuePair<string, string>("token", token),
-             new KeyValuePair<string, string>("aud", aud.ToString())]);
+             new KeyValuePair<string, string>("project_id", projectId.ToString())]);
 
     [Fact]
     public async Task Introspect_TokenFromAnotherOrganisation_IsNotResolved()
@@ -270,7 +270,7 @@ public class BackendHardeningRegressionTests(TestFixture fixture)
             @namespace = Roles.KetoSystemNamespace,
             @object    = Roles.KetoSystemObject,
             relation   = Roles.KetoSuperAdminRelation,
-            aud        = org.Id,
+            project_id = org.Id,
         });
 
         (await res.Content.ReadFromJsonAsync<JsonElement>())

@@ -31,8 +31,6 @@ public sealed record TokenInfo
     [JsonPropertyName("client_id")]          public string? ClientId { get; init; }
     [JsonPropertyName("is_service_account")] public bool IsServiceAccount { get; init; }
 
-    /// <summary>Echo of the <c>aud</c> this client sent, on an active answer.</summary>
-    [JsonPropertyName("aud")]                public string? Audience { get; init; }
 
     /// <summary>
     /// Contract version of the answer; 0 means the field was absent. See
@@ -77,16 +75,21 @@ public sealed class RediensIamOptions
 
     /// <summary>
     /// The tenant <b>this resource server serves</b> — the project id it fronts, or the
-    /// organisation id if it fronts a whole organisation. Sent as <c>aud</c> on every
+    /// organisation id if it fronts a whole organisation. Sent as <c>project_id</c> on every
     /// introspection and authorisation call, and mandatory at the server since contract
-    /// <c>ver: 1</c>.
+    /// <c>ver: 2</c>.
+    ///
+    /// <para>This is the same identifier that gives the front <c>client_&lt;project_id&gt;</c>, so
+    /// one value configures both halves of an integration. It was called <c>Audience</c> and
+    /// travelled the wire as <c>aud</c> until contract 2 — one value, two names, and a deployment
+    /// test whose whole job was to check the two agreed.</para>
     ///
     /// <para>Required, with deliberately no default. A default would be a guess about which
     /// tenant this service belongs to, and a wrong guess is P-06 exactly: a deployment-scoped
     /// service-account credential resolving <i>every</i> tenant's token as active, leaving the
     /// resource server to remember a <c>project_id</c> comparison nobody remembers.</para>
     /// </summary>
-    public string Audience { get; set; } = "";
+    public string ProjectId { get; set; } = "";
 
     /// <summary>
     /// How long a positive introspection is reused. Keep it short — it is the upper bound on how
@@ -99,7 +102,7 @@ public sealed class RediensIamOptions
     /// <summary>
     /// Throws unless these options can produce a working client, and returns them.
     ///
-    /// <para>Called at construction, never on the first request: a missing audience or a
+    /// <para>Called at construction, never on the first request: a missing project id or a
     /// cleartext <see cref="BaseUrl"/> is a deployment mistake, and it should stop the process at
     /// startup rather than turn into 400s once traffic arrives.</para>
     /// </summary>
@@ -110,11 +113,11 @@ public sealed class RediensIamOptions
             throw new ArgumentException("RediensIamOptions.BaseUrl is required.");
         if (string.IsNullOrWhiteSpace(ServiceAccountToken))
             throw new ArgumentException("RediensIamOptions.ServiceAccountToken is required.");
-        if (string.IsNullOrWhiteSpace(Audience))
+        if (string.IsNullOrWhiteSpace(ProjectId))
             throw new ArgumentException(
-                "RediensIamOptions.Audience is required: name the project id this resource server " +
+                "RediensIamOptions.ProjectId is required: name the project id this resource server " +
                 "serves, or its organisation id if it fronts a whole organisation. RediensIAM sends " +
-                "it as aud and refuses a request without one (400 audience_required).");
+                "it as project_id and refuses a request without one (400 project_id_required).");
 
         // The service-account credential and every token being introspected ride on BaseUrl, so
         // cleartext there hands an on-path attacker both. http is accepted only on a loopback
@@ -144,14 +147,14 @@ public sealed class RediensIamClient
     /// Contract version this client requires on every answer.
     ///
     /// <para>RediensIAM stamps <c>ver</c> on every answer it gives, including
-    /// <c>{"active": false}</c>. A server older than this silently discards the unknown <c>aud</c>
-    /// this client sends and answers exactly as it always did — so sending <c>aud</c> proves
-    /// nothing on its own, and only the presence of <c>ver</c> distinguishes a server that
-    /// enforced the audience from one that ignored it. Failing on an absent <c>ver</c> is the
+    /// <c>{"active": false}</c>. A server older than this silently discards the unknown
+    /// <c>project_id</c> this client sends and answers exactly as it always did — so sending it
+    /// proves nothing on its own, and only <c>ver</c> distinguishes a server that enforced the
+    /// binding from one that ignored it. Failing on an absent <c>ver</c> is the
     /// point: the alternative is believing an answer is scoped to one tenant when it was scoped
     /// to the whole deployment.</para>
     /// </summary>
-    public const int RequiredContractVersion = 1;
+    public const int RequiredContractVersion = 2;
 
     private readonly HttpClient http;
     private readonly RediensIamOptions options;
@@ -160,7 +163,7 @@ public sealed class RediensIamClient
 
     /// <summary>
     /// Options are validated here rather than on the first request, so a service with no declared
-    /// audience — or a cleartext base URL — fails to start instead of failing under load.
+    /// project id — or a cleartext base URL — fails to start instead of failing under load.
     /// </summary>
     /// <exception cref="ArgumentException"><paramref name="options"/> is unusable.</exception>
     public RediensIamClient(
@@ -205,7 +208,7 @@ public sealed class RediensIamClient
             [
                 new KeyValuePair<string, string>("token", token),
                 new KeyValuePair<string, string>("token_type_hint", "access_token"),
-                new KeyValuePair<string, string>("aud", options.Audience),
+                new KeyValuePair<string, string>("project_id", options.ProjectId),
             ]),
         };
         Authorize(request);
@@ -246,7 +249,7 @@ public sealed class RediensIamClient
                 @namespace,
                 @object,
                 relation,
-                aud = options.Audience,
+                project_id = options.ProjectId,
             }),
         };
         Authorize(request);
@@ -261,7 +264,7 @@ public sealed class RediensIamClient
     }
 
     /// <summary>
-    /// Refuses an answer that did not come from an audience-enforcing server. See
+    /// Refuses an answer that did not come from a tenant-enforcing server. See
     /// <see cref="RequiredContractVersion"/>.
     /// </summary>
     private static void RequireContract(int ver)
@@ -270,7 +273,7 @@ public sealed class RediensIamClient
 
         throw new InvalidOperationException(
             $"RediensIAM answered with ver={ver}, expected at least {RequiredContractVersion}: this " +
-            "server predates mandatory audience binding and silently ignored the aud this client " +
+            "server predates mandatory project_id binding and silently ignored the project_id this " +
             "sent. Upgrade RediensIAM before trusting its answers.");
     }
 
@@ -282,15 +285,15 @@ public sealed class RediensIamClient
 
     // Cache on a hash, never the token itself: cache keys end up in dumps and diagnostics.
     //
-    // The audience and the base URL are part of the key because they are part of the question. One
-    // token introspected for two audiences has two different answers — that is what `aud` is for —
+    // The project id and the base URL are part of the key because they are part of the question. One
+    // token introspected for two tenants has two different answers — that is what project_id is for —
     // and IMemoryCache is resolved from the host, so a multi-tenant gateway shares one instance
     // across its per-tenant clients. Keyed on the token alone, tenant A's `active: true` was served
     // to tenant B, roles and all, without a round trip.
     private string CacheKey(string token)
     {
         var digest = System.Security.Cryptography.SHA256.HashData(
-            System.Text.Encoding.UTF8.GetBytes($"{options.BaseUrl}\n{options.Audience}\n{token}"));
+            System.Text.Encoding.UTF8.GetBytes($"{options.BaseUrl}\n{options.ProjectId}\n{token}"));
         return "rediensiam:" + Convert.ToHexString(digest);
     }
 

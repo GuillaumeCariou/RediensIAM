@@ -84,7 +84,7 @@ rather than mid-flow. Every failure throws `RediensIamError` with `code === 'con
 | `projectId` | `string` | no | Sent as `project_id` on the authorization request. RediensIAM uses the client's *registered* project regardless; this only makes the login page render the right theme sooner. |
 | `apiOrigins` | `string[]` | no | Extra origins `iam.fetch()` may send the bearer to. Same scheme rule as `issuer`. |
 
-There is deliberately **no audience option** — see [What this SDK does not do](#what-this-sdk-does-not-do).
+There is deliberately **no `project_id` option** — see [What this SDK does not do](#what-this-sdk-does-not-do).
 
 Construction throws when:
 

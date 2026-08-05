@@ -17,8 +17,8 @@ public static class RediensIamServiceCollectionExtensions
     /// {
     ///     o.BaseUrl             = "https://auth.example.com";
     ///     o.ServiceAccountToken = builder.Configuration["RediensIAM:Token"]!;
-    ///     // The tenant this service serves. Required — see RediensIamOptions.Audience.
-    ///     o.Audience            = builder.Configuration["RediensIAM:ProjectId"]!;
+    ///     // The tenant this service serves. Required — see RediensIamOptions.ProjectId.
+    ///     o.ProjectId           = builder.Configuration["RediensIAM:ProjectId"]!;
     /// });
     /// </code>
     /// </summary>

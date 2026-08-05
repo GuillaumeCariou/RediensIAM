@@ -32,14 +32,14 @@ using RediensIAM.Client;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// The tenant this service serves — the same value goes in Audience and in every role check.
+// The tenant this service serves — the same value goes in ProjectId and in every role check.
 var projectId = builder.Configuration["RediensIAM:ProjectId"]!;
 
 builder.Services.AddRediensIam(o =>
 {
     o.BaseUrl             = "https://auth.example.com";
     o.ServiceAccountToken = builder.Configuration["RediensIAM:Token"]!;
-    o.Audience            = projectId;   // required, no default
+    o.ProjectId           = projectId;   // required, no default
 });
 
 var app = builder.Build();
@@ -79,7 +79,7 @@ handler resolves `RediensIamClient` from the container.
 |---|---|---|---|---|
 | `BaseUrl` | `string` | yes | `""` | Base URL of the RediensIAM public API. Must be `https`, except on a loopback host. |
 | `ServiceAccountToken` | `string` | yes | `""` | The credential this service presents. A service-account PAT (`rediens_pat_…`) is the simplest option; a plain user token is refused by the server. |
-| `Audience` | `string` | yes | `""` | The tenant *this resource server serves*: the project id it fronts, or the organisation id if it fronts a whole organisation. Sent as `aud` on every call. |
+| `ProjectId` | `string` | yes | `""` | The tenant *this resource server serves*: the project id it fronts, or the organisation id if it fronts a whole organisation. Sent as `project_id` on every call — the same identifier that gives the front `client_<project_id>`. |
 | `CacheDuration` | `TimeSpan` | no | 30 s | How long a positive introspection is reused. `TimeSpan.Zero` disables caching. |
 | `Timeout` | `TimeSpan` | no | 5 s | Applied to the `HttpClient`. |
 
@@ -94,14 +94,14 @@ registration so the failure lands at startup with the registration in the stack 
 | `BaseUrl is not an absolute URL` | relative |
 | `BaseUrl must be https — http is accepted only on localhost` | cleartext to a non-loopback host |
 | `ServiceAccountToken is required` | unset or whitespace |
-| `Audience is required: name the project id this resource server serves…` | unset or whitespace |
+| `ProjectId is required: name the project id this resource server serves…` | unset or whitespace |
 
 Loopback is `Uri.IsLoopback`: `localhost`, all of `127.0.0.0/8`, and `::1`. That is the whole
 opt-out; there is deliberately no flag to disable the scheme check, because a flag gets set in
 production too. The rule differs slightly per SDK — the browser SDK additionally accepts any
 `*.localhost` host, and the Rust client accepts `localhost` and `127.0.0.1` only.
 
-### Why `Audience` has no default
+### Why `ProjectId` has no default
 
 A default would be a guess about which tenant this service belongs to, and a wrong guess is finding
 P-06 exactly. Scoping used to come from *the caller's* organisation — and a multi-tenant gateway
@@ -110,9 +110,9 @@ stayed deliberately unscoped. One gateway credential therefore resolved **every*
 the deployment as `active: true`, and each resource server was expected to compare `project_id`
 against its own configuration afterwards. Nothing enforced that, and no SDK had a field for it.
 
-`Audience` is that field. The server answers `400 {"error":"audience_required","ver":1}` to any
+`ProjectId` is that field. The server answers `400 {"error":"project_id_required","ver":2}` to any
 caller that omits it. Full migration notes:
-[`sdk/README.md`](../../README.md#aud-is-now-a-required-sdk-option).
+[`sdk/README.md`](../../README.md#project_id-is-now-a-required-sdk-option).
 
 ---
 
@@ -147,7 +147,7 @@ Both calls throw rather than answering:
 
 | Exception | When |
 |---|---|
-| `HttpRequestException` | Non-2xx from RediensIAM (`EnsureSuccessStatusCode`), including `400 audience_required` and `403 service_account_required`. |
+| `HttpRequestException` | Non-2xx from RediensIAM (`EnsureSuccessStatusCode`), including `400 project_id_required` and `403 service_account_required`. |
 | `InvalidOperationException` | An empty body — a broken server, not an inactive token — or an answer whose `ver` is below `RequiredContractVersion`. |
 | `TaskCanceledException` | `Timeout` elapsed, or `ct` was cancelled. |
 | `JsonException` | A body that is not the documented shape. |
@@ -168,7 +168,6 @@ acceptable is the caller's decision, not the SDK's.
 | `Roles` | `IReadOnlyList<string>` | `roles` | Never null. An explicit `"roles": null` from the server is normalised to an empty list on both get and init. |
 | `ClientId` | `string?` | `client_id` | |
 | `IsServiceAccount` | `bool` | `is_service_account` | |
-| `Audience` | `string?` | `aud` | Echo of the `aud` this client sent, on an active answer. |
 | `Ver` | `int` | `ver` | Contract version; `0` means the field was absent, and such an answer never reaches you. |
 
 | Member | Signature | Meaning |
@@ -257,18 +256,18 @@ instead.
 
 ## What this SDK enforces, and why
 
-Pinned by `../RediensIAM.Client.Tests/AudienceBindingTests.cs`.
+Pinned by `../RediensIAM.Client.Tests/ProjectBindingTests.cs`.
 
 **`BaseUrl` must be `https`, except on loopback.** The service-account credential and every token
 being introspected ride on that URL, so cleartext hands an on-path attacker both.
 
-**The audience is required, and it is checked at construction.** A resource server with no declared
+**The project id is required, and it is checked at construction.** A resource server with no declared
 tenant is a deployment mistake; it should stop the process at startup with a message naming the
 fix, not turn into a 400 on every request once traffic arrives.
 
-**Every answer must carry `ver >= 1`.** This is the load-bearing half of the audience change. A
-RediensIAM older than contract version 1 does **not** reject the `aud` you send — it silently
-discards the unknown form field and answers exactly as it always did. An SDK that only *sent* `aud`
+**Every answer must carry `ver >= 2`.** This is the load-bearing half of the tenant-binding change. A
+RediensIAM older than contract version 2 does **not** reject the `project_id` you send — it silently
+discards the unknown form field and answers exactly as it always did. An SDK that only *sent* `project_id`
 could therefore not tell an enforcing server from an ignoring one, and would report success while
 being bound to nothing. `ver` is present on every answer from an upgraded server, including
 `{"active": false}` and the 400, so requiring it turns that silent failure into a loud one.
@@ -278,16 +277,16 @@ every answer, by design:
 
 ```
 RediensIAM answered with ver=0, expected at least 1: this server predates mandatory
-audience binding and silently ignored the aud this client sent. Upgrade RediensIAM
+project_id binding and silently ignored the project_id it sent. Upgrade RediensIAM
 before trusting its answers.
 ```
 
 Upgrade the server first, or accept a window in which this service fails closed. There is no window
-of 400s in the other direction — the old server ignores the `aud` a new SDK sends.
+of 400s in the other direction — the old server ignores the `project_id` a new SDK sends.
 
 **Cache keys are a SHA-256 digest of `BaseUrl`, `Audience` and the token — never the token
-itself.** Keys surface in dumps and diagnostics, and the audience is part of the *question*: one
-token introspected for two audiences has two different answers. `IMemoryCache` is resolved from the
+itself.** Keys surface in dumps and diagnostics, and the project id is part of the *question*: one
+token introspected for two tenants has two different answers. `IMemoryCache` is resolved from the
 host, so a multi-tenant gateway shares one instance across its per-tenant clients; keyed on the
 token alone, tenant A's `active: true` was served to tenant B, roles and all, without a round trip.
 
@@ -330,7 +329,7 @@ Listed so you do not go looking.
 - **No local JWT validation.** No JWKS fetch, no signature check, no `exp` arithmetic. That is the
   point: a signature proves a token was issued, not that it is still honoured.
 - **No tenant comparison on your behalf.** `IntrospectAsync` answering `Active == true` means the
-  token is usable for the audience you declared. Comparing `OrgId` or `ProjectId` against the
+  token is usable for the tenant you declared. Comparing `OrgId` or `ProjectId` against the
   resource being served, and checking roles with `HasProjectRole`, is still yours to write.
 - **No retries, no backoff, no circuit breaker.** One request per call. Compose
   `IHttpClientFactory` policies on the typed client if you want them.
@@ -365,8 +364,8 @@ Full walkthrough: [`docs/INTEGRATION.md`](../../../docs/INTEGRATION.md).
 
 ## Tests
 
-`../RediensIAM.Client.Tests` covers the audience reaching the wire, the construction-time checks,
-the `ver` refusal, the null-roles answer, per-audience cache isolation and the timeout. Run from the
+`../RediensIAM.Client.Tests` covers the project id reaching the wire, the construction-time checks,
+the `ver` refusal, the null-roles answer, per-project cache isolation and the timeout. Run from the
 repository root:
 
 ```bash

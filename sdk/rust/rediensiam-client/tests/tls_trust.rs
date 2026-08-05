@@ -73,7 +73,7 @@ async fn serve_once_tls(pki: &Pki) -> SocketAddr {
         let mut buffer = [0u8; 2048];
         let _ = tls.read(&mut buffer).await;
 
-        const BODY: &str = r#"{"active":true,"ver":1}"#;
+        const BODY: &str = r#"{"active":true,"ver":2}"#;
         let response = format!(
             "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{BODY}",
             BODY.len()
@@ -89,7 +89,7 @@ fn client(addr: SocketAddr) -> Result<RediensIamClient, Error> {
     RediensIamClient::new(Config {
         base_url: format!("https://{addr}"),
         service_account_token: "rediens_pat_x".into(),
-        audience: "proj-1".into(),
+        project_id: "proj-1".into(),
         ..Default::default()
     })
 }

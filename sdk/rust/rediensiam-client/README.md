@@ -110,9 +110,9 @@ stayed deliberately unscoped. One gateway credential therefore resolved **every*
 the deployment as `active: true`, and each resource server was expected to compare `project_id`
 against its own configuration afterwards. Nothing enforced that, and no SDK had a field for it.
 
-`audience` is that field. The server answers `400 {"error":"audience_required","ver":1}` to any
+`audience` is that field. The server answers `400 {"error":"project_id_required","ver":2}` to any
 caller that omits it. Full migration notes:
-[`sdk/README.md`](../../README.md#aud-is-now-a-required-sdk-option).
+[`sdk/README.md`](../../README.md#project_id-is-now-a-required-sdk-option).
 
 ---
 
@@ -160,7 +160,7 @@ Implements `std::error::Error` through `thiserror`.
 | Variant | When | Note |
 |---|---|---|
 | `Transport(reqwest::Error)` | Connection failure, DNS, TLS rejection, timeout — and also a response body that does not deserialise, since decoding goes through `reqwest`. | `From<reqwest::Error>` is derived. Treating this as "the IAM is unreachable" is right for the first group and optimistic for the last; check `source()` if the distinction matters to you. |
-| `Api { status: u16, body: String }` | Any non-2xx from RediensIAM, with the body attached. `400 audience_required` and `403 service_account_required` arrive here. | |
+| `Api { status: u16, body: String }` | Any non-2xx from RediensIAM, with the body attached. `400 project_id_required` and `403 service_account_required` arrive here. | |
 | `Config(String)` | A missing or unusable option, from `new()`. | |
 | `ServerTooOld { found: u32 }` | The answer's `ver` was below `CONTRACT_VERSION`. | See below. |
 
@@ -228,7 +228,7 @@ fix, not return 400s under load. The wire tests assert that the field reaches th
 the form body and the JSON body — the whole change is worthless if it is configured and then not
 sent.
 
-**Every answer must carry `ver >= 1`.** This is the load-bearing half of the audience change. A
+**Every answer must carry `ver >= 2`.** This is the load-bearing half of the audience change. A
 RediensIAM older than contract version 1 does **not** reject the `aud` you send — it silently
 discards the unknown field and answers exactly as it always did. A client that only *sent* `aud`
 could therefore not tell an enforcing server from an ignoring one, and would report success while

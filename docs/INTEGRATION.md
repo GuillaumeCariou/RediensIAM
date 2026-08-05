@@ -213,16 +213,16 @@ service accounts that must *act*, not to unlock introspection.
 curl -s -X POST "$IAM/api/introspect" \
   -H "Authorization: Bearer $SA_PAT" \
   --data-urlencode "token=$USER_TOKEN" \
-  --data-urlencode "aud=$PROJECT_ID"
+  --data-urlencode "project_id=$PROJECT_ID"
 ```
 
 An unusable token answers `{"active": false}` with a 200 — never an error status, so a caller
 cannot distinguish malformed from revoked from expired.
 
-### `aud` is mandatory — read this before you upgrade
+### `project_id` is mandatory — read this before you upgrade
 
-**Breaking change (contract `ver: 1`).** `aud` names the tenant *your resource server serves*.
-Omit it and you get `400 {"error": "audience_required", "ver": 1}`. There is no grace period and
+**Breaking change (contract `ver: 2`).** `project_id` names the tenant *your resource server serves*.
+Omit it and you get `400 {"error": "project_id_required", "ver": 2}`. There is no grace period and
 no opt-out: **a resource server that declares no audience is no longer served.**
 
 Why the break was worth making. Introspection previously answered for whatever token you handed
@@ -235,13 +235,13 @@ nothing made the *tenant* check safe by construction. Now the tenant check is th
 
 | Field | Value |
 |---|---|
-| `aud` (request) | the project id your service serves, **or** the organisation id if you front a whole organisation |
-| `aud` (response) | echo of what you sent, on an active answer |
+| `project_id` (request) | the project id your service serves, **or** the organisation id if you front a whole organisation |
+| `project_id` (response) | echo of what you sent, on an active answer |
 | `ver` (response) | `1`, on **every** answer including `{"active": false}` and the 400 |
 
-A token is bound to `aud` when the value equals its `project_id`, equals its `org_id`, or appears
+A token is bound to `project_id` when the value equals its `project_id`, equals its `org_id`, or appears
 in its OAuth2 `aud` claim. A token whose `project_id` and `org_id` are both empty matches no
-audience and can only be introspected by naming an explicit `aud` claim minted onto it.
+audience and can only be introspected by naming an explicit OAuth2 `aud` claim minted onto it.
 
 **Migration.** If you use a backend SDK, steps 2 and 3 are done for you — upgrade the SDK, set
 the one new option, and jump to the symptom list. The raw-HTTP version:
@@ -249,15 +249,15 @@ the one new option, and jump to the symptom list. The raw-HTTP version:
 1. Find every caller of `/api/introspect` and `/api/authorize`. Each one serves exactly one
    tenant; write that tenant's id into its configuration. If a caller genuinely serves several,
    it already knows which one each request is for — send that.
-2. Add `aud` to the request. Deploy the callers **before** the server, or accept a window of
+2. Add `project_id` to the request. Deploy the callers **before** the server, or accept a window of
    400s: the old server ignores the unknown field, so adding it early is safe.
-3. Check `ver >= 1` in the response. This is the point of `ver`: a server that has not been
-   upgraded silently discards the `aud` you sent and answers without `ver`, so a client that
+3. Check `ver >= 2` in the response. This is the point of `ver`: a server that has not been
+   upgraded silently discards the `project_id` you sent and answers without `ver`, so a client that
    requires `ver` fails closed instead of believing it is bound when it is not.
 
 **Symptom you will see if you skip this:** every introspection returns
-`400 audience_required`, or — worse and quieter — an `{"active": false}` on a token you know is
-good, which means the `aud` you sent names a different tenant than the token belongs to.
+`400 project_id_required`, or — worse and quieter — an `{"active": false}` on a token you know is
+good, which means the `project_id` you sent names a different tenant than the token belongs to.
 
 > `token_type_hint` is **not** part of the request record. RFC 7662 §2.1 makes it an optional
 > lookup hint the server may ignore and must not reject a token over, and RediensIAM identifies
@@ -271,10 +271,10 @@ keeps the policy in RediensIAM instead of in every gateway:
 
 ```json
 { "token": "…", "namespace": "Organisations", "object": "<org-id>",
-  "relation": "org_admin", "aud": "<project-or-org-id>" }
+  "relation": "org_admin", "project_id": "<project-or-org-id>" }
 ```
 
-`aud` is mandatory here too, on the same terms as introspection.
+`project_id` is mandatory here too, on the same terms as introspection.
 
 **Also breaking: `object` is now tenant-scoped.** The object must belong to the tenant the answer
 is about — the caller's organisation, or, for a deployment-scoped caller, the organisation of the
@@ -295,11 +295,11 @@ In practice, use a backend SDK rather than raw HTTP — see
 [`../sdk/README.md`](../sdk/README.md#c). Both SDKs cache positive answers briefly and never
 cache negative ones.
 
-> **The backend SDKs now send `aud`, and require it.** `RediensIamOptions.Audience` (C#) and
-> `Config::audience` (Rust) are **required options with no default** — a client constructed
+> **The backend SDKs now send `project_id`, and require it.** `RediensIamOptions.ProjectId` (C#) and
+> `Config::project_id` (Rust) are **required options with no default** — a client constructed
 > without one throws at construction rather than 400-ing on its first request. Both also refuse
 > any answer that arrives without `ver`, which is how they detect a server that silently ignored
-> the `aud` they sent. Full migration in [`../sdk/README.md`](../sdk/README.md#aud-is-now-a-required-sdk-option).
+> the `project_id` they sent. Full migration in [`../sdk/README.md`](../sdk/README.md#project_id-is-now-a-required-sdk-option).
 >
 > The browser SDK is unaffected: it never calls these endpoints, because introspection needs a
 > service-account credential and anything shipped to a browser is readable by anyone with
@@ -326,7 +326,7 @@ Bodies are `snake_case`. Records cited so you can re-check against the source.
 | `POST /service-accounts/{id}/roles` | access to the SA | `{role, org_id?, project_id?}` | `AssignSaRoleRequest` |
 | `POST /admin/organizations/{id}/admins` | SuperAdmin | `{user_id, role, scope_id?}` | `AssignOrgAdminRequest` |
 | `POST /api/introspect` | service account | **form**: `token`, `aud` (required) | `IntrospectionRequest` |
-| `POST /api/authorize` | service account | `{token, namespace, object, relation, aud}` — `aud` required | `AuthorizationRequest` |
+| `POST /api/authorize` | service account | `{token, namespace, object, relation, aud}` — `project_id` required | `AuthorizationRequest` |
 | `PATCH /admin/projects/{id}` | SuperAdmin | see [MFA](#turning-require_mfa-off) | `AdminUpdateProjectRequest` |
 
 `role` values are validated against `SystemAdminController.KnownManagementRoles` — `super_admin`,
@@ -452,6 +452,6 @@ Recorded here because each one looks like an integration bug when you hit it. Cu
 4. **`POST /service-accounts` with only `{"name": …}`.** `user_list_id` is required → 400.
 5. **Assigning a role so a service account may introspect.** Unnecessary.
 6. **Sending JSON to `/api/introspect`.** It is form-encoded.
-6b. **Omitting `aud`.** Required since contract `ver: 1`. 400, every time.
+6b. **Omitting `project_id`.** Required since contract `ver: 2`. 400, every time.
 7. **Matching a bare tenant role name.** `ext.roles` carries tenant roles as
    `{project_id}/{name}`; `roles.contains("admin")` matches nothing. See the warning above.
