@@ -8,6 +8,74 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.6.0] — 2026-08-05
+
+**Two breaking changes, and one component removed.** Read both sections before upgrading: the
+wire contract moves to `ver: 2`, and the deployment loses Dragonfly — which means a schema
+migration and a chart change in the same step.
+
+### Breaking — one value, one name: `aud` is now `project_id`
+
+The tenant a resource server declares it serves travelled the stack under **seven** names:
+`project_id` (the API), `client_<project_id>` (the OIDC client), `clientId` (the browser SDK),
+`Audience` / `audience` (the backend SDKs), `aud` (the wire), `IAM_AUDIENCE` (the gateway) and
+`OIDC_PROJECT_ID` (the infrastructure). It is one value. A deployment needed a test whose entire
+job was to check that two of those names agreed — and a test that verifies a tautology is a naming
+bug with extra steps.
+
+- **`/api/introspect` and `/api/authorize` take `project_id`, not `aud`.** Missing or blank is
+  `400 {"error":"project_id_required","ver":2}`. There is no alias and no grace period.
+- **The introspection response no longer echoes the audience.** `project_id` in the answer is the
+  *token's* project, which is what it always was; echoing back the value you just sent was
+  tautological once the field had the same name. `ver` is what tells a client the server enforced
+  the binding, and it is what the SDKs check.
+- **`ver` is `2`.** The backend SDKs refuse any answer below it, which is how they detect a server
+  that silently ignored the field.
+- **SDK options renamed.** `RediensIamOptions.Audience` → `ProjectId`; `Config::audience` →
+  `project_id`. Still required, still no default, still throws at construction.
+- **`/api/introspect` binds its two form fields as explicit action parameters.** Form binding
+  resolves a record through its *constructor*, so `[property: FromForm(Name = "project_id")]`
+  lands where the binder never looks — the same silent failure that made `token_type_hint` a field
+  nobody could set. Two parameters, two explicit names.
+- The audit actions are `api.introspect.project_mismatch` and `api.authorize.project_mismatch`.
+
+**What you must change.** One line per backend service: rename the option, set it to the project
+id you already hold. Deploy the callers before the server, or accept a window of 400s.
+
+### Breaking — Dragonfly is gone; its contents are in PostgreSQL
+
+The deployment ran two datastores where one would do, and the second carried far more than a
+cache: the DataProtection key ring that signs session cookies, the pending-MFA session, the OAuth2
+social `state`, the TOTP anti-replay set, the lockout counters and the webhook queue. Ten of its
+thirteen uses were shared state or security controls; three were cache. None of it survives a
+replica keeping its own copy.
+
+- **New tables** — `shared_state`, `rate_counters`, `webhook_pending`, `data_protection_keys`.
+  Migration `20260805154942_DropDragonflySharedStateToPostgres`. All four are declared
+  deployment-global in `files/rls.sql`; they carry no `OrgId` and belong to no tenant.
+- **`Cache__ConnectionString`, `Cache__TlsCaFile`, `Cache__InstanceName` are gone.**
+- **`Cache__PatTtlMinutes` → `Security__PatCacheTtlMinutes`.** It never was a cache setting: it is
+  the ceiling on how long a revoked personal access token keeps working. Liveness — account
+  active, organisation not suspended, token unexpired — is still re-checked on *every* hit,
+  whatever this says.
+- **`rediensiam.secrets.cacheUrl`, `rediensiam.dragonfly.*` and the `dragonfly-password` secret key
+  are gone** from the chart, along with the Dragonfly Deployment, its Service, its NetworkPolicy
+  and its TLS Certificate.
+- The lockout counter is now `INSERT … ON CONFLICT DO UPDATE … RETURNING` — atomic by definition,
+  which is the property the Lua script existed to buy, without `SCRIPT LOAD` or EVALSHA.
+
+**Five defects went with the component.** Two multiplexers to the same server; `Cache__InstanceName`
+prefixing only the `IDistributedCache` half of the keys, so two deployments sharing a Dragonfly
+still shared `otp:`, `pat:`, `rate:` and the webhook queue; a health check that probed only one of
+the two connections; `IsConnected` without a `PING`; and a DataProtection prefix written as a
+literal rather than read from the setting.
+
+**Upgrade order.** The migration runs at startup (`Database__MigrateOnStartup`, default true).
+Dragonfly holds no durable data, so nothing is migrated *out* of it — but the DataProtection key
+ring restarts empty, which invalidates every session exactly once. Plan the rollout accordingly.
+
+---
+
 ## [0.5.0] — 2026-08-02
 
 **Breaking:** signing in now creates an SSO session. Deployments that want a password at every
