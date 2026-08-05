@@ -57,3 +57,10 @@ sdk/typescript/**/node_modules/
 findings.md
 progress.md
 task_plan.md
+
+# A directory literally named `bin\Debug` — a Windows path that reached a Linux
+# filesystem as one name. It is not matched by `**/bin`, so Docker copies it into
+# the image, MSBuild cannot enumerate it, and every default glob reaches csc as a
+# literal: `CS2021: File name '**/*.cs' is empty…`. It broke the image build once
+# before (e170fcf) and came back through a `git add -A`.
+*\\*

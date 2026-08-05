@@ -29,3 +29,6 @@ deploy/rediensiam/values*.override.yaml
 .sonar.env
 .sonarqube
 *.bak
+
+# See .gitignore: a path with a backslash breaks the image build.
+*\\*

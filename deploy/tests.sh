@@ -379,11 +379,16 @@ done
 # `-o "bin\Debug\net10.0"` on Linux and then swept into a commit by `git add -A`. MSBuild reads the
 # backslash as a separator while expanding the SDK's default globs, so `**/*.cs` stayed literal and
 # `dotnet publish` failed with CS2021/CS2001 inside the container while the host build was fine.
-BACKSLASHED="$(cd "${ROOT}" && git ls-files | grep -F '\\' | head -3)"
+#
+# Tracked is not the test that matters. `docker build` copies the WORKING TREE, so an untracked
+# `bin\Debug` breaks the image just as thoroughly — and this check passed the day it happened,
+# because the directory was still untracked when it ran and only became tracked a `git add -A`
+# later. Walk the tree, not the index.
+BACKSLASHED="$(cd "${ROOT}" && find . -name '*\\*' -not -path './.git/*' | head -3)"
 if [ -n "${BACKSLASHED}" ]; then
-  fail "no tracked path contains a backslash" "${BACKSLASHED}"
+  fail "no path contains a backslash" "${BACKSLASHED}"
 else
-  pass "no tracked path contains a backslash"
+  pass "no path contains a backslash"
 fi
 
 # ── the docs must not describe a stack that was removed ──────────────────────
