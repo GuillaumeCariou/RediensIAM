@@ -3,6 +3,18 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { APP_URL, CONSOLE_URL } from './playwright.config';
 
+/**
+ * The admin ingress serves a certificate cert-manager signed for itself, and Node's fetch refuses
+ * it — `ignoreHTTPSErrors` in the config governs the browser, not this file, so the probe below
+ * failed while `curl -k` succeeded and the console was plainly up.
+ *
+ * Set on this process only — the Playwright runner, which talks to nothing but the deployment
+ * under test. It is not exported, not written to a file, and dies with the run. `undici`'s scoped
+ * dispatcher would be narrower still, but it is not a dependency of this package and adding one to
+ * relax a check is the wrong trade.
+ */
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SECRETS = path.resolve(HERE, '../../deploy/rediensiam/values.secret.yaml');
 

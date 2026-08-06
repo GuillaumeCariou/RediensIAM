@@ -239,6 +239,32 @@ decides *which* level to re-check, it is never the answer.
 }
 ```
 
+### Which pairs are accepted
+
+`project_id` names **the authentication boundary** — where the customer signs in — and not a
+possession of the organisation. The two look the same only in the model where every tenant has a
+project of its own. They come apart on a shared surface, which is the model
+[ORGANIZATIONS.md](ORGANIZATIONS.md) describes and the one §1 above is written for: one
+`yandee-client` project, one login page, one gateway, every customer behind it. A resource server
+declares a single `project_id` to `/api/introspect`, so a project per customer would mean a gateway
+per customer.
+
+A pair is therefore accepted when either is true:
+
+| | Accepted because |
+|---|---|
+| `project.org_id == org_id` | the project belongs to the organisation — one tenant, one project |
+| a member of `org_id` is on `project.assigned_user_list_id` | the organisation signs in through this surface — `user.org_id` is that membership, see [ORGANIZATIONS.md](ORGANIZATIONS.md) |
+
+Anything else is `project_not_in_org`, and a `project_id` naming nothing is `project_not_found`.
+The cross-tenant refusal is intact: an organisation with no account on a surface cannot be entered
+through it.
+
+**An organisation created a moment ago, with no user yet, is not impersonable.** That is deliberate
+rather than a gap — there is nothing inside it to look at, and the alternative is a rule that
+accepts any organisation for any project and so checks nothing. Give it its first member and it
+becomes reachable.
+
 ### `POST /admin/impersonate/{session_id}/revoke`
 
 Same authority. Ends the session immediately. Also callable by the operator who opened it.
@@ -469,7 +495,7 @@ curl -X POST https://iam.yandee.fr/api/manage/impersonate \
 | Field | Required | Notes |
 |---|---|---|
 | `org_id` | ✅ | the organisation being entered |
-| `project_id` | ✅ | must belong to `org_id`; the pair is checked in the database, never taken on trust |
+| `project_id` | ✅ | the authentication boundary. It must be one `org_id` can sign in on — either the project belongs to it, or a member of it is on the project's assigned user list. Checked in the database, never taken on trust. See [Which pairs are accepted](#which-pairs-are-accepted) |
 | `mode` | ✅ | `read` or `write`, decided here and never inferred from a role |
 | `reason` | ✅ | free text, lands in the tenant's own audit log. Whitespace is not a reason |
 | `ttl_seconds` | — | default 900, **hard ceiling 3600**; an over-long request is clamped, not refused |

@@ -89,8 +89,24 @@ public class ImpersonationController(
         if (body.UserId is not null)
             return BadRequest(new { error = "user_id_not_supported", detail = "sessions are organisation-scoped; see docs/IMPERSONATION.md" });
 
-        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == body.ProjectId && p.OrgId == body.OrgId);
+        // What this has to establish is "can this organisation authenticate on this project?", not
+        // "does this organisation own this project". The two coincide only where every tenant has a
+        // project of its own; they come apart on a shared surface, which is the model
+        // docs/ORGANIZATIONS.md describes and the one impersonation exists for — a single
+        // `yandee-client` project, one login page, one gateway, every customer behind it. Owning
+        // the project would have been false for every pair a caller could form there, so the route
+        // answered project_not_in_org to all of them.
+        //
+        // The assigned user list is the link that carries the answer in both models: a member of
+        // the target organisation on the project's list means that organisation signs in here.
+        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == body.ProjectId);
         if (project is null)
+            return BadRequest(new { error = "project_not_found" });
+
+        var reachable = project.OrgId == body.OrgId
+            || (project.AssignedUserListId is { } listId
+                && await db.Users.AnyAsync(u => u.UserListId == listId && u.OrgId == body.OrgId));
+        if (!reachable)
             return BadRequest(new { error = "project_not_in_org" });
 
         var (raw, session) = await impersonation.OpenAsync(new OpenSession(

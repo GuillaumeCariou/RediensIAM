@@ -108,17 +108,24 @@ public class SeedData
     /// re-authenticate, so tests need to know it.</summary>
     public const string DefaultPassword = "P@ssw0rd!Test";
 
+    /// <param name="orgId">
+    /// The organisation this user is a member of, when it differs from the one owning their list —
+    /// a shared login surface. Null keeps the historical behaviour, where the organisation comes
+    /// from the project. See <see cref="User.OrgId"/>.
+    /// </param>
     public async Task<User> CreateUserAsync(
         Guid   userListId,
         string? email    = null,
         string  password = DefaultPassword,
-        bool    active   = true)
+        bool    active   = true,
+        Guid?   orgId    = null)
     {
         email ??= UniqueEmail();
         var user = new User
         {
             Id             = Guid.NewGuid(),
             UserListId     = userListId,
+            OrgId          = orgId,
             Email          = email,
             Username       = email.Split('@')[0],
             Discriminator  = Random.Shared.Next(1000, 9999).ToString(),

@@ -116,7 +116,7 @@ public sealed class InstanceConfigurationProvider(InstanceBootstrapOptions opts)
     /// and an operator's manifest, the manifest is the one that was just edited.
     /// </para>
     /// </summary>
-    private static IReadOnlyDictionary<string, string?> ChangedSinceLastLoad(
+    private static Dictionary<string, string?> ChangedSinceLastLoad(
         Instance i, IReadOnlyDictionary<string, string?> env)
     {
         Dictionary<string, string?> previous;

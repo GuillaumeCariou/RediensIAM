@@ -8,6 +8,90 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.8.0] — 2026-08-06
+
+**Trois défauts remontés depuis `iam-handler-svc`, le service qui crée les organisations clientes
+en appelant l'API d'administration.** Aucun n'était contournable côté appelant : il relaie les 4xx
+tels quels et traduit tout le reste en 502, donc chacun de ces cas affichait « service
+indisponible » là où il fallait lire ce qui n'allait pas.
+
+### Corrigé — `POST /admin/organizations` refusait mal
+
+Un slug déjà pris répondait **500**. Rien ne le vérifiait avant l'insertion, l'index unique
+remontait en `DbUpdateException`, et deux clients dont le nom dérive le même slug est le cas
+NORMAL, pas le cas limite. Désormais **`409 slug_already_exists`**. Un corps sans `slug` répondait
+500 par la contrainte NOT NULL : **`400 slug_required`**. Un slug de 101 caractères passait par la
+même porte (`HasMaxLength(100)`) : **`400 slug_too_long`**, et **`400 name_required` /
+`name_too_long`** avec lui.
+
+C'est le raisonnement que `UserListOperations.AddUserAsync` tenait déjà pour l'unicité du courriel,
+appliqué mot pour mot.
+
+⚠️ Le test qui aurait dû l'attraper existait et disait `>= 400` — ce qu'un 500 satisfait. Il dit
+maintenant 409 et nomme l'erreur.
+
+### Corrigé — la même route laissait une `UserList` orpheline à chaque échec
+
+La liste de l'organisation était **commitée avant** l'organisation. Toute panne de la seconde
+écriture laissait derrière elle une liste `Immovable = true`, `OrgId = null`, que plus rien ne
+référençait et que `DeleteOrg` ne pouvait pas atteindre. Invisible : l'appelant voyait un 500 et
+rejouait, ce qui en créait une deuxième.
+
+Les trois écritures sont désormais **une transaction**, et la validation ci-dessus arrive avant la
+première. Les deux moitiés comptent : la validation couvre le cas courant, la transaction couvre
+les pannes qu'on n'a pas prévues.
+
+### Corrigé — `POST /admin/impersonate` était inatteignable sur une surface partagée
+
+`project_id` nomme **la frontière d'authentification**, pas une propriété de l'organisation. Le
+contrôle exigeait `project.OrgId == org_id`, ce qui n'est vrai que dans le modèle « un projet par
+locataire ». Sur une surface partagée — un seul projet, une page de connexion, une passerelle, tous
+les clients derrière — c'était faux pour **tous** les couples possibles, et la route répondait
+`project_not_in_org` à chaque appel.
+
+Un couple est maintenant accepté quand le projet appartient à l'organisation **ou** qu'un membre de
+cette organisation figure sur la liste assignée au projet (`user.org_id`, voir
+[ORGANIZATIONS.md](docs/ORGANIZATIONS.md)). Le refus inter-locataires reste entier.
+
+**Changement de contrat** : un `project_id` qui ne désigne rien répond désormais
+**`project_not_found`** et non plus `project_not_in_org`. Un appelant qui teste cette chaîne doit
+la connaître — c'est ce que ce bump de mineure signale.
+
+`docs/IMPERSONATION.md` affirmait les deux choses à la fois — ligne 222 « the authentication
+boundary », ligne 472 « must belong to `org_id` ». La seconde est corrigée et une section
+**Which pairs are accepted** dit ce qui est accepté et pourquoi. Elle tranche aussi le cas laissé
+ouvert : **une organisation sans aucun compte sur la surface n'est pas impersonnable**, y compris
+une organisation créée à l'instant — il n'y a rien à y voir, et la règle inverse n'en vérifierait
+aucune.
+
+### Corrigé — Hydra n'avait jamais de `dsn` sur une installation neuve
+
+`deploy/deploy.sh` écrivait le bloc `hydra:` **sous `rediensiam:`** dans le fichier de secrets
+généré, là où `keto:` était à la racine. Helm ne passe à un sous-chart que ce qui est écrit sous
+son propre nom, donc le bloc était analysé et ignoré : Hydra démarrait sans DSN et chaque
+`setup.sh --dev` sur une base neuve finissait en `CrashLoopBackOff` sur `dsn must be set`. Deux
+espaces d'indentation, et la même famille que le bloc `hydra:` de `values.dev.yaml` corrigé plus
+tôt.
+
+### Corrigé — la graine e2e
+
+`tests/e2e/seed-dev.mjs` ne pouvait pas s'exécuter de bout en bout. Trois défauts, chacun masquant
+le suivant : elle ne retirait que les guillemets doubles d'un mot de passe que le générateur écrit
+entre apostrophes (401 lu comme « mauvaises identifiants ») ; elle envoyait un POST à `/auth/consent`
+qui est une route GET (405) ; et elle appelait l'API d'administration sur l'hôte public, que
+l'ingress `rediensiam-public-admin-deny` refuse par conception (403 sans corps, de Traefik). Elle
+est aussi devenue importable — `main()` ne s'exécute plus que lancée comme script, ce qui est la
+condition pour qu'un spec puisse faire `import { SEED }` sans réamorcer le déploiement.
+
+### Qualité
+
+Porte SonarQube ramenée de 25 violations à 0 : sélecteurs CSS dupliqués, tags `<param>` manquants,
+assertions inutiles, ternaire imbriqué, et la complexité cognitive de `InstanceController.Patch`
+(17 → sous le seuil) en sortant les quatorze ternaires `is { } v ? Clamp(v) : null` dans le
+helper qui les applique.
+
+---
+
 ## [0.7.0] — 2026-08-06
 
 **Impersonation : un opérateur peut agir *pour* une organisation cliente.** Additif de bout en

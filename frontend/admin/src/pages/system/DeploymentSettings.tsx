@@ -94,7 +94,7 @@ export default function DeploymentSettings() {
   }
 
   const value = <K extends keyof Settings>(key: K): Settings[K] =>
-    (draft[key] ?? config.settings[key]) as Settings[K];
+    draft[key] ?? config.settings[key];
 
   const differs = (key: keyof Settings) => config.settings[key] !== config.stored[key];
 

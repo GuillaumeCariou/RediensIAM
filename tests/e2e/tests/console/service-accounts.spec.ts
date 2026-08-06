@@ -37,7 +37,7 @@ test('creating one, issuing a token, and revoking it', async ({ console: page })
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByLabel(/^Name/i).fill(name);
   await page.getByRole('dialog').getByRole('button', { name: /^Create$/i }).click();
-  await expect(page.getByText(name)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(name).first()).toBeVisible({ timeout: 15_000 });
 
   await page.getByRole('row', { name: new RegExp(name) }).getByRole('button', { name: /^Tokens$/i }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
@@ -62,7 +62,7 @@ test('deleting one asks first and says what else goes', async ({ console: page }
   await page.getByRole('button', { name: /New service account/i }).click();
   await page.getByLabel(/^Name/i).fill(name);
   await page.getByRole('dialog').getByRole('button', { name: /^Create$/i }).click();
-  await expect(page.getByText(name)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(name).first()).toBeVisible({ timeout: 15_000 });
 
   await page.getByRole('row', { name: new RegExp(name) }).getByRole('button', { name: /^Delete$/i }).click();
 

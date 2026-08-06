@@ -102,7 +102,7 @@ export default function Impersonation() {
                   <td className="iam-mono" style={{ fontSize: 12 }}>{s.org_id}</td>
                   <td>
                     {/* read is the weaker capability, and the one that must be visible at a glance. */}
-                    <IamChip tone={s.mode === 'write' ? 'warning' : 'default'}>{s.mode}</IamChip>
+                    <IamChip tone={s.mode === 'write' ? 'warn' : 'default'}>{s.mode}</IamChip>
                   </td>
                   <td style={{ fontSize: 12 }}>{s.reason}</td>
                   <td style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{fmtDate(s.created_at)}</td>

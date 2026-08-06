@@ -53,14 +53,9 @@ function show(path: string, dark = false) {
   return user;
 }
 
-/** The section headers, which are the only buttons carrying that class. */
-const sections = () =>
-  [...document.querySelectorAll('.iam-nav-section-header')].map(b => b.textContent);
-/** Scoped to the sidebar: the stand-in page beside it has links of its own. */
-const navLinks = () => [...document.querySelectorAll<HTMLAnchorElement>('aside a')];
-const links = () => navLinks().map(a => a.getAttribute('href'));
-const linkNames = () => navLinks().map(a => a.textContent);
-const navLink = (name: string) => navLinks().find(a => a.textContent === name);
+// The helpers that read the navigation left with it: the tree owns those assertions now, and
+// NavTree.test.tsx has them. Keeping dead readers here would be keeping a second description of a
+// structure this file no longer renders.
 
 beforeEach(() => {
   vi.clearAllMocks();

@@ -44,6 +44,16 @@ public static class UserListOperations
     /// pourrait nommer une autre organisation créerait des comptes dont les jetons revendiquent
     /// un locataire qui n'est pas le sien.
     /// </param>
+    /// <param name="Email">L'adresse du compte. Unique PAR LISTE, pas globalement.</param>
+    /// <param name="Password">
+    /// Le mot de passe initial. <c>null</c> crée un compte sans mot de passe et envoie une
+    /// invitation — c'est ce qui distingue « ajouter » de « inviter ».
+    /// </param>
+    /// <param name="Username">Le nom affiché. Dérivé de l'adresse quand il est absent.</param>
+    /// <param name="EmailVerified">
+    /// Marque l'adresse comme déjà vérifiée. Réservé à un administrateur qui l'a vérifiée
+    /// autrement ; par défaut le compte suit le parcours de vérification.
+    /// </param>
     public record NewUser(string Email, string? Password = null, string? Username = null, bool? EmailVerified = null, Guid? OrgId = null);
 
     /// <summary>
@@ -128,6 +138,14 @@ public static class UserListOperations
     /// requête : c'est ce qui empêche un administrateur d'organisation d'en nommer une autre.
     /// <c>null</c> laisse le comportement historique — l'organisation viendra du projet à la
     /// connexion.
+    /// </param>
+    /// <param name="deps">Les services que les deux surfaces partagent, passés d'un bloc.</param>
+    /// <param name="actorId">L'administrateur qui agit, écrit tel quel dans le journal d'audit.</param>
+    /// <param name="list">La liste d'accueil, déjà résolue et autorisée par l'appelant.</param>
+    /// <param name="body">Le compte demandé.</param>
+    /// <param name="locationPrefix">
+    /// Le préfixe de l'en-tête <c>Location</c> du 201. Il diffère entre les deux surfaces — c'est
+    /// la seule chose qui en diffère, et la raison pour laquelle il est un paramètre.
     /// </param>
     public static async Task<IActionResult> AddUserAsync(
         UserListDeps deps, Guid actorId, UserList list, NewUser body, string locationPrefix, Guid? orgId = null)

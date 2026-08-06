@@ -67,8 +67,8 @@ test.describe('user lists', () => {
     await page.getByLabel(/^Name/i).fill(name);
     await page.getByRole('dialog').getByRole('button', { name: /Create|Save/i }).click();
 
-    await expect(page.getByText(name)).toBeVisible({ timeout: 15_000 });
-    await page.getByText(name).click();
+    await expect(page.getByText(name).first()).toBeVisible({ timeout: 15_000 });
+    await page.getByText(name).first().click();
     await expect(page).toHaveURL(/userlists\/[0-9a-f-]{36}/i);
   });
 });

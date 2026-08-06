@@ -4,6 +4,10 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
+    // seed-dev.mjs is plain JavaScript because deploy/dev-fixture.sh runs it with bare `node`,
+    // and every spec imports `SEED` from it so that no test repeats a fixture name as a literal.
+    // Inferred types are enough: the shape is one frozen object of strings.
+    "allowJs": true,
     "noEmit": true,
     "strict": true,
     "types": ["node"],

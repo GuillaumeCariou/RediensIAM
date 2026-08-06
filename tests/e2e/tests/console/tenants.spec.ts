@@ -32,7 +32,7 @@ test.describe('organisations', () => {
     if (await slug.isVisible()) await slug.fill(name);
     await page.getByRole('dialog').getByRole('button', { name: /Create|Save/i }).click();
 
-    await expect(page.getByText(name)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(name).first()).toBeVisible({ timeout: 15_000 });
     // The tree reads the same list the page does; a tenant that exists in one and not the other is
     // the console disagreeing with itself.
     await expect(shell(page).getByRole('link', { name: new RegExp(name) })).toBeVisible();
@@ -56,7 +56,7 @@ test.describe('organisations', () => {
     const slug = page.getByLabel(/Slug/i);
     if (await slug.isVisible()) await slug.fill(name);
     await page.getByRole('dialog').getByRole('button', { name: /Create|Save/i }).click();
-    await expect(page.getByText(name)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(name).first()).toBeVisible({ timeout: 15_000 });
 
     await page.getByRole('row', { name: new RegExp(name) })
       .getByRole('button', { name: /suspend/i }).click();
@@ -78,10 +78,10 @@ test.describe('projects', () => {
     const slug = page.getByLabel(/Slug/i);
     if (await slug.isVisible()) await slug.fill(org);
     await page.getByRole('dialog').getByRole('button', { name: /Create|Save/i }).click();
-    await expect(page.getByText(org)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(org).first()).toBeVisible({ timeout: 15_000 });
 
     await page.getByRole('link', { name: new RegExp(org) }).first().click();
-    await page.getByRole('link', { name: /^Projects$/ }).click();
+    await shell(page).getByRole('link', { name: /^Projects$/ }).first().click();
 
     const project = unique('portal');
     await openDialog(page, /New project|Create project/i);
@@ -92,6 +92,6 @@ test.describe('projects', () => {
 
     // Creation rolls back when Hydra is unreachable, so a visible row is also proof the OAuth2
     // client was registered — the one part no unit test can stand in for.
-    await expect(page.getByText(project)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(project).first()).toBeVisible({ timeout: 15_000 });
   });
 });
