@@ -1986,10 +1986,16 @@ public class AuthController(
         else
         {
             var project = await db.Projects.FindAsync(Guid.Parse(projectId));
-            var subject  = SubjectFor(user, project!);
+            // Checked rather than suppressed. `project!` said "trust me" three times and the third
+            // read still tripped CS8602 — and a challenge naming a project that no longer exists
+            // would have finished MFA and then thrown a NullReferenceException, which reads to the
+            // user as the login itself failing at the last step.
+            if (project is null) return BadRequest(new { error = "unknown_project" });
+
+            var subject  = SubjectFor(user, project);
             var context  = new Dictionary<string, object>
             {
-                [CtxOrgId] = EffectiveOrgId(user, project!).ToString(), [CtxProjectId] = projectId, [CtxUserId] = user.Id.ToString()
+                [CtxOrgId] = EffectiveOrgId(user, project).ToString(), [CtxProjectId] = projectId, [CtxUserId] = user.Id.ToString()
             };
             redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, context);
             await audit.RecordAsync(project.OrgId, project.Id, user.Id, auditEvent);
