@@ -62,6 +62,19 @@ export interface Claims {
   expiresAt?: Date;
 }
 
+/**
+ * A delegated session as this tab sees it. `token` is what you send to your own API; everything
+ * else is what the banner renders and what your logs should carry beside the tenant id.
+ */
+export interface ImpersonationContext {
+  token: string;
+  sessionId: string;
+  orgId: string;
+  mode: 'read' | 'write';
+  /** The operator, for the banner. Authority never comes from here. */
+  operator: string;
+}
+
 export type RediensIamErrorCode =
   | 'not_authenticated'
   | 'state_mismatch'
@@ -124,6 +137,8 @@ export class RediensIam {
   #expiresAt = 0;
   #discovery: Discovery | null = null;
   #refreshInFlight: Promise<string | null> | null = null;
+  /** In memory, per tab — see `adoptImpersonation`. */
+  #impersonation: ImpersonationContext | null = null;
 
   readonly #config: RediensIamConfig;
   readonly #issuerOrigin: string;
@@ -448,6 +463,75 @@ export class RediensIam {
     } catch {
       return null;
     }
+  }
+
+  // ── Impersonation ─────────────────────────────────────────────────────────
+
+  /**
+   * Adopts a delegated session handed over in the URL fragment, and scrubs the URL.
+   *
+   * An operator console opens this application with `#imp_token=…`; a fragment is never sent to a
+   * server, which is why the handover uses one. Returns the context when a session was adopted,
+   * `null` otherwise, so a call on an ordinary page load is a no-op.
+   *
+   * The token is held **in memory only**, like the ordinary access token above — and deliberately
+   * not in `sessionStorage`, which the integration guide originally called for. Memory is already
+   * per-tab, so "one tab, one customer" holds either way; memory additionally cannot be read back
+   * by injected script after the fact, and does not survive a reload. The cost is that a reload
+   * ends the session and the operator opens a new one, which for a credential with a one-hour
+   * ceiling is the cheaper side of the trade.
+   *
+   * ⚠ This does not authorise anything. A delegated token carries no roles; what a support session
+   * may see is decided by the API this app calls.
+   */
+  adoptImpersonation(): ImpersonationContext | null {
+    const fragment = new URLSearchParams(location.hash.replace(/^#/, ''));
+    const token = fragment.get('imp_token');
+    if (!token) return null;
+
+    this.#impersonation = {
+      token,
+      sessionId: fragment.get('imp_session') ?? '',
+      orgId: fragment.get('imp_org') ?? '',
+      mode: fragment.get('imp_mode') === 'write' ? 'write' : 'read',
+      operator: fragment.get('imp_actor') ?? '',
+    };
+
+    // The URL is the one place a token would survive into history, a screenshot or a shared link.
+    fragment.delete('imp_token');
+    fragment.delete('imp_session');
+    fragment.delete('imp_org');
+    fragment.delete('imp_mode');
+    fragment.delete('imp_actor');
+    const rest = fragment.toString();
+    history.replaceState(null, '', location.pathname + location.search + (rest ? `#${rest}` : ''));
+
+    return this.#impersonation;
+  }
+
+  /**
+   * The active delegated session, or `null`. Non-null is the signal to render the permanent,
+   * non-dismissible banner: the operator must never forget whose data is on screen.
+   */
+  get impersonation(): ImpersonationContext | null {
+    return this.#impersonation;
+  }
+
+  /** True while a delegated session forbids mutations. Your API enforces it; this renders it. */
+  get isReadOnlyImpersonation(): boolean {
+    return this.#impersonation?.mode === 'read';
+  }
+
+  /**
+   * Drops the delegated session from this tab.
+   *
+   * ⚠ **Local only.** Revoking the session server-side needs a service-account credential, which a
+   * browser must never hold — so the exit button calls *your* backend, which calls
+   * `POST /api/manage/impersonate/{session}/revoke`. Until it does, the credential stays valid for
+   * the rest of its TTL wherever else it was copied.
+   */
+  exitImpersonation(): void {
+    this.#impersonation = null;
   }
 
   /**

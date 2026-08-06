@@ -1,0 +1,23 @@
+# Analyzer configuration. Deliberately minimal: this file exists to say one thing, and adding
+# formatting preferences to it would bury that.
+
+# ── EF Core migrations are written by the tool, not by us ─────────────────────
+#
+# `dotnet ef migrations add` generates these files and rewrites them on every model change. A
+# finding whose only fix is to hand-edit generated code is a finding with no fix: the edit is lost
+# on the next scaffold, and a migration that has already been applied somewhere must not be edited
+# at all — the applied SQL is history, and history does not get refactored.
+#
+# Scoped to the two rules that actually fire on scaffolded output, not a blanket `none` on the
+# folder: a genuine bug in a migration — a wrong column type, a missing index — must still be
+# reported. This is a suppression of style advice on generated code, not of analysis.
+#
+# The scanner exclusion route was tried and reverted: excluding these paths after MSBuild has
+# already analysed them makes the scanner import protobufs referencing paths it was told to forget,
+# and warn about each on every run. See the comment in sonar-scan.sh.
+[src/Data/Migrations/*.cs]
+# "Prefer 'static readonly' fields over constant array arguments" — the scaffolder emits array
+# literals inline and always will.
+dotnet_diagnostic.CA1861.severity = none
+# "Use 'GeneratedRegexAttribute'" — cannot apply to a generated non-partial class.
+dotnet_diagnostic.SYSLIB1045.severity = none

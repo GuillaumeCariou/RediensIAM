@@ -36,6 +36,7 @@ public class RediensIamDbContext(DbContextOptions<RediensIamDbContext> options, 
     public DbSet<WebhookDelivery> WebhookDeliveries => Set<WebhookDelivery>();
     public DbSet<SamlIdpConfig> SamlIdpConfigs => Set<SamlIdpConfig>();
     public DbSet<Instance> Instances => Set<Instance>();
+    public DbSet<ImpersonationSession> ImpersonationSessions => Set<ImpersonationSession>();
 
     // ── Shared state, formerly Dragonfly ──────────────────────────────────────
     // Deployment-wide, never tenant-scoped: a session cookie and a rate-limit counter belong to

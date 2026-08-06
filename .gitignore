@@ -6,7 +6,9 @@ obj/
 .vs/
 *.DotSettings.user
 .sonarqube/
-tests/**/TestResults/
+# Coverage output. `tests/**` alone let an SDK run's copy reach a commit — the sdk/ projects
+# write here too, and the Sonar scan reads it from wherever it lands.
+**/TestResults/
 .idea/
 
 # ── Node / Frontend ───────────────────────────────────────────────────────────

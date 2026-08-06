@@ -125,23 +125,15 @@ the same live Keto re-check.
 Two things this table exists to keep straight:
 
    work was written up; `values.prod.yaml` has since set it. It has now run in dev and once under
-   the prod profile in a scratch namespace — never on a production cluster, and never as a
-   refuse cleartext, so `cacheUrl` must gain `ssl=true` in the same `helm upgrade`.
-   split by accident.
+   the prod profile in a scratch namespace — never on a production cluster, and never as a cutover
+   against an existing `pg_hba.conf`.
 2. **RLS is on in dev and off in prod**, not off everywhere. 19 tables carry a policy; see §6.
 
-```mermaid
-flowchart LR
-    url["values.secret.yaml<br/>secrets.cacheUrl contains ssl=true"]
-    ok["Rendered manifests"]
-    fail["helm fail - both directions:<br/>tls without ssl=true, or ssl=true without tls"]
-
-    flag --> render
-    url --> render
-    render -->|"agree"| ok
-    render -->|"disagree"| fail
-    ok --> pinned["App side: CacheTls.BuildOptions<br/>X509Chain with CustomRootTrust over<br/>/etc/cache-tls/ca.crt only<br/>name mismatch fatal - serverAuth EKU required<br/>RevocationMode NoCheck - stated ceiling, no CRL exists"]
-```
+> **Cache TLS: section removed with the component.** 0.6.0 deleted Dragonfly, so the render-time
+> agreement this diagram described — `dragonfly.local.tls.enabled` against `ssl=true` in `cacheUrl`
+> — has nothing left to check, and neither does the pinned `X509Chain` on the application side.
+> Both guards were real and both are gone with what they guarded. The state they protected now
+> lives in PostgreSQL, behind the Postgres tunnel above.
 
 ### 1.4 What the NetworkPolicies actually permit
 
@@ -218,7 +210,7 @@ flowchart TD
     route["UseRouting<br/>endpoint is now resolvable"]
 
     g1{"path starts with<br/>/account /project /org /internal<br/>/service-accounts /api /admin/system<br/>/auth/oauth2/link ?"}
-    g2{"path starts with /admin<br/>AND not /admin/config<br/>AND has a controller action OR method != GET ?"}
+    g2{"path starts with /admin<br/>AND not /console/config<br/>AND has a controller action OR method != GET ?"}
     gw["GatewayAuthMiddleware<br/>see 2.2"]
     ep["Endpoint execution"]
 
@@ -500,7 +492,7 @@ sequenceDiagram
     participant K as Ory Keto
     participant DB as Postgres
 
-    Note over SPA: GET /admin/config is a MINIMAL endpoint,<br/>deliberately outside MapControllers so it bypasses<br/>SystemAdminController's RequireManagementLevel.<br/>Returns hydra_url, client_id, redirect_uri.
+    Note over SPA: GET /console/config is a MINIMAL endpoint,<br/>deliberately outside MapControllers so it bypasses<br/>SystemAdminController's RequireManagementLevel.<br/>Returns hydra_url, client_id, redirect_uri.
     SPA->>H: /oauth2/auth  client_id = client_admin_system
     H-->>R: login challenge - AdminLogin path, subject = bare USER_ID
     Note over R: The first admin of a deployment signs in without a factor.<br/>Once any admin has one, an admin without is sent<br/>through enrolment, never refused.
@@ -628,24 +620,6 @@ flowchart TD
     l-->|"false"| k
     l-->|"true"| m
     m --> n
-```
-
-### 5.2 The `ver` contract
-
-`ContractVersion = 1` rides on **every** answer, including `{"active": false}` and both 400s. It
-exists so a client can tell an audience-enforcing server from one that silently drops the `aud`
-field it was sent: an older RediensIAM answers without `ver`, so an SDK requiring `ver >= 2` fails
-closed rather than believing it is bound when it is not.
-
-```mermaid
-flowchart LR
-    sdk["SDK requiring ver >= 1"]
-    new["RediensIAM 0.2.x<br/>aud REQUIRED, ver 1 on every answer"]
-    old["Older RediensIAM<br/>drops the unknown aud field,<br/>answers for every tenant, no ver"]
-    sdk -->|"ver present"| ok["proceed - the answer is audience-bound"]
-    sdk -->|"ver absent"| fail["fail closed"]
-    new --> ok
-    old --> fail
 ```
 
 ---
@@ -883,7 +857,7 @@ What the sweep **cannot** cover, and why:
 
 ```mermaid
 flowchart TD
-    boot["Startup: AddDataProtection<br/>PersistKeysToStackExchangeRedis rediensiam:dataprotection:keys<br/>ProtectKeysWithRootKey - EncryptedOnlyXmlRepository"]
+    boot["Startup: AddDataProtection<br/>PersistKeysToDbContext - data_protection_keys table<br/>ProtectKeysWithRootKey - EncryptedOnlyXmlRepository"]
     read["GetAllElements"]
     chk{"every key element wrapped in the k-id envelope ?"}
     ok["Unwrap under DataProtectionKey, use for session cookies"]
@@ -988,7 +962,7 @@ including the record of the change that purged it.
 
 ## What is deliberately not drawn here
 
-- **The route table.** 187 routes do not fit in a diagram; [`API.md`](API.md) has them with their
+- **The route table.** 190 routes do not fit in a diagram; [`API.md`](API.md) has them with their
   required authority and where each is reachable.
 - **Webhook delivery.** It has its own queue, SSRF re-validation on every delivery, and a retry
   ladder; it is a subsystem, not part of the authorisation spine.

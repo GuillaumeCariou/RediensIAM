@@ -57,7 +57,7 @@ public class ApiSurfaceIntrospectionTests(TestFixture fixture)
     /// a token from another tenant was its own.
     /// </summary>
     [Fact]
-    public async Task Introspect_WithoutAudience_IsRefused()
+    public async Task Introspect_WithoutProjectId_IsRefused()
     {
         var gateway  = await SystemGatewayAsync();
         var tenant   = await TenantAsync();
@@ -70,11 +70,10 @@ public class ApiSurfaceIntrospectionTests(TestFixture fixture)
             "an undeclared project id is a defect in the caller, not a statement about the token");
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("error").GetString().Should().Be("project_id_required");
-        body.GetProperty("ver").GetInt32().Should().Be(2);
     }
 
     [Fact]
-    public async Task Authorize_WithoutAudience_IsRefused()
+    public async Task Authorize_WithoutProjectId_IsRefused()
     {
         var gateway = await SystemGatewayAsync();
         var tenant  = await TenantAsync();
@@ -112,7 +111,6 @@ public class ApiSurfaceIntrospectionTests(TestFixture fixture)
             .Content.ReadFromJsonAsync<JsonElement>();
         wrong.GetProperty("active").GetBoolean().Should().BeFalse(
             "a deployment-scoped gateway credential must not resolve every tenant's token at once");
-        wrong.GetProperty("ver").GetInt32().Should().Be(2);
 
         var right = await (await gateway.PostAsync("/api/introspect", Form(theirToken, theirs.Project.Id.ToString())))
             .Content.ReadFromJsonAsync<JsonElement>();

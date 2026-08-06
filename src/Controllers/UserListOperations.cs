@@ -29,6 +29,9 @@ namespace RediensIAM.Controllers;
 /// </summary>
 public static class UserListOperations
 {
+    /// <summary>Audit metadata key, written from four places and spelled once.</summary>
+    private const string UserListIdKey = "user_list_id";
+
     private const string KindInvite = "invite";
 
     /// <summary>One shape for what a caller may say when putting a user in a list.</summary>
@@ -112,10 +115,10 @@ public static class UserListOperations
     /// </para>
     /// </summary>
     public static async Task<IActionResult> AddUserAsync(
-        RediensIamDbContext db, KetoService keto, AuditLogService audit, PasswordService passwords,
-        IEmailService emailService, AppConfig appConfig,
-        Guid actorId, UserList list, NewUser body, string locationPrefix)
+        UserListDeps deps, Guid actorId, UserList list, NewUser body, string locationPrefix)
     {
+        var (db, keto, audit, passwords, emailService, appConfig) = deps;
+
         // Without this the unique index on (UserListId, Email) surfaces as a DbUpdateException and
         // a 500, which tells the caller nothing about the one thing they can fix.
         var email = body.Email.ToLowerInvariant();
@@ -158,11 +161,11 @@ public static class UserListOperations
 
         await audit.RecordAsync(list.OrgId, null, actorId,
             isInvite ? "user.invited" : "user.created", "user", user.Id.ToString(),
-            new() { ["user_list_id"] = list.Id.ToString() });
+            new() { [UserListIdKey] = list.Id.ToString() });
         if (GrantsSuperAdmin(list))
             await audit.RecordAsync(null, null, actorId,
                 "user.super_admin_granted", "user", user.Id.ToString(),
-                new() { ["user_list_id"] = list.Id.ToString() });
+                new() { [UserListIdKey] = list.Id.ToString() });
 
         return new CreatedResult($"{locationPrefix}/{list.Id}/users/{user.Id}", new
         {
@@ -187,11 +190,11 @@ public static class UserListOperations
         await db.SaveChangesAsync();
 
         await audit.RecordAsync(list.OrgId, null, actorId, "user.deleted", "user", userId.ToString(),
-            new() { ["user_list_id"] = list.Id.ToString() });
+            new() { [UserListIdKey] = list.Id.ToString() });
         if (GrantsSuperAdmin(list))
             await audit.RecordAsync(null, null, actorId,
                 "user.super_admin_revoked", "user", userId.ToString(),
-                new() { ["user_list_id"] = list.Id.ToString() });
+                new() { [UserListIdKey] = list.Id.ToString() });
 
         return new NoContentResult();
     }
@@ -221,3 +224,21 @@ public static class UserListOperations
             user.Email, appConfig.InviteUrl(raw), list.Organisation?.Name ?? "the organization", list.OrgId);
     }
 }
+
+/// <summary>
+/// The collaborators <see cref="UserListOperations.AddUserAsync"/> needs, as one value.
+///
+/// <para>
+/// Adding a user touches six services, and passing them positionally put ten arguments on one
+/// call — the point where a reader checks a signature by counting commas. The six travel together
+/// and never vary independently, so they are one thing; what stays positional is what actually
+/// differs between the two call sites.
+/// </para>
+/// </summary>
+public record UserListDeps(
+    RediensIamDbContext Db,
+    KetoService Keto,
+    AuditLogService Audit,
+    PasswordService Passwords,
+    IEmailService EmailService,
+    AppConfig AppConfig);

@@ -16,7 +16,7 @@ interface Props {
   identityReadOnly?: boolean;
 }
 
-export default function ProjectFields({ idPrefix, form, onChange, identityReadOnly = false }: Props) {
+export default function ProjectFields({ idPrefix, form, onChange, identityReadOnly = false }: Readonly<Props>) {
   const set = <K extends keyof ProjectFormState>(key: K, value: ProjectFormState[K]) =>
     onChange({ ...form, [key]: value });
 

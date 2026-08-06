@@ -24,22 +24,11 @@ namespace RediensIAM.Controllers;
 [Route("api")]
 public class IntrospectionController(
     RediensIamDbContext db,
-    HydraService hydra,
-    PatService pats,
     KetoService keto,
     LiveAuthorizationService live,
     AuditLogService audit,
-    AppConfig appConfig) : ControllerBase
+    TokenResolver tokens) : ControllerBase
 {
-    /// <summary>
-    /// Contract version of this surface. It exists so a client can tell a server that enforces
-    /// <c>project_id</c> from one that silently ignores it: a RediensIAM older than this contract
-    /// drops the unknown field and answers without <c>ver</c>, so an SDK that requires
-    /// <c>ver &gt;= 2</c> fails closed instead of believing it is bound when it is not. Every
-    /// answer carries it, including <c>{"active": false}</c>.
-    /// </summary>
-    public const int ContractVersion = 2;
-
     private TokenClaims Caller => HttpContext.GetClaims()!;
 
     /// <summary>
@@ -91,12 +80,12 @@ public class IntrospectionController(
         // statement about the token, and answering "inactive" would let an un-migrated
         // integration keep running while believing it had merely been handed a dead token.
         if (string.IsNullOrWhiteSpace(projectId))
-            return BadRequest(new { error = "project_id_required", ver = ContractVersion });
+            return BadRequest(new { error = "project_id_required" });
 
         if (string.IsNullOrWhiteSpace(token))
             return Ok(IntrospectionResult.Inactive);
 
-        var claims = await ResolveAsync(token);
+        var claims = await tokens.ResolveAsync(token);
         if (claims is null) return Ok(IntrospectionResult.Inactive);
 
         if (!await IsBoundToTenantAsync(claims, projectId, "api.introspect.project_mismatch"))
@@ -125,7 +114,8 @@ public class IntrospectionController(
             ProjectId: NullIfEmpty(claims.ProjectId),
             Roles:     roles,
             ClientId:  NullIfEmpty(claims.ClientId),
-            IsServiceAccount: claims.IsServiceAccount));
+            IsServiceAccount: claims.IsServiceAccount,
+            Act:       claims.Act));
     }
 
     /// <summary>
@@ -144,9 +134,9 @@ public class IntrospectionController(
             return StatusCode(403, new { error = "service_account_required" });
 
         if (string.IsNullOrWhiteSpace(body.ProjectId))
-            return BadRequest(new { error = "project_id_required", ver = ContractVersion });
+            return BadRequest(new { error = "project_id_required" });
 
-        var claims = await ResolveAsync(body.Token);
+        var claims = await tokens.ResolveAsync(body.Token);
         if (claims is null) return Ok(AuthorizationResult.Denied);
 
         if (!await IsBoundToTenantAsync(claims, body.ProjectId, "api.authorize.project_mismatch"))
@@ -244,23 +234,6 @@ public class IntrospectionController(
         }
     }
 
-    /// <summary>Both token shapes RediensIAM issues: personal access tokens and OAuth2 access tokens.</summary>
-    private async Task<TokenClaims?> ResolveAsync(string token)
-    {
-        if (token.StartsWith(appConfig.PatPrefix, StringComparison.Ordinal))
-        {
-            var pat = await pats.IntrospectAsync(token);
-            return pat is { Active: true }
-                ? new TokenClaims
-                {
-                    UserId = pat.Sub, OrgId = pat.OrgId, ProjectId = pat.ProjectId,
-                    Roles = pat.Roles, IsServiceAccount = true,
-                }
-                : null;
-        }
-        return await hydra.ValidateJwtAsync(token);
-    }
-
     /// <summary>
     /// True when the resolved token belongs to the caller's organisation, or the caller is a
     /// deployment-level service account. Refusals are audited — this surface previously wrote no
@@ -349,9 +322,8 @@ public class IntrospectionController(
 /// RFC 7662 response. Field names are serialised snake_case by the global JSON options.
 ///
 /// <para><c>ProjectId</c> is the <b>token's</b> project, not the one the caller asked about — the
-/// two are equal on an active answer, which is why the request value is not echoed back. Contract
-/// 1 echoed it as <c>aud</c>; that field is gone, and <c>Ver</c> is what tells a client the server
-/// enforced the binding. See <see cref="IntrospectionController.ContractVersion"/>.</para>
+/// two are equal on an active answer, which is why the request value is not echoed back. An
+/// earlier shape echoed it as <c>aud</c>; that field is gone.</para>
 /// </summary>
 public record IntrospectionResult(
     bool Active,
@@ -362,7 +334,7 @@ public record IntrospectionResult(
     List<string>? Roles = null,
     string? ClientId = null,
     bool IsServiceAccount = false,
-    int Ver = IntrospectionController.ContractVersion)
+    ActorClaim? Act = null)
 {
     /// <summary>
     /// Never null on the wire. The inactive answer — by far the most common one this endpoint
@@ -386,7 +358,7 @@ public record AuthorizationRequest(
     [property: System.Text.Json.Serialization.JsonRequired] string Relation,
     string? ProjectId = null);
 
-public record AuthorizationResult(bool Allowed, string? UserId, int Ver = IntrospectionController.ContractVersion)
+public record AuthorizationResult(bool Allowed, string? UserId)
 {
     public static readonly AuthorizationResult Denied = new(false, null);
 }

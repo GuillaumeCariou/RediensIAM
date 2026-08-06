@@ -134,6 +134,8 @@ builder.Services.AddHttpClient("webhook")
 builder.Services.AddHttpClient(SocialLoginService.NoRedirectClient)
     .ConfigurePrimaryHttpMessageHandler(() => WebhookUrlValidator.CreateSsrfSafeHandler());
 builder.Services.AddScoped<PatService>();
+builder.Services.AddScoped<ImpersonationService>();
+builder.Services.AddScoped<TokenResolver>();
 builder.Services.AddSingleton<SocialLoginService>();
 
 // ── WebAuthn / Passkeys ────────────────────────────────────────────────────

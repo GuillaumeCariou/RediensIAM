@@ -264,7 +264,6 @@ Assembled in `AuthController`'s consent path and handed to Hydra, which nests it
 | `ext.org_id`, `ext.project_id`, `ext.user_id` | yes | yes (`""` when absent) |
 | `ext.roles` | tenant roles as `{project_id}/{name}` | **bare** management roles, resolved live from Keto |
 | `aud` | **not set by RediensIAM** | not set |
-| `ver` | no such claim | no such claim |
 
 Two things worth stating plainly, because a report implies otherwise:
 
@@ -273,9 +272,6 @@ Two things worth stating plainly, because a report implies otherwise:
   introspection therefore works via `project_id`/`org_id` only; the third documented path
   (`aud` ∈ the token's OAuth2 audiences) is unreachable for tokens this deployment mints, unless the
   relying party requested an audience at `/oauth2/auth`.
-- **`ver` is a response field of `/api/introspect` and `/api/authorize`, not a token claim.** It
-  signals server capability, so an SDK can detect a server that silently discarded the `aud` it
-  sent. It says nothing about the token.
 
 The claims-assembly component that S-2 asked for was never built: issuance is still open-coded in
 `AuthController.GetConsent`.
@@ -288,13 +284,13 @@ All four are breaking. Integrators must read
 | # | Break | What fails if you ignore it |
 |---|---|---|
 | 1 | **`ext.roles` is project-qualified.** Tenant roles are `{project_id}/{name}`; management names are reserved. | `roles.contains("admin")` matches nothing — fails **closed**, which is the intended direction. In the .NET SDK the qualified string is what lands in `ClaimTypes.Role`, so `[Authorize(Roles = "admin")]` stops matching every tenant at once. |
-| 2 | **`project_id` is mandatory on `POST /api/introspect`.** | `400 {"error":"project_id_required","ver":2}` on every call. No grace period, no opt-out. |
+| 2 | **`project_id` is mandatory on `POST /api/introspect`.** | `400 {"error":"project_id_required"}` on every call. No grace period, no opt-out. |
 | 3 | **`project_id` is mandatory on `POST /api/authorize`**, same terms. | Same. |
 | 4 | **`object` on `/api/authorize` is tenant-scoped**, and unknown Keto namespaces are refused. | `{"allowed": false}` — deliberately the same shape as a genuine deny, so the endpoint cannot be used to probe which objects exist. Every refusal writes `api.authorize.object_out_of_scope`. |
 
-Backend SDKs (.NET, Rust) now take a **required** `Audience`/`audience` option with no default — a
-client constructed without one throws at construction rather than 400-ing on its first request — and
-refuse any answer that arrives without `ver`. The browser SDK is unaffected; it never calls these
+Backend SDKs (.NET, Rust) now take a **required** `ProjectId`/`project_id` option with no default — a
+client constructed without one throws at construction rather than 400-ing on its first request. The
+browser SDK is unaffected; it never calls these
 endpoints, because introspection needs a service-account credential and anything shipped to a
 browser is readable by anyone with devtools.
 
@@ -302,11 +298,6 @@ browser is readable by anyone with devtools.
 
 These do not change the security properties, but a document that says "always" should mean it:
 
-- **`ver` is not on *every* response.** It is on the 200s and on the `project_id_required` 400. It is
-  **not** on the `403 service_account_required`, nor on ASP.NET Core's own
-  `ValidationProblemDetails` 400 for a missing `token`/`namespace`/`object`/`relation` (there is no
-  `InvalidModelStateResponseFactory` override in `src/`), nor on the middleware `401`. An SDK
-  enforcing "`ver >= 2` or fail closed" is unaffected — all of these are non-200s.
 - **Object scoping still has a narrower fail-open edge.** `IsObjectInScopeAsync` computes
   `scope = CallerOrgScope ?? subject.OrgId`. When both are absent — a deployment-level service
   account asking about a token whose `org_id` is also empty — there is no ownership to compare, so
@@ -462,19 +453,18 @@ Neither runs on a schedule by default. See [`TESTING.md`](TESTING.md#detection-r
 
 Two of these need their qualifier stated, because a summary table elsewhere reads as unconditional:
 
-  a scratch namespace — never on a production cluster.**
-  `values.yaml:339-340` remains `false`. The prod-profile install described in
-  `SECURITY-AUDIT-LOG.md` step 33 did exercise it: cleartext `PING` was refused by the
-  server, a TLS `PING` against the mounted CA succeeded, the same connection against the OS trust
-  store was rejected, and the app read and wrote through the tunnel. That is a real observation and
-  it is more than the rendering this document used to claim — but it was one namespace on the
-  single-node dev cluster, for about an hour, from scratch. The upgrade path this control actually
-  has to survive in production — a cutover against a cache that already holds an unprotected key
-  ring — remains reasoned about, not observed. The application side is complete and *pinned*
-  — `src/Config/CacheTls.cs` builds an `X509Chain` with `CustomRootTrust` over only the mounted CA,
-  keeps name mismatch fatal, and requires the serverAuth EKU; it is not a `return true`. The chart
-  answering cleartext — so `cacheUrl` must gain `ssl=true` in the same `helm upgrade`, which the
-  chart enforces as a render failure in both directions.
+  a scratch namespace — never on a production cluster.** `values.yaml` still ships it `false`.
+  The prod-profile install in `SECURITY-AUDIT-LOG.md` step 33 exercised it — cleartext rejected,
+  `hostssl` honoured, the app reading and writing through the tunnel — but that was one namespace on
+  the single-node dev cluster, from scratch. The upgrade path this control has to survive in
+  production, a cutover against an existing `pg_hba.conf`, remains reasoned about rather than
+  observed.
+
+  > The cache half of this bullet is **gone with the component**: 0.6.0 removed Dragonfly, so there
+  > is no second server certificate to pin, no `/etc/cache-tls/ca.crt` and no `cacheUrl`. What it
+  > held moved into PostgreSQL, behind the tunnel this bullet is about. `src/Config/CacheTls.cs` no
+  > longer exists.
+
 - **NetworkPolicy is decorative unless your CNI enforces it.** Verify that before trusting any row
   in this table; the two-minute check is in
   [`DEPLOYMENT.md`](DEPLOYMENT.md#before-the-first-install-on-a-new-cluster--two-minutes).

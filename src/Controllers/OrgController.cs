@@ -319,7 +319,7 @@ public class OrgController(
         var ul = await UserListOperations.FindAsync(db, id);
         if (ul == null || ul.OrgId != OrgId) return NotFound();
         return await UserListOperations.AddUserAsync(
-            db, keto, audit, passwords, emailService, appConfig, ActorId, ul, body, "/org/userlists");
+            new UserListDeps(db, keto, audit, passwords, emailService, appConfig), ActorId, ul, body, "/org/userlists");
     }
 
     [HttpPost("userlists/{id}/users/{uid}/resend-invite")]

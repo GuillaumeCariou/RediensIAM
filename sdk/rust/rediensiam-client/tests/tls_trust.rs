@@ -31,7 +31,9 @@ fn issue(common_name: &str) -> Pki {
     let mut ca_params = CertificateParams::new(Vec::<String>::new()).unwrap();
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-    ca_params.distinguished_name.push(DnType::CommonName, common_name);
+    ca_params
+        .distinguished_name
+        .push(DnType::CommonName, common_name);
     let ca_cert = ca_params.self_signed(&ca_key).unwrap();
 
     let leaf_key = KeyPair::generate().unwrap();
@@ -59,7 +61,9 @@ async fn serve_once_tls(pki: &Pki) -> SocketAddr {
     .unwrap();
 
     let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
-    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .unwrap();
     let addr = listener.local_addr().unwrap();
 
     tokio::spawn(async move {
@@ -73,7 +77,7 @@ async fn serve_once_tls(pki: &Pki) -> SocketAddr {
         let mut buffer = [0u8; 2048];
         let _ = tls.read(&mut buffer).await;
 
-        const BODY: &str = r#"{"active":true,"ver":2}"#;
+        const BODY: &str = r#"{"active":true}"#;
         let response = format!(
             "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{BODY}",
             BODY.len()

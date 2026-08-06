@@ -131,6 +131,9 @@ BEGIN
       ('webhooks',               '"OrgId" = rls_org()'),
       ('service_account_roles',  '"OrgId" = rls_org()'),
       ('audit_log',              '"OrgId" = rls_org()'),
+      -- A delegated session names the organisation it enters, so it is that tenant's row: an
+      -- operator's session into Acme must be visible to Acme and to nobody else.
+      ('impersonation_sessions', '"OrgId" = rls_org()'),
 
       -- Reached through user_lists. The sub-select is itself filtered by
       -- user_lists' own policy, which is the same predicate — consistent, and the

@@ -8,6 +8,121 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.7.0] — 2026-08-06
+
+**Impersonation : un opérateur peut agir *pour* une organisation cliente.** Additif de bout en
+bout — le contrat reste `ver: 2`, aucun flux OIDC ne change, aucune CSP n'est rouverte, aucun
+attribut de cookie n'est affaibli pour la population client.
+
+### Ajouté — sessions déléguées
+
+Trois routes, sous les deux préfixes habituels (`/admin/impersonate` et `/api/manage/impersonate`) :
+ouvrir, lister, révoquer. **Deux portes, pas une** : l'appelant doit être un compte de service
+**et** porter `super_admin`, ce dernier revérifié vivant contre Keto. Un jeton d'utilisateur est
+refusé, donc la surface n'est jamais atteignable depuis une session de navigateur.
+
+Le jeton délégué est un **credential opaque RediensIAM** (`rediens_imp_`), pas un jeton OAuth2 :
+Hydra auto-hébergé ne supporte pas RFC 8693 — son modèle de client énumère ses grant types, et
+`token-exchange` n'y figure pas. Chaque passerelle appelant déjà `/api/introspect` à chaque requête,
+un consommateur ne reçoit qu'**un champ de plus**, `act`.
+
+Ce que le jeton porte, et ce qu'il ne porte pas :
+
+- `act` nomme l'opérateur, son niveau à l'ouverture, le mode et la session ;
+- **`roles` est vide par construction** — un jeton délégué dit *qui agit pour qui*, jamais *ce
+  qu'il peut faire*. « Les rôles de gestion sont retirés » est donc vrai par la forme, pas par un
+  filtre que quelqu'un doit penser à appliquer ;
+- `sub` vaut `imp_<session>` et **ne parse pas** comme un identifiant d'utilisateur : une session
+  est scopée organisation, il n'y a aucune personne dedans.
+
+`user_id` est **refusé** (`user_id_not_supported`), pas ignoré : un appelant qui l'envoie croit
+entrer dans le compte d'une personne, et répondre 200 à cette croyance serait le défaut. La
+capacité la plus faible est celle par défaut ; nommer un utilisateur plus tard est un ajout à ce
+contrat.
+
+Le reste des invariants : `reason` obligatoire (une impersonation sans motif déclaré n'est pas
+auditable), TTL par défaut 900 s et **plafond dur 3600 s** — une demande trop longue est bornée, pas
+refusée —, **une seule session active par opérateur** (ouvrir révoque la précédente), révocation
+immédiate, et les deux identités dans l'audit, écrit sur la chaîne de l'organisation **entrée**.
+
+L'expiration est un **prédicat, pas un job** : chaque lecture filtre `expires_at` et `revoked_at`,
+donc une session cesse d'être utilisable à l'instant où elle expire, sans balayeur.
+
+`docs/IMPERSONATION.md` §12 est le guide d'intégration pour un service extérieur : ce que la
+passerelle doit refuser tant que `act.mode == "read"`, ce que l'interface doit afficher, et les
+erreurs à attendre.
+
+### Supprimé — le champ `ver` et tout le mécanisme de version de contrat
+
+`ver` existait pour une seule raison : un serveur antérieur à `project_id` obligatoire **jette le
+champ en silence** au lieu de le refuser, donc l'envoyer ne prouvait rien et seul `ver` distinguait
+« le serveur a appliqué la liaison » de « le serveur a ignoré mon champ ». Les SDK refusaient toute
+réponse en `ver < 2`.
+
+Il n'y a pas de serveur antérieur à mettre à niveau, et rien n'est déployé en production. Le
+mécanisme protégeait donc une fenêtre qui n'existe pas, au prix d'un champ sur chaque réponse, d'une
+constante dans chaque SDK, d'une variante d'erreur, et d'une section dans six documents.
+
+Partent avec lui : `IntrospectionController.ContractVersion`, les champs `Ver` d'`IntrospectionResult`
+et d'`AuthorizationResult`, `RequiredContractVersion` et `RequireContract` côté .NET,
+`CONTRACT_VERSION`, `require_contract` et `Error::ServerTooOld` côté Rust, et les quatre tests qui
+n'existaient que pour vérifier ce refus — supprimés parce que le comportement testé n'existe plus,
+non parce qu'ils gênaient.
+
+**Il reste une contrainte, et elle est désormais purement opérationnelle** : mettre le serveur à
+niveau **avant** d'y pointer des SDK récents. Un serveur ancien répondra normalement à une requête
+qu'il n'a pas liée, et il n'y a plus aucun contrôle côté client pour le détecter. C'était le seul
+service que `ver` rendait ; l'ordre de déploiement le remplace.
+
+`project_id` reste obligatoire, et l'erreur reste `400 project_id_required` — sans `ver` dans le
+corps.
+
+### Tests — 42 tests sur cette seule surface, dont 26 adversariaux
+
+`Tests/Api/ImpersonationTests.cs` (16) couvre le cycle de vie et le contrat ;
+`Tests/Security/ImpersonationSecurityTests.cs` (26) est écrit depuis le côté de l'attaquant : un
+jeton délégué ne peut atteindre aucune route de gestion, ne peut pas ouvrir une seconde session,
+ne peut pas appeler l'introspection, est refusé par `/api/authorize` jusque sur le namespace
+système ; la passerelle d'un autre locataire ne voit rien ; le jeton est lié à son projet ; le
+credential brut n'est jamais stocké ni renvoyé par la liste ; une session révoquée ne revit pas ;
+`act` ne peut pas être dicté par l'appelant.
+
+**Trois de ces tests existent parce qu'une mutation les a exigés.** Injecter
+`Roles = ["super_admin"]` dans `ImpersonationService.ClaimsFor` laissait **41 tests sur 41 au
+vert** : `IntrospectionController` revérifie les rôles de gestion en direct et retirait l'intrus,
+si bien que la suite ne regardait que cette seconde défense. Or elle ne retire que les rôles **de
+gestion** — un rôle locataire `{project}/admin` injecté au même endroit serait arrivé intact chez
+un consommateur. L'invariant est désormais asserté à sa source, et cette assertion échoue bien
+sous la mutation. Deux autres mutations (prédicat de révocation, prédicat d'expiration) ont été
+passées de la même façon : quatre tests virent au rouge, dans les deux fichiers.
+
+> *Une vérification qui ne teste que ce qu'elle vient d'écrire ne teste rien* — la leçon que
+> `yandee_infra/CONTEXTE.md` tire, appliquée à la suite de tests elle-même.
+
+### Ajouté — `act` dans les SDK .NET et Rust
+
+`TokenInfo.Act` / `TokenInfo.act`, plus `IsReadOnlyImpersonation` / `is_read_only_impersonation()`.
+Le SDK navigateur est inchangé : il n'introspecte pas.
+
+### Corrigé — la cause du répertoire `src/bin\Debug`, enfin identifiée
+
+Le chemin à backslash qui casse `docker build` est revenu **deux fois** (`e170fcf`, puis le 5 août),
+chaque fois attribué à un `-o` de style Windows. Ce n'était pas ça : **`dotnet-ef` 10.0.3 le crée**,
+à chaque invocation, `--no-build` compris. Reproduit, puis vérifié corrigé en passant l'outil en
+**10.0.10**, où il n'apparaît plus. Rien dans les fichiers de build du dépôt n'était en cause.
+
+Le garde-fou de `deploy/tests.sh` a fait son travail : il a viré au rouge pendant cette session,
+sur l'arbre de travail, exactement ce pour quoi il avait été recâblé.
+
+### Corrigé — les compteurs de `docs/TESTING.md`
+
+Tous faux, certains d'un facteur 12 : SPA console 99 → **1235**, SPA login 80 → **300**, SDK .NET
+14 → **53**, SDK TypeScript 14 → **38**, `deploy/tests.sh` 36 → **58**, backend 1460 → **1594**.
+Chaque valeur vient d'une commande lancée, pas d'une relecture. `docs/API.md` passe à **190 routes**
+sur **12 contrôleurs**.
+
+---
+
 ## [0.6.1] — 2026-08-06
 
 **Un correctif de console, une ancre de confiance rangée, et deux fichiers de verrouillage qui

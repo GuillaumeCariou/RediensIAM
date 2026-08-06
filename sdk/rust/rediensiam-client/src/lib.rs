@@ -57,24 +57,7 @@ pub enum Error {
 
     #[error("invalid configuration: {0}")]
     Config(String),
-
-    /// The answer carried no `ver`, so it did not come from a tenant-enforcing RediensIAM.
-    ///
-    /// A server older than contract version 2 silently discards the unknown `project_id` form
-    /// field and answers exactly as it always did. Sending it therefore proves nothing on its own
-    /// — only `ver` distinguishes a server that enforced the binding from one that
-    /// ignored it. Failing here is the point: the alternative is believing an answer is scoped to
-    /// one tenant when it was scoped to the whole deployment.
-    #[error(
-        "RediensIAM answered with ver={found}, expected at least 2: this server predates \
-         mandatory project_id binding and silently ignored the `project_id` it sent. Upgrade \
-         RediensIAM before trusting its answers."
-    )]
-    ServerTooOld { found: u32 },
 }
-
-/// Contract version this client requires on every answer. See [`Error::ServerTooOld`].
-pub const CONTRACT_VERSION: u32 = 2;
 
 /// Answer to an introspection call.
 ///
@@ -105,17 +88,43 @@ pub struct TokenInfo {
     #[serde(default)]
     pub is_service_account: bool,
 
-    /// Contract version of the answer. `0` means the field was absent — see
-    /// [`Error::ServerTooOld`]; [`RediensIamClient::introspect`] refuses such an answer before it
-    /// ever reaches you.
+    /// Who is acting for whom. `None` on every ordinary token — `Some` means an operator opened a
+    /// delegated session into this tenant, and the request in front of you is support traffic
+    /// rather than the customer's own.
+    ///
+    /// A delegated token carries **no roles**: authority still comes from your own enforcement
+    /// point. What this decides is what you show, what you record, and — while `mode` reads
+    /// `"read"` — what you refuse.
     #[serde(default)]
-    pub ver: u32,
+    pub act: Option<Actor>,
+}
+
+/// The operator behind a delegated session (RFC 8693 `act`).
+///
+/// `mode` is a claim, and a claim enforces nothing on its own — refusing mutating verbs while it
+/// reads `"read"` is your gateway's job. `session` is what revokes it, and what your logs should
+/// carry beside the tenant id so a support action is never indistinguishable from the customer's.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Actor {
+    #[serde(default)]
+    pub sub: String,
+    #[serde(default)]
+    pub level: String,
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub session: String,
 }
 
 impl TokenInfo {
     /// An inactive answer. Returned for empty tokens without a round-trip.
     pub fn inactive() -> Self {
         Self::default()
+    }
+
+    /// True when this request is an operator acting for the tenant, in read-only mode.
+    pub fn is_read_only_impersonation(&self) -> bool {
+        self.act.as_ref().is_some_and(|a| a.mode == "read")
     }
 
     /// True when the token carries a **management** role of RediensIAM itself
@@ -155,11 +164,10 @@ pub struct Config {
 
     /// The tenant **this resource server serves** — the project id it fronts, or the organisation
     /// id if it fronts a whole organisation. Sent as `project_id` on every introspect and authorize
-    /// call, and mandatory at the server since contract version 2.
+    /// call, and required by the server.
     ///
     /// This is the same identifier that gives the front `client_<project_id>`, so one value
-    /// configures both halves of an integration. It was `audience`, and travelled the wire as
-    /// `aud`, until contract 2 — one value under two names.
+    /// configures both halves of an integration.
     ///
     /// Required, with deliberately no default. A default would be a guess about which tenant this
     /// service belongs to, and a wrong guess is P-06 exactly: a deployment-scoped service-account
@@ -195,11 +203,35 @@ struct AuthorizeRequest<'a> {
     project_id: &'a str,
 }
 
+#[derive(Serialize)]
+struct OpenImpersonationRequest<'a> {
+    org_id: &'a str,
+    project_id: &'a str,
+    mode: &'a str,
+    reason: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ttl_seconds: Option<u32>,
+}
+
+/// A delegated session, as returned when it is opened. `access_token` is shown once.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ImpersonationSession {
+    pub access_token: String,
+    pub session_id: String,
+    pub expires_in: u32,
+    #[serde(default)]
+    pub sub: String,
+    #[serde(default)]
+    pub org_id: String,
+    #[serde(default)]
+    pub project_id: String,
+    #[serde(default)]
+    pub act: Option<Actor>,
+}
+
 #[derive(Deserialize)]
 struct AuthorizeResponse {
     allowed: bool,
-    #[serde(default)]
-    ver: u32,
 }
 
 struct CacheEntry {
@@ -267,7 +299,10 @@ impl RediensIamClient {
             }
         }
 
-        let url = format!("{}/api/introspect", self.config.base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/api/introspect",
+            self.config.base_url.trim_end_matches('/')
+        );
         let response = self
             .http
             .post(url)
@@ -281,7 +316,6 @@ impl RediensIamClient {
             .await?;
 
         let info: TokenInfo = self.parse(response).await?;
-        require_contract(info.ver)?;
 
         // Only positive answers are cached: caching "inactive" would keep denying a token that
         // has since become valid, and buys nothing.
@@ -312,7 +346,10 @@ impl RediensIamClient {
         object: &str,
         relation: &str,
     ) -> Result<bool, Error> {
-        let url = format!("{}/api/authorize", self.config.base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/api/authorize",
+            self.config.base_url.trim_end_matches('/')
+        );
         let response = self
             .http
             .post(url)
@@ -328,8 +365,85 @@ impl RediensIamClient {
             .await?;
 
         let parsed: AuthorizeResponse = self.parse(response).await?;
-        require_contract(parsed.ver)?;
         Ok(parsed.allowed)
+    }
+
+    /// Opens a delegated session — an operator acting **for** the organisation named here.
+    ///
+    /// Requires a service-account credential that also holds `super_admin`; anything less is
+    /// refused by the server. This is an operator console's call, never a customer-facing one.
+    ///
+    /// The returned `access_token` is shown **once**. Opening a session revokes the same
+    /// operator's previous one.
+    ///
+    /// Sessions are organisation-scoped: no user is impersonated and the token carries no roles,
+    /// so what a support session may see is decided by your own service. `reason` is required —
+    /// it lands in the entered tenant's audit log, and a session with no stated reason is not
+    /// auditable.
+    ///
+    /// `ttl_seconds` defaults to 900 server-side; anything above 3600 is clamped, not refused.
+    pub async fn open_impersonation(
+        &self,
+        org_id: &str,
+        project_id: &str,
+        mode: &str,
+        reason: &str,
+        ttl_seconds: Option<u32>,
+    ) -> Result<ImpersonationSession, Error> {
+        if reason.trim().is_empty() {
+            return Err(Error::Config(
+                "a delegated session must state a reason: it is written to the tenant's audit log"
+                    .into(),
+            ));
+        }
+
+        let url = format!(
+            "{}/api/manage/impersonate",
+            self.config.base_url.trim_end_matches('/')
+        );
+        let response = self
+            .http
+            .post(url)
+            .bearer_auth(&self.config.service_account_token)
+            .json(&OpenImpersonationRequest {
+                org_id,
+                project_id,
+                mode,
+                reason,
+                ttl_seconds,
+            })
+            .send()
+            .await?;
+
+        self.parse(response).await
+    }
+
+    /// Ends a delegated session immediately — not at its TTL. `false` means there was nothing live
+    /// to end, which is also what a second call answers.
+    pub async fn revoke_impersonation(&self, session_id: &str) -> Result<bool, Error> {
+        let url = format!(
+            "{}/api/manage/impersonate/{session_id}/revoke",
+            self.config.base_url.trim_end_matches('/')
+        );
+        let response = self
+            .http
+            .post(url)
+            .bearer_auth(&self.config.service_account_token)
+            .send()
+            .await?;
+
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(false);
+        }
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(Error::Api {
+                status: status.as_u16(),
+                body,
+            });
+        }
+        Ok(true)
     }
 
     /// Drops any cached decision for a token — call on logout to make it immediate.
@@ -344,20 +458,13 @@ impl RediensIamClient {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            return Err(Error::Api { status: status.as_u16(), body });
+            return Err(Error::Api {
+                status: status.as_u16(),
+                body,
+            });
         }
         Ok(response.json().await?)
     }
-}
-
-/// Refuses an answer that is not from a tenant-enforcing server. See [`Error::ServerTooOld`]:
-/// the `project_id` we send is invisible to an older RediensIAM, so `ver` is the only evidence that it
-/// was read at all.
-fn require_contract(found: u32) -> Result<(), Error> {
-    if found < CONTRACT_VERSION {
-        return Err(Error::ServerTooOld { found });
-    }
-    Ok(())
 }
 
 /// The service-account credential and every token being introspected ride on `base_url`, so
@@ -373,7 +480,14 @@ fn require_secure_url(base_url: &str) -> Result<(), Error> {
         // `[::1]` and not `::1`: the url crate keeps the brackets an IPv6 authority is written
         // with, so matching the bare form rejected every IPv6 loopback address — the one form of
         // local development this check was written to allow.
-        "http" if matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]" | "::1")) => Ok(()),
+        "http"
+            if matches!(
+                url.host_str(),
+                Some("localhost" | "127.0.0.1" | "[::1]" | "::1")
+            ) =>
+        {
+            Ok(())
+        }
         _ => Err(Error::Config(format!(
             "base_url must be https — http is accepted only on localhost: {base_url}"
         ))),
@@ -459,7 +573,10 @@ mod tests {
         assert!(with("http://127.0.0.1:8080").is_ok());
         // The url crate keeps the brackets, so this asserts the bracketed form the parser produces
         // rather than the bare address a reader would write in a match arm. It failed before.
-        assert!(with("http://[::1]:8080").is_ok(), "IPv6 loopback is loopback");
+        assert!(
+            with("http://[::1]:8080").is_ok(),
+            "IPv6 loopback is loopback"
+        );
 
         assert!(with("http://auth.example.com").is_err());
         assert!(with("auth.example.com").is_err(), "must be an absolute URL");
@@ -499,8 +616,14 @@ mod tests {
         };
 
         assert!(info.has_project_role("project-a", "admin"));
-        assert!(!info.has_project_role("project-b", "admin"), "must not serve another tenant");
-        assert!(!info.has_role("admin"), "a bare tenant role name must never match");
+        assert!(
+            !info.has_project_role("project-b", "admin"),
+            "must not serve another tenant"
+        );
+        assert!(
+            !info.has_role("admin"),
+            "a bare tenant role name must never match"
+        );
         assert!(!info.has_role("super_admin"));
     }
 
@@ -516,7 +639,10 @@ mod tests {
         assert!(info.has_role("org_admin"));
         assert!(!info.has_role("super_admin"));
         assert!(info.belongs_to_org("org-1"));
-        assert!(!info.belongs_to_org("org-2"), "must not serve another tenant");
+        assert!(
+            !info.belongs_to_org("org-2"),
+            "must not serve another tenant"
+        );
     }
 
     #[test]
@@ -578,7 +704,10 @@ mod tests {
         };
         let declared = text
             .lines()
-            .find_map(|line| line.strip_prefix("content-length: ").or(line.strip_prefix("Content-Length: ")))
+            .find_map(|line| {
+                line.strip_prefix("content-length: ")
+                    .or(line.strip_prefix("Content-Length: "))
+            })
             .and_then(|v| v.trim().parse::<usize>().ok())
             .unwrap_or(0);
         buffer.len() >= head_len + declared
@@ -588,7 +717,7 @@ mod tests {
     /// configured and then not sent.
     #[tokio::test]
     async fn introspect_sends_the_project_id() {
-        let (base_url, server) = serve_once(r#"{"active":true,"ver":2}"#).await;
+        let (base_url, server) = serve_once(r#"{"active":true}"#).await;
         let iam = RediensIamClient::new(config(&base_url)).unwrap();
 
         let info = iam.introspect("rediens_pat_x").await.unwrap();
@@ -596,7 +725,89 @@ mod tests {
 
         let request = server.await.unwrap();
         assert!(request.contains("POST /api/introspect"), "{request}");
-        assert!(request.contains("project_id=proj-1"), "project_id missing from the form body: {request}");
+        assert!(
+            request.contains("project_id=proj-1"),
+            "project_id missing from the form body: {request}"
+        );
+    }
+
+    /// A delegated session: `act` names the operator, and the role list is empty. Both halves
+    /// matter — a consumer that reads the roles and ignores `act` cannot tell support traffic from
+    /// the customer's own, which is the one thing it must never fail to do.
+    #[tokio::test]
+    async fn introspect_surfaces_the_actor_of_a_delegated_token() {
+        let (base_url, _server) = serve_once(
+            r#"{"active":true,"sub":"imp_7f3","org_id":"acme","roles":[],
+                "act":{"sub":"usr_operator","level":"super_admin","mode":"read","session":"7f3"}}"#,
+        )
+        .await;
+        let iam = RediensIamClient::new(config(&base_url)).unwrap();
+
+        let info = iam.introspect("rediens_imp_x").await.unwrap();
+
+        let act = info.act.as_ref().expect("act must survive deserialisation");
+        assert_eq!(act.sub, "usr_operator");
+        assert_eq!(act.mode, "read");
+        assert!(info.roles.is_empty(), "a delegated token carries no roles");
+        assert!(info.is_read_only_impersonation());
+    }
+
+    /// Opening a session returns a credential shown once, and the request carries the reason —
+    /// which is the field the tenant's own audit log will show them.
+    #[tokio::test]
+    async fn open_impersonation_posts_the_reason_and_returns_the_token() {
+        let (base_url, server) = serve_once(
+            r#"{"access_token":"rediens_imp_abc","session_id":"7f3","expires_in":900,
+                "sub":"imp_7f3","org_id":"acme","project_id":"p1",
+                "act":{"sub":"usr_operator","level":"super_admin","mode":"read","session":"7f3"}}"#,
+        )
+        .await;
+        let iam = RediensIamClient::new(config(&base_url)).unwrap();
+
+        let session = iam
+            .open_impersonation("acme", "p1", "read", "ticket #4812", Some(900))
+            .await
+            .unwrap();
+
+        assert_eq!(session.access_token, "rediens_imp_abc");
+        assert_eq!(session.session_id, "7f3");
+        assert_eq!(session.act.unwrap().sub, "usr_operator");
+
+        let request = server.await.unwrap();
+        assert!(
+            request.contains("POST /api/manage/impersonate"),
+            "{request}"
+        );
+        assert!(
+            request.contains("ticket #4812"),
+            "the reason must reach the server: {request}"
+        );
+    }
+
+    /// A session with no stated reason is not auditable, so the client refuses before the round
+    /// trip rather than letting the server answer 400.
+    #[tokio::test]
+    async fn open_impersonation_refuses_an_empty_reason() {
+        let iam = RediensIamClient::new(config("http://127.0.0.1:1")).unwrap();
+
+        let err = iam
+            .open_impersonation("acme", "p1", "read", "   ", None)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, Error::Config(_)), "got {err:?}");
+    }
+
+    /// And the field is absent on everything else, which is what gives it meaning.
+    #[tokio::test]
+    async fn an_ordinary_token_has_no_actor() {
+        let (base_url, _server) = serve_once(r#"{"active":true,"sub":"sa:1"}"#).await;
+        let iam = RediensIamClient::new(config(&base_url)).unwrap();
+
+        let info = iam.introspect("rediens_pat_x").await.unwrap();
+
+        assert!(info.act.is_none());
+        assert!(!info.is_read_only_impersonation());
     }
 
     /// The most common answer this endpoint gives, in the shape a server that predates the fix
@@ -610,7 +821,7 @@ mod tests {
     #[tokio::test]
     async fn an_inactive_answer_with_null_fields_is_not_a_transport_error() {
         let (base_url, server) = serve_once(
-            r#"{"active":false,"sub":null,"user_id":null,"org_id":null,"project_id":null,"roles":null,"client_id":null,"is_service_account":false,"ver":2}"#,
+            r#"{"active":false,"sub":null,"user_id":null,"org_id":null,"project_id":null,"roles":null,"client_id":null,"is_service_account":false}"#,
         )
         .await;
         let iam = RediensIamClient::new(config(&base_url)).unwrap();
@@ -627,44 +838,19 @@ mod tests {
 
     #[tokio::test]
     async fn authorize_sends_the_project_id() {
-        let (base_url, server) = serve_once(r#"{"allowed":true,"ver":2}"#).await;
-        let iam = RediensIamClient::new(config(&base_url)).unwrap();
-
-        assert!(iam.authorize("t", "Organisations", "org-1", "org_admin").await.unwrap());
-
-        let request = server.await.unwrap();
-        assert!(request.contains("POST /api/authorize"), "{request}");
-        assert!(request.contains(r#""project_id":"proj-1""#), "project_id missing from the JSON body: {request}");
-    }
-
-    /// The anti-downgrade signal. An un-upgraded RediensIAM drops the unknown `aud` and answers
-    /// without `ver` — byte-for-byte what it always answered. Accepting that answer would mean
-    /// believing a deployment-wide result was scoped to one tenant, so it must fail closed.
-    #[tokio::test]
-    async fn an_answer_without_ver_is_refused() {
-        let (base_url, server) = serve_once(r#"{"active":true,"org_id":"org-9"}"#).await;
-        let iam = RediensIamClient::new(config(&base_url)).unwrap();
-
-        let err = iam
-            .introspect("rediens_pat_x")
-            .await
-            .expect_err("an answer without `ver` must not be trusted");
-
-        assert!(matches!(err, Error::ServerTooOld { found: 0 }), "{err}");
-        let _ = server.await;
-    }
-
-    #[tokio::test]
-    async fn an_authorize_answer_without_ver_is_refused() {
         let (base_url, server) = serve_once(r#"{"allowed":true}"#).await;
         let iam = RediensIamClient::new(config(&base_url)).unwrap();
 
-        let err = iam
+        assert!(iam
             .authorize("t", "Organisations", "org-1", "org_admin")
             .await
-            .expect_err("an allow without `ver` must not be trusted");
+            .unwrap());
 
-        assert!(matches!(err, Error::ServerTooOld { found: 0 }), "{err}");
-        let _ = server.await;
+        let request = server.await.unwrap();
+        assert!(request.contains("POST /api/authorize"), "{request}");
+        assert!(
+            request.contains(r#""project_id":"proj-1""#),
+            "project_id missing from the JSON body: {request}"
+        );
     }
 }

@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using RediensIAM.Data;
@@ -11,9 +12,11 @@ using RediensIAM.Data;
 namespace RediensIAM.Data.Migrations
 {
     [DbContext(typeof(RediensIamDbContext))]
-    partial class RediensIamDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260806133216_AddImpersonationSessions")]
+    partial class AddImpersonationSessions
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

@@ -173,6 +173,29 @@ a token revoked since. The trade-off table is in [`../sdk/README.md`](../sdk/REA
 > Introspection still strips management roles it cannot confirm (`IntrospectionController.cs`), and
 > introspecting remains preferable to local JWKS validation for every reason listed above.
 
+### `act` — telling support traffic from the customer's own
+
+Since 0.7.0 an introspection answer can carry an `act` object. It is **absent on every ordinary
+token**, and present exactly when an operator opened a delegated session into the tenant:
+
+```json
+"act": { "sub": "usr_operator", "level": "super_admin", "mode": "read", "session": "7f3e…" }
+```
+
+Three consequences for your service, none optional:
+
+1. **A consumer that cannot see `act` cannot tell an impersonated request from a genuine one.** Log
+   both identities — the tenant *and* `act.sub` — or your audit trail says only "Acme did this".
+2. **While `act.mode == "read"`, refuse mutating verbs.** The claim travels so every enforcement
+   point sees the same value; enforcing it is still yours. `IsReadOnlyImpersonation` /
+   `is_read_only_impersonation()` in the SDKs is the one-liner.
+3. **A delegated token carries no roles at all** — `roles` is empty and `user_id` is null. Your
+   usual role checks therefore grant it nothing, which is correct: *you* decide what a support
+   session may see.
+
+The full contract, and how to open a session, is in [`IMPERSONATION.md`](IMPERSONATION.md) — §12 is
+written for exactly this audience.
+
 ### Get a service account and a PAT
 
 Introspection callers authenticate as a service account
@@ -221,9 +244,9 @@ cannot distinguish malformed from revoked from expired.
 
 ### `project_id` is mandatory — read this before you upgrade
 
-**Breaking change (contract `ver: 2`).** `project_id` names the tenant *your resource server serves*.
-Omit it and you get `400 {"error": "project_id_required", "ver": 2}`. There is no grace period and
-no opt-out: **a resource server that declares no audience is no longer served.**
+**Breaking change.** `project_id` names the tenant *your resource server serves*. Omit it and you
+get `400 {"error": "project_id_required"}`. There is no grace period and no opt-out: **a resource
+server that declares no tenant is no longer served.**
 
 Why the break was worth making. Introspection previously answered for whatever token you handed
 it, scoped only by *your* credential's organisation. A gateway holding a deployment-scoped
@@ -237,7 +260,6 @@ nothing made the *tenant* check safe by construction. Now the tenant check is th
 |---|---|
 | `project_id` (request) | the project id your service serves, **or** the organisation id if you front a whole organisation |
 | `project_id` (response) | echo of what you sent, on an active answer |
-| `ver` (response) | `1`, on **every** answer including `{"active": false}` and the 400 |
 
 A token is bound to `project_id` when the value equals its `project_id`, equals its `org_id`, or appears
 in its OAuth2 `aud` claim. A token whose `project_id` and `org_id` are both empty matches no
@@ -249,11 +271,11 @@ the one new option, and jump to the symptom list. The raw-HTTP version:
 1. Find every caller of `/api/introspect` and `/api/authorize`. Each one serves exactly one
    tenant; write that tenant's id into its configuration. If a caller genuinely serves several,
    it already knows which one each request is for — send that.
-2. Add `project_id` to the request. Deploy the callers **before** the server, or accept a window of
-   400s: the old server ignores the unknown field, so adding it early is safe.
-3. Check `ver >= 2` in the response. This is the point of `ver`: a server that has not been
-   upgraded silently discards the `project_id` you sent and answers without `ver`, so a client that
-   requires `ver` fails closed instead of believing it is bound when it is not.
+2. Add `project_id` to the request.
+3. **Upgrade the server before pointing upgraded callers at it.** A server that predates this
+   change does not reject the field — it discards it in silence and answers as it always did, and
+   nothing in that answer says so. There is no client-side check that catches it, which is exactly
+   why the order matters.
 
 **Symptom you will see if you skip this:** every introspection returns
 `400 project_id_required`, or — worse and quieter — an `{"active": false}` on a token you know is
@@ -297,9 +319,7 @@ cache negative ones.
 
 > **The backend SDKs now send `project_id`, and require it.** `RediensIamOptions.ProjectId` (C#) and
 > `Config::project_id` (Rust) are **required options with no default** — a client constructed
-> without one throws at construction rather than 400-ing on its first request. Both also refuse
-> any answer that arrives without `ver`, which is how they detect a server that silently ignored
-> the `project_id` they sent. Full migration in [`../sdk/README.md`](../sdk/README.md#project_id-is-now-a-required-sdk-option).
+> without one throws at construction rather than 400-ing on its first request. Full migration in [`../sdk/README.md`](../sdk/README.md#project_id-is-now-a-required-sdk-option).
 >
 > The browser SDK is unaffected: it never calls these endpoints, because introspection needs a
 > service-account credential and anything shipped to a browser is readable by anyone with
@@ -309,7 +329,7 @@ cache negative ones.
 
 ## Endpoint reference
 
-The routes below are the ones an integrator uses. **The complete list of all 187 routes — with
+The routes below are the ones an integrator uses. **The complete list of all 190 routes — with
 required authority and whether each is reachable on the public hostname — is in
 [`API.md`](API.md).**
 
@@ -325,9 +345,21 @@ Bodies are `snake_case`. Records cited so you can re-check against the source.
 | `POST /service-accounts/{id}/pat` | access to the SA | `{name, expires_at?}` | `GenerateSaPatRequest` |
 | `POST /service-accounts/{id}/roles` | access to the SA | `{role, org_id?, project_id?}` | `AssignSaRoleRequest` |
 | `POST /admin/organizations/{id}/admins` | SuperAdmin | `{user_id, role, scope_id?}` | `AssignOrgAdminRequest` |
-| `POST /api/introspect` | service account | **form**: `token`, `aud` (required) | `IntrospectionRequest` |
-| `POST /api/authorize` | service account | `{token, namespace, object, relation, aud}` — `project_id` required | `AuthorizationRequest` |
+| `POST /api/introspect` | service account | **form**: `token`, `project_id` (required) | two action parameters, not a record — see below |
+| `POST /api/authorize` | service account | `{token, namespace, object, relation, project_id}` | `AuthorizationRequest` |
+| `POST /admin/impersonate` | SuperAdmin **and** a service-account caller | `{org_id, project_id, mode, reason, ttl_seconds?}` | `OpenImpersonationRequest` |
+| `GET /admin/impersonate` | same | — | — |
+| `POST /admin/impersonate/{session}/revoke` | same | — | — |
 | `PATCH /admin/projects/{id}` | SuperAdmin | see [MFA](#turning-require_mfa-off) | `AdminUpdateProjectRequest` |
+
+⚠ `aud` was the name of `project_id` until 0.6.0. One value under two names is
+what produced a deployment test whose only job was to check that two spellings agreed. There is no
+compatibility shim: a caller still sending `aud` gets `400 project_id_required`.
+
+⚠ `/api/introspect` binds **two action parameters**, not a record. Form binding resolves a record
+through its constructor, so `[property: FromForm(Name = "project_id")]` lands where the binder never
+looks — the field bound to nothing and every request answered `400 project_id_required`. If you
+mirror this endpoint's shape in your own service, do not use a record.
 
 `role` values are validated against `SystemAdminController.KnownManagementRoles` — `super_admin`,
 `org_admin`, `project_admin`; anything else is `400 unknown_role`.
@@ -438,7 +470,7 @@ Recorded here because each one looks like an integration bug when you hit it. Cu
 | Serving RediensIAM under `https://host/iam` breaks OIDC | the ingress serves at a host root; issuer and discovery URLs are absolute | **Still open** (finding R-27). Give it a dedicated host — `iam.example.com` |
 | `/admin`, `/org`, `/project` or `/service-accounts` returns 403 from your gateway | the public host denies those prefixes at the ingress by design (finding P-04) | Working as intended. A machine caller wants `/api/manage/*`, which is the same super-admin surface and *is* served on the public host — see [Management API](#management-api--admin-and-apimanage-are-one-surface) |
 | Pod in `CrashLoopBackOff` on a dev deploy | `App__TrustedProxies` was empty and the image runs as Production, so the app refuses to start rather than silently trust RFC1918 | **Fixed.** `values.yaml` now ships the k3s pod and service CIDRs (`10.42.0.0/16,10.43.0.0/16`). Override it for any other cluster |
-| Admin console login does nothing | its own CSP `connect-src 'self'` blocked the cross-origin discovery fetch | **Fixed.** The header now names the issuer origin explicitly (`src/Program.cs:466-470`), resolved once at startup from the same value `/admin/config` hands the SPA |
+| Admin console login does nothing | its own CSP `connect-src 'self'` blocked the cross-origin discovery fetch | **Fixed.** The header now names the issuer origin explicitly (`src/Program.cs:466-470`), resolved once at startup from the same value `/console/config` hands the SPA |
 
 ---
 
@@ -452,6 +484,6 @@ Recorded here because each one looks like an integration bug when you hit it. Cu
 4. **`POST /service-accounts` with only `{"name": …}`.** `user_list_id` is required → 400.
 5. **Assigning a role so a service account may introspect.** Unnecessary.
 6. **Sending JSON to `/api/introspect`.** It is form-encoded.
-6b. **Omitting `project_id`.** Required since contract `ver: 2`. 400, every time.
+6b. **Omitting `project_id`.** Required. 400, every time.
 7. **Matching a bare tenant role name.** `ext.roles` carries tenant roles as
    `{project_id}/{name}`; `roles.contains("admin")` matches nothing. See the warning above.

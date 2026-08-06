@@ -47,7 +47,7 @@ export default function UserLists() {
       // En portée système, l'organisation vient de l'URL et doit voyager dans le corps : le jeton
       // d'un super-admin n'en porte aucune. En portée organisation, c'est le jeton qui fait foi.
       await (isSystemCtx
-        ? createSystemUserList({ name: listForm.name, org_id: orgId! })
+        ? createSystemUserList({ name: listForm.name, org_id: orgId })
         : createUserList({ name: listForm.name }));
       setCreateOpen(false); setListForm({ name: '' }); load();
     } finally { setSaving(false); }

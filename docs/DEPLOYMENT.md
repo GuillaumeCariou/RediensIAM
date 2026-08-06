@@ -91,9 +91,16 @@ What you get:
 
 ```
 Login          http://iam.localhost/login
-Admin console  http://localhost:30501/console/
+Admin console  http://admin.iam.localhost/console/
 OIDC discovery http://iam.localhost/.well-known/openid-configuration
 ```
+
+The console is on a **subdomain of the issuer's host**, not on `localhost`. That is not cosmetic:
+`localhost` and `iam.localhost` are different sites as a browser counts them, so Hydra's
+`SameSite=Strict` session cookie was never sent and every reload asked for the password again. The
+`:30501` NodePort still exists as a troubleshooting door, but it answers only to a request carrying
+`Host: admin.iam.localhost` — a bare `http://localhost:30501` is refused with a 400, which is host
+filtering working.
 
 `iam.localhost` needs to resolve to the ingress. On most systems `localhost` subdomains resolve
 automatically; if not, add it to `/etc/hosts`.

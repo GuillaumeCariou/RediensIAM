@@ -18,7 +18,7 @@ Multi-tenant Identity & Access Management built on Ory Hydra + Keto, ASP.NET Cor
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | how the system is put together and where authority lives |
 | [docs/DIAGRAMS.md](docs/DIAGRAMS.md) | the same thing drawn — deployment topology, request pipeline, authorisation decision, OIDC and introspection sequences, data model and RLS coverage, key material, audit chain |
 | [docs/SECURITY.md](docs/SECURITY.md) | what protects what, and what is deliberately still open — **read before trusting it with anything** |
-| [docs/API.md](docs/API.md) | all 187 routes: method, path, required authority, where each is reachable |
+| [docs/API.md](docs/API.md) | all 190 routes: method, path, required authority, where each is reachable |
 | [docs/INTEGRATION.md](docs/INTEGRATION.md) | plugging an application in — the wire contract, the SDKs, and what changes between releases |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | bare cluster to working IdP, plus the day-2 runbooks |
 | [docs/CONSOLE.md](docs/CONSOLE.md) | the admin console: the three scopes, what each page does, and the order a first run has to happen in |
@@ -71,9 +71,16 @@ What you get:
 
 ```
 Login          http://iam.localhost/login
-Admin console  http://localhost:30501/console/
+Admin console  http://admin.iam.localhost/console/
 OIDC discovery http://iam.localhost/.well-known/openid-configuration
 ```
+
+The console is on a **subdomain of the issuer's host**, not on `localhost`. That is not cosmetic:
+`localhost` and `iam.localhost` are different sites as a browser counts them, so Hydra's
+`SameSite=Strict` session cookie was never sent and every reload asked for the password again. The
+`:30501` NodePort still exists as a troubleshooting door, but it answers only to a request carrying
+`Host: admin.iam.localhost` — a bare `http://localhost:30501` is refused with a 400, which is host
+filtering working.
 
 Clean slate: `./deploy/reset-dev.sh` (lists exactly what it destroys, then asks).
 
@@ -219,7 +226,7 @@ themselves are configured at the **top level**, outside `rediensiam:`:
 dotnet test tests/RediensIAM.IntegrationTests -p:SonarQubeTargetsImported=true
 ```
 
-**1545 tests** against a real PostgreSQL container (Testcontainers) with WireMock Hydra
+**1597 tests** against a real PostgreSQL container (Testcontainers) with WireMock Hydra
 and Keto stubs. The `-p:SonarQubeTargetsImported=true` flag suppresses a user-global MSBuild hook
 that a stale `.sonarqube/` directory at the repository root arms — pass it whenever you run `dotnet`
 from the repository root.

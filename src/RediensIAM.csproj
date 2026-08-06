@@ -10,7 +10,7 @@
          causing MSB3552. No .resx files in this project; suppress the default include. -->
     <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
 
-    <Version>0.6.1</Version>
+    <Version>0.7.0</Version>
     <!-- AssemblyVersion is pinned and must stay pinned. The DataProtection key ring persists
          `decryptorType="RediensIAM.Config.RootKeyXmlDecryptor, RediensIAM, Version=1.0.0.0, …"`
          into storage (KeyRingProtection.cs). Letting <Version> drive AssemblyVersion would make

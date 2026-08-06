@@ -110,7 +110,7 @@ stayed deliberately unscoped. One gateway credential therefore resolved **every*
 the deployment as `active: true`, and each resource server was expected to compare `project_id`
 against its own configuration afterwards. Nothing enforced that, and no SDK had a field for it.
 
-`ProjectId` is that field. The server answers `400 {"error":"project_id_required","ver":2}` to any
+`ProjectId` is that field. The server answers `400 {"error":"project_id_required"}` to any
 caller that omits it. Full migration notes:
 [`sdk/README.md`](../../README.md#project_id-is-now-a-required-sdk-option).
 
@@ -138,7 +138,6 @@ URIs are relative (`api/introspect`, `api/authorize`) and are resolved against i
 
 | Member | Signature | Returns / throws |
 |---|---|---|
-| `RequiredContractVersion` | `const int` = `1` | The `ver` every answer must carry. |
 | `IntrospectAsync` | `Task<TokenInfo> IntrospectAsync(string token, CancellationToken ct = default)` | `TokenInfo`. A null, empty or whitespace token short-circuits to `TokenInfo.Inactive` with no round trip. |
 | `AuthorizeAsync` | `Task<bool> AuthorizeAsync(string token, string @namespace, string @object, string relation, CancellationToken ct = default)` | `true` when RediensIAM allows it. Not cached. |
 | `Forget` | `void Forget(string token)` | Drops any cached decision for that token. Returns nothing; a miss is not an error. |
@@ -148,7 +147,7 @@ Both calls throw rather than answering:
 | Exception | When |
 |---|---|
 | `HttpRequestException` | Non-2xx from RediensIAM (`EnsureSuccessStatusCode`), including `400 project_id_required` and `403 service_account_required`. |
-| `InvalidOperationException` | An empty body — a broken server, not an inactive token — or an answer whose `ver` is below `RequiredContractVersion`. |
+| `InvalidOperationException` | An empty body — a broken server, not an inactive token. |
 | `TaskCanceledException` | `Timeout` elapsed, or `ct` was cancelled. |
 | `JsonException` | A body that is not the documented shape. |
 
@@ -168,7 +167,6 @@ acceptable is the caller's decision, not the SDK's.
 | `Roles` | `IReadOnlyList<string>` | `roles` | Never null. An explicit `"roles": null` from the server is normalised to an empty list on both get and init. |
 | `ClientId` | `string?` | `client_id` | |
 | `IsServiceAccount` | `bool` | `is_service_account` | |
-| `Ver` | `int` | `ver` | Contract version; `0` means the field was absent, and such an answer never reaches you. |
 
 | Member | Signature | Meaning |
 |---|---|---|
@@ -265,24 +263,12 @@ being introspected ride on that URL, so cleartext hands an on-path attacker both
 tenant is a deployment mistake; it should stop the process at startup with a message naming the
 fix, not turn into a 400 on every request once traffic arrives.
 
-**Every answer must carry `ver >= 2`.** This is the load-bearing half of the tenant-binding change. A
-RediensIAM older than contract version 2 does **not** reject the `project_id` you send — it silently
-discards the unknown form field and answers exactly as it always did. An SDK that only *sent* `project_id`
-could therefore not tell an enforcing server from an ignoring one, and would report success while
-being bound to nothing. `ver` is present on every answer from an upgraded server, including
-`{"active": false}` and the 400, so requiring it turns that silent failure into a loud one.
+**Deploy order is load-bearing, and there is no client-side net.** A RediensIAM that predates
+mandatory `project_id` does **not** reject the field — it silently discards the unknown parameter
+and answers exactly as it always did. Nothing in the answer distinguishes an enforcing server from
+an ignoring one, so an upgraded client pointed at an old server would report success while being
+bound to nothing. **Upgrade the server first.**
 
-Consequence: **deploy order is load-bearing.** An upgraded SDK against an un-upgraded server refuses
-every answer, by design:
-
-```
-RediensIAM answered with ver=0, expected at least 1: this server predates mandatory
-project_id binding and silently ignored the project_id it sent. Upgrade RediensIAM
-before trusting its answers.
-```
-
-Upgrade the server first, or accept a window in which this service fails closed. There is no window
-of 400s in the other direction — the old server ignores the `project_id` a new SDK sends.
 
 **Cache keys are a SHA-256 digest of `BaseUrl`, `Audience` and the token — never the token
 itself.** Keys surface in dumps and diagnostics, and the project id is part of the *question*: one
@@ -365,7 +351,7 @@ Full walkthrough: [`docs/INTEGRATION.md`](../../../docs/INTEGRATION.md).
 ## Tests
 
 `../RediensIAM.Client.Tests` covers the project id reaching the wire, the construction-time checks,
-the `ver` refusal, the null-roles answer, per-project cache isolation and the timeout. Run from the
+the null-roles answer, per-project cache isolation and the timeout. Run from the
 repository root:
 
 ```bash

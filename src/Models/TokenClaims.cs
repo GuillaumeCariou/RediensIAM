@@ -17,6 +17,13 @@ public record TokenClaims
     /// <summary>Audiences the token was minted for (<c>aud</c>). Often empty — Hydra only sets it when requested.</summary>
     public List<string> Audiences { get; init; } = [];
 
+    /// <summary>
+    /// Who is acting for whom (RFC 8693 §4.1). Null on every ordinary token, which is the whole
+    /// point: a consumer that cannot tell a delegated request from a genuine one is the one thing
+    /// this must never allow.
+    /// </summary>
+    public ActorClaim? Act { get; init; }
+
     // Strips the "orgId:userId" compound format used in Hydra subjects.
     // Split into exactly two parts and take the last: a subject with extra colons used to
     // silently yield the middle segment instead of failing.
@@ -30,6 +37,18 @@ public record TokenClaims
         }
     }
 }
+
+/// <summary>
+/// The actor behind a delegated token: the operator, the level they held when the session opened,
+/// the mode the session was issued in, and the session id that revokes it.
+///
+/// <para>
+/// <c>Mode</c> is a claim, and a claim enforces nothing on its own — the enforcement point is the
+/// consuming gateway, which refuses mutating verbs while it reads <c>read</c>. It is carried here
+/// so that every enforcement point sees the same value, rather than each deriving its own.
+/// </para>
+/// </summary>
+public record ActorClaim(string Sub, string Level, string Mode, string Session);
 
 public record IntrospectionResponse(
     bool Active,

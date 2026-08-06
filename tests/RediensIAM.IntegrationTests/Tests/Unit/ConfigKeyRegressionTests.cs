@@ -11,7 +11,7 @@ namespace RediensIAM.IntegrationTests.Tests.Unit;
 ///
 /// No fixture: these are all pure configuration binding, so they need neither a database nor Redis.
 /// </summary>
-public class ConfigKeyRegressionTests
+public partial class ConfigKeyRegressionTests
 {
     private static AppConfig Build(params (string Key, string Value)[] entries) =>
         new(new ConfigurationBuilder()
@@ -72,9 +72,18 @@ public class ConfigKeyRegressionTests
     [InlineData("Cache", "JwksTtlMinutes")]
     [InlineData("App", "FrontendUrl")]
     [InlineData("App", "LoginPath")]
+    // 0.6.0 removed the cache itself. The whole section outlived it in appsettings.json —
+    // ConnectionString and InstanceName pointing at a component that no longer exists, and
+    // PatTtlMinutes under a name AppConfig had stopped reading. Declared, read by nothing: the
+    // exact defect the rest of this class exists to catch, found by this class catching it late.
+    [InlineData("Cache", "ConnectionString")]
+    [InlineData("Cache", "InstanceName")]
+    [InlineData("Cache", "PatTtlMinutes")]
     public void RetiredKeys_AreNotDeclared(string section, string key)
     {
-        ShippedAppSettings()[section]!.AsObject()
+        var settings = ShippedAppSettings();
+        if (settings[section] is null) return;   // a whole section may legitimately be gone
+        settings[section]!.AsObject()
             .ContainsKey(key).Should().BeFalse(
                 $"{section}:{key} is read by nothing — declaring it advertises a setting that does not exist");
     }
@@ -84,7 +93,7 @@ public class ConfigKeyRegressionTests
     /// would be a silent behaviour change rather than a cleanup.
     /// </summary>
     [Theory]
-    [InlineData("Cache", "PatTtlMinutes")]
+    [InlineData("Security", "PatCacheTtlMinutes")]
     [InlineData("Security", "Argon2Pepper")]
     [InlineData("App", "PublicUrl")]
     [InlineData("App", "AdminSpaOrigin")]
@@ -117,6 +126,15 @@ public class ConfigKeyRegressionTests
     }
 
     // ── One door for configuration ────────────────────────────────────────────
+
+    /// <summary>
+    /// Indexer lookups and <c>GetValue&lt;T&gt;</c>/<c>GetSection</c>/<c>GetConnectionString</c> calls
+    /// on an <c>IConfiguration</c>. Source-generated: compiled once at build time rather than parsed
+    /// on every run.
+    /// </summary>
+    [GeneratedRegex(
+        @"(config|cfg|Configuration|configuration)\s*\[|\.GetValue<|\.GetSection\(|\.GetConnectionString\(")]
+    private static partial Regex DirectConfigurationRead();
 
     /// <summary>
     /// Walks up from the test output to the directory holding <c>RediensIAM.slnx</c>. Fails rather
@@ -158,11 +176,7 @@ public class ConfigKeyRegressionTests
         var src = new DirectoryInfo(Path.Combine(RepoRoot().FullName, "src"));
         src.Exists.Should().BeTrue("the scan needs the backend sources");
 
-        // Indexer lookups and GetValue<T>/GetSection/GetConnectionString calls on an IConfiguration.
-        var directRead = new Regex(
-            @"(config|cfg|Configuration|configuration)\s*\[|" +
-            @"\.GetValue<|\.GetSection\(|\.GetConnectionString\(",
-            RegexOptions.Compiled);
+        var directRead = DirectConfigurationRead();
 
         var exempt = new[] { "AppConfig.cs", "InstanceConfiguration.cs" };
 

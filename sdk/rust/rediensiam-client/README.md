@@ -110,7 +110,7 @@ stayed deliberately unscoped. One gateway credential therefore resolved **every*
 the deployment as `active: true`, and each resource server was expected to compare `project_id`
 against its own configuration afterwards. Nothing enforced that, and no SDK had a field for it.
 
-`audience` is that field. The server answers `400 {"error":"project_id_required","ver":2}` to any
+`project_id` is that field. The server answers `400 {"error":"project_id_required"}` to any
 caller that omits it. Full migration notes:
 [`sdk/README.md`](../../README.md#project_id-is-now-a-required-sdk-option).
 
@@ -144,7 +144,6 @@ Derives `Debug`, `Clone`, `Default`, `Deserialize`. All fields are public.
 | `client_id` | `Option<String>` | |
 | `is_service_account` | `bool` | |
 | `aud` | `Option<String>` | Echo of the `aud` this client sent, on an active answer. |
-| `ver` | `u32` | Contract version; `0` means absent, and such an answer never reaches you. |
 
 | Method | Signature | Meaning |
 |---|---|---|
@@ -162,15 +161,10 @@ Implements `std::error::Error` through `thiserror`.
 | `Transport(reqwest::Error)` | Connection failure, DNS, TLS rejection, timeout — and also a response body that does not deserialise, since decoding goes through `reqwest`. | `From<reqwest::Error>` is derived. Treating this as "the IAM is unreachable" is right for the first group and optimistic for the last; check `source()` if the distinction matters to you. |
 | `Api { status: u16, body: String }` | Any non-2xx from RediensIAM, with the body attached. `400 project_id_required` and `403 service_account_required` arrive here. | |
 | `Config(String)` | A missing or unusable option, from `new()`. | |
-| `ServerTooOld { found: u32 }` | The answer's `ver` was below `CONTRACT_VERSION`. | See below. |
 
 An *unusable token* is none of these: it is `Ok(TokenInfo { active: false, .. })`. Transport and
 server faults return `Err` so an IAM outage cannot be mistaken for "everyone is unauthenticated" —
 the caller decides how to handle it.
-
-### `const CONTRACT_VERSION: u32 = 1`
-
-The `ver` every answer must carry.
 
 ---
 
@@ -228,17 +222,11 @@ fix, not return 400s under load. The wire tests assert that the field reaches th
 the form body and the JSON body — the whole change is worthless if it is configured and then not
 sent.
 
-**Every answer must carry `ver >= 2`.** This is the load-bearing half of the audience change. A
-RediensIAM older than contract version 1 does **not** reject the `aud` you send — it silently
-discards the unknown field and answers exactly as it always did. A client that only *sent* `aud`
-could therefore not tell an enforcing server from an ignoring one, and would report success while
-being bound to nothing. `ver` is present on every answer from an upgraded server, including
-`{"active": false}` and the 400, so requiring it turns that silent failure into a loud one.
-
-Consequence: **deploy order is load-bearing.** An upgraded client against an un-upgraded server
-returns `Error::ServerTooOld { found: 0 }` for every call, by design. Upgrade the server first, or
-accept a window in which this service fails closed. There is no window of 400s in the other
-direction — the old server ignores the `aud` a new client sends.
+**Deploy order is load-bearing, and there is no client-side net.** A RediensIAM that predates
+mandatory `project_id` does **not** reject the field — it silently discards the unknown parameter
+and answers exactly as it always did. Nothing in the answer distinguishes an enforcing server from
+an ignoring one, so an upgraded client pointed at an old server would report success while being
+bound to nothing. **Upgrade the server first.**
 
 **Cache keys are a SHA-256 digest of the token, never the token itself.** Keys surface in dumps and
 diagnostics, and the map returns a full `TokenInfo` — roles included — before any server call, so

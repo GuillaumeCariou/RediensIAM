@@ -444,7 +444,7 @@ var ul = await UserListOperations.FindAsync(db, id);
         var ul = await UserListOperations.FindAsync(db, id);
         if (ul == null) return NotFound();
         return await UserListOperations.AddUserAsync(
-            db, keto, audit, passwords, emailService, appConfig, GetActorId(), ul, body, "/admin/userlists");
+            new UserListDeps(db, keto, audit, passwords, emailService, appConfig), GetActorId(), ul, body, "/admin/userlists");
     }
 
     [HttpDelete("userlists/{id}/users/{uid}")]

@@ -56,7 +56,7 @@ public class ClientBehaviourTests
     private static (RediensIamClient Client, ScriptedHandler Handler, IMemoryCache Cache) Build(
         RediensIamOptions? options = null, IMemoryCache? cache = null, params string[] bodies)
     {
-        var handler = new ScriptedHandler(bodies.Length == 0 ? ["""{"active":true,"ver":2}"""] : bodies);
+        var handler = new ScriptedHandler(bodies.Length == 0 ? ["""{"active":true}"""] : bodies);
         var http    = new HttpClient(handler) { BaseAddress = new Uri("https://auth.example.com/") };
         var memory  = cache ?? new MemoryCache(new MemoryCacheOptions());
         return (new RediensIamClient(http, options ?? Options(), memory, NullLogger<RediensIamClient>.Instance),
@@ -100,7 +100,7 @@ public class ClientBehaviourTests
     {
         // The timeout cannot be changed once a request has been sent, and throwing here would take
         // down a service over a setting the caller already owns.
-        var http = new HttpClient(new ScriptedHandler("""{"active":true,"ver":2}"""))
+        var http = new HttpClient(new ScriptedHandler("""{"active":true}"""))
         {
             BaseAddress = new Uri("https://auth.example.com/"),
         };
@@ -129,7 +129,7 @@ public class ClientBehaviourTests
     public async Task A_tenant_role_matches_only_inside_its_own_project()
     {
         // Role names are chosen per tenant, so "admin" on its own means nothing across them.
-        var (client, _, _) = Build(bodies: ["""{"active":true,"ver":2,"roles":["p1/admin","org_admin"]}"""]);
+        var (client, _, _) = Build(bodies: ["""{"active":true,"roles":["p1/admin","org_admin"]}"""]);
 
         var info = await client.IntrospectAsync("t");
 
@@ -158,7 +158,7 @@ public class ClientBehaviourTests
     public async Task An_inactive_answer_is_never_cached()
     {
         // Caching it would keep denying a token that has since become valid, and buys nothing.
-        var (client, handler, _) = Build(bodies: ["""{"active":false,"ver":2}"""]);
+        var (client, handler, _) = Build(bodies: ["""{"active":false}"""]);
 
         await client.IntrospectAsync("t");
         await client.IntrospectAsync("t");
@@ -184,9 +184,9 @@ public class ClientBehaviourTests
         // token alone, tenant A's answer — roles and all — was served to tenant B.
         var cache = new MemoryCache(new MemoryCacheOptions());
         var (a, handlerA, _) = Build(Options(o => o.ProjectId = "proj-1"), cache,
-            """{"active":true,"ver":2,"roles":["p1/admin"]}""");
+            """{"active":true,"roles":["p1/admin"]}""");
         var (b, handlerB, _) = Build(Options(o => o.ProjectId = "proj-2"), cache,
-            """{"active":false,"ver":2}""");
+            """{"active":false}""");
 
         var first  = await a.IntrospectAsync("t");
         var second = await b.IntrospectAsync("t");
@@ -253,7 +253,7 @@ public class ClientBehaviourTests
     [Fact]
     public async Task An_authorisation_the_server_refuses_comes_back_false_rather_than_throwing()
     {
-        var (client, _, _) = Build(bodies: ["""{"allowed":false,"user_id":"u1","ver":2}"""]);
+        var (client, _, _) = Build(bodies: ["""{"allowed":false,"user_id":"u1"}"""]);
 
         Assert.False(await client.AuthorizeAsync("t", "Organisations", "org-1", "org_admin"));
     }
@@ -264,7 +264,7 @@ public class ClientBehaviourTests
         // Guarded because introspection runs per request, and the unguarded call boxes the
         // arguments into the params array even when Debug is off.
         var recorder = new RecordingLogger { Enabled = false };
-        var http = new HttpClient(new ScriptedHandler("""{"active":true,"ver":2,"user_id":"u1"}"""))
+        var http = new HttpClient(new ScriptedHandler("""{"active":true,"user_id":"u1"}"""))
         {
             BaseAddress = new Uri("https://auth.example.com/"),
         };
@@ -341,7 +341,7 @@ public class ClientBehaviourTests
     public async Task A_live_token_becomes_a_principal_carrying_its_tenant_and_roles()
     {
         var result = await Authenticate("Bearer tok",
-            """{"active":true,"ver":2,"user_id":"u1","org_id":"o1","project_id":"p1","roles":["p1/admin","org_admin"]}""");
+            """{"active":true,"user_id":"u1","org_id":"o1","project_id":"p1","roles":["p1/admin","org_admin"]}""");
 
         Assert.True(result.Succeeded);
         var principal = result.Principal!;
@@ -357,7 +357,7 @@ public class ClientBehaviourTests
     [Fact]
     public async Task The_scheme_tolerates_a_bearer_written_in_any_case_and_padded()
     {
-        var result = await Authenticate("bearer   tok   ", """{"active":true,"ver":2,"user_id":"u1"}""");
+        var result = await Authenticate("bearer   tok   ", """{"active":true,"user_id":"u1"}""");
 
         Assert.True(result.Succeeded);
     }
@@ -365,7 +365,7 @@ public class ClientBehaviourTests
     [Fact]
     public async Task A_token_the_server_calls_inactive_is_refused()
     {
-        var result = await Authenticate("Bearer tok", """{"active":false,"ver":2}""");
+        var result = await Authenticate("Bearer tok", """{"active":false}""");
 
         Assert.False(result.Succeeded);
         Assert.Equal("Token is not active.", result.Failure!.Message);
@@ -374,7 +374,7 @@ public class ClientBehaviourTests
     [Fact]
     public async Task An_answer_with_no_identity_in_it_yields_a_principal_with_no_claims()
     {
-        var result = await Authenticate("Bearer tok", """{"active":true,"ver":2,"user_id":"","org_id":null}""");
+        var result = await Authenticate("Bearer tok", """{"active":true,"user_id":"","org_id":null}""");
 
         Assert.True(result.Succeeded);
         Assert.Empty(result.Principal!.Claims);

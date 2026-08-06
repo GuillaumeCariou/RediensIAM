@@ -565,31 +565,31 @@ handled explicitly rather than falling through.
 Dev being cleartext on the ingress is the one place finding R-02 is not fixed, and it is gated to
 dev so prod cannot inherit it.
 
-`cacheUrl` must gain `ssl=true` in the same change. `deploy.sh` derives it from the flag and
-by accident. It is set in **both** `values.dev.yaml` and `values.prod.yaml`. It has been executed in
-dev, and once under the prod profile in a scratch namespace on the dev cluster, where the server was
-confirmed to refuse cleartext and the app to read and write through the pinned tunnel
-(`SECURITY-AUDIT-LOG.md` step 33 §3). No production cluster has run it, and the
-*cutover* — flipping this on a cache that is already up and already holds a key ring — remains
-reasoned from the dev experience rather than observed.
+Postgres TLS is the only outbound tunnel left to configure. **The cache is gone** — 0.6.0 removed
+Dragonfly, so there is no `cacheUrl`, no `/etc/cache-tls/ca.crt` and no second server certificate to
+pin. What that component carried now lives in PostgreSQL, in four tables: `shared_state`,
+`rate_counters`, `webhook_pending` and `data_protection_keys`.
 
-The app's cache TLS is **pinned, not trusting** (`src/Config/CacheTls.cs`, wired at
-`src/Program.cs:53-59`). The callback builds an `X509Chain` with `TrustMode = CustomRootTrust` over
-only the roots mounted at `/etc/cache-tls/ca.crt` (`:122-123`); name mismatch stays fatal (`:117`);
-the serverAuth EKU is required (`:128`). It is not a `return true`. `RevocationMode = NoCheck` is a
-stated ceiling — cert-manager publishes no CRL or OCSP responder (`:124-127`). On a cleartext DSN
-the whole thing is a no-op (`:68`).
+The reason was not tidiness. Ten of its thirteen uses were shared state or security controls rather
+than caching — the DataProtection key ring, the pending-MFA session, the OAuth2 `state`, the TOTP
+anti-replay set, the lockout counters. None of those survives a replica keeping its own copy: at
+`replicaCount: 2`, a cookie minted by one pod was rejected by the other, an observed TOTP code
+became replayable, and the lockout budget doubled.
 
 ### The DataProtection key ring
 
-survive a pod restart, and it is **encrypted at rest** (`src/Program.cs:68-71`):
+The ring lives in the `data_protection_keys` table so it survives a pod restart, and it is
+**encrypted at rest** (`src/Program.cs:77-80`):
 
 ```csharp
 builder.Services.AddDataProtection()
-    .PersistKeysToStackExchangeRedis(cacheMultiplexer, "rediensiam:dataprotection:keys")
+    .PersistKeysToDbContext<RediensIamDbContext>()
     .ProtectKeysWithRootKey(appConfig)
     .SetApplicationName("rediensiam");
 ```
+
+⚠ The first rollout onto 0.6.0 starts on an empty ring, so **every session is invalidated exactly
+once**. That is the migration, not a bug to diagnose on the day.
 
 Each key is wrapped in AES-GCM under an HKDF-SHA256 subkey of the encryption root
 (`info = "rediensiam-dataprotection-v1"`, `src/Config/AppConfig.cs:207`), using the same

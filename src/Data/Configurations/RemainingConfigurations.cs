@@ -319,6 +319,28 @@ public class WebhookPendingConfiguration : IEntityTypeConfiguration<WebhookPendi
     }
 }
 
+public class ImpersonationSessionConfiguration : IEntityTypeConfiguration<ImpersonationSession>
+{
+    public void Configure(EntityTypeBuilder<ImpersonationSession> b)
+    {
+        b.ToTable("impersonation_sessions");
+        b.HasKey(e => e.Id);
+        b.Property(e => e.Id).HasDefaultValueSql("gen_random_uuid()");
+        b.Property(e => e.ActorLevel).IsRequired().HasMaxLength(50);
+        b.Property(e => e.Mode).IsRequired().HasMaxLength(10);
+        b.Property(e => e.Reason).IsRequired().HasMaxLength(500);
+        b.Property(e => e.TokenHash).IsRequired().HasMaxLength(64);
+        b.Property(e => e.CreatedAt).HasDefaultValueSql("now()");
+        // The lookup every introspection makes. Unique because two live sessions cannot share a
+        // credential, and the database is the right place to say so.
+        b.HasIndex(e => e.TokenHash).IsUnique();
+        // "Which sessions is this operator running" — asked by the one-at-a-time rule on every
+        // open, and by the listing route.
+        b.HasIndex(e => new { e.ActorUserId, e.RevokedAt });
+        b.HasIndex(e => e.OrgId);
+    }
+}
+
 public class DataProtectionKeyConfiguration
     : IEntityTypeConfiguration<Microsoft.AspNetCore.DataProtection.EntityFrameworkCore.DataProtectionKey>
 {

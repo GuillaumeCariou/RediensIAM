@@ -8,13 +8,13 @@ What exists, how to run it, and — just as usefully — what has no tests at al
 
 | Suite | Where | Count | Runs today? |
 |---|---|---:|---|
-| Backend integration tests | `tests/RediensIAM.IntegrationTests/` | **1460** | yes |
-| Admin SPA tests | `frontend/admin/src/**` | 99 across 6 files — 36 in node, 63 in a real browser | yes |
-| Login SPA unit tests | `frontend/login/src/**` | 80 across 3 files | yes, ~3s |
-| .NET SDK tests | `sdk/dotnet/RediensIAM.Client.Tests/` | 14 | yes |
-| Rust SDK tests | `sdk/rust/rediensiam-client/src/lib.rs` (inline) | 15 (13 unit + 2 doctests) | yes |
-| TypeScript SDK tests | `sdk/typescript/rediensiam-web/src/index.test.ts` | 14 | yes |
-| Deploy-layer static tests | `deploy/tests.sh` | 36 checks | yes, no cluster needed |
+| Backend integration tests | `tests/RediensIAM.IntegrationTests/` | **1597** | yes |
+| Admin SPA tests | `frontend/admin/src/**` | 1235 across 51 files | yes, ~31s |
+| Login SPA unit tests | `frontend/login/src/**` | 300 across 13 files | yes, ~7s |
+| .NET SDK tests | `sdk/dotnet/RediensIAM.Client.Tests/` | 53 | yes |
+| Rust SDK tests | `sdk/rust/rediensiam-client/src/lib.rs` (inline) | 17 (15 unit + 2 doctests) | yes |
+| TypeScript SDK tests | `sdk/typescript/rediensiam-web/src/*.test.ts` | 42 | yes |
+| Deploy-layer static tests | `deploy/tests.sh` | 58 checks | yes, no cluster needed |
 | Deployment verification | `deploy/verify-deployment.sh` | 26 checks | yes, against a live cluster |
 | Detection-rule self-test | `deploy/monitoring/selftest.sh` | 6 assertions | yes, against a live database |
 | Playwright E2E | `tests/e2e/` | 5, against a live deployment | yes — `npx playwright test`, no configuration |
@@ -178,7 +178,7 @@ cd sdk/typescript/rediensiam-web && npm run typecheck
 ```
 
 The .NET SDK suite is a single file, `AudienceBindingTests.cs`: 6 facts plus a 5-case theory, all
-covering the `aud`/`ver` contract added in this release. The Rust tests include wire-level
+covering the `project_id` binding. The Rust tests include wire-level
 assertions — a one-shot loopback listener reads the bytes the client actually writes, which is why
 `tokio` is a dev-dependency. The TypeScript suite runs under `node --test` with type stripping,
 preserving the SDK's zero-dependency claim.

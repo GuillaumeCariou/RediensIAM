@@ -479,3 +479,97 @@ test('an org or project id that is not a non-empty string is treated as absent',
     assert.equal(iam.claims.projectId, undefined);
   } finally { b.restore(); }
 });
+
+/**
+ * Impersonation handover. An operator console opens this app with the delegated token in the URL
+ * **fragment** — a fragment is never sent to a server, which is the reason it is the handover.
+ *
+ * Two properties matter and both are asserted: the token is adopted, and the URL no longer carries
+ * it. The URL is the one place a credential survives into history, a screenshot or a pasted link.
+ */
+function impersonationBrowser(hash: string) {
+  const replaced: string[] = [];
+  const stub = <T,>(name: string, value: T) =>
+    Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
+
+  stub('location', {
+    origin: 'https://app.example.com',
+    href: `https://app.example.com/dashboard${hash}`,
+    pathname: '/dashboard',
+    search: '',
+    hash,
+    assign() {},
+  });
+  stub('history', { replaceState: (_s: unknown, _t: string, url: string) => replaced.push(url) });
+
+  return {
+    replaced,
+    restore() {
+      for (const k of ['location', 'history']) delete (globalThis as Record<string, unknown>)[k];
+    },
+  };
+}
+
+test('adoptImpersonation takes the delegated session out of the fragment and scrubs the URL', () => {
+  const env = impersonationBrowser(
+    '#imp_token=rediens_imp_abc&imp_session=7f3&imp_org=acme&imp_mode=read&imp_actor=usr_operator',
+  );
+  try {
+    const iam = createRediensIam(validConfig);
+
+    const context = iam.adoptImpersonation();
+
+    assert.equal(context?.token, 'rediens_imp_abc');
+    assert.equal(context?.sessionId, '7f3');
+    assert.equal(context?.orgId, 'acme');
+    assert.equal(context?.mode, 'read');
+    assert.equal(iam.isReadOnlyImpersonation, true);
+    assert.equal(iam.impersonation?.operator, 'usr_operator');
+
+    assert.equal(env.replaced.length, 1);
+    assert.ok(!env.replaced[0].includes('rediens_imp_abc'), 'the token must not survive in the URL');
+  } finally {
+    env.restore();
+  }
+});
+
+test('an ordinary page load adopts nothing', () => {
+  const env = impersonationBrowser('');
+  try {
+    const iam = createRediensIam(validConfig);
+
+    assert.equal(iam.adoptImpersonation(), null);
+    assert.equal(iam.impersonation, null);
+    assert.equal(iam.isReadOnlyImpersonation, false);
+    assert.equal(env.replaced.length, 0, 'a no-op must not rewrite the URL');
+  } finally {
+    env.restore();
+  }
+});
+
+test('an unknown mode in the fragment is read as the weaker one', () => {
+  const env = impersonationBrowser('#imp_token=rediens_imp_abc&imp_mode=administrator');
+  try {
+    const iam = createRediensIam(validConfig);
+
+    assert.equal(iam.adoptImpersonation()?.mode, 'read',
+      'anything that is not literally "write" must not widen the session');
+  } finally {
+    env.restore();
+  }
+});
+
+test('exitImpersonation clears the tab but says nothing about the server', () => {
+  const env = impersonationBrowser('#imp_token=rediens_imp_abc&imp_session=7f3');
+  try {
+    const iam = createRediensIam(validConfig);
+    iam.adoptImpersonation();
+
+    iam.exitImpersonation();
+
+    assert.equal(iam.impersonation, null);
+    assert.equal(iam.isReadOnlyImpersonation, false);
+  } finally {
+    env.restore();
+  }
+});

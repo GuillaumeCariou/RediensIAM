@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router';
 import { getLoginChallenge, submitLogin } from '../api';
-import { setAllowedRedirectOrigins } from '../safeNavigate';
 import { useTheme, type Theme as ColorTheme } from '../useTheme';
-import { safeNavigate } from '../safeNavigate';
+import { safeNavigate, setAllowedRedirectOrigins } from '../safeNavigate';
 import { sanitizeCss, safeCssValue } from '../lib/sanitizeCss';
 
 const themeIcons: Record<ColorTheme, string> = { light: '☀', dark: '☾', system: '⊙' };

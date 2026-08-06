@@ -31,13 +31,22 @@ public sealed record TokenInfo
     [JsonPropertyName("client_id")]          public string? ClientId { get; init; }
     [JsonPropertyName("is_service_account")] public bool IsServiceAccount { get; init; }
 
-
     /// <summary>
-    /// Contract version of the answer; 0 means the field was absent. See
-    /// <see cref="RediensIamClient.RequiredContractVersion"/> — an answer below the required
-    /// version never reaches a caller.
+    /// Who is acting for whom. <c>null</c> on every ordinary token — a non-null value means an
+    /// operator opened a delegated session into this tenant, and the request in front of you is
+    /// support traffic rather than the customer's own.
+    ///
+    /// <para>
+    /// A delegated token carries <b>no roles</b>: authority still comes from your own enforcement
+    /// point. What this field decides is what you must show and record, and — while
+    /// <c>Act.Mode</c> reads <c>read</c> — what you must refuse.
+    /// </para>
     /// </summary>
-    [JsonPropertyName("ver")]                public int Ver { get; init; }
+    [JsonPropertyName("act")] public Actor? Act { get; init; }
+
+    /// <summary>True when this request is an operator acting for the tenant, in read-only mode.</summary>
+    public bool IsReadOnlyImpersonation => Act is { Mode: "read" };
+
 
     public static readonly TokenInfo Inactive = new() { Active = false };
 
@@ -59,6 +68,38 @@ public sealed record TokenInfo
     /// </summary>
     public bool HasProjectRole(string projectId, string role) =>
         Roles.Contains($"{projectId}/{role}", StringComparer.Ordinal);
+}
+
+/// <summary>
+/// A delegated session, as returned when it is opened. <see cref="AccessToken"/> is shown once.
+/// </summary>
+public sealed record ImpersonationSession
+{
+    [JsonPropertyName("access_token")] public string AccessToken { get; init; } = "";
+    [JsonPropertyName("session_id")]   public string SessionId   { get; init; } = "";
+    [JsonPropertyName("expires_in")]   public int    ExpiresIn   { get; init; }
+    [JsonPropertyName("sub")]          public string Sub         { get; init; } = "";
+    [JsonPropertyName("org_id")]       public string OrgId       { get; init; } = "";
+    [JsonPropertyName("project_id")]   public string ProjectId   { get; init; } = "";
+    [JsonPropertyName("act")]          public Actor? Act         { get; init; }
+}
+
+/// <summary>
+/// The operator behind a delegated session (RFC 8693 <c>act</c>).
+///
+/// <para>
+/// <c>Mode</c> is a claim, and a claim enforces nothing on its own — refusing mutating
+/// verbs while it reads <c>read</c> is your gateway's job. <c>Session</c> is what an
+/// operator's own console revokes, and what your logs should carry beside the tenant id so a
+/// support action is never indistinguishable from the customer's own.
+/// </para>
+/// </summary>
+public sealed record Actor
+{
+    [JsonPropertyName("sub")]     public string Sub     { get; init; } = "";
+    [JsonPropertyName("level")]   public string Level   { get; init; } = "";
+    [JsonPropertyName("mode")]    public string Mode    { get; init; } = "";
+    [JsonPropertyName("session")] public string Session { get; init; } = "";
 }
 
 /// <summary>Options for <see cref="RediensIamClient"/>.</summary>
@@ -143,19 +184,6 @@ public sealed class RediensIamClient
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
 
-    /// <summary>
-    /// Contract version this client requires on every answer.
-    ///
-    /// <para>RediensIAM stamps <c>ver</c> on every answer it gives, including
-    /// <c>{"active": false}</c>. A server older than this silently discards the unknown
-    /// <c>project_id</c> this client sends and answers exactly as it always did — so sending it
-    /// proves nothing on its own, and only <c>ver</c> distinguishes a server that enforced the
-    /// binding from one that ignored it. Failing on an absent <c>ver</c> is the
-    /// point: the alternative is believing an answer is scoped to one tenant when it was scoped
-    /// to the whole deployment.</para>
-    /// </summary>
-    public const int RequiredContractVersion = 2;
-
     private readonly HttpClient http;
     private readonly RediensIamOptions options;
     private readonly IMemoryCache cache;
@@ -219,7 +247,6 @@ public sealed class RediensIamClient
         // An empty body is a broken server, not an inactive token — say so rather than denying.
         var info = await response.Content.ReadFromJsonAsync<TokenInfo>(Json, ct)
                    ?? throw new InvalidOperationException("RediensIAM returned an empty introspection answer.");
-        RequireContract(info.Ver);
 
         // Only positive answers are cached. Caching "inactive" would keep denying a token that
         // has since become valid, and buys nothing.
@@ -259,22 +286,76 @@ public sealed class RediensIamClient
 
         var result = await response.Content.ReadFromJsonAsync<AuthorizeResponse>(Json, ct)
                      ?? throw new InvalidOperationException("RediensIAM returned an empty authorisation answer.");
-        RequireContract(result.Ver);
         return result.Allowed;
     }
 
     /// <summary>
-    /// Refuses an answer that did not come from a tenant-enforcing server. See
-    /// <see cref="RequiredContractVersion"/>.
+    /// Opens a delegated session — an operator acting <b>for</b> the organisation named here.
+    ///
+    /// <para>
+    /// Requires a service-account credential that also holds <c>super_admin</c>; anything less is
+    /// refused by the server. This is an operator console's call, never a customer-facing one.
+    /// </para>
+    ///
+    /// <para>
+    /// The returned <see cref="ImpersonationSession.AccessToken"/> is shown <b>once</b> and cannot
+    /// be read back. Opening a session revokes the same operator's previous one.
+    /// </para>
+    ///
+    /// <para>
+    /// Sessions are organisation-scoped: no user is impersonated, the token carries no roles, and
+    /// what a support session may see is decided by your own service. <paramref name="reason"/> is
+    /// required — it lands in the entered tenant's own audit log, and an impersonation with no
+    /// stated reason is not auditable.
+    /// </para>
     /// </summary>
-    private static void RequireContract(int ver)
+    /// <param name="orgId">The organisation being entered.</param>
+    /// <param name="projectId">The authentication boundary; must belong to <paramref name="orgId"/>.</param>
+    /// <param name="mode"><c>read</c> or <c>write</c>. Decided here, never inferred from a role.</param>
+    /// <param name="reason">Free text, required; written to the entered tenant's audit log.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <param name="ttlSeconds">Defaults to 900 server-side; anything above 3600 is clamped, not refused.</param>
+    /// <returns>The session, whose token is shown once.</returns>
+    public async Task<ImpersonationSession> OpenImpersonationAsync(
+        string orgId, string projectId, string mode, string reason,
+        int? ttlSeconds = null, CancellationToken ct = default)
     {
-        if (ver >= RequiredContractVersion) return;
+        if (string.IsNullOrWhiteSpace(reason))
+            throw new ArgumentException("A delegated session must state a reason: it is written to the tenant's audit log.", nameof(reason));
 
-        throw new InvalidOperationException(
-            $"RediensIAM answered with ver={ver}, expected at least {RequiredContractVersion}: this " +
-            "server predates mandatory project_id binding and silently ignored the project_id this " +
-            "sent. Upgrade RediensIAM before trusting its answers.");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/manage/impersonate")
+        {
+            Content = JsonContent.Create(new
+            {
+                org_id      = orgId,
+                project_id  = projectId,
+                mode,
+                reason,
+                ttl_seconds = ttlSeconds,
+            }),
+        };
+        Authorize(request);
+
+        using var response = await http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+
+        return await response.Content.ReadFromJsonAsync<ImpersonationSession>(Json, ct)
+               ?? throw new InvalidOperationException("RediensIAM returned an empty impersonation answer.");
+    }
+
+    /// <summary>
+    /// Ends a delegated session immediately — not at its TTL. Returns false when there was nothing
+    /// live to end, which is also what a second call answers.
+    /// </summary>
+    public async Task<bool> RevokeImpersonationAsync(string sessionId, CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"api/manage/impersonate/{sessionId}/revoke");
+        Authorize(request);
+
+        using var response = await http.SendAsync(request, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return false;
+        response.EnsureSuccessStatusCode();
+        return true;
     }
 
     /// <summary>Drops any cached decision for a token — call on logout to make it immediate.</summary>
@@ -300,6 +381,5 @@ public sealed class RediensIamClient
     // `user_id` is on the wire too; it is not bound because nothing here reads it, and an unread
     // property is a getter nobody calls that still has to be maintained.
     private sealed record AuthorizeResponse(
-        [property: JsonPropertyName("allowed")] bool Allowed,
-        [property: JsonPropertyName("ver")] int Ver = 0);
+        [property: JsonPropertyName("allowed")] bool Allowed);
 }

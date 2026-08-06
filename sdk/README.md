@@ -101,35 +101,21 @@ project id throws at construction — `ArgumentException` in C#, `Error::Config`
 place and the same way a cleartext `BaseUrl` already fails. It is a startup failure with a
 message naming the fix, not a 400 on every request once traffic arrives.
 
-### The `ver` check, and why it is not optional
-
-The SDKs also **refuse any answer that arrives without `ver`**, throwing
-`InvalidOperationException` (C#) or returning `Error::ServerTooOld` (Rust).
-
-This matters more than it looks. A RediensIAM older than contract version 1 does not reject the
-`project_id` you send — it silently discards the unknown field and answers exactly as it always did. An
-SDK that only *sent* `project_id` therefore could not tell an enforcing server from an ignoring one, and
-would report success while being bound to nothing. `ver` is present on every answer from an
-upgraded server, including `{"active": false}` and the 400, so requiring it turns that silent
-failure into a loud one.
-
 ### Migration
 
 1. **Upgrade the SDK and set the option.** One line per service — see the C# and Rust examples
    below. Each caller serves exactly one tenant; that tenant's id is the value.
-2. **Deploy your services, then the server.** In that order. The old server ignores the `project_id` the
-   new SDK sends, so there is no window of 400s — but a new server rejects an old SDK
-   immediately. The `ver` check makes step 2's intermediate state safe to sit in: while the old
-   server is still up, the new SDK fails closed rather than pretending to be tenant-bound.
-   Do not run an upgraded SDK against an un-upgraded server for longer than the rollout takes —
-   it will refuse every answer, by design.
+2. **Upgrade the server, then your services.** In that order, and this one is not
+   interchangeable. A server that predates mandatory `project_id` *silently discards* the field
+   rather than refusing it, so an upgraded SDK pointed at it would receive answers that look
+   normal and are bound to nothing. There is no client-side detection of that state: upgrade the
+   server first.
 3. **Nothing to do in the browser.** `rediensiam-web` never called these endpoints.
 
 | Symptom | Cause |
 |---|---|
 | Throws at startup, message naming `ProjectId` / `project_id` | Step 1 not done for that service |
 | `400 project_id_required` | An un-upgraded SDK, or a raw-HTTP caller, against an upgraded server |
-| `ver=0, expected at least 1` | An upgraded SDK against an un-upgraded server — step 2 out of order |
 | `{"active": false}` on a token you know is good | The `project_id` you configured names a different tenant than the token belongs to |
 
 That last row is the quiet one. A project mismatch is deliberately indistinguishable from
@@ -155,8 +141,9 @@ token=<token>&token_type_hint=access_token&project_id=<project-or-org-id>
 ```
 
 `project_id` is **required** — see [above](#project_id-is-now-a-required-sdk-option). `token_type_hint` is sent
-for RFC conformance and discarded during model binding: `IntrospectionRequest` no longer declares
-it, because `ResolveAsync` already picks the token shape from its prefix in constant time and RFC
+for RFC conformance and discarded during model binding: the endpoint binds two explicit action
+parameters rather than a record, so nothing declares it — `ResolveAsync` already picks the token
+shape from its prefix in constant time, and RFC
 7662 §2.1 makes the hint something a server MAY ignore. Sending it is harmless. RediensIAM pins its
 own `token_type_hint=access_token` when it asks Hydra, which is a different question.
 
@@ -170,18 +157,29 @@ own `token_type_hint=access_token` when it asks Hydra, which is a different ques
   "roles": ["org_admin"],
   "client_id": "client_admin_system",
   "is_service_account": false,
-
-  "ver": 1
+  "act": null
 }
 ```
 
-An unusable token answers `{"active": false, "ver": 1}` with everything else null — never an error
+`act` is null on every ordinary token. It is an object exactly when an operator opened a delegated
+session into the tenant:
+
+```json
+"act": { "sub": "usr_operator", "level": "super_admin", "mode": "read", "session": "7f3e…" }
+```
+
+A delegated token carries **no roles** and a null `user_id` — it says *who acts for whom*, never
+*what they may do*. Refuse mutating verbs while `act.mode` reads `read`, and log both identities:
+a consumer that cannot see `act` cannot tell support traffic from the customer's own. Both backend
+SDKs expose it as `Act` / `act`, with `IsReadOnlyImpersonation` / `is_read_only_impersonation()`
+for the common check, and can open and revoke sessions with
+`OpenImpersonationAsync` / `open_impersonation` and `RevokeImpersonationAsync` /
+`revoke_impersonation`. The full contract is [`docs/IMPERSONATION.md`](../docs/IMPERSONATION.md).
+
+An unusable token answers `{"active": false}` with everything else null — never an error
 status, so a caller cannot distinguish "malformed" from "revoked" from "expired". A token
 belonging to another tenant answers the same way. Management roles are re-verified against Keto
 before being reported, so a revoked role does not appear.
-
-`ver` is on every answer, including the inactive one and the `400 project_id_required`. The SDKs
-refuse anything without it.
 
 ### `POST /api/authorize`
 
@@ -191,7 +189,7 @@ refuse anything without it.
 ```
 
 ```json
-{ "allowed": true, "user_id": "0b7c…", "ver": 1 }
+{ "allowed": true, "user_id": "0b7c…" }
 ```
 
 Keeps the policy in RediensIAM instead of every gateway reimplementing its own reading of the
@@ -340,6 +338,32 @@ Logout ends the SSO session too:
 ```ts
 await iam.logout();
 ```
+
+### Being opened by an operator (impersonation)
+
+An operator console hands a delegated session over in the URL **fragment** — a fragment is never
+sent to a server, which is why the handover uses one. Call `adoptImpersonation()` once at startup:
+on an ordinary page load it returns `null` and does nothing.
+
+```ts
+const support = iam.adoptImpersonation();   // null on a normal load
+if (support) {
+  showBanner(`Acting for ${support.orgId} — ${support.operator}`);   // permanent, non-dismissible
+  if (iam.isReadOnlyImpersonation) disableEveryWriteControl();
+}
+```
+
+The token is kept **in memory**, and the URL is scrubbed immediately — the URL is the one place a
+credential survives into history, a screenshot or a pasted link.
+
+> The integration guide originally called for `sessionStorage`. Memory is already per-tab, so *one
+> tab, one customer* holds either way; memory additionally cannot be read back by injected script
+> and does not survive a reload. The cost is that a reload ends the session — cheap, for a
+> credential with a one-hour ceiling.
+
+`exitImpersonation()` clears the tab and nothing else. **Revoking server-side needs a
+service-account credential, which a browser must never hold**, so your exit button calls your own
+backend, which calls `POST /api/manage/impersonate/{session}/revoke`.
 
 ### What it does for you
 
