@@ -24,9 +24,12 @@ vi.mock('@/api', () => api);
 const auth = vi.hoisted(() => ({ orgId: '', projectId: 'p1' }));
 vi.mock('@/context/AuthContext', () => ({ useAuth: () => auth }));
 
+// `user_list_id` was added to this fixture when the page started filtering on it. Every account
+// the API returns carries one; the fixture simply did not, because nothing read it — which is
+// exactly why the missing filter went unnoticed.
 const SA = {
   id: 's1', name: 'ci-deploy', description: 'CI pipeline',
-  active: true, last_used_at: '2026-03-04T05:06:07Z',
+  active: true, last_used_at: '2026-03-04T05:06:07Z', user_list_id: 'l1',
 };
 const PATS = [
   { id: 't1', name: 'ci-token', expires_at: '2027-01-01T00:00:00Z', last_used_at: null, created_at: '2026-01-02T00:00:00Z' },
@@ -50,6 +53,46 @@ function show() {
 
 const openMenu = (user: Awaited<ReturnType<typeof show>>) =>
   user.click([...screen.getByRole('row', { name: /ci-deploy/ }).querySelectorAll('button')].at(-1)!);
+
+describe('the project boundary', () => {
+  /**
+   * The defect this covers: the page called `/service-accounts` and rendered the answer whole.
+   * That endpoint scopes to the *caller*, not to the project — a super-admin got every account in
+   * the deployment, an org admin got the whole organisation — so this page showed accounts that
+   * belong to other projects, each with a delete button.
+   *
+   * A ServiceAccount carries no ProjectId. It belongs to a project exactly when it sits on that
+   * project's assigned user list, so that list is the only thing that can decide membership here.
+   */
+  it('shows only the accounts on the project assigned user list', async () => {
+    api.listServiceAccounts.mockResolvedValue([
+      SA,
+      { ...SA, id: 's2', name: 'other-project-bot', user_list_id: 'l2' },
+      { ...SA, id: 's3', name: 'org-wide-bot', user_list_id: 'l3' },
+    ]);
+
+    show();
+
+    expect(await screen.findByText('ci-deploy')).toBeInTheDocument();
+    expect(screen.queryByText('other-project-bot')).not.toBeInTheDocument();
+    expect(screen.queryByText('org-wide-bot')).not.toBeInTheDocument();
+  });
+
+  /**
+   * With no list assigned, no account can belong to this project — the empty state is the truthful
+   * answer. Falling back to "show everything" is how the defect would come back.
+   */
+  it('shows nothing when the project has no assigned user list', async () => {
+    api.getProjectInfo.mockResolvedValue({ assigned_user_list_id: null });
+    api.listServiceAccounts.mockResolvedValue([SA, { ...SA, id: 's2', name: 'other-project-bot', user_list_id: 'l2' }]);
+
+    show();
+
+    expect(await screen.findByText('No service accounts')).toBeInTheDocument();
+    expect(screen.queryByText('ci-deploy')).not.toBeInTheDocument();
+    expect(screen.queryByText('other-project-bot')).not.toBeInTheDocument();
+  });
+});
 
 describe('the table', () => {
   it('lists the accounts with their status and last use', async () => {

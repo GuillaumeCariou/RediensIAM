@@ -22,7 +22,7 @@ rediensiam:
   # Two replicas is what makes the PodDisruptionBudget mean anything: maxUnavailable: 1 against a
   # single pod lets a node drain take the last one, so the object that looks like it prevents
   # downtime prevents nothing and every rollout is a full auth outage. Nothing in the app is
-  # pinned to one pod — sessions live in Dragonfly and state in Postgres.
+  # pinned to one pod — sessions and shared state both live in Postgres since 0.6.0.
   replicaCount: 2
 
 

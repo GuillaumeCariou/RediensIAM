@@ -9,7 +9,7 @@ import {
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
 
-interface SA { id: string; name: string; description: string | null; active: boolean; last_used_at: string | null; }
+interface SA { id: string; name: string; description: string | null; active: boolean; last_used_at: string | null; user_list_id: string; }
 interface Pat { id: string; name: string; expires_at: string | null; last_used_at: string | null; created_at: string; }
 
 function CopyButton({ text }: Readonly<{ text: string }>) {
@@ -76,10 +76,19 @@ export default function ProjectServiceAccounts() {
   const load = () => {
     if (!projectId) { setLoading(false); return; }
     setLoading(true);
-    Promise.all([
-      listServiceAccounts().then(r => setAccounts(r ?? [])),
-      getProjectInfo(projectId).then(r => setAssignedListId(r.assigned_user_list_id ?? null)),
-    ]).catch(console.error).finally(() => setLoading(false));
+    // `/service-accounts` answers with everything the caller may see, which for a super-admin is
+    // every account in the deployment and for an org admin is the whole organisation. A service
+    // account has no ProjectId — it belongs to a project exactly when it sits on that project's
+    // assigned user list — so that list is the filter. Without it this page listed other projects'
+    // automation identities, with a delete button beside each.
+    Promise.all([listServiceAccounts(), getProjectInfo(projectId)])
+      .then(([all, info]) => {
+        const listId = info.assigned_user_list_id ?? null;
+        setAssignedListId(listId);
+        // No list assigned means no account can belong to this project yet — not "show them all".
+        setAccounts(listId ? (all ?? []).filter((sa: SA) => sa.user_list_id === listId) : []);
+      })
+      .catch(console.error).finally(() => setLoading(false));
   };
   useEffect(load, [projectId]);
 

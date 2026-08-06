@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
 using RediensIAM.Config;
 
@@ -113,5 +114,74 @@ public class ConfigKeyRegressionTests
     public void LiveTopLevelKeys_AreStillDeclared(string key)
     {
         ShippedAppSettings().ContainsKey(key).Should().BeTrue($"{key} is read by the application");
+    }
+
+    // ── One door for configuration ────────────────────────────────────────────
+
+    /// <summary>
+    /// Walks up from the test output to the directory holding <c>RediensIAM.slnx</c>. Fails rather
+    /// than skips: a structural test that silently finds nothing to inspect is a test that passes
+    /// for the wrong reason, which is the exact failure mode <c>deploy/tests.sh</c> hit when its
+    /// backslash guard read <c>git ls-files</c> instead of the working tree.
+    /// </summary>
+    private static DirectoryInfo RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "RediensIAM.slnx")))
+            dir = dir.Parent;
+        dir.Should().NotBeNull("the test runs from inside the repository, which is what makes a source scan meaningful");
+        return dir!;
+    }
+
+    /// <summary>
+    /// <c>AppConfig</c> is the single place that reads configuration: it is where the defaults
+    /// live, where <c>Math.Clamp</c> bounds them, and where the instance row can override them.
+    /// A direct <c>config["…"]</c> anywhere else is a second reader with none of the three — it
+    /// silently gets no default, no bound, and no instance override.
+    ///
+    /// <para>
+    /// This existed. <c>App:TrustedProxies</c> — a trust anchor — was read straight off
+    /// <c>IConfiguration</c> in <c>Program.cs</c>. It is now <c>AppConfig.TrustedProxies</c>, and
+    /// this test is what stops the fourth leak: without it the next one arrives silently, exactly
+    /// as this one did.
+    /// </para>
+    ///
+    /// <para>
+    /// <c>InstanceConfiguration.cs</c> is exempt by design and by necessity: it runs
+    /// <b>before</b> dependency injection, building the configuration that <c>AppConfig</c> then
+    /// reads. It cannot depend on the thing it constructs.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void NoSourceFileOutsideAppConfig_ReadsConfigurationDirectly()
+    {
+        var src = new DirectoryInfo(Path.Combine(RepoRoot().FullName, "src"));
+        src.Exists.Should().BeTrue("the scan needs the backend sources");
+
+        // Indexer lookups and GetValue<T>/GetSection/GetConnectionString calls on an IConfiguration.
+        var directRead = new Regex(
+            @"(config|cfg|Configuration|configuration)\s*\[|" +
+            @"\.GetValue<|\.GetSection\(|\.GetConnectionString\(",
+            RegexOptions.Compiled);
+
+        var exempt = new[] { "AppConfig.cs", "InstanceConfiguration.cs" };
+
+        var offenders = src
+            .EnumerateFiles("*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.FullName.Contains($"{Path.DirectorySeparatorChar}Migrations{Path.DirectorySeparatorChar}"))
+            .Where(f => !f.FullName.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))
+            .Where(f => !f.FullName.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"))
+            .Where(f => !exempt.Contains(f.Name))
+            .SelectMany(f => File.ReadAllLines(f.FullName)
+                .Select((line, i) => (File: f.Name, Number: i + 1, Text: line.Trim()))
+                .Where(l => !l.Text.StartsWith("//") && !l.Text.StartsWith("///") && !l.Text.StartsWith('*'))
+                .Where(l => directRead.IsMatch(l.Text)))
+            .Select(l => $"{l.File}:{l.Number}  {l.Text}")
+            .ToList();
+
+        offenders.Should().BeEmpty(
+            "configuration is read in AppConfig.cs and nowhere else — a direct read elsewhere gets " +
+            "no default, no Math.Clamp bound and no instance-row override, and nothing tells the " +
+            "operator that the setting they configured is being read a second way");
     }
 }

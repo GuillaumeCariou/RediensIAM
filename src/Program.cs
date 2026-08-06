@@ -49,7 +49,7 @@ builder.Services.AddDbContext<RediensIamDbContext>((sp, options) =>
            .AddInterceptors(sp.GetRequiredService<TenantScopeInterceptor>()),
     ServiceLifetime.Scoped);
 
-builder.Services.Configure<ForwardedHeadersOptions>(o => ConfigureForwardedHeaders(o, builder.Configuration, builder.Environment));
+builder.Services.Configure<ForwardedHeadersOptions>(o => ConfigureForwardedHeaders(o, appConfig, builder.Environment));
 
 // ── Shared state ───────────────────────────────────────────────────────────
 // One datastore, not two. Dragonfly carried the DataProtection key ring, the pending-MFA session,
@@ -79,7 +79,8 @@ builder.Services.AddDataProtection()
     .ProtectKeysWithRootKey(appConfig)
     .SetApplicationName("rediensiam");
 
-// ── Session (for MFA state) — backed by Redis so it survives pod restarts ──
+// ── Session (for MFA state) — backed by PostgresSharedState, the registered IDistributedCache,
+// so it survives a pod restart AND is seen by every replica. Said "backed by Redis" until 0.6.0.
 builder.Services.AddSession(o =>
 {
     o.IdleTimeout = TimeSpan.FromMinutes(15);
@@ -583,12 +584,12 @@ static void AddSecurityHeaders(HttpContext ctx, string issuerOrigin, string[] pr
 // App__TrustedProxies (CSV of CIDRs) overrides the defaults. In production this MUST be
 // set explicitly — silently trusting RFC1918 means any pod in a multi-tenant cluster can
 // spoof X-Forwarded-For and bypass per-IP rate limiting / IP allowlists.
-static void ConfigureForwardedHeaders(ForwardedHeadersOptions o, IConfiguration cfg, IWebHostEnvironment env)
+static void ConfigureForwardedHeaders(ForwardedHeadersOptions o, AppConfig cfg, IWebHostEnvironment env)
 {
     o.ForwardedHeaders = ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedFor;
     o.KnownIPNetworks.Clear();
     o.KnownProxies.Clear();
-    var trusted = cfg["App:TrustedProxies"];
+    var trusted = cfg.TrustedProxies;
     if (!string.IsNullOrWhiteSpace(trusted))
     {
         if (ApplyTrustedProxiesFromConfig(o, trusted) == 0)

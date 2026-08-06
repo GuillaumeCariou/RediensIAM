@@ -66,6 +66,18 @@ public class AppConfig(IConfiguration config)
     public string AdminSpaOrigin => config["App:AdminSpaOrigin"] ?? $"{PublicUrl}";
 
     /// <summary>
+    /// CSV of CIDRs whose <c>X-Forwarded-*</c> headers are honoured. Null or empty means "not set",
+    /// which Production refuses and development answers with the RFC1918 defaults.
+    ///
+    /// <para>
+    /// Read here rather than from <c>IConfiguration</c> at the call site: this was the one value in
+    /// the process that still reached its consumer through <c>cfg["…"]</c>, and a trust anchor is
+    /// the worst possible place to keep a second way of reading a setting.
+    /// </para>
+    /// </summary>
+    public string? TrustedProxies => config["App:TrustedProxies"];
+
+    /// <summary>
     /// Extra origins trusted before any project exists — comma separated.
     ///
     /// <para>

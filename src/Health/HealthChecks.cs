@@ -24,5 +24,3 @@ public sealed class DatabaseHealthCheck(RediensIamDbContext db) : IHealthCheck
         }
     }
 }
-
-/// <summary>Answers unhealthy when the cache multiplexer has lost its connection.</summary>
