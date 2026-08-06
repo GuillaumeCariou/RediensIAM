@@ -127,6 +127,11 @@ const ROUTES: readonly Route[] = [
   ['listImpersonations', () => api.listImpersonations(), '/admin/impersonate'],
   ['listImpersonations by actor', () => api.listImpersonations('usr_1'), '/admin/impersonate?actor_id=usr_1'],
   ['revokeImpersonation', () => api.revokeImpersonation('7f3'), '/admin/impersonate/7f3/revoke', { method: 'POST' }],
+
+  // The instance row: the settings that used to need a manifest edit and a rollout.
+  ['getInstanceConfig', () => api.getInstanceConfig(), '/admin/instance'],
+  ['updateInstanceConfig', () => api.updateInstanceConfig({ lockout_minutes: 42 }),
+    '/admin/instance', { method: 'PATCH', body: json({ lockout_minutes: 42 }) }],
   ['assignSaRole', () => api.assignSaRole('s1', { role: 'org_admin', org_id: 'o1' }),
     '/service-accounts/s1/roles', { method: 'POST', body: json({ role: 'org_admin', org_id: 'o1' }) }],
   ['removeSaRole', () => api.removeSaRole('s1', 'r1'), '/service-accounts/s1/roles/r1', { method: 'DELETE' }],

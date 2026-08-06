@@ -35,7 +35,16 @@ public static class UserListOperations
     private const string KindInvite = "invite";
 
     /// <summary>One shape for what a caller may say when putting a user in a list.</summary>
-    public record NewUser(string Email, string? Password = null, string? Username = null, bool? EmailVerified = null);
+    /// <param name="OrgId">
+    /// L'organisation dont ce compte est membre. Elle décide de l'<c>org_id</c> que porteront ses
+    /// jetons — voir <c>docs/ORGANIZATIONS.md</c>.
+    ///
+    /// ⚠ N'est lu QUE sur la surface d'administration système. Sur la surface d'organisation, il
+    /// est ignoré et remplacé par celle de l'appelant : un administrateur d'organisation qui
+    /// pourrait nommer une autre organisation créerait des comptes dont les jetons revendiquent
+    /// un locataire qui n'est pas le sien.
+    /// </param>
+    public record NewUser(string Email, string? Password = null, string? Username = null, bool? EmailVerified = null, Guid? OrgId = null);
 
     /// <summary>
     /// The list itself. Both scopes answer with the same fields: one carried
@@ -114,10 +123,21 @@ public static class UserListOperations
     /// grants deployment-wide administration and still gets its own entry beside the user one.
     /// </para>
     /// </summary>
+    /// <param name="orgId">
+    /// L'organisation à inscrire sur le compte. L'APPELANT la décide, jamais le corps de la
+    /// requête : c'est ce qui empêche un administrateur d'organisation d'en nommer une autre.
+    /// <c>null</c> laisse le comportement historique — l'organisation viendra du projet à la
+    /// connexion.
+    /// </param>
     public static async Task<IActionResult> AddUserAsync(
-        UserListDeps deps, Guid actorId, UserList list, NewUser body, string locationPrefix)
+        UserListDeps deps, Guid actorId, UserList list, NewUser body, string locationPrefix, Guid? orgId = null)
     {
         var (db, keto, audit, passwords, emailService, appConfig) = deps;
+
+        // Une organisation inconnue remonterait en violation de clé étrangère, donc en 500 — qui
+        // ne dit rien à l'appelant sur la seule chose qu'il peut corriger.
+        if (orgId is { } oid && !await db.Organisations.AnyAsync(o => o.Id == oid))
+            return new BadRequestObjectResult(new { error = "unknown_organisation" });
 
         // Without this the unique index on (UserListId, Email) surfaces as a DbUpdateException and
         // a 500, which tells the caller nothing about the one thing they can fix.
@@ -135,6 +155,7 @@ public static class UserListOperations
         var user = new User
         {
             UserListId      = list.Id,
+            OrgId           = orgId,
             Username        = username,
             Discriminator   = discriminator,
             Email           = email,

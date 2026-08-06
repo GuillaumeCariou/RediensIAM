@@ -9,6 +9,7 @@ import Shell from './components/layout/Shell';
 import ServiceAccounts from './pages/shared/ServiceAccounts';
 import AuditLog from './pages/shared/AuditLog';
 import Impersonation from './pages/system/Impersonation';
+import DeploymentSettings from './pages/system/DeploymentSettings';
 import { DESTINATIONS, ROUTE_BASES, type Level } from './scope';
 
 import AccountPage from './pages/account/AccountPage';
@@ -160,6 +161,7 @@ export const PAGES: Record<Level, Record<string, React.ReactElement>> = {
     'service-accounts': <ServiceAccounts level="deployment" />,
     'email':            <SystemEmail />,
     'impersonation':    <Impersonation />,
+    'settings':         <DeploymentSettings />,
     'audit-log':        <AuditLog level="deployment" />,
     'metrics':          <SystemMetrics />,
     'health':           <SystemHealth />,

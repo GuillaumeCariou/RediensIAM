@@ -60,6 +60,7 @@ export const DESTINATIONS: Record<Level, Destination[]> = {
     { key: 'audit-log',        label: 'Audit log',        icon: 'log' },
     { key: 'metrics',          label: 'Metrics',          icon: 'chart' },
     { key: 'health',           label: 'Health',           icon: 'heart',    superOnly: true },
+    { key: 'settings',         label: 'Settings',         icon: 'settings', superOnly: true },
   ],
   org: [
     { key: '',                 label: 'Overview',         icon: 'dashboard' },

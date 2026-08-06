@@ -114,7 +114,29 @@ La clé étrangère est en `Restrict`, pas `Cascade`. Supprimer une organisation
 doit pas effacer en silence les comptes de ses membres : c'est une décision qui se
 prend explicitement, avec la liste sous les yeux.
 
-## 9. Ce qui reste ouvert
+## 9. Comment poser l'appartenance
+
+`POST /admin/userlists/{id}/users` accepte `org_id`. C'est la **seule** surface qui
+le permet, et c'est ce qui rend une liste partagée exploitable.
+
+```json
+{ "email": "marie@acme.fr", "password": "…", "org_id": "<uuid d'ACME>" }
+```
+
+Une organisation inconnue répond **400**, pas 500 : une violation de clé étrangère
+ne dit rien à l'appelant sur la seule chose qu'il peut corriger.
+
+⚠ `POST /org/userlists/{id}/users` **ignore** `org_id` et inscrit celle de
+l'appelant. Un administrateur d'organisation qui pourrait en nommer une autre
+créerait des comptes dont les jetons revendiquent un locataire qui n'est pas le
+sien. La règle est dans l'appelant, pas dans le corps de la requête.
+
+**Déplacer un compte d'une organisation à une autre n'est pas exposé.** C'est une
+opération rare et lourde de conséquences — toutes les sessions en cours
+continueraient de porter l'ancienne organisation jusqu'à expiration. Elle mérite
+son propre endpoint, avec révocation des sessions, le jour où elle sera demandée.
+
+## 10. Ce qui reste ouvert
 
 **L'identity-first login** — demander le courriel avant le mot de passe pour router
 vers le fournisseur SSO d'une organisation. **Pas nécessaire aujourd'hui** : la

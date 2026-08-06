@@ -1,4 +1,5 @@
 import { useLocation, useNavigate } from 'react-router';
+import { basePath, scopeFromPath } from '@/scope';
 import { useAuth } from '@/context/AuthContext';
 import { useScope } from '@/context/ScopeContext';
 function Kbd({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -15,10 +16,12 @@ export default function Topbar({ onCmdK }: Readonly<TopbarProps>) {
   const { isSuperAdmin, isOrgAdmin } = useAuth();
   const { orgName, projectName } = useScope();
 
-  const sysProjMatch = /^\/system\/organisations\/([^/]+)\/projects\/([^/]+)/.exec(pathname);
-  const sysOrgMatch  = /^\/system\/organisations\/([^/]+)/.exec(pathname);
-  const urlOrgId     = sysOrgMatch?.[1] ?? '';
-  const urlProjId    = sysProjMatch?.[2] ?? '';
+  // One reading of the URL, shared with the router, the tree and the pages — see scope.ts. This
+  // was the seventh place in the console re-deriving "where am I" from a regex of its own, and a
+  // breadcrumb that disagrees with the tree is a breadcrumb that lies about where you are.
+  const here      = scopeFromPath(pathname);
+  const urlOrgId  = here.orgId ?? '';
+  const urlProjId = here.level === 'project' ? (here.projectId ?? '') : '';
 
   const showSys  = isSuperAdmin || pathname.startsWith('/system');
   const showOrg  =
@@ -45,7 +48,7 @@ export default function Topbar({ onCmdK }: Readonly<TopbarProps>) {
           <>
             <span className="iam-scope-sep">›</span>
             <button className="iam-scope-chip"
-              onClick={() => navigate(isSuperAdmin && urlOrgId ? `/system/organisations/${urlOrgId}` : '/org')}>
+              onClick={() => navigate(basePath({ level: 'org', orgId: isSuperAdmin ? urlOrgId : undefined }))}>
               <span className="iam-scope-kind iam-scope-kind-org">ORG</span>
               <span>{resolvedOrgName}</span>
             </button>
@@ -56,9 +59,9 @@ export default function Topbar({ onCmdK }: Readonly<TopbarProps>) {
           <>
             <span className="iam-scope-sep">›</span>
             <button className="iam-scope-chip"
-              onClick={() => navigate(isSuperAdmin && urlOrgId && urlProjId
-                ? `/system/organisations/${urlOrgId}/projects/${urlProjId}`
-                : '/project')}>
+              onClick={() => navigate(basePath(isSuperAdmin
+                ? { level: 'project', orgId: urlOrgId, projectId: urlProjId }
+                : { level: 'project' }))}>
               <span className="iam-scope-kind iam-scope-kind-proj">PRJ</span>
               <span>{resolvedProjName}</span>
             </button>

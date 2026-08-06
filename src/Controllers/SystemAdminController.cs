@@ -443,8 +443,12 @@ var ul = await UserListOperations.FindAsync(db, id);
     {
         var ul = await UserListOperations.FindAsync(db, id);
         if (ul == null) return NotFound();
+        // Surface système : l'organisation est nommée explicitement. C'est le seul endroit où
+        // elle peut l'être, et c'est ce qui permet de peupler une liste PARTAGÉE entre plusieurs
+        // locataires — le modèle décrit dans docs/ORGANIZATIONS.md.
         return await UserListOperations.AddUserAsync(
-            new UserListDeps(db, keto, audit, passwords, emailService, appConfig), GetActorId(), ul, body, "/admin/userlists");
+            new UserListDeps(db, keto, audit, passwords, emailService, appConfig), GetActorId(), ul, body,
+            "/admin/userlists", body.OrgId);
     }
 
     [HttpDelete("userlists/{id}/users/{uid}")]

@@ -62,6 +62,7 @@ vi.mock('./pages/project/ProjectRoles', () => stub('ProjectRoles'));
 vi.mock('./pages/shared/ServiceAccounts', () => stub('ServiceAccounts'));
 vi.mock('./pages/shared/AuditLog', () => stub('AuditLog'));
 vi.mock('./pages/system/Impersonation', () => stub('Impersonation'));
+vi.mock('./pages/system/DeploymentSettings', () => stub('DeploymentSettings'));
 vi.mock('./pages/project/Authentication', () => stub('Authentication'));
 vi.mock('./pages/project/ProjectSettings', () => stub('ProjectSettings'));
 // The shell fetches the operator's MFA status; the reminder inside it has its own tests.

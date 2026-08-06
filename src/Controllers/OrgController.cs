@@ -318,8 +318,12 @@ public class OrgController(
     {
         var ul = await UserListOperations.FindAsync(db, id);
         if (ul == null || ul.OrgId != OrgId) return NotFound();
+        // `OrgId` de l'appelant, JAMAIS `body.OrgId` : un administrateur d'organisation qui
+        // pourrait nommer une autre organisation créerait des comptes dont les jetons
+        // revendiquent un locataire qui n'est pas le sien.
         return await UserListOperations.AddUserAsync(
-            new UserListDeps(db, keto, audit, passwords, emailService, appConfig), ActorId, ul, body, "/org/userlists");
+            new UserListDeps(db, keto, audit, passwords, emailService, appConfig), ActorId, ul, body,
+            "/org/userlists", OrgId);
     }
 
     [HttpPost("userlists/{id}/users/{uid}/resend-invite")]

@@ -482,3 +482,11 @@ export async function listImpersonations(actorId?: string) {
 export async function revokeImpersonation(sessionId: string) {
   return apiFetch(`/admin/impersonate/${sessionId}/revoke`, { method: 'POST' });
 }
+
+// ── Deployment settings (the instances row) ───────────────────────────────
+export async function getInstanceConfig() {
+  return (await apiFetch('/admin/instance')).json();
+}
+export async function updateInstanceConfig(body: Record<string, unknown>) {
+  return (await apiFetch('/admin/instance', { method: 'PATCH', body: JSON.stringify(body) })).json();
+}
