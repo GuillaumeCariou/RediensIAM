@@ -8,6 +8,56 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.6.1] — 2026-08-06
+
+**Un correctif de console, une ancre de confiance rangée, et deux fichiers de verrouillage qui
+n'avaient jamais suivi.** Aucun changement de contrat : `ver: 2` est inchangé, aucune migration.
+
+### Corrigé — la page « service accounts » d'un projet listait tout ce que l'appelant pouvait voir
+
+`/service-accounts` scope sur **l'appelant**, pas sur le projet : un super-admin y reçoit tous les
+comptes du déploiement, un `org_admin` toute son organisation. `ProjectServiceAccounts.tsx` affichait
+cette réponse **entière**, sur une page nommée d'après un seul projet, avec un bouton de suppression
+à côté de chaque ligne.
+
+Un `ServiceAccount` ne porte pas de `ProjectId` — il appartient à un projet exactement quand il est
+sur la liste d'utilisateurs assignée à ce projet. C'est donc cette liste qui filtre. Sans liste
+assignée, la page n'affiche plus rien : c'est la réponse vraie, et se rabattre sur « tout afficher »
+est la façon dont ce défaut reviendrait.
+
+**Le contrôleur n'a pas bougé**, et six tests d'intégration le démontrent au lieu de l'affirmer :
+`AssignUserListAsync` exige `ul.OrgId == project.OrgId`, donc la liste d'un projet porte toujours
+l'`OrgId` de son organisation et le filtre de l'`OrgAdmin` l'attrape déjà. Les tests fixent les trois
+niveaux, et fixent surtout que la liste et `CanAccessAsync` restent d'accord — la même question
+répondue à deux endroits est la façon dont ce contrôleur peut dériver.
+
+### Corrigé — `App:TrustedProxies` était la dernière lecture de configuration hors d'`AppConfig`
+
+C'est une **ancre de confiance** : limites de débit, allowlists IP de projet et adresse source dans
+l'audit en dépendent toutes. Une lecture directe n'a ni défaut, ni borne `Math.Clamp`, ni surcharge
+par la ligne `instances`. Elle devient `AppConfig.TrustedProxies`.
+
+Le correctif qui compte est le **test** : un contrôle structurel échoue désormais sur toute lecture
+de configuration hors d'`AppConfig.cs`. Sans lui, la quatrième fuite serait arrivée en silence,
+comme celle-ci. `InstanceConfiguration.cs` reste exempté — il tourne avant la DI et construit la
+configuration qu'`AppConfig` lit ensuite.
+
+### Corrigé — trois reliquats de la suppression de Dragonfly
+
+- `CS1587` dans `src/Health/HealthChecks.cs` : le `<summary>` du `CacheHealthCheck` supprimé était
+  resté sans classe en dessous. **Invisible en build incrémental**, ce qui explique qu'il ait
+  survécu à la release.
+- Deux commentaires décrivaient encore Dragonfly comme le magasin des sessions.
+
+### Corrigé — les fichiers de verrouillage n'avaient jamais suivi la version
+
+`sdk/rust/rediensiam-client/Cargo.lock` et les deux `package-lock.json` des SPA étaient restés à
+**0.5.0** alors que la 0.6.0 était publiée. Le CHANGELOG dit que les trois SDK et les deux SPA
+partagent un numéro ; trois fichiers ne le savaient pas. Ils sont régénérés par leurs outils, pas
+édités à la main.
+
+---
+
 ## [0.6.0] — 2026-08-05
 
 **Two breaking changes, and one component removed.** Read both sections before upgrading: the
