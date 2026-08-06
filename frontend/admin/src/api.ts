@@ -471,3 +471,14 @@ export async function adminTestOrgSmtp(orgId: string) {
 export async function getSystemHealth() {
   return (await apiFetch('/admin/system/health')).json();
 }
+
+// ── Impersonation (0.7.0) ─────────────────────────────────────────────────
+// Opening a session is refused to a browser by design — it mints a credential, and that gate is
+// what keeps this surface from being an oracle. The console supervises: it lists and it revokes.
+export async function listImpersonations(actorId?: string) {
+  const q = actorId ? `?actor_id=${encodeURIComponent(actorId)}` : '';
+  return (await apiFetch(`/admin/impersonate${q}`)).json();
+}
+export async function revokeImpersonation(sessionId: string) {
+  return apiFetch(`/admin/impersonate/${sessionId}/revoke`, { method: 'POST' });
+}

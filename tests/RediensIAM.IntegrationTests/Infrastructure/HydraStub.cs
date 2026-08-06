@@ -790,6 +790,20 @@ public sealed class HydraStub : IDisposable
             e.RequestMessage?.Query?.ContainsKey("login_challenge") == true &&
             e.RequestMessage.Query["login_challenge"].Contains(challenge));
 
+    /// <summary>
+    /// Le corps envoyé à <c>login/accept</c> pour ce challenge — subject et contexte compris.
+    ///
+    /// Sans lui, un test ne peut vérifier que « la connexion a été acceptée », pas SOUS QUELLE
+    /// identité. Or c'est exactement ce que change l'appartenance à une organisation : le sujet
+    /// et le <c>org_id</c> du contexte, que deux chemins distincts relisent ensuite.
+    /// </summary>
+    public string? AcceptedLoginBody(string challenge) =>
+        _server.LogEntries.LastOrDefault(e =>
+            e.RequestMessage?.Path == "/admin/oauth2/auth/requests/login/accept" &&
+            e.RequestMessage?.Query?.ContainsKey("login_challenge") == true &&
+            e.RequestMessage.Query["login_challenge"].Contains(challenge))
+        ?.RequestMessage?.Body;
+
     public bool LoginWasRejected(string challenge) =>
         _server.LogEntries.Any(e =>
             e.RequestMessage?.Path == "/admin/oauth2/auth/requests/login/reject" &&

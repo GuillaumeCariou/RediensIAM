@@ -158,6 +158,61 @@ public class ImpersonationSecurityTests(TestFixture fixture)
         res.StatusCode.Should().BeOneOf(HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden);
     }
 
+    /// <summary>
+    /// Opening is the act that mints a credential, and it stays closed to anything but a service
+    /// account. A super-admin's own browser session may supervise — list and revoke — but may not
+    /// create: that is the difference between a console and an oracle.
+    /// </summary>
+    [Fact]
+    public async Task AUserTokenMaySuperviseButNotOpen()
+    {
+        var (holderOrg, orgList) = await fixture.Seed.CreateOrgAsync();
+        var user   = await fixture.Seed.CreateUserAsync(orgList.Id);
+        var (org, project) = await CustomerAsync();
+        fixture.Keto.AllowAll();
+        var console = fixture.ClientWithToken(fixture.Seed.SuperAdminToken(user.Id));
+
+        var opened = await console.PostAsJsonAsync("/admin/impersonate", new
+        {
+            org_id = org.Id, project_id = project.Id, mode = "read", reason = "from a browser"
+        });
+        opened.StatusCode.Should().Be(HttpStatusCode.Forbidden,
+            "minting a delegated credential from a browser session is what the service-account gate refuses");
+
+        (await console.GetAsync("/admin/impersonate")).StatusCode.Should().Be(HttpStatusCode.OK,
+            "a session nobody can list is a session nobody can stop");
+        holderOrg.Id.Should().NotBe(org.Id);
+    }
+
+    /// <summary>
+    /// And the console can end one. Revocation only ever removes access, so it is the one
+    /// supervision act that is safe to reach with a cookie-backed session.
+    /// </summary>
+    [Fact]
+    public async Task AUserTokenMayRevoke()
+    {
+        var (op, _)        = await OperatorClientAsync();
+        var (org, project) = await CustomerAsync();
+        var opened  = await op.PostAsJsonAsync("/admin/impersonate", new
+        {
+            org_id = org.Id, project_id = project.Id, mode = "read", reason = "ticket #4812"
+        });
+        var payload = await opened.Content.ReadFromJsonAsync<JsonElement>();
+        var token   = payload.GetProperty("access_token").GetString()!;
+        var id      = payload.GetProperty("session_id").GetString()!;
+
+        var (_, orgList) = await fixture.Seed.CreateOrgAsync();
+        var user    = await fixture.Seed.CreateUserAsync(orgList.Id);
+        var console = fixture.ClientWithToken(fixture.Seed.SuperAdminToken(user.Id));
+
+        (await console.PostAsync($"/admin/impersonate/{id}/revoke", null)).StatusCode
+            .Should().Be(HttpStatusCode.NoContent);
+
+        var body = await (await (await GatewayForAsync(org.Id)).PostAsync("/api/introspect", Form(token, project.Id)))
+            .Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("active").GetBoolean().Should().BeFalse();
+    }
+
     // ── Cross-tenant ──────────────────────────────────────────────────────────
 
     /// <summary>

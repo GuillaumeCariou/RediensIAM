@@ -47,6 +47,14 @@ public class ImpersonationController(
     /// The same gate as <c>IntrospectionController.IsServiceAccountCaller</c>. Written here rather
     /// than shared: the two surfaces answer to different levels and a shared helper would invite
     /// changing both at once.
+    ///
+    /// <para>
+    /// It guards <b>opening</b> only. Minting a delegated credential from a browser session is the
+    /// act worth refusing — it is what would make this endpoint an oracle reachable with a cookie.
+    /// Listing and revoking are supervision: an operator console holds a user token, and a session
+    /// nobody can list is a session nobody can stop. Both remain <c>SuperAdmin</c>, re-checked live
+    /// against Keto by the class filter, and revocation only ever ends access.
+    /// </para>
     /// </summary>
     private bool IsServiceAccountCaller() =>
         Claims.IsServiceAccount
@@ -115,9 +123,6 @@ public class ImpersonationController(
     [HttpGet("")]
     public async Task<IActionResult> List([FromQuery(Name = "actor_id")] Guid? actorId)
     {
-        if (!IsServiceAccountCaller())
-            return StatusCode(403, new { error = "service_account_required" });
-
         var sessions = await impersonation.ListActiveAsync(actorId);
         return Ok(sessions.Select(s => new
         {
@@ -139,9 +144,6 @@ public class ImpersonationController(
     [HttpPost("{sessionId}/revoke")]
     public async Task<IActionResult> Revoke(Guid sessionId)
     {
-        if (!IsServiceAccountCaller())
-            return StatusCode(403, new { error = "service_account_required" });
-
         return await impersonation.RevokeAsync(sessionId, ActorId)
             ? NoContent()
             : NotFound();

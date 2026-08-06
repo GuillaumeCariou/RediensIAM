@@ -632,3 +632,48 @@
 @media (max-width: 900px) {
   .iam-stats-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ── Navigation tree ───────────────────────────────────────────────────────────
+   Ported from the proposed console design, attribute selectors turned into classes.
+   The values are the design's own — this is the same paint, on a different structure. */
+.iam-navtree { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
+.iam-trow { display: flex; align-items: center; }
+
+.iam-twist {
+  width: 14px; height: 14px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--iam-sidebar-muted);
+  transition: transform 140ms;
+  cursor: pointer; border: none; background: none; padding: 0; margin-left: -4px;
+}
+.iam-twist.open { transform: rotate(90deg); }
+
+.iam-treeitem {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--iam-radius-sm);
+  font-size: 13px; color: var(--iam-sidebar-muted);
+  transition: background 120ms, color 120ms;
+  position: relative; white-space: nowrap;
+  cursor: pointer; text-decoration: none;
+  background: none; border: none;
+  font-family: var(--font-sans);
+  flex: 1; min-width: 0; text-align: left;
+}
+.iam-treeitem:hover { background: var(--iam-sidebar-accent); color: var(--iam-sidebar-fg); text-decoration: none; }
+.iam-treeitem.active { background: var(--iam-sidebar-accent); color: var(--iam-sidebar-fg); font-weight: 600; }
+/* The rail that says "you are here" without spending a colour on it. */
+.iam-treeitem.active::before {
+  content: ''; position: absolute; left: -3px; top: 5px; bottom: 5px;
+  width: 2px; background: var(--ia-accent); border-radius: 0 2px 2px 0;
+}
+
+.iam-tree-label {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--iam-sidebar-muted); padding: 12px 10px 4px;
+}
+
+.iam-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex: none; }
+.iam-dot-success { background: var(--success); }
+.iam-dot-muted { background: var(--fg-subtle); }

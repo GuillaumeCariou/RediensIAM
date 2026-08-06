@@ -1,9 +1,24 @@
-import { useEffect, useState } from 'react';
-import { getAuditLog, exportSystemAuditLog } from '@/api';
+import { useCallback, useEffect, useState } from 'react';
+import { exportOrgAuditLog, exportSystemAuditLog, getAuditLog } from '@/api';
+import { useOrgContext } from '@/hooks/useOrgContext';
 import PageHeader from '@/components/layout/PageHeader';
-import AuditLogTable from '@/components/AuditLogTable';
-import type { AuditEntry } from '@/components/AuditLogTable';
+import AuditLogTable, { type AuditEntry } from '@/components/AuditLogTable';
+import type { Level } from '@/scope';
 
+/**
+ * The audit log, at the deployment or at one organisation.
+ *
+ * The two pages this replaces differed in two calls — which rows to read and which export to
+ * ask for — and were otherwise the same file twice, down to an identical comment explaining the
+ * export's error handling. What that duplication cost was visible: the action colours existed on
+ * the deployment page only, so the same `org_deleted` row was red for a super-admin and grey for
+ * the tenant whose organisation it was about.
+ */
+
+/**
+ * Colours for the actions worth spotting at a glance. Shared by both levels, which is the fix:
+ * a destructive action should not change colour with who is reading it.
+ */
 const ACTION_COLORS: Record<string, 'default' | 'destructive' | 'success' | 'warning' | 'secondary'> = {
   login: 'success',
   login_failed: 'destructive',
@@ -16,11 +31,14 @@ const ACTION_COLORS: Record<string, 'default' | 'destructive' | 'success' | 'war
   org_suspended: 'warning',
   org_created: 'default',
   org_deleted: 'destructive',
+  'impersonation.opened': 'warning',
+  'impersonation.revoked': 'secondary',
 };
 
 const PAGE_SIZE = 50;
 
-export default function AuditLog() {
+export default function AuditLog({ level }: Readonly<{ level: Level }>) {
+  const { orgId, isSystemCtx } = useOrgContext();
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [offset, setOffset] = useState(0);
@@ -36,7 +54,9 @@ export default function AuditLog() {
     setExporting(true);
     setExportError('');
     try {
-      const blob = await exportSystemAuditLog();
+      const blob = level === 'deployment'
+        ? await exportSystemAuditLog()
+        : await exportOrgAuditLog(orgId ?? '', isSystemCtx);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -48,9 +68,16 @@ export default function AuditLog() {
     } finally { setExporting(false); }
   };
 
-  const load = (off: number) => {
+  const load = useCallback((off: number) => {
     setLoading(true);
-    getAuditLog({ limit: PAGE_SIZE, offset: off })
+    // The deployment log is every organisation's rows; an organisation's is its own. `isSystemCtx`
+    // picks which of the two an org page reads, and it changes with the scope switcher while
+    // `orgId` stays the same — so it belongs in the deps, not only in the closure.
+    const query = level === 'deployment'
+      ? { limit: PAGE_SIZE, offset: off }
+      : { scope: isSystemCtx ? 'system' : 'org', org_id: orgId, limit: PAGE_SIZE, offset: off };
+
+    getAuditLog(query)
       .then(res => {
         const rows = Array.isArray(res) ? res : (res?.entries ?? []);
         setEntries(rows);
@@ -58,16 +85,21 @@ export default function AuditLog() {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  };
+  }, [level, orgId, isSystemCtx]);
 
-  useEffect(() => { load(0); }, []);
+  useEffect(() => { load(0); setOffset(0); }, [load]);
 
   const prev = () => { const o = Math.max(0, offset - PAGE_SIZE); setOffset(o); load(o); };
   const next = () => { const o = offset + PAGE_SIZE; setOffset(o); load(o); };
 
   return (
     <div>
-      <PageHeader title="Audit Log" description="Complete history of all administrative actions" />
+      <PageHeader
+        title="Audit log"
+        description={level === 'deployment'
+          ? 'Complete history of all administrative actions'
+          : 'Administrative actions in this organisation'}
+      />
       {exportError && (
         <div className="iam-alert iam-alert-danger" style={{ margin: '0 24px 12px' }}>{exportError}</div>
       )}

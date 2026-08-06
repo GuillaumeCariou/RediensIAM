@@ -1,4 +1,5 @@
 import { useLocation, useParams, useSearchParams } from 'react-router';
+import { basePath, hrefFor } from '@/scope';
 import { useAuth } from '@/context/AuthContext';
 
 // ── Org context ────────────────────────────────────────────────────────────────
@@ -21,13 +22,18 @@ export function useOrgContext() {
   // the page's catch, leaving a titled page with an empty table. The param is now :listId, and
   // this no longer depends on anyone remembering that.
   const isSystemCtx  = pathname.startsWith('/system');
-  const orgBase      = isSystemCtx ? `/system/organisations/${orgId}` : '/org';
-  const userListBase = isSystemCtx ? `${orgBase}/userlists`           : '/org/userlists';
+  // Built by scope.ts, not here. These were the fifth and sixth places in the console assembling a
+  // path out of string pieces; every one of them had to be found and edited together whenever a
+  // URL shape moved, and the sidebar's copy had already drifted from the router's.
+  const orgBase      = basePath({ level: 'org', orgId: isSystemCtx ? orgId : undefined });
+  const userListBase = hrefFor({ level: 'org', orgId: isSystemCtx ? orgId : undefined }, 'userlists');
 
+  // The query form is not a URL shape scope.ts knows, and deliberately: an org admin has one
+  // project route and reaches every project through it, which is what `?project_id=` carries.
   const projectUrl = (projId: string) =>
     isSystemCtx
-      ? `/system/organisations/${orgId}/projects/${projId}`
-      : `/project?project_id=${projId}`;
+      ? basePath({ level: 'project', orgId, projectId: projId })
+      : `${basePath({ level: 'project' })}?project_id=${projId}`;
 
   return { orgId, isSystemCtx, orgBase, userListBase, projectUrl };
 }
@@ -51,9 +57,7 @@ export function useProjectContext() {
   const queryProjectId = searchParams.get('project_id') ?? undefined;
   const projectId   = pid ?? queryProjectId ?? tokenProjectId;
   const isSystemCtx = !!(oid && pid);
-  const projectBase = isSystemCtx
-    ? `/system/organisations/${oid}/projects/${pid}`
-    : '/project';
+  const projectBase = basePath({ level: 'project', orgId: oid, projectId: pid });
 
   return { projectId, isSystemCtx, projectBase };
 }

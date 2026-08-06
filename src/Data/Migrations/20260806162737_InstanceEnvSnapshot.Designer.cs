@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using RediensIAM.Data;
@@ -11,9 +12,11 @@ using RediensIAM.Data;
 namespace RediensIAM.Data.Migrations
 {
     [DbContext(typeof(RediensIamDbContext))]
-    partial class RediensIamDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260806162737_InstanceEnvSnapshot")]
+    partial class InstanceEnvSnapshot
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1004,9 +1007,6 @@ namespace RediensIAM.Data.Migrations
                         .HasColumnType("boolean")
                         .HasDefaultValue(true);
 
-                    b.Property<Guid?>("OrgId")
-                        .HasColumnType("uuid");
-
                     b.Property<string>("PasswordHash")
                         .HasColumnType("text");
 
@@ -1039,8 +1039,6 @@ namespace RediensIAM.Data.Migrations
                         .HasColumnType("boolean");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("OrgId");
 
                     b.HasIndex("UserListId", "Active");
 
@@ -1469,18 +1467,11 @@ namespace RediensIAM.Data.Migrations
 
             modelBuilder.Entity("RediensIAM.Data.Entities.User", b =>
                 {
-                    b.HasOne("RediensIAM.Data.Entities.Organisation", "Organisation")
-                        .WithMany()
-                        .HasForeignKey("OrgId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.HasOne("RediensIAM.Data.Entities.UserList", "UserList")
                         .WithMany("Users")
                         .HasForeignKey("UserListId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.Navigation("Organisation");
 
                     b.Navigation("UserList");
                 });

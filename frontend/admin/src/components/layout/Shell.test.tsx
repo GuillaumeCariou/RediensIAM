@@ -9,7 +9,11 @@ vi.mock('@/context/AuthContext', () => ({
 }));
 // The reminder does its own fetching and has its own tests; here it only has to not explode.
 vi.mock('@/components/MfaReminder', () => ({ default: () => null }));
-vi.mock('@/api', () => ({ getMfaStatus: vi.fn(), listWebAuthnCredentials: vi.fn() }));
+vi.mock('@/api', () => ({
+  getMfaStatus: vi.fn(), listWebAuthnCredentials: vi.fn(),
+  // Reached through the sidebar's tree.
+  listOrgs: vi.fn().mockResolvedValue([]), listProjects: vi.fn().mockResolvedValue([]),
+}));
 
 const show = () => {
   const user = userEvent.setup();

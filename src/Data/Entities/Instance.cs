@@ -68,6 +68,25 @@ public class Instance
     public int AuditRetentionDays { get; set; } = 365;
     public int InviteExpiryHours { get; set; } = 72;
 
+    /// <summary>
+    /// The environment values last applied to this row, as JSON, keyed by configuration key.
+    ///
+    /// <para>
+    /// It exists to tell two changes apart. The deployment must be able to describe itself — an
+    /// operator editing the chart has to see it take effect, and a row frozen at first boot was a
+    /// real defect. But since 0.7.0 an operator can also change these settings from the console,
+    /// and re-applying the environment on every load would silently undo that at the next restart:
+    /// a control that does not hold is worse than an absent one.
+    /// </para>
+    ///
+    /// <para>
+    /// So the environment is applied when <b>it</b> changed, not merely because it is present. A
+    /// key whose environment value is what it was last time leaves the stored value alone, which is
+    /// what makes a console write survive a rollout.
+    /// </para>
+    /// </summary>
+    public string EnvSnapshot { get; set; } = "{}";
+
     // ── Versioning + audit ────────────────────────────────────────────────────
     /// <summary>Monotonically increasing; bumped on every reconfigure. Future use:
     /// pods poll this to refresh in-memory config without restart.</summary>

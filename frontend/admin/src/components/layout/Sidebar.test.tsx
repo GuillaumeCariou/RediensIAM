@@ -20,6 +20,9 @@ vi.mock('@/context/AuthContext', () => ({ useAuth: () => auth }));
 
 const version = vi.hoisted(() => ({ get: vi.fn<() => string | null>(() => null) }));
 vi.mock('@/auth', () => ({ getServerVersion: () => version.get() }));
+// The sidebar renders the tree, and the tree asks the server which tenants exist. Stubbed to
+// nothing here: what those calls produce is NavTree.test's subject, not this file's.
+vi.mock('@/api', () => ({ listOrgs: vi.fn().mockResolvedValue([]), listProjects: vi.fn().mockResolvedValue([]) }));
 
 const toggleDark = vi.fn();
 
@@ -67,118 +70,13 @@ beforeEach(() => {
   version.get.mockReturnValue(null);
 });
 
-describe('what a super admin sees', () => {
-  beforeEach(() => { auth.isSuperAdmin = true; auth.isOrgAdmin = true; auth.isProjectManager = true; });
-
-  it('has the system section only, until the URL names an organisation', () => {
-    show('/system');
-    expect(sections()).toEqual(['System']);
-  });
-
-  it('gains an organisation section, labelled by the id in the URL', () => {
-    show('/system/organisations/0123456789abcdef');
-    expect(sections()).toEqual(['System', 'Org · 01234567…']);
-  });
-
-  it('gains a project section once the URL names a project as well', () => {
-    show('/system/organisations/o1/projects/0123456789abcdef');
-    expect(sections()).toEqual(['System', 'Org · o1…', 'Proj · 01234567…']);
-  });
-
-  it('points the nested sections at the system routes, not the tenant\'s own', () => {
-    // /org/projects would be the super admin's own organisation, which is not the one on screen.
-    show('/system/organisations/o1');
-    expect(links()).toContain('/system/organisations/o1/projects');
-    expect(links()).not.toContain('/org/projects');
-  });
-
-  it('includes the entries reserved for a super admin', () => {
-    show('/system');
-    expect(linkNames()).toContain('Health');
-    expect(links()).toContain('/system/users');
-  });
-});
-
-describe('what an org admin sees', () => {
-  beforeEach(() => { auth.isOrgAdmin = true; auth.isProjectManager = true; });
-
-  it('has their own organisation and no system section', () => {
-    show('/org');
-    expect(sections()).toEqual(['Organisation']);
-  });
-
-  it('links to the tenant-scoped routes', () => {
-    show('/org');
-    expect(links()).toContain('/org/projects');
-    expect(links()).toContain('/org/webhooks');
-  });
-
-  it('gains a project section only once they are on a project page', () => {
-    show('/project/users');
-    expect(sections()).toEqual(['Organisation', 'Project']);
-  });
-});
-
-describe('what a project manager sees', () => {
-  beforeEach(() => { auth.isProjectManager = true; });
-
-  it('has the project section, and only that', () => {
-    show('/project');
-    expect(sections()).toEqual(['Project']);
-  });
-
-  it('is never offered a super-admin-only entry', () => {
-    // These entries render nothing at all rather than rendering a link to a 403.
-    show('/project');
-    expect(linkNames()).not.toContain('Health');
-  });
-});
-
-describe('the active entry', () => {
-  beforeEach(() => { auth.isOrgAdmin = true; });
-
-  it('marks the section the route is in', () => {
-    show('/org/projects');
-    expect(document.querySelector('.iam-nav-section-highlight')).not.toBeNull();
-  });
-
-  it('marks a nested route as being under its parent entry', () => {
-    show('/org/userlists/l1');
-    expect(navLink('User Lists')!.className).toContain('active');
-  });
-
-  it('does not mark the overview entry for every route beneath it', () => {
-    // `/org` is a prefix of every org route, so it is matched exactly or it is always active.
-    show('/org/projects');
-    expect(navLink('Overview')!.className).not.toContain('active');
-  });
-});
-
-describe('the sections', () => {
-  beforeEach(() => { auth.isSuperAdmin = true; auth.isOrgAdmin = true; auth.isProjectManager = true; });
-
-  it('can be collapsed by hand', async () => {
-    const user = show('/system');
-
-    await user.click(screen.getByRole('button', { name: /System/ }));
-
-    expect(navLink('Organisations')).toBeUndefined();
-  });
-
-  it('opens the one the route moved into, undoing a manual collapse', async () => {
-    // Which section is open follows the route, except while the operator has overridden it — so
-    // the override has to end when the route leaves and comes back, not persist for the session.
-    auth.isSuperAdmin = false;
-    const user = show('/org/projects');
-    await user.click(screen.getByRole('button', { name: /Organisation/ }));
-    expect(navLink('Webhooks')).toBeUndefined();
-
-    await user.click(screen.getByRole('link', { name: 'page: project' }));
-    await user.click(screen.getByRole('link', { name: 'page: org' }));
-
-    await vi.waitFor(() => expect(navLink('Webhooks')).toBeDefined());
-  });
-});
+/**
+ * The sidebar is the frame: brand, version, the account menu and the theme toggle. The navigation
+ * inside it moved to `NavTree`, and so did its tests — what a super admin, a tenant admin and a
+ * project admin each see, which entry is lit, and what a node opens are asserted in
+ * `NavTree.test.tsx` against the component that now decides them. They were not dropped; asserting
+ * them here would be asserting them about a component that no longer makes the decision.
+ */
 
 describe('the brand line', () => {
   it('shows the version of the server that served the console', () => {
@@ -265,16 +163,5 @@ describe('the account menu', () => {
 
     expect(remove).toHaveBeenCalledWith('mousedown', expect.any(Function));
     remove.mockRestore();
-  });
-});
-
-describe('the project section', () => {
-  it('can be collapsed by hand like the others', async () => {
-    auth.isProjectManager = true;
-    const user = show('/project');
-
-    await user.click(screen.getByRole('button', { name: /Project/ }));
-
-    expect(navLink('Roles')).toBeUndefined();
   });
 });

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { useAuth } from '@/context/AuthContext';
+import NavTree from './NavTree';
 import { useTheme } from '@/context/ThemeContext';
 import { getServerVersion } from '@/auth';
 
@@ -37,42 +38,7 @@ const ICONS = {
 
 // ── Nav definitions ────────────────────────────────────────────────────────────
 
-interface NavItem { label: string; to: string; icon: keyof typeof ICONS; superOnly?: boolean; exact?: boolean; }
 
-const systemNav: NavItem[] = [
-  { label: 'Dashboard',        to: '/system',                  icon: 'dashboard', exact: true },
-  { label: 'Organisations',    to: '/system/organisations',    icon: 'building' },
-  { label: 'Admins',           to: '/system/admins',           icon: 'shield',   superOnly: true },
-  { label: 'Users',            to: '/system/users',            icon: 'users',    superOnly: true },
-  { label: 'Projects',         to: '/system/projects',         icon: 'folder',   superOnly: true },
-  { label: 'User Lists',       to: '/system/userlists',        icon: 'list',     superOnly: true },
-  { label: 'Service Accounts', to: '/system/service-accounts', icon: 'bot',      superOnly: true },
-  { label: 'Email',            to: '/system/email',            icon: 'mail',     superOnly: true },
-  { label: 'Audit Log',        to: '/system/audit-log',        icon: 'log' },
-  { label: 'Metrics',          to: '/system/metrics',          icon: 'chart' },
-  { label: 'Health',           to: '/system/health',           icon: 'heart',    superOnly: true },
-];
-
-const orgNav: NavItem[] = [
-  { label: 'Overview',         to: '/org',                   icon: 'dashboard', exact: true },
-  { label: 'Projects',         to: '/org/projects',          icon: 'folder' },
-  { label: 'User Lists',       to: '/org/userlists',         icon: 'list' },
-  { label: 'Admins',           to: '/org/admins',            icon: 'shield' },
-  { label: 'Service Accounts', to: '/org/service-accounts',  icon: 'bot' },
-  { label: 'Email',            to: '/org/email',             icon: 'mail' },
-  { label: 'Audit Log',        to: '/org/audit-log',         icon: 'log' },
-  { label: 'Webhooks',         to: '/org/webhooks',          icon: 'zap' },
-  { label: 'Settings',         to: '/org/settings',          icon: 'settings' },
-];
-
-const projectNav: NavItem[] = [
-  { label: 'Overview',         to: '/project',                   icon: 'dashboard', exact: true },
-  { label: 'Users',            to: '/project/users',             icon: 'users' },
-  { label: 'Roles',            to: '/project/roles',             icon: 'shield' },
-  { label: 'Service Accounts', to: '/project/service-accounts',  icon: 'bot' },
-  { label: 'Authentication',   to: '/project/authentication',    icon: 'key' },
-  { label: 'Settings',         to: '/project/settings',         icon: 'settings' },
-];
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -80,35 +46,6 @@ function roleLabel(isSuperAdmin: boolean, isOrgAdmin: boolean): string {
   if (isSuperAdmin) return 'super_admin';
   if (isOrgAdmin) return 'org_admin';
   return 'project_admin';
-}
-
-function isActive(item: NavItem, pathname: string): boolean {
-  return item.exact ? pathname === item.to : pathname.startsWith(item.to);
-}
-
-function buildSysOrgNav(base: string): NavItem[] {
-  return [
-    { label: 'Overview',         to: base,                         icon: 'dashboard', exact: true },
-    { label: 'Projects',         to: `${base}/projects`,           icon: 'folder' },
-    { label: 'User Lists',       to: `${base}/userlists`,          icon: 'list' },
-    { label: 'Admins',           to: `${base}/admins`,             icon: 'shield' },
-    { label: 'Service Accounts', to: `${base}/service-accounts`,   icon: 'bot' },
-    { label: 'Email',            to: `${base}/email`,              icon: 'mail' },
-    { label: 'Audit Log',        to: `${base}/audit-log`,          icon: 'log' },
-    { label: 'Webhooks',         to: `${base}/webhooks`,           icon: 'zap' },
-    { label: 'Settings',         to: `${base}/settings`,           icon: 'settings' },
-  ];
-}
-
-function buildSysProjNav(base: string): NavItem[] {
-  return [
-    { label: 'Overview',         to: base,                           icon: 'dashboard', exact: true },
-    { label: 'Users',            to: `${base}/users`,                icon: 'users' },
-    { label: 'Roles',            to: `${base}/roles`,                icon: 'shield' },
-    { label: 'Service Accounts', to: `${base}/service-accounts`,     icon: 'bot' },
-    { label: 'Authentication',   to: `${base}/authentication`,       icon: 'key' },
-    { label: 'Settings',         to: `${base}/settings`,             icon: 'settings' },
-  ];
 }
 
 // ── NavLink ────────────────────────────────────────────────────────────────────
@@ -120,30 +57,6 @@ function NavLink({ item, active, superAdmin }: Readonly<{ item: NavItem; active:
       <span className="iam-nav-icon"><Icon path={ICONS[item.icon]} size={15} /></span>
       {item.label}
     </Link>
-  );
-}
-
-// ── AccordionSection ──────────────────────────────────────────────────────────
-
-interface AccordionProps {
-  label: string;
-  iconKey: keyof typeof ICONS;
-  open: boolean;
-  onToggle: () => void;
-  highlight?: boolean;
-  children: React.ReactNode;
-}
-
-function AccordionSection({ label, iconKey, open, onToggle, highlight, children }: Readonly<AccordionProps>) {
-  return (
-    <div className={`iam-nav-section${highlight ? ' iam-nav-section-highlight' : ''}`}>
-      <button className={`iam-nav-section-header${open ? ' open' : ''}`} onClick={onToggle}>
-        <Icon path={ICONS[iconKey]} size={11} />
-        <span>{label}</span>
-        <span className="iam-chev"><Icon path={ICONS.chevRight} size={11} /></span>
-      </button>
-      {open && <div className="iam-nav-items">{children}</div>}
-    </div>
   );
 }
 
@@ -174,41 +87,7 @@ function UserPopover({ onClose }: Readonly<{ onClose: () => void }>) {
 
 // ── Sidebar ────────────────────────────────────────────────────────────────────
 
-interface ScopeDerived {
-  urlOrgId: string;
-  urlProjectId: string;
-  sysOrgBase: string;
-  sysProjBase: string;
-}
 
-function deriveScope(pathname: string): ScopeDerived {
-  const sysProjMatch = /^\/system\/organisations\/([^/]+)\/projects\/([^/]+)/.exec(pathname);
-  const sysOrgMatch  = /^\/system\/organisations\/([^/]+)/.exec(pathname);
-  const urlOrgId      = sysOrgMatch?.[1]  ?? '';
-  const urlProjectId  = sysProjMatch?.[2] ?? '';
-  const urlOrgForProj = sysProjMatch?.[1] ?? '';
-  return {
-    urlOrgId,
-    urlProjectId,
-    sysOrgBase:  urlOrgId     ? `/system/organisations/${urlOrgId}`                               : '',
-    sysProjBase: urlProjectId ? `/system/organisations/${urlOrgForProj}/projects/${urlProjectId}` : '',
-  };
-}
-
-function pickActiveSection(pathname: string, scope: ScopeDerived, isSuperAdmin: boolean): 'system' | 'org' | 'project' | null {
-  const projectActive = isSuperAdmin ? scope.urlProjectId !== '' : pathname.startsWith('/project');
-  if (projectActive) return 'project';
-  const orgActive = isSuperAdmin ? scope.urlOrgId !== '' : pathname.startsWith('/org');
-  if (orgActive) return 'org';
-  if (pathname.startsWith('/system')) return 'system';
-  return null;
-}
-
-function pickProjectVisibility(pathname: string, scope: ScopeDerived, roles: { isSuperAdmin: boolean; isOrgAdmin: boolean; isProjectManager: boolean }): boolean {
-  if (roles.isSuperAdmin) return scope.urlProjectId !== '';
-  if (roles.isOrgAdmin)   return pathname.startsWith('/project');
-  return roles.isProjectManager;
-}
 
 export default function Sidebar() {
   const { pathname } = useLocation();
@@ -219,45 +98,12 @@ export default function Sidebar() {
   const version = getServerVersion();
   const userRef = useRef<HTMLDivElement>(null);
 
-  const scope = deriveScope(pathname);
-  const { urlOrgId, urlProjectId, sysOrgBase, sysProjBase } = scope;
-
-  const showSystem  = isSuperAdmin;
-  const showOrg     = isSuperAdmin ? urlOrgId !== '' : isOrgAdmin;
-  const showProject = pickProjectVisibility(pathname, scope, { isSuperAdmin, isOrgAdmin, isProjectManager });
-  const activeSection = pickActiveSection(pathname, scope, isSuperAdmin);
-
-  const [systemOpen,  setSystemOpen]  = useState(pathname.startsWith('/system'));
-  const [orgOpen,     setOrgOpen]     = useState(isSuperAdmin ? urlOrgId !== '' : pathname.startsWith('/org'));
-  const [projectOpen, setProjectOpen] = useState(isSuperAdmin ? urlProjectId !== '' : pathname.startsWith('/project'));
-
-  /**
-   * Which section is open follows the route, except while the user has toggled one by hand — so
-   * it is state that resets when the route changes, and React's own answer to that is to adjust
-   * it during render rather than in an effect. Setting state during render re-runs this component
-   * before anything is committed; an effect would paint the stale section first, and the lint rule
-   * (react-hooks/set-state-in-effect) is naming exactly that.
-   */
-  const [renderedSection, setRenderedSection] = useState(activeSection);
-  if (renderedSection !== activeSection) {
-    setRenderedSection(activeSection);
-    setSystemOpen(activeSection === 'system');
-    setOrgOpen(activeSection === 'org');
-    setProjectOpen(activeSection === 'project');
-  }
-
   useEffect(() => {
     if (!userOpen) return;
     const h = (e: MouseEvent) => { if (!userRef.current?.contains(e.target as Node)) setUserOpen(false); };
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, [userOpen]);
-
-  const activeOrgNav     = isSuperAdmin && sysOrgBase  ? buildSysOrgNav(sysOrgBase)   : orgNav;
-  const activeProjectNav = isSuperAdmin && sysProjBase ? buildSysProjNav(sysProjBase) : projectNav;
-
-  const orgLabel     = urlOrgId     ? `Org · ${urlOrgId.slice(0, 8)}…`     : 'Organisation';
-  const projectLabel = urlProjectId ? `Proj · ${urlProjectId.slice(0, 8)}…` : 'Project';
 
   return (
     <aside className="iam-sidebar">
@@ -287,38 +133,7 @@ export default function Sidebar() {
         </button>
       </div>
 
-      <div className="iam-sidebar-nav">
-        {showSystem && (
-          <AccordionSection label="System" iconKey="shield"
-            open={systemOpen} onToggle={() => setSystemOpen(o => !o)}
-            highlight={activeSection === 'system'}>
-            {systemNav.map(item => (
-              <NavLink key={item.to} item={item} active={isActive(item, pathname)} superAdmin={isSuperAdmin} />
-            ))}
-          </AccordionSection>
-        )}
-
-        {showOrg && activeOrgNav.length > 0 && (
-          <AccordionSection label={orgLabel} iconKey="building"
-            open={orgOpen} onToggle={() => setOrgOpen(o => !o)}
-            highlight={activeSection === 'org'}>
-            {activeOrgNav.map(item => (
-              <NavLink key={item.to} item={item} active={isActive(item, pathname)} superAdmin={isSuperAdmin} />
-            ))}
-          </AccordionSection>
-        )}
-
-        {showProject && activeProjectNav.length > 0 && (
-          <AccordionSection label={projectLabel} iconKey="folder"
-            open={projectOpen} onToggle={() => setProjectOpen(o => !o)}
-            highlight={activeSection === 'project'}>
-            {activeProjectNav.map(item => (
-              <NavLink key={item.to} item={item} active={isActive(item, pathname)} superAdmin={isSuperAdmin} />
-            ))}
-          </AccordionSection>
-        )}
-      </div>
-
+      <NavTree />
       <div className="iam-sidebar-footer" ref={userRef} style={{ position: 'relative' }}>
         {userOpen && <UserPopover onClose={() => setUserOpen(false)} />}
         <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--iam-sidebar-accent, var(--surface-2))', display: 'grid', placeItems: 'center', flexShrink: 0 }}>

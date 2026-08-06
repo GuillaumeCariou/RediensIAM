@@ -69,7 +69,13 @@ public sealed class InstanceConfigurationProvider(InstanceBootstrapOptions opts)
                 // frozen at whatever the first boot happened to write. ApplyEnv already prefers the
                 // stored value where the environment says nothing, so running it always is not a
                 // reset — it is the deployment being allowed to describe itself.
-                ApplyEnv(inst, opts.EnvDefaults);
+                // Only the keys whose environment value CHANGED since the last load, unless an
+                // explicit reconfigure was asked for. See Instance.EnvSnapshot: applying the
+                // environment unconditionally is what would erase a console change on restart.
+                ApplyEnv(inst, opts.ReconfigureFromEnv
+                    ? opts.EnvDefaults
+                    : ChangedSinceLastLoad(inst, opts.EnvDefaults));
+                inst.EnvSnapshot = Snapshot(opts.EnvDefaults);
                 if (opts.ReconfigureFromEnv)
                 {
                     inst.ConfigVersion++;
@@ -94,8 +100,44 @@ public sealed class InstanceConfigurationProvider(InstanceBootstrapOptions opts)
     {
         var i = new Instance { Id = id, CreatedAt = now, UpdatedAt = now };
         ApplyEnv(i, env);
+        // Stamped at creation too. Left at "{}", the next load would find every key "changed" and
+        // re-apply the whole environment — which is exactly the overwrite the snapshot exists to
+        // prevent, deferred by one restart.
+        i.EnvSnapshot = Snapshot(env);
         return i;
     }
+
+    /// <summary>
+    /// The subset of the environment that differs from what was applied last time.
+    ///
+    /// <para>
+    /// A key absent here keeps whatever the row holds — which may be what the console wrote. A key
+    /// present is a deployment describing itself anew, and still wins: between an operator's form
+    /// and an operator's manifest, the manifest is the one that was just edited.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyDictionary<string, string?> ChangedSinceLastLoad(
+        Instance i, IReadOnlyDictionary<string, string?> env)
+    {
+        Dictionary<string, string?> previous;
+        try
+        {
+            previous = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string?>>(i.EnvSnapshot)
+                       ?? new Dictionary<string, string?>();
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // An unreadable snapshot must not freeze the deployment out of its own settings.
+            previous = new Dictionary<string, string?>();
+        }
+
+        return env
+            .Where(kv => !previous.TryGetValue(kv.Key, out var was) || was != kv.Value)
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
+    }
+
+    private static string Snapshot(IReadOnlyDictionary<string, string?> env) =>
+        System.Text.Json.JsonSerializer.Serialize(env);
 
     private static void ApplyEnv(Instance i, IReadOnlyDictionary<string, string?> env)
     {

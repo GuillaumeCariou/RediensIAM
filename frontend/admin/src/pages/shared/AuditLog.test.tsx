@@ -2,12 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { userEvent } from 'vitest/browser';
 import { MemoryRouter, Route, Routes } from 'react-router';
-import AuditLog from './AuditLog';
-import OrgAuditLog from '@/pages/org/OrgAuditLog';
+import AuditLog from '@/pages/shared/AuditLog';
 
 /**
- * Two pages over the same table component, and the difference between them is the route each
- * reads. `/admin/audit-log` is super-admin-only and binds nothing but limit/offset: passing
+ * One page over two levels, and the difference between them is the route each reads. `/admin/audit-log` is super-admin-only and binds nothing but limit/offset: passing
  * `org_id` to it filtered nothing, so an org admin got a 403 and a super admin browsing one
  * organisation saw every tenant's entries under a heading that said otherwise. The org-scoped
  * page has to ask for `scope: 'org'`, which is a different controller action.
@@ -46,7 +44,7 @@ beforeEach(() => {
 
 function showSystem() {
   const user = userEvent.setup();
-  render(<MemoryRouter initialEntries={['/system/audit-log']}><AuditLog /></MemoryRouter>);
+  render(<MemoryRouter initialEntries={['/system/audit-log']}><AuditLog level="deployment" /></MemoryRouter>);
   return user;
 }
 
@@ -54,7 +52,7 @@ function showOrg(path = '/org/audit-log', pattern = '/org/audit-log') {
   const user = userEvent.setup();
   render(
     <MemoryRouter initialEntries={[path]}>
-      <Routes><Route path={pattern} element={<OrgAuditLog />} /></Routes>
+      <Routes><Route path={pattern} element={<AuditLog level="org" />} /></Routes>
     </MemoryRouter>,
   );
   return user;
@@ -186,7 +184,11 @@ describe('the export route', () => {
   });
 });
 
-describe('the system page only', () => {
+/**
+ * Was "the system page only". The colours now come from the shared page, which is the point of
+ * merging: a destructive action must not change colour with who is reading it.
+ */
+describe('action severity', () => {
   it('tones the actions that matter by severity', async () => {
     api.getAuditLog.mockResolvedValue({
       entries: [entry(0), { ...entry(1), action: 'login' }, { ...entry(2), action: 'org_suspended' }],

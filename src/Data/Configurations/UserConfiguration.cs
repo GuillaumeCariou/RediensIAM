@@ -34,6 +34,17 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
         builder.HasIndex(x => new { x.UserListId, x.Username, x.Discriminator }).IsUnique();
         builder.HasIndex(x => new { x.UserListId, x.Active });
 
+        // L'appartenance à une organisation. `Restrict` et non `Cascade` : supprimer une
+        // organisation ne doit pas effacer en silence les comptes de ses membres — c'est une
+        // décision qui se prend explicitement, avec la liste sous les yeux.
+        builder.HasOne(x => x.Organisation)
+               .WithMany()
+               .HasForeignKey(x => x.OrgId)
+               .OnDelete(DeleteBehavior.Restrict);
+        // Sert le balayage « tous les membres de cette organisation », que la console client et
+        // la facturation feront à chaque page.
+        builder.HasIndex(x => x.OrgId);
+
         builder.Property(x => x.Metadata)
                .HasColumnType("jsonb")
                .HasConversion(

@@ -9,6 +9,14 @@ public class AppConfig(IConfiguration config)
     public int    PublicPort => config.GetValue<int>("IAM_PUBLIC_PORT", 5000);
     public int    AdminPort  => config.GetValue<int>("IAM_ADMIN_PORT", 5001);
 
+    /// <summary>
+    /// Which <c>instances</c> row this process uses. Read here rather than at the call site: the
+    /// structural test in ConfigKeyRegressionTests forbids a second reader of configuration, and it
+    /// is right to — a controller resolving its own instance id is how two of them end up
+    /// disagreeing about which row they are editing.
+    /// </summary>
+    public string InstanceId => config["INSTANCE_ID"] ?? "default";
+
     // ── Bootstrap ─────────────────────────────────────────────────────────────
     public string? BootstrapEmail    => config["IAM_BOOTSTRAP_EMAIL"];
     public string? BootstrapPassword => config["IAM_BOOTSTRAP_PASSWORD"];
@@ -106,8 +114,8 @@ public class AppConfig(IConfiguration config)
     // These stay operator-tunable through the instance row, so every one of them is clamped to a
     // range in which it is still a control. Unclamped, a single DB write disables account
     // lockout, weakens Argon2 for every future hash, and makes PAT revocation ineffective.
-    public int    MaxLoginAttempts        => Math.Clamp(config.GetValue<int>("Security:MaxLoginAttempts", 5), 1, 10);
-    public int    LockoutMinutes          => Math.Clamp(config.GetValue<int>("Security:LockoutMinutes", 15), 1, 1440);
+    public int    MaxLoginAttempts        => ClampMaxLoginAttempts(config.GetValue<int>("Security:MaxLoginAttempts", 5));
+    public int    LockoutMinutes          => ClampLockoutMinutes(config.GetValue<int>("Security:LockoutMinutes", 15));
 
     /// <summary>
     /// How long Hydra keeps an SSO session after a successful login, in minutes.
@@ -128,9 +136,9 @@ public class AppConfig(IConfiguration config)
     /// </para>
     /// </summary>
     public int    SsoSessionMinutes       => Math.Clamp(config.GetValue<int>("Security:SsoSessionMinutes", 480), 0, 10080);
-    public int    OtpTtlSeconds           => config.GetValue<int>("Security:OtpTtlSeconds", 300);
-    public int    MaxSmsPerWindow         => config.GetValue<int>("Security:MaxSmsPerWindow", 3);
-    public int    SmsWindowMinutes        => config.GetValue<int>("Security:SmsWindowMinutes", 10);
+    public int    OtpTtlSeconds           => ClampOtpTtlSeconds(config.GetValue<int>("Security:OtpTtlSeconds", 300));
+    public int    MaxSmsPerWindow         => ClampMaxSmsPerWindow(config.GetValue<int>("Security:MaxSmsPerWindow", 3));
+    public int    SmsWindowMinutes        => ClampSmsWindowMinutes(config.GetValue<int>("Security:SmsWindowMinutes", 10));
     public string TotpSecretEncryptionKey => config["Security:TotpSecretEncryptionKey"]
         ?? throw new InvalidOperationException("Security:TotpSecretEncryptionKey is required");
     // Floors are the OWASP Argon2id minimum (t=2, m=19 MiB, p=1).
@@ -168,7 +176,7 @@ public class AppConfig(IConfiguration config)
     /// deactivating a service account takes effect immediately whatever this says.
     /// </para>
     /// </summary>
-    public int    PatCacheTtlMinutes      => Math.Clamp(config.GetValue<int>("Security:PatCacheTtlMinutes", 5), 0, 15);
+    public int    PatCacheTtlMinutes      => ClampPatCacheTtl(config.GetValue<int>("Security:PatCacheTtlMinutes", 5));
 
     /// <summary>
     /// OAuth2 client IDs allowed to call the management surfaces (/admin, /org, /project,
@@ -329,6 +337,33 @@ public class AppConfig(IConfiguration config)
     /// <c>ExecuteDeleteAsync</c>, so a value at or below zero is not a setting — it is a
     /// self-service purge of the evidence, including the record of the change itself.
     /// </summary>
+    /// <summary>
+    /// The bounds of every setting an operator may change at runtime, as functions rather than as
+    /// numbers repeated at each place that needs them.
+    ///
+    /// <para>
+    /// They exist because <c>PATCH /admin/instance</c> writes the same settings the environment
+    /// seeds, and a bound applied on one path and not the other is a value that means one thing
+    /// when an operator types it and another when a manifest declares it. Every property below
+    /// reads through these, so the two paths cannot drift.
+    /// </para>
+    ///
+    /// <para>
+    /// <c>OtpTtlSeconds</c>, <c>MaxSmsPerWindow</c>, <c>SmsWindowMinutes</c> and
+    /// <c>InviteExpiryHours</c> gained bounds here that the environment never applied. An unbounded
+    /// one-time-code lifetime was tolerable while only a deployment manifest could set it; it is
+    /// not once a form can.
+    /// </para>
+    /// </summary>
+    public static int ClampMaxLoginAttempts(int v)  => Math.Clamp(v, 1, 10);
+    public static int ClampLockoutMinutes(int v)    => Math.Clamp(v, 1, 1440);
+    public static int ClampPatCacheTtl(int v)       => Math.Clamp(v, 0, 15);
+    public static int ClampOtpTtlSeconds(int v)     => Math.Clamp(v, 60, 3600);
+    public static int ClampMaxSmsPerWindow(int v)   => Math.Clamp(v, 1, 20);
+    public static int ClampSmsWindowMinutes(int v)  => Math.Clamp(v, 1, 1440);
+    public static int ClampInviteExpiryHours(int v) => Math.Clamp(v, 1, 720);
+    public static int ClampSmtpPort(int v)          => Math.Clamp(v, 1, 65535);
+
     public const int MinAuditRetentionDays = 90;
     public const int MaxAuditRetentionDays = 3650;
 
@@ -338,7 +373,7 @@ public class AppConfig(IConfiguration config)
         Math.Clamp(days, MinAuditRetentionDays, MaxAuditRetentionDays);
 
     // ── Invitations ───────────────────────────────────────────────────────────
-    public int InviteExpiryHours => config.GetValue<int>("Invitations:ExpiryHours", 72);
+    public int InviteExpiryHours => ClampInviteExpiryHours(config.GetValue<int>("Invitations:ExpiryHours", 72));
 
     /// <summary>
     /// Link mailed to an invited user. Must point at the login SPA route that renders the

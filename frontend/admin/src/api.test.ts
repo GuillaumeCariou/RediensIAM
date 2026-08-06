@@ -121,6 +121,12 @@ const ROUTES: readonly Route[] = [
   ['generatePat', () => api.generatePat('s1', { name: 'deploy' }),
     '/service-accounts/s1/pat', { method: 'POST', body: json({ name: 'deploy' }) }],
   ['revokePat', () => api.revokePat('s1', 't1'), '/service-accounts/s1/pat/t1', { method: 'DELETE' }],
+
+  // Impersonation: the console supervises. Opening is service-account-only at the server and has
+  // deliberately no client here — a function that always answers 403 is a trap, not an API.
+  ['listImpersonations', () => api.listImpersonations(), '/admin/impersonate'],
+  ['listImpersonations by actor', () => api.listImpersonations('usr_1'), '/admin/impersonate?actor_id=usr_1'],
+  ['revokeImpersonation', () => api.revokeImpersonation('7f3'), '/admin/impersonate/7f3/revoke', { method: 'POST' }],
   ['assignSaRole', () => api.assignSaRole('s1', { role: 'org_admin', org_id: 'o1' }),
     '/service-accounts/s1/roles', { method: 'POST', body: json({ role: 'org_admin', org_id: 'o1' }) }],
   ['removeSaRole', () => api.removeSaRole('s1', 'r1'), '/service-accounts/s1/roles/r1', { method: 'DELETE' }],

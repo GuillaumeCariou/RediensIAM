@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
+import { DESTINATIONS, hrefFor, type Level } from '@/scope';
 import { useAuth } from '@/context/AuthContext';
 
 function Kbd({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -33,45 +34,26 @@ export default function CommandPalette({ onClose }: Readonly<CommandPaletteProps
   const ref = useRef<HTMLDialogElement>(null);
   const listId = useId();
 
+  /**
+   * The palette's destinations are the sidebar's destinations. They were a sixth hand-kept copy of
+   * the same list — drifted, too: it offered "System Users" and "Email Config" under names the
+   * sidebar never used, and omitted the deployment's user lists and admins entirely. Built from
+   * `DESTINATIONS`, the palette can no longer offer a page the tree does not, or miss one it does.
+   */
   const items = useMemo<CmdItem[]>(() => {
-    const list: CmdItem[] = [];
-    if (isSuperAdmin) {
-      list.push(
-        { group: 'System', label: 'Dashboard',            kind: 'nav', to: '/system' },
-        { group: 'System', label: 'Organisations',         kind: 'nav', to: '/system/organisations' },
-        { group: 'System', label: 'System Users',          kind: 'nav', to: '/system/users' },
-        { group: 'System', label: 'System Projects',       kind: 'nav', to: '/system/projects' },
-        { group: 'System', label: 'Service Accounts',      kind: 'nav', to: '/system/service-accounts' },
-        { group: 'System', label: 'Audit Log',             kind: 'nav', to: '/system/audit-log' },
-        { group: 'System', label: 'Metrics',               kind: 'nav', to: '/system/metrics' },
-        { group: 'System', label: 'Health',                kind: 'nav', to: '/system/health' },
-        { group: 'System', label: 'Email Config',          kind: 'nav', to: '/system/email' },
-      );
-    }
-    if (isOrgAdmin) {
-      list.push(
-        { group: 'Organisation', label: 'Overview',         kind: 'nav', to: '/org' },
-        { group: 'Organisation', label: 'Projects',         kind: 'nav', to: '/org/projects' },
-        { group: 'Organisation', label: 'User Lists',       kind: 'nav', to: '/org/userlists' },
-        { group: 'Organisation', label: 'Admins',           kind: 'nav', to: '/org/admins' },
-        { group: 'Organisation', label: 'Service Accounts', kind: 'nav', to: '/org/service-accounts' },
-        { group: 'Organisation', label: 'Audit Log',        kind: 'nav', to: '/org/audit-log' },
-        { group: 'Organisation', label: 'Webhooks',         kind: 'nav', to: '/org/webhooks' },
-        { group: 'Organisation', label: 'Settings',         kind: 'nav', to: '/org/settings' },
-      );
-    }
-    if (isProjectManager) {
-      list.push(
-        { group: 'Project', label: 'Overview',          kind: 'nav', to: '/project' },
-        { group: 'Project', label: 'Users',             kind: 'nav', to: '/project/users' },
-        { group: 'Project', label: 'Roles',             kind: 'nav', to: '/project/roles' },
-        { group: 'Project', label: 'Service Accounts',  kind: 'nav', to: '/project/service-accounts' },
-        { group: 'Project', label: 'Authentication',    kind: 'nav', to: '/project/authentication' },
-        { group: 'Project', label: 'Settings',          kind: 'nav', to: '/project/settings' },
-      );
-    }
-    list.push({ group: 'Account', label: 'My Account', kind: 'nav', to: '/account' });
-    return list;
+    const entries = (level: Level, group: string, allowed: boolean): CmdItem[] =>
+      allowed
+        ? DESTINATIONS[level]
+            .filter(d => !d.superOnly || isSuperAdmin)
+            .map(d => ({ group, label: d.label, kind: 'nav' as const, to: hrefFor({ level }, d.key) }))
+        : [];
+
+    return [
+      ...entries('deployment', 'Deployment',   isSuperAdmin),
+      ...entries('org',        'Organisation', isOrgAdmin),
+      ...entries('project',    'Project',      isProjectManager),
+      { group: 'Account', label: 'My Account', kind: 'nav', to: '/account' },
+    ];
   }, [isSuperAdmin, isOrgAdmin, isProjectManager]);
 
   const filtered = useMemo(() => {

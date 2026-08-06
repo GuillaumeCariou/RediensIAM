@@ -1,22 +1,24 @@
 import { useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, Outlet, useNavigate } from 'react-router';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useNavigate, useParams } from 'react-router';
 import { useAuth } from './context/AuthContext';
 import { AuthProvider } from './context/AuthProvider';
 import { consumeReturnTo } from './context/returnTo';
 import { ThemeProvider } from './context/ThemeProvider';
 import { ScopeProvider } from './context/ScopeProvider';
 import Shell from './components/layout/Shell';
+import ServiceAccounts from './pages/shared/ServiceAccounts';
+import AuditLog from './pages/shared/AuditLog';
+import Impersonation from './pages/system/Impersonation';
+import { DESTINATIONS, ROUTE_BASES, type Level } from './scope';
 
 import AccountPage from './pages/account/AccountPage';
 
 import SystemDashboard from './pages/system/Dashboard';
 import Organisations from './pages/system/Organisations';
 import SystemUsers from './pages/system/Users';
-import AuditLog from './pages/system/AuditLog';
 import SystemMetrics from './pages/system/Metrics';
 import SystemEmail from './pages/system/SystemEmail';
 import SystemAdmins from './pages/system/SystemAdmins';
-import SystemServiceAccounts from './pages/system/SystemServiceAccounts';
 import OrgDetail from './pages/system/OrgDetail';
 import SystemProjectDetail from './pages/system/SystemProjectDetail';
 import SystemProjects from './pages/system/SystemProjects';
@@ -28,8 +30,6 @@ import UserListDetail from './pages/shared/UserListDetail';
 import OrgDashboard from './pages/org/OrgDashboard';
 import UserLists from './pages/org/UserLists';
 import Projects from './pages/org/Projects';
-import OrgServiceAccounts from './pages/org/OrgServiceAccounts';
-import OrgAuditLog from './pages/org/OrgAuditLog';
 import OrgEmail from './pages/org/OrgEmail';
 import OrgWebhooks from './pages/org/OrgWebhooks';
 import OrgSettings from './pages/org/OrgSettings';
@@ -37,7 +37,6 @@ import OrgSettings from './pages/org/OrgSettings';
 import ProjectDashboard from './pages/project/ProjectDashboard';
 import ProjectUsers from './pages/project/ProjectUsers';
 import ProjectRoles from './pages/project/ProjectRoles';
-import ProjectServiceAccounts from './pages/project/ProjectServiceAccounts';
 import Authentication from './pages/project/Authentication';
 import ProjectSettings from './pages/project/ProjectSettings';
 
@@ -113,59 +112,24 @@ function AppRoutes() {
         <Route path="account" element={<AccountPage />} />
 
         <Route element={isSuperAdmin ? <Outlet /> : <Navigate to={home} replace />}>
-          <Route path="system" element={<SystemDashboard />} />
-          <Route path="system/admins" element={<SystemAdmins />} />
-          <Route path="system/projects" element={<SystemProjects />} />
-          <Route path="system/organisations" element={<Organisations />} />
-          <Route path="system/organisations/:id" element={<OrgDetail />} />
-          <Route path="system/organisations/:id/userlists" element={<UserLists />} />
-          <Route path="system/organisations/:id/projects" element={<Projects />} />
-          <Route path="system/organisations/:id/admins" element={<OrgAdmins />} />
-          <Route path="system/organisations/:id/service-accounts" element={<OrgServiceAccounts />} />
-          <Route path="system/organisations/:id/service-accounts/:saId" element={<ServiceAccountDetail />} />
-          <Route path="system/organisations/:id/audit-log" element={<OrgAuditLog />} />
-          <Route path="system/organisations/:id/email" element={<OrgEmail />} />
-          <Route path="system/organisations/:id/webhooks" element={<OrgWebhooks />} />
-          <Route path="system/organisations/:id/settings" element={<OrgSettings />} />
-          <Route path="system/organisations/:oid/projects/:pid" element={<SystemProjectDetail />} />
-          <Route path="system/organisations/:oid/projects/:pid/users" element={<ProjectUsers />} />
-          <Route path="system/organisations/:oid/projects/:pid/roles" element={<ProjectRoles />} />
-          <Route path="system/organisations/:oid/projects/:pid/service-accounts" element={<ProjectServiceAccounts />} />
-          <Route path="system/organisations/:oid/projects/:pid/authentication" element={<Authentication />} />
-          <Route path="system/organisations/:oid/projects/:pid/settings" element={<ProjectSettings />} />
-          <Route path="system/users" element={<SystemUsers />} />
-          <Route path="system/userlists" element={<UserLists />} />
+          {routesFor('deployment', '/system')}
+          {systemShapes('org').flatMap(b => routesFor('org', b))}
+          {systemShapes('project').flatMap(b => routesFor('project', b))}
+          {/* Detail pages: reached from a destination, not destinations themselves. */}
+          <Route path="system/service-accounts/:id" element={<ServiceAccountDetail />} />
           <Route path="system/userlists/:listId" element={<UserListDetail />} />
           <Route path="system/organisations/:id/userlists/:listId" element={<UserListDetail />} />
-          <Route path="system/service-accounts" element={<SystemServiceAccounts />} />
-          <Route path="system/service-accounts/:id" element={<ServiceAccountDetail />} />
-          <Route path="system/audit-log" element={<AuditLog />} />
-          <Route path="system/metrics" element={<SystemMetrics />} />
-          <Route path="system/email" element={<SystemEmail />} />
-          <Route path="system/health" element={<SystemHealth />} />
+          <Route path="system/organisations/:id/service-accounts/:saId" element={<ServiceAccountDetail />} />
         </Route>
 
         <Route element={isOrgAdmin ? <Outlet /> : <Navigate to={home} replace />}>
-          <Route path="org" element={<OrgDashboard />} />
-          <Route path="org/userlists" element={<UserLists />} />
+          {routesFor('org', ownShape('org'))}
           <Route path="org/userlists/:listId" element={<UserListDetail />} />
-          <Route path="org/projects" element={<Projects />} />
-          <Route path="org/admins" element={<OrgAdmins />} />
-          <Route path="org/service-accounts" element={<OrgServiceAccounts />} />
           <Route path="org/service-accounts/:saId" element={<ServiceAccountDetail />} />
-          <Route path="org/audit-log" element={<OrgAuditLog />} />
-          <Route path="org/email" element={<OrgEmail />} />
-          <Route path="org/webhooks" element={<OrgWebhooks />} />
-          <Route path="org/settings" element={<OrgSettings />} />
         </Route>
 
         <Route element={isProjectManager ? <Outlet /> : <Navigate to={home} replace />}>
-          <Route path="project" element={<ProjectDashboard />} />
-          <Route path="project/users" element={<ProjectUsers />} />
-          <Route path="project/roles" element={<ProjectRoles />} />
-          <Route path="project/service-accounts" element={<ProjectServiceAccounts />} />
-          <Route path="project/authentication" element={<Authentication />} />
-          <Route path="project/settings" element={<ProjectSettings />} />
+          {routesFor('project', ownShape('project'))}
         </Route>
 
         <Route path="*" element={<Navigate to={home} replace />} />
@@ -173,6 +137,84 @@ function AppRoutes() {
     </Shell>
   );
 }
+
+/**
+ * Which component answers each destination, by level.
+ *
+ * The routes below are generated from this and `ROUTE_BASES`, so a page is registered once and
+ * reached by both URL shapes. Written by hand, `UserLists` appeared three times and both service
+ * account pages twice — and a route added to one shape and forgotten on the other is a page that
+ * exists for a tenant admin and 404s for the super-admin looking at the same tenant.
+ *
+ * Destination keys come from `scope.ts`; a key here that is not a destination there, or the
+ * reverse, is caught by App.test.
+ */
+export const PAGES: Record<Level, Record<string, React.ReactElement>> = {
+  deployment: {
+    '':                 <SystemDashboard />,
+    'organisations':    <Organisations />,
+    'admins':           <SystemAdmins />,
+    'users':            <SystemUsers />,
+    'projects':         <SystemProjects />,
+    'userlists':        <UserLists />,
+    'service-accounts': <ServiceAccounts level="deployment" />,
+    'email':            <SystemEmail />,
+    'impersonation':    <Impersonation />,
+    'audit-log':        <AuditLog level="deployment" />,
+    'metrics':          <SystemMetrics />,
+    'health':           <SystemHealth />,
+  },
+  org: {
+    '':                 <OrgDashboardOrDetail />,
+    'projects':         <Projects />,
+    'userlists':        <UserLists />,
+    'admins':           <OrgAdmins />,
+    'service-accounts': <ServiceAccounts level="org" />,
+    'email':            <OrgEmail />,
+    'audit-log':        <AuditLog level="org" />,
+    'webhooks':         <OrgWebhooks />,
+    'settings':         <OrgSettings />,
+  },
+  project: {
+    '':                 <ProjectDashboardOrDetail />,
+    'users':            <ProjectUsers />,
+    'roles':            <ProjectRoles />,
+    'service-accounts': <ServiceAccounts level="project" />,
+    'authentication':   <Authentication />,
+    'settings':         <ProjectSettings />,
+  },
+};
+
+/**
+ * The level's own page differs by audience: a tenant admin lands on their dashboard, a super-admin
+ * browsing in lands on the tenant's detail page. That is the one place the two shapes genuinely
+ * mean different things, so it is decided here rather than duplicated across the route table.
+ */
+function OrgDashboardOrDetail() {
+  return useParams().id ? <OrgDetail /> : <OrgDashboard />;
+}
+
+function ProjectDashboardOrDetail() {
+  return useParams().pid ? <SystemProjectDetail /> : <ProjectDashboard />;
+}
+
+/**
+ * Every route of a level, on one URL shape.
+ *
+ * One shape at a time, not all of them, because the shapes are guarded differently: the
+ * `/system/...` forms belong to a super-admin browsing into a tenant, the short forms to that
+ * tenant's own administrator. Mounting both under one guard would hand a super-admin `/org`, a page
+ * that resolves its organisation from a token that names none.
+ */
+function routesFor(level: Level, base: string) {
+  return DESTINATIONS[level].map(d => (
+    <Route key={`${base}/${d.key}`} path={d.key ? `${base}/${d.key}` : base} element={PAGES[level][d.key]} />
+  ));
+}
+
+/** The shapes a super-admin reaches a level by, and the one its own administrator does. */
+const systemShapes = (level: Level) => ROUTE_BASES[level].filter(b => b.startsWith('/system'));
+const ownShape     = (level: Level) => ROUTE_BASES[level].find(b => !b.startsWith('/system'))!;
 
 export default function App() {
   // basename comes from Vite, so the router, the bundle's asset paths and the server's fallback

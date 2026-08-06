@@ -123,9 +123,25 @@ describe('what it offers', () => {
     expect(within(screen.getByRole('group', { name: 'Account' })).getByRole('option', { name: /My Account/ })).toBeInTheDocument();
   });
 
-  it('gives a super admin the system section', () => {
+  /**
+   * The group is "Deployment", not "System": the palette now builds its entries from the same
+   * `DESTINATIONS` the sidebar uses, and that is the name the console gives its top level. The
+   * label is "Audit log" for the same reason — one list, one spelling, everywhere.
+   */
+  it('gives a super admin the deployment section', () => {
     open({ isSuperAdmin: true });
-    expect(within(screen.getByRole('group', { name: 'System' })).getByRole('option', { name: /Audit Log/ })).toBeInTheDocument();
+    expect(within(screen.getByRole('group', { name: 'Deployment' })).getByRole('option', { name: /Audit log/ })).toBeInTheDocument();
+  });
+
+  /**
+   * The copy it replaced had drifted: it offered no deployment user lists and no deployment
+   * admins at all. Built from the shared list, the palette cannot omit a page the tree offers.
+   */
+  it('offers every deployment destination the tree does', () => {
+    open({ isSuperAdmin: true });
+    const group = within(screen.getByRole('group', { name: 'Deployment' }));
+    expect(group.getByRole('option', { name: /User lists/ })).toBeInTheDocument();
+    expect(group.getByRole('option', { name: /Admins/ })).toBeInTheDocument();
   });
 });
 
@@ -200,9 +216,12 @@ describe('keyboard navigation', () => {
     // would sit still.
     const { user } = open({ isOrgAdmin: true });
     await user.type(search(), 'a');
+    const before = options().map(o => o.textContent);
     await user.type(search(), '{ArrowDown}');
 
-    expect(active()).toBe(options()[1]);
+    // Compared by position in the filtered list rather than by element identity: the list
+    // re-renders on each keystroke, so the node captured before the arrow is not the node after it.
+    expect(active()?.textContent).toBe(before[1]);
   });
 });
 

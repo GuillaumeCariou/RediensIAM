@@ -196,6 +196,24 @@ public class AuthController(
         return SafeRedirect(redirect);
     }
 
+
+    /// <summary>
+    /// L'organisation que porte le jeton : celle de l'UTILISATEUR si elle est nommée, sinon celle
+    /// du projet.
+    ///
+    /// L'ordre n'est pas arbitraire. Un projet partagé entre plusieurs locataires — une console
+    /// client unique, une page de connexion, des employés de sociétés différentes — donnerait à
+    /// tous l'organisation propriétaire du projet. L'isolation disparaîtrait au niveau du jeton,
+    /// avant Keto, avant <c>IsInCallerScopeAsync</c>, avant tout ce qui s'appuie dessus.
+    ///
+    /// Le repli sur le projet préserve exactement le comportement d'origine quand
+    /// <c>user.OrgId</c> est nul, c'est-à-dire pour tout ce qui existe aujourd'hui.
+    /// </summary>
+    private static Guid EffectiveOrgId(User user, Project project) => user.OrgId ?? project.OrgId;
+
+    /// <summary>Le sujet Hydra, <c>"&lt;org&gt;:&lt;user&gt;"</c>, avec l'organisation effective.</summary>
+    private static string SubjectFor(User user, Project project) => $"{EffectiveOrgId(user, project)}:{user.Id}";
+
     /// <summary>The organisation half of a "&lt;org&gt;:&lt;user&gt;" subject; null for a bare admin subject.</summary>
     private static Guid? ParseSubjectOrgId(string? subject)
     {
@@ -515,10 +533,10 @@ public class AuthController(
         await db.SaveChangesAsync();
         await rateLimiter.ResetAsync(Ip, user.Id);
 
-        var subject = $"{project.OrgId}:{user.Id}";
+        var subject = SubjectFor(user, project);
         var context = new Dictionary<string, object>
         {
-            [CtxOrgId]     = project.OrgId.ToString(),
+            [CtxOrgId]     = EffectiveOrgId(user, project).ToString(),
             [CtxProjectId] = project.Id.ToString(),
             [CtxUserId]    = user.Id.ToString()
         };
@@ -1043,10 +1061,10 @@ public class AuthController(
         await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.registered");
         await keto.AssignDefaultRoleAsync(project, user);
 
-        var subject = $"{project.OrgId}:{user.Id}";
+        var subject = SubjectFor(user, project);
         var ctx = new Dictionary<string, object>
         {
-            [CtxOrgId]     = project.OrgId.ToString(),
+            [CtxOrgId]     = EffectiveOrgId(user, project).ToString(),
             [CtxProjectId] = project.Id.ToString(),
             [CtxUserId]    = user.Id.ToString()
         };
@@ -1607,10 +1625,10 @@ public class AuthController(
         if (factorRequired)
             return StartFederatedMfa(project, user, stateData.LoginChallenge, needsEnrolment);
 
-        var subject = $"{project.OrgId}:{user.Id}";
+        var subject = SubjectFor(user, project);
         var ctx = new Dictionary<string, object>
         {
-            [CtxOrgId]     = project.OrgId.ToString(),
+            [CtxOrgId]     = EffectiveOrgId(user, project).ToString(),
             [CtxProjectId] = project.Id.ToString(),
             [CtxUserId]    = user.Id.ToString(),
         };
@@ -1968,10 +1986,10 @@ public class AuthController(
         else
         {
             var project = await db.Projects.FindAsync(Guid.Parse(projectId));
-            var subject  = $"{project!.OrgId}:{user.Id}";
+            var subject  = SubjectFor(user, project!);
             var context  = new Dictionary<string, object>
             {
-                [CtxOrgId] = project.OrgId.ToString(), [CtxProjectId] = projectId, [CtxUserId] = user.Id.ToString()
+                [CtxOrgId] = EffectiveOrgId(user, project!).ToString(), [CtxProjectId] = projectId, [CtxUserId] = user.Id.ToString()
             };
             redirectUrl = await hydra.AcceptLoginAsync(challenge, subject, context);
             await audit.RecordAsync(project.OrgId, project.Id, user.Id, auditEvent);
