@@ -10,7 +10,7 @@ administrator may.
 
 ---
 
-## Three scopes, three sidebars
+## Three scopes, one tree
 
 The console is not one application with a permission filter over it. It has three scopes, and which
 one you are in decides both the navigation and the API prefix every page calls.
@@ -21,9 +21,20 @@ one you are in decides both the navigation and the API prefix every page calls.
 | **Organisation** | `org_admin` | One organisation: its projects, its user lists, its own administrators, its SMTP, its webhooks, its audit log |
 | **Project** | `project_admin` | One project: its users, its roles, its service accounts, its login page and authentication policy |
 
-An administrator holding several roles can move between scopes; the scope switcher sits in the top
-bar. A token carrying no management role at all does not reach the console — it is refused with an
+The three scopes are drawn as **one tree**, not three sidebars: the deployment at the root, its
+tenants under it, each tenant's projects under that, and every level's destinations as its children.
+The level is a *place* — you are on a node, and its children are what that node has. Expanding a
+tenant is what fetches its projects, so a deployment with fifty tenants does not make fifty requests
+to draw a sidebar. The top bar carries a breadcrumb that names where you are and clicks back up.
+
+A token carrying no management role at all does not reach the console — it is refused with an
 explanation rather than an empty screen, because a redirect loop was the alternative.
+
+⚠ **In practice every console operator is a super-admin today.** Sign-in admits only accounts in the
+immovable system user list, and membership of that list *is* deployment-wide administration. The
+organisation and project scopes below are built, routed and tested, and no account can currently
+hold one on its own. Which of the two rules gives is an open decision; `tests/e2e/PLAN.md` §12
+carries the matrix, written and skipped, so the question stays asked.
 
 ---
 
@@ -62,7 +73,7 @@ is the prerequisite of the next.
 | Page | What you do there |
 |---|---|
 | **Dashboard** | Counts across the deployment, and the sign-in activity of the last 24 hours from the audit log |
-| **Organisations** | Create, suspend, delete. Suspending revokes every member's sessions immediately |
+| **Organisations** | Create, suspend, delete. Suspending revokes every live session of the tenant — including its own administrators', who cannot sign back in — so it asks for confirmation first, the way Delete does. Unsuspending is immediate: it takes nothing away |
 | **Admins** | Who administers the deployment. Adding someone here grants `super_admin`, which is the most privileged grant there is and is audited as such |
 | **Users** | Every user across every tenant. Search, inspect, unlock, disable, reset |
 | **Projects** | Every project across every tenant |
@@ -142,6 +153,8 @@ purpose: it is the only thing standing between that one account and a password o
   the change would appear to work and would not. Delete and recreate.
 - **See a service account's key twice.** It is shown once, at creation.
 - **Silence the MFA reminder.**
+- **Create a user list at deployment level.** `/system/userlists` is an index across every tenant,
+  not a place to make one: a list belongs to an organisation. Create it inside the tenant.
 
 ---
 

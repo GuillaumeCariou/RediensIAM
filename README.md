@@ -226,7 +226,7 @@ themselves are configured at the **top level**, outside `rediensiam:`:
 dotnet test tests/RediensIAM.IntegrationTests -p:SonarQubeTargetsImported=true
 ```
 
-**1597 tests** against a real PostgreSQL container (Testcontainers) with WireMock Hydra
+**1633 tests** against a real PostgreSQL container (Testcontainers) with WireMock Hydra
 and Keto stubs. The `-p:SonarQubeTargetsImported=true` flag suppresses a user-global MSBuild hook
 that a stale `.sonarqube/` directory at the repository root arms — pass it whenever you run `dotnet`
 from the repository root.
