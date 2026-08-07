@@ -518,6 +518,33 @@ var ul = await UserListOperations.FindAsync(db, id);
 return await UserListOperations.CreateAsync(db, audit, GetActorId(), body.Name, body.OrgId, "/admin/userlists");
     }
 
+    /// <summary>
+    /// Le pendant système de <c>DELETE /org/userlists/{id}</c>, qui n'existait pas : une liste
+    /// pouvait être créée depuis la console système et n'en être jamais retirée, y compris celles
+    /// sans organisation, que la route d'organisation ne voit pas.
+    ///
+    /// <para>
+    /// Mêmes deux refus que la route d'organisation, et pour les mêmes raisons : la liste
+    /// immuable porte l'administration du déploiement, et une liste encore assignée à un projet
+    /// laisserait ce projet sans population plutôt que sans liste.
+    /// </para>
+    /// </summary>
+    [HttpDelete("userlists/{id}")]
+    public async Task<IActionResult> AdminDeleteUserList(Guid id)
+    {
+        var ul = await db.UserLists.FirstOrDefaultAsync(ul => ul.Id == id);
+        if (ul == null) return NotFound();
+        if (ul.Immovable) return BadRequest(new { error = "cannot_delete_immovable" });
+        if (await db.Projects.AnyAsync(p => p.AssignedUserListId == id))
+            return BadRequest(new { error = "userlist_is_assigned_to_project" });
+
+        db.UserLists.Remove(ul);
+        await db.SaveChangesAsync();
+        await audit.RecordAsync(ul.OrgId, null, GetActorId(), "userlist.deleted", "userlist", id.ToString(),
+            new() { ["name"] = ul.Name });
+        return NoContent();
+    }
+
     // ── Org Admins ────────────────────────────────────────────────────────────
 
     [HttpGet("organizations/{id}/admins")]
@@ -709,7 +736,7 @@ var actorId = GetActorId();
         var project = await db.Projects.FindAsync(id);
         if (project == null) return NotFound();
         if (await ProjectUpdate.ApplyAsync(db, hydra, audit, appConfig, GetActorId(), project, body) is { } err) return err;
-        await db.SaveChangesAsync();
+        await ProjectUpdate.SaveAndAuditAsync(db, audit, GetActorId(), project);
         return Ok(new { project.Id, project.Name });
     }
 
@@ -783,8 +810,14 @@ var project = await db.Projects.FindAsync(id);
     [HttpGet("projects/{id}/roles")]
     public async Task<IActionResult> AdminListRoles(Guid id)
     {
-var roles = await db.Roles
+        // 404 sur projet inconnu, comme ProjectController.ListRoles. Sans ce test la route rendait
+        // `[]`, que la console affiche en « No roles defined yet » : un id erroné dans l'URL était
+        // indiscernable d'un projet sans rôle.
+        if (!await db.Projects.AnyAsync(p => p.Id == id)) return NotFound();
+
+        var roles = await db.Roles
             .Where(r => r.ProjectId == id)
+            .OrderBy(r => r.Rank)
             .Select(r => new { r.Id, r.Name, r.Description, r.Rank })
             .ToListAsync();
         return Ok(roles);
@@ -793,19 +826,10 @@ var roles = await db.Roles
     [HttpPost("projects/{id}/roles")]
     public async Task<IActionResult> AdminCreateRole(Guid id, [FromBody] AdminCreateRoleRequest body)
     {
-        if (Roles.ProjectRoleNameError(body.Name) is { } nameErr)
-            return BadRequest(new { error = nameErr, reserved = KnownManagementRoles });
-        if (!await db.Projects.AnyAsync(p => p.Id == id)) return NotFound();
-        var role = new Role
-        {
-            ProjectId = id, Name = body.Name, Description = body.Description,
-            Rank = body.Rank ?? 100, CreatedBy = GetActorId(), CreatedAt = DateTimeOffset.UtcNow
-        };
-        db.Roles.Add(role);
-        await db.SaveChangesAsync();
-        await audit.RecordAsync(null, id, GetActorId(), "role.created", "role", role.Id.ToString(),
-            new() { ["name"] = role.Name });
-        return Created($"/admin/projects/{id}/roles/{role.Id}", new { role.Id, role.Name, role.Rank });
+        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id);
+        if (project == null) return NotFound();
+        return await ProjectOperations.CreateRoleAsync(db, audit, GetActorId(), project.Id, project.OrgId,
+            new ProjectOperations.NewRole(body.Name, body.Description, body.Rank), $"/admin/projects/{id}/roles");
     }
 
     [HttpDelete("projects/{id}/roles/{rid}")]
@@ -824,8 +848,13 @@ var role = await db.Roles
         {
             try
             {
+                // `role:{nom}` et `user:{id}`, pas les valeurs nues : c'est la forme que KetoService
+                // écrit à l'assignation et que ProjectController.DeleteRole supprime. Passer le nom
+                // et l'id bruts visait un tuple qui n'existe pas — la ligne partait, le grant Keto
+                // restait, et un rôle supprimé depuis la portée système laissait ses porteurs
+                // autorisés.
                 await keto.DeleteRelationTupleAsync(
-                    Roles.KetoProjectsNamespace, id.ToString(), role.Name, userId.ToString());
+                    Roles.KetoProjectsNamespace, id.ToString(), $"role:{role.Name}", $"user:{userId}");
             }
             catch (Exception ex)
             {

@@ -72,6 +72,24 @@ public class ProjectRoleTests(TestFixture fixture)
         res.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
+    /// <summary>
+    /// L'index unique est <c>(ProjectId, Name)</c>. Sans le test d'existence, le doublon n'était
+    /// pas refusé : il remontait en <c>DbUpdateException</c>, que rien n'attrape, donc en
+    /// <c>500 internal_error</c> — un refus légitime déguisé en panne de serveur.
+    /// </summary>
+    [Fact]
+    public async Task CreateRole_DuplicateName_Returns409()
+    {
+        var (_, project, client) = await ScaffoldAsync();
+        await fixture.Seed.CreateRoleAsync(project.Id, "QA Engineer");
+
+        var res = await client.PostAsJsonAsync("/project/roles", new { name = "QA Engineer", rank = 50 });
+
+        res.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("error").GetString().Should().Be("role_name_exists");
+    }
+
     // ── PATCH /project/roles/{id} ─────────────────────────────────────────────
 
     [Fact]

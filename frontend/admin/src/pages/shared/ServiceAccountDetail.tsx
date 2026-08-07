@@ -4,10 +4,11 @@ import { ArrowLeft, Plus, Trash2, MoreHorizontal, Copy, Check, KeyRound } from '
 import {
   getServiceAccount, deleteServiceAccount,
   generatePat, revokePat,
-  assignSaRole, removeSaRole,
+  assignSaRole, removeSaRole, listSaRoles,
   getSaApiKeys, addSaApiKey, removeSaApiKey,
   listOrgs, listProjects,
 } from '@/api';
+import { ApiError } from '@/auth';
 import { useOrgContext } from '@/hooks/useOrgContext';
 import { useAuth } from '@/context/AuthContext';
 import { fmtDateShort } from '@/lib/utils';
@@ -128,6 +129,7 @@ export default function ServiceAccountDetail() {
   const [orgs, setOrgs] = useState<{ id: string; name: string }[]>([]);
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const [removeRoleTarget, setRemoveRoleTarget] = useState<SaRole | null>(null);
+  const [roleError, setRoleError] = useState('');
 
   const [deleteOpen, setDeleteOpen] = useState(false);
 
@@ -191,10 +193,19 @@ export default function ServiceAccountDetail() {
     if (org_id) listProjects(org_id).then(r => setProjects(r.projects ?? r ?? [])).catch(console.error);
   };
 
+  /**
+   * Recharge les rôles seuls plutôt que le compte entier : `getServiceAccount` ramène aussi les
+   * PAT et la clé, et repasse la page en squelette pour une ligne de tableau qui a changé.
+   */
+  const reloadRoles = useCallback(async () => {
+    const roles: SaRole[] = await listSaRoles(saId);
+    setSa(s => s ? { ...s, roles: roles ?? [] } : s);
+  }, [saId]);
+
   const handleAssignRole = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!saId || !roleForm.role) return;
-    setRoleSaving(true);
+    setRoleSaving(true); setRoleError('');
     try {
       await assignSaRole(saId, {
         role: roleForm.role,
@@ -202,15 +213,21 @@ export default function ServiceAccountDetail() {
         project_id: roleForm.project_id || undefined,
       });
       setRoleOpen(false);
-      load();
+      await reloadRoles();
+    } catch (e) {
+      const body = e instanceof ApiError ? (e.body as { error?: string; detail?: string } | null) : null;
+      setRoleError(body?.detail ?? body?.error ?? 'Failed to assign this role.');
     } finally { setRoleSaving(false); }
   };
 
   const handleRemoveRole = async () => {
     if (!removeRoleTarget || !saId) return;
-    await removeSaRole(saId, removeRoleTarget.id);
-    setRemoveRoleTarget(null);
-    load();
+    setRoleError('');
+    try {
+      await removeSaRole(saId, removeRoleTarget.id);
+      setRemoveRoleTarget(null);
+      await reloadRoles();
+    } catch { setRoleError('Failed to remove this role.'); setRemoveRoleTarget(null); }
   };
 
   const copyToken = () => {
@@ -256,8 +273,9 @@ export default function ServiceAccountDetail() {
       <div className="rounded-xl border bg-card overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Assigned Roles</h2>
-          <button className="iam-btn iam-btn-primary iam-btn-sm" onClick={openRoleDialog}><Plus className="h-4 w-4" />Assign Role</button>
+          <button className="iam-btn iam-btn-primary iam-btn-sm" onClick={() => { setRoleError(''); openRoleDialog(); }}><Plus className="h-4 w-4" />Assign Role</button>
         </div>
+        {roleError && <p className="text-sm text-destructive px-4 pt-3">{roleError}</p>}
         <table className="iam-tbl">
           <thead>
             <tr>

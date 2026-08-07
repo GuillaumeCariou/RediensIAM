@@ -246,7 +246,7 @@ Read [`INTEGRATION.md`](INTEGRATION.md#introspection--the-backend-path) before c
 | DELETE | `/project/users/{id}/roles/{roleId}` | `RemoveRole` |
 | DELETE | `/project/users/{id}/sessions` | `ForceLogoutUser` |
 | GET | `/project/roles` | `ListRoles` |
-| POST | `/project/roles` | `CreateRole` |
+| POST | `/project/roles` | `CreateRole` — **409 `role_name_exists`** si le nom est pris. L'index unique est `(ProjectId, Name)` ; sans ce test le doublon remontait en `DbUpdateException`, donc en 500 |
 | PATCH | `/project/roles/{id}` | `UpdateRole` |
 | DELETE | `/project/roles/{id}` | `DeleteRole` |
 | GET | `/project/audit-log` | `GetAuditLog` |
@@ -302,9 +302,9 @@ project's assigned list. Creating or scoping a grant to a foreign `org_id` is re
 | GET | `/org/projects` | `ListProjects` |
 | POST | `/org/projects` | `CreateProject` — also creates the Hydra client `client_<project_id>`, from `redirect_uris` **and `post_logout_redirect_uris`** |
 | GET | `/org/projects/{id}` | `GetProject` |
-| PATCH | `/org/projects/{id}` | `UpdateProject` |
+| PATCH | `/org/projects/{id}` | `UpdateProject` — écrit `project.updated` au journal d'audit, comme `/project/info`. Les trois passent par `ProjectUpdate.SaveAndAuditAsync` : `project.updated` est un événement webhook souscriptible, et deux des trois routes ne l'émettaient pas |
 | DELETE | `/org/projects/{id}` | `DeleteProject` |
-| GET | `/org/projects/{id}/scopes` | `GetProjectScopes` |
+| GET | `/org/projects/{id}/scopes` | `GetProjectScopes` — porte l'échappement super-admin comme les autres routes projet de ce contrôleur. Sans lui un super-admin, dont le jeton ne nomme aucune organisation, recevait 404 sur un projet réel |
 | PUT | `/org/projects/{id}/scopes` | `UpdateProjectScopes` |
 | PUT | `/org/projects/{id}/userlist` | `AssignUserList` |
 | DELETE | `/org/projects/{id}/userlist` | `UnassignUserList` |
@@ -335,7 +335,7 @@ project's assigned list. Creating or scoping a grant to a foreign `org_id` is re
 |---|---|---|
 | GET | `/org/admins` | `ListOrgListManagers` |
 | POST | `/org/admins` | `AssignOrgListManager` |
-| PATCH | `/org/admins/{id}` | `UpdateOrgListManager` |
+| PATCH | `/org/admins/{id}` | `UpdateOrgListManager` — efface la portée quand le rôle cible n'est pas `project_admin`. Seul `project_admin` en porte une ; sans cet invariant une promotion réécrivait le tuple Keto sur `user:…\|project:…` sous la relation `org_admin`, un grant qu'aucune vérification d'organisation ne trouve |
 | DELETE | `/org/admins/{id}` | `RemoveOrgListManager` |
 
 ### SMTP
@@ -437,7 +437,19 @@ stack trace.
 
 ---
 
-## `/admin` · `/api/manage` — SystemAdminController · 58 routes
+## `/admin/instance` · `/api/manage/instance` — InstanceController · 2 routes
+
+**SuperAdmin.** Les réglages du déploiement lui-même. Cette section manquait au document, et le
+tableau des comptes plus bas ne comptait pas ce contrôleur — d'où un total de 190 pour 194 routes.
+
+| Method | Path | Action |
+|---|---|---|
+| GET | `/admin/instance` | `GetInstance` |
+| PATCH | `/admin/instance` | `UpdateInstance` |
+
+---
+
+## `/admin` · `/api/manage` — SystemAdminController · 60 routes
 
 **SuperAdmin.** `/admin/*` is admin-only; **`/api/manage/*` is public** — same action, same filter.
 
@@ -493,6 +505,7 @@ stack trace.
 |---|---|---|
 | GET | `/admin/userlists` | `ListAllUserLists` |
 | POST | `/admin/userlists` | `AdminCreateUserList` |
+| DELETE | `/admin/userlists/{id}` | `AdminDeleteUserList` — refuse la liste immuable (`cannot_delete_immovable`) et celle qu'un projet utilise (`userlist_is_assigned_to_project`). La suppression **cascade sur les comptes et les comptes de service de la liste** |
 | GET | `/admin/userlists/{id}` | `GetUserList` |
 | GET | `/admin/userlists/{id}/users` | `ListUsersInList` |
 | POST | `/admin/userlists/{id}/users` | `AddUserToList` |
@@ -506,14 +519,14 @@ stack trace.
 | GET | `/admin/projects/{id}` | `AdminGetProject` — one project, with `assigned_user_list_id` and `org_name`. The `Location` of a created project points here |
 | GET | `/admin/organizations/{id}/projects` | `AdminListOrgProjects` — same fields, scoped to one organisation |
 | POST | `/admin/organizations/{id}/projects` | `AdminCreateProject` — same body as `POST /org/projects`, including `post_logout_redirect_uris` |
-| PATCH | `/admin/projects/{id}` | `AdminUpdateProject` — see the `require_mfa` downgrade guard |
+| PATCH | `/admin/projects/{id}` | `AdminUpdateProject` — see the `require_mfa` downgrade guard. Écrit `project.updated` au journal d'audit comme les deux autres surfaces de mise à jour, via `ProjectUpdate.SaveAndAuditAsync` |
 | DELETE | `/admin/projects/{id}` | `AdminDeleteProject` |
 | GET | `/admin/projects/{id}/stats` | `AdminGetProjectStats` |
 | GET | `/admin/projects/{id}/scopes` | `AdminGetProjectScopes` |
 | PUT | `/admin/projects/{id}/scopes` | `AdminUpdateProjectScopes` |
 | PUT | `/admin/projects/{id}/userlist` | `AdminAssignUserList` |
 | DELETE | `/admin/projects/{id}/userlist` | `AdminUnassignUserList` |
-| GET | `/admin/projects/{id}/roles` | `AdminListRoles` |
+| GET | `/admin/projects/{id}/roles` | `AdminListRoles` — **404 sur projet inconnu** et tri par rang, comme `/project/roles`. La route rendait `[]`, indiscernable d'un projet sans rôle |
 | POST | `/admin/projects/{id}/roles` | `AdminCreateRole` |
 | DELETE | `/admin/projects/{id}/roles/{rid}` | `AdminDeleteRole` |
 
@@ -576,13 +589,14 @@ Known gap; plan both lists up front.
 | `OrgWebhookController` | `/org/webhooks` | 8 | OrgAdmin | **no** |
 | `AdminWebhookController` | `/admin/webhooks` + `/api/manage/webhooks` | 3 | SuperAdmin | via `/api/manage` only |
 | `SystemHealthController` | `/admin/system` + `/api/manage/system` | 1 | SuperAdmin | via `/api/manage` only |
-| `SystemAdminController` | `/admin` + `/api/manage` | 58 | SuperAdmin | via `/api/manage` only |
+| `SystemAdminController` | `/admin` + `/api/manage` | 60 | SuperAdmin | via `/api/manage` only |
+| `InstanceController` | `/admin/instance` + `/api/manage/instance` | 2 | SuperAdmin | via `/api/manage` only |
 | `ImpersonationController` | `/admin/impersonate` + `/api/manage/impersonate` | 3 | SuperAdmin + service account | via `/api/manage` only |
-| | | **190** | | |
+| | | **194** | | |
 
 Plus the five non-controller endpoints listed above (`/health`, `/health/ready`, `/console/config`,
 `/metrics`, `/swagger`) and the two SPA fallbacks, which are not controller actions and are not
-counted in the 190.
+counted in the 194.
 
 The per-controller numbers are the count of `[HttpGet|HttpPost|HttpPut|HttpPatch|HttpDelete]`
 attributes in `src/Controllers/*.cs`. The two aliased prefixes are **one** action each and are

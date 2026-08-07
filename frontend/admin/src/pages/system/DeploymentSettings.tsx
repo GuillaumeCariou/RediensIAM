@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import PageHeader from '@/components/layout/PageHeader';
 import { getInstanceConfig, updateInstanceConfig } from '@/api';
+import KeyRotationPanel from './KeyRotationPanel';
 
 /**
  * The deployment's runtime settings — what used to require editing a manifest and rolling the pods.
@@ -196,6 +197,8 @@ export default function DeploymentSettings() {
             </tbody>
           </table>
         </div>
+
+        <KeyRotationPanel />
       </div>
     </div>
   );

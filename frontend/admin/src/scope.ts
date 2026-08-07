@@ -55,11 +55,13 @@ export const DESTINATIONS: Record<Level, Destination[]> = {
     { key: 'projects',         label: 'Projects',         icon: 'folder',   superOnly: true },
     { key: 'userlists',        label: 'User lists',       icon: 'list',     superOnly: true },
     { key: 'service-accounts', label: 'Service accounts', icon: 'bot',      superOnly: true },
+    { key: 'oauth2-clients',   label: 'OAuth2 clients',   icon: 'key',      superOnly: true },
     { key: 'email',            label: 'Email',            icon: 'mail',     superOnly: true },
     { key: 'impersonation',    label: 'Impersonation',    icon: 'user',     superOnly: true },
     { key: 'audit-log',        label: 'Audit log',        icon: 'log' },
     { key: 'metrics',          label: 'Metrics',          icon: 'chart' },
     { key: 'health',           label: 'Health',           icon: 'heart',    superOnly: true },
+    { key: 'grant-reconcile',  label: 'Grant reconciliation', icon: 'shield', superOnly: true },
     { key: 'settings',         label: 'Settings',         icon: 'settings', superOnly: true },
   ],
   org: [
@@ -79,6 +81,7 @@ export const DESTINATIONS: Record<Level, Destination[]> = {
     { key: 'roles',            label: 'Roles',            icon: 'shield' },
     { key: 'service-accounts', label: 'Service accounts', icon: 'bot' },
     { key: 'authentication',   label: 'Authentication',   icon: 'key' },
+    { key: 'audit-log',        label: 'Audit log',        icon: 'log' },
     { key: 'settings',         label: 'Settings',         icon: 'settings' },
   ],
 };

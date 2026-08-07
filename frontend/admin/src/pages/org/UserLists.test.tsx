@@ -15,6 +15,7 @@ import UserLists from './UserLists';
 // le fichier entier ne se charge plus.
 const api = vi.hoisted(() => ({
   listUserLists: vi.fn(), createUserList: vi.fn(), createSystemUserList: vi.fn(),
+  deleteUserList: vi.fn(), deleteSystemUserList: vi.fn(),
 }));
 vi.mock('@/api', () => api);
 
@@ -236,5 +237,41 @@ describe('dismissing the create form with Escape', () => {
 
     await vi.waitFor(() => expect(screen.queryByLabelText('Name')).toBeNull());
     expect(api.createUserList).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('deleting a list', () => {
+  it('deletes a movable list through the organisation route and reloads', async () => {
+    const user = show();
+    await screen.findByText('Staff');
+    api.deleteUserList.mockResolvedValue(undefined);
+
+    await user.click(screen.getByRole('button', { name: 'Delete Staff' }));
+    await user.click(await screen.findByRole('button', { name: 'Delete' }));
+
+    await vi.waitFor(() => expect(api.deleteUserList).toHaveBeenCalledWith('l1'));
+    expect(api.listUserLists).toHaveBeenCalledTimes(2);
+  });
+
+  // La liste immuable porte l'administration du déploiement : la route la refuse, et la ligne
+  // n'offre pas le bouton plutôt que de le rendre inerte.
+  it('offers nothing to click on the immovable list', async () => {
+    show();
+    await screen.findByText('System');
+
+    expect(screen.queryByRole('button', { name: 'Delete System' })).toBeNull();
+  });
+
+  it('says why the API refused instead of failing silently', async () => {
+    const user = show();
+    await screen.findByText('Staff');
+    const { ApiError } = await import('@/auth');
+    api.deleteUserList.mockRejectedValue(new ApiError(400, { error: 'userlist_is_assigned_to_project' }));
+
+    await user.click(screen.getByRole('button', { name: 'Delete Staff' }));
+    await user.click(await screen.findByRole('button', { name: 'Delete' }));
+
+    expect(await screen.findByText(/still assigned to a project/)).toBeInTheDocument();
   });
 });

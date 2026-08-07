@@ -14,7 +14,12 @@ import DeploymentSettings from './DeploymentSettings';
  * it indistinguishable from a lost write.
  */
 
-const api = vi.hoisted(() => ({ getInstanceConfig: vi.fn(), updateInstanceConfig: vi.fn() }));
+// `vi.mock` replaces the module, so the key-rotation panel this page embeds needs its two calls
+// here as well — a missing export breaks the whole file, not just the panel.
+const api = vi.hoisted(() => ({
+  getInstanceConfig: vi.fn(), updateInstanceConfig: vi.fn(),
+  getKeyRotationStatus: vi.fn(), reEncryptKeys: vi.fn(),
+}));
 vi.mock('@/api', () => api);
 
 const SETTINGS = {
@@ -37,6 +42,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   api.getInstanceConfig.mockResolvedValue(config());
   api.updateInstanceConfig.mockResolvedValue({ changed: ['lockout_minutes'], config_version: 4 });
+  api.getKeyRotationStatus.mockResolvedValue({
+    active_key_id: 1, configured_key_ids: [1], columns: [], total_pending: 0,
+  });
 });
 
 function show() {

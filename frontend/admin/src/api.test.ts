@@ -62,6 +62,8 @@ const ROUTES: readonly Route[] = [
     '/org/userlists', { method: 'POST', body: json({ name: 'Staff' }) }],
   ['createSystemUserList', () => api.createSystemUserList({ name: 'Staff', org_id: 'o1' }),
     '/admin/userlists', { method: 'POST', body: json({ name: 'Staff', org_id: 'o1' }) }],
+  ['deleteUserList', () => api.deleteUserList('l1'), '/org/userlists/l1', { method: 'DELETE' }],
+  ['deleteSystemUserList', () => api.deleteSystemUserList('l1'), '/admin/userlists/l1', { method: 'DELETE' }],
   ['getUserList', () => api.getUserList('l1'), '/org/userlists/l1'],
   ['listUserListMembers', () => api.listUserListMembers('l1'), '/org/userlists/l1/users'],
   ['getSystemUserList', () => api.getSystemUserList('l1'), '/admin/userlists/l1'],
@@ -69,6 +71,13 @@ const ROUTES: readonly Route[] = [
   ['addUserToList', () => api.addUserToList('l1', { email: 'a@b.test', username: 'a', password: 'p' }),
     '/admin/userlists/l1/users',
     { method: 'POST', body: json({ email: 'a@b.test', username: 'a', password: 'p' }) }],
+  // L'ajout et l'édition en portée organisation. `addUserToList` ci-dessus ne porte que `/admin` :
+  // un org_admin y recevait 403 sur sa propre liste.
+  ['orgAddUserToList', () => api.orgAddUserToList('l1', { email: 'a@b.test', username: 'a', password: 'p' }),
+    '/org/userlists/l1/users',
+    { method: 'POST', body: json({ email: 'a@b.test', username: 'a', password: 'p' }) }],
+  ['orgUpdateListUser', () => api.orgUpdateListUser('l1', 'u1', { active: false }),
+    '/org/userlists/l1/users/u1', { method: 'PATCH', body: json({ active: false }) }],
   ['removeUserFromList', () => api.removeUserFromList('l1', 'u1'),
     '/org/userlists/l1/users/u1', { method: 'DELETE' }],
   ['cleanupUserList', () => api.cleanupUserList('l1', { dry_run: true }),
@@ -96,6 +105,11 @@ const ROUTES: readonly Route[] = [
   ['assignUserList', () => api.assignUserList('p1', 'l1'),
     '/org/projects/p1/userlist', { method: 'PUT', body: json({ user_list_id: 'l1' }) }],
   ['unassignUserList', () => api.unassignUserList('p1'), '/org/projects/p1/userlist', { method: 'DELETE' }],
+  ['getProjectScopes', () => api.getProjectScopes('p1'), '/org/projects/p1/scopes'],
+  // `scopes`, and only the custom ones: the built-in three are implicit and the server sends back
+  // whatever it is given as the complete custom list.
+  ['updateProjectScopes', () => api.updateProjectScopes('p1', ['read:orders']),
+    '/org/projects/p1/scopes', { method: 'PUT', body: json({ scopes: ['read:orders'] }) }],
 
   // ── SAML ────────────────────────────────────────────────────────
   ['listSamlProviders', () => api.listSamlProviders('p1'), '/admin/projects/p1/saml-providers'],
@@ -103,8 +117,20 @@ const ROUTES: readonly Route[] = [
   ['createSamlProvider', () => api.createSamlProvider('p1', { entity_id: 'e', display_name_attribute_name: 'cn' }),
     '/admin/projects/p1/saml-providers',
     { method: 'POST', body: json({ entity_id: 'e', display_name_attribute_name: 'cn' }) }],
+  ['updateSamlProvider', () => api.updateSamlProvider('p1', 'i1', { active: false }),
+    '/admin/projects/p1/saml-providers/i1', { method: 'PATCH', body: json({ active: false }) }],
   ['deleteSamlProvider', () => api.deleteSamlProvider('p1', 'i1'),
     '/admin/projects/p1/saml-providers/i1', { method: 'DELETE' }],
+  // La portée organisation des quatre mêmes opérations : les routes `/admin` exigent l'autorité
+  // système, qu'un org_admin n'a pas — sa propre configuration SAML rendait 403.
+  ['orgListSamlProviders', () => api.orgListSamlProviders('p1'), '/org/projects/p1/saml-providers'],
+  ['orgCreateSamlProvider', () => api.orgCreateSamlProvider('p1', { entity_id: 'e', display_name_attribute_name: 'cn' }),
+    '/org/projects/p1/saml-providers',
+    { method: 'POST', body: json({ entity_id: 'e', display_name_attribute_name: 'cn' }) }],
+  ['orgUpdateSamlProvider', () => api.orgUpdateSamlProvider('p1', 'i1', { active: false }),
+    '/org/projects/p1/saml-providers/i1', { method: 'PATCH', body: json({ active: false }) }],
+  ['orgDeleteSamlProvider', () => api.orgDeleteSamlProvider('p1', 'i1'),
+    '/org/projects/p1/saml-providers/i1', { method: 'DELETE' }],
 
   // ── Project users and roles ─────────────────────────────────────
   ['listProjectUsers', () => api.listProjectUsers('p1'), '/project/users?project_id=p1'],
@@ -112,10 +138,29 @@ const ROUTES: readonly Route[] = [
     '/project/users/u1/roles?project_id=p1', { method: 'POST', body: json({ role_id: 'r1' }) }],
   ['removeRole', () => api.removeRole('p1', 'u1', 'r1'),
     '/project/users/u1/roles/r1?project_id=p1', { method: 'DELETE' }],
+  // La portée projet : ce qu'un project_admin peut faire sans passer par `/org`, qui lui est fermé.
+  ['createProjectUser', () => api.createProjectUser('p1', { email: 'a@b.test', password: 'p' }),
+    '/project/users?project_id=p1', { method: 'POST', body: json({ email: 'a@b.test', password: 'p' }) }],
+  ['getProjectUser', () => api.getProjectUser('p1', 'u1'), '/project/users/u1?project_id=p1'],
+  ['revokeProjectUserSessions', () => api.revokeProjectUserSessions('p1', 'u1'),
+    '/project/users/u1/sessions?project_id=p1', { method: 'DELETE' }],
+  ['cleanupProject', () => api.cleanupProject('p1', true),
+    '/project/cleanup?project_id=p1', { method: 'POST', body: json({ dry_run: true }) }],
+  ['getProjectAuditLog', () => api.getProjectAuditLog('p1', { limit: 50, offset: 100 }),
+    '/project/audit-log?project_id=p1&limit=50&offset=100'],
   ['listRoles', () => api.listRoles('p1'), '/project/roles?project_id=p1'],
   ['createRole', () => api.createRole('p1', { name: 'admin', rank: 10 }),
     '/project/roles?project_id=p1', { method: 'POST', body: json({ name: 'admin', rank: 10 }) }],
+  // Ce que le PATCH accepte, et rien d'autre : `UpdateRoleRequest(Description, Rank)`. Le nom n'y
+  // est pas — c'est la relation Keto écrite pour chaque porteur du rôle.
+  ['updateRole', () => api.updateRole('p1', 'r1', { description: 'Reads', rank: 20 }),
+    '/project/roles/r1?project_id=p1', { method: 'PATCH', body: json({ description: 'Reads', rank: 20 }) }],
   ['deleteRole', () => api.deleteRole('p1', 'r1'), '/project/roles/r1?project_id=p1', { method: 'DELETE' }],
+  // Les trois mêmes en portée système : le projet est dans le chemin, pas en `?project_id=`.
+  ['adminListRoles', () => api.adminListRoles('p1'), '/admin/projects/p1/roles'],
+  ['adminCreateRole', () => api.adminCreateRole('p1', { name: 'admin', rank: 10 }),
+    '/admin/projects/p1/roles', { method: 'POST', body: json({ name: 'admin', rank: 10 }) }],
+  ['adminDeleteRole', () => api.adminDeleteRole('p1', 'r1'), '/admin/projects/p1/roles/r1', { method: 'DELETE' }],
 
   // ── Service accounts ────────────────────────────────────────────
   ['listServiceAccounts', () => api.listServiceAccounts(), '/service-accounts'],
@@ -138,8 +183,14 @@ const ROUTES: readonly Route[] = [
   ['getInstanceConfig', () => api.getInstanceConfig(), '/admin/instance'],
   ['updateInstanceConfig', () => api.updateInstanceConfig({ lockout_minutes: 42 }),
     '/admin/instance', { method: 'PATCH', body: json({ lockout_minutes: 42 }) }],
+
+  // Root key rotation: both take no body, and the POST answers with the post-sweep status.
+  ['getKeyRotationStatus', () => api.getKeyRotationStatus(), '/admin/key-rotation'],
+  ['reEncryptKeys', () => api.reEncryptKeys(), '/admin/key-rotation/reencrypt', { method: 'POST' }],
+
   ['assignSaRole', () => api.assignSaRole('s1', { role: 'org_admin', org_id: 'o1' }),
     '/service-accounts/s1/roles', { method: 'POST', body: json({ role: 'org_admin', org_id: 'o1' }) }],
+  ['listSaRoles', () => api.listSaRoles('s1'), '/service-accounts/s1/roles'],
   ['removeSaRole', () => api.removeSaRole('s1', 'r1'), '/service-accounts/s1/roles/r1', { method: 'DELETE' }],
   ['getSaApiKeys', () => api.getSaApiKeys('s1'), '/service-accounts/s1/api-keys'],
   ['addSaApiKey', () => api.addSaApiKey('s1', { kty: 'RSA' }),
@@ -201,6 +252,7 @@ const ROUTES: readonly Route[] = [
   // ── Metrics, health, org settings ───────────────────────────────
   ['getMetrics', () => api.getMetrics(), '/admin/metrics'],
   ['getSystemHealth', () => api.getSystemHealth(), '/admin/system/health'],
+  ['verifyAuditChain', () => api.verifyAuditChain(), '/admin/audit-chain'],
   // /org/settings, not /org/info: the latter is registered GET-only and answered 405.
   ['updateOrgInfo', () => api.updateOrgInfo({ audit_retention_days: 90 }),
     '/org/settings', { method: 'PATCH', body: json({ audit_retention_days: 90 }) }],
@@ -209,10 +261,12 @@ const ROUTES: readonly Route[] = [
   ['listWebhooks', () => api.listWebhooks(), '/org/webhooks'],
   ['createWebhook', () => api.createWebhook({ url: 'https://h.test', events: ['user.created'] }),
     '/org/webhooks', { method: 'POST', body: json({ url: 'https://h.test', events: ['user.created'] }) }],
+  ['getWebhook', () => api.getWebhook('w1'), '/org/webhooks/w1'],
   ['updateWebhook', () => api.updateWebhook('w1', { active: false }),
     '/org/webhooks/w1', { method: 'PATCH', body: json({ active: false }) }],
   ['deleteWebhook', () => api.deleteWebhook('w1'), '/org/webhooks/w1', { method: 'DELETE' }],
   ['testWebhook', () => api.testWebhook('w1'), '/org/webhooks/w1/test', { method: 'POST' }],
+  ['rotateWebhookSecret', () => api.rotateWebhookSecret('w1'), '/org/webhooks/w1/rotate-secret', { method: 'POST' }],
   ['listWebhookDeliveries', () => api.listWebhookDeliveries('w1'), '/org/webhooks/w1/deliveries'],
 
   // ── Exports ─────────────────────────────────────────────────────
@@ -222,11 +276,16 @@ const ROUTES: readonly Route[] = [
   // Deliberately not the mirror of the path above: OrgController registers this one.
   ['exportOrgAuditLog (org context)', () => api.exportOrgAuditLog('o1', false), '/org/audit-log/export?format=csv'],
   ['exportSystemAuditLog', () => api.exportSystemAuditLog(), '/admin/audit-log/export?format=csv'],
+  ['exportOrgUsers', () => api.exportOrgUsers('o1'), '/admin/organizations/o1/export/users?format=csv'],
 
   // ── Org admins ──────────────────────────────────────────────────
   ['listOrgListManagers', () => api.listOrgListManagers(), '/org/admins'],
   ['assignOrgListManager', () => api.assignOrgListManager({ user_id: 'u1', role: 'list_manager', scope_id: 'l1' }),
     '/org/admins', { method: 'POST', body: json({ user_id: 'u1', role: 'list_manager', scope_id: 'l1' }) }],
+  // Modifier une délégation plutôt que la révoquer et la refaire. Aucune contrepartie `/admin` :
+  // SystemAdminController n'expose que GET, POST et DELETE sur organizations/{id}/admins.
+  ['updateOrgListManager', () => api.updateOrgListManager('r1', { role: 'project_admin', scope_id: 'p1' }),
+    '/org/admins/r1', { method: 'PATCH', body: json({ role: 'project_admin', scope_id: 'p1' }) }],
   ['removeOrgListManager', () => api.removeOrgListManager('r1'), '/org/admins/r1', { method: 'DELETE' }],
   ['listOrgAdmins', () => api.listOrgAdmins('o1'), '/admin/organizations/o1/admins'],
   ['assignOrgAdmin', () => api.assignOrgAdmin('o1', 'u1', 'org_admin', 'l1'),
@@ -243,12 +302,17 @@ const ROUTES: readonly Route[] = [
   ['adminCreateProject', () => api.adminCreateProject('o1', { name: 'P', slug: 'p' }),
     '/admin/organizations/o1/projects', { method: 'POST', body: json({ name: 'P', slug: 'p' }) }],
   ['adminListAllProjects', () => api.adminListAllProjects(), '/admin/projects'],
-  // Reading one project is the org route even for a super admin — /admin/projects/{id} is not a GET.
-  ['adminGetProject', () => api.adminGetProject('p1'), '/org/projects/p1'],
+  ['adminListOrgProjects', () => api.adminListOrgProjects('o1'), '/admin/organizations/o1/projects'],
+  // Lisait `/org/projects/{id}` faute de GET système. Il existe maintenant, et une page système
+  // n'a plus à passer par la branche d'échappement super-admin d'un contrôleur OrgAdmin.
+  ['adminGetProject', () => api.adminGetProject('p1'), '/admin/projects/p1'],
   ['adminGetProjectStats', () => api.adminGetProjectStats('p1'), '/admin/projects/p1/stats'],
   ['adminAssignUserList', () => api.adminAssignUserList('p1', 'l1'),
     '/admin/projects/p1/userlist', { method: 'PUT', body: json({ user_list_id: 'l1' }) }],
   ['adminUnassignUserList', () => api.adminUnassignUserList('p1'), '/admin/projects/p1/userlist', { method: 'DELETE' }],
+  ['adminGetProjectScopes', () => api.adminGetProjectScopes('p1'), '/admin/projects/p1/scopes'],
+  ['adminUpdateProjectScopes', () => api.adminUpdateProjectScopes('p1', ['read:orders']),
+    '/admin/projects/p1/scopes', { method: 'PUT', body: json({ scopes: ['read:orders'] }) }],
   ['adminDeleteProject', () => api.adminDeleteProject('p1'), '/admin/projects/p1', { method: 'DELETE' }],
 
   // ── Per-user actions, list-scoped or system-scoped ──────────────
@@ -276,8 +340,23 @@ const ROUTES: readonly Route[] = [
   ['adminUpsertOrgSmtp', () => api.adminUpsertOrgSmtp('o1', { host: 'h', port: 465, start_tls: false, from_address: 'a@b.test', from_name: 'A' }),
     '/admin/organizations/o1/smtp',
     { method: 'PUT', body: json({ host: 'h', port: 465, start_tls: false, from_address: 'a@b.test', from_name: 'A' }) }],
+  // ── Grant reconciliation ────────────────────────────────────────
+  ['scanGrantReconcile', () => api.scanGrantReconcile(), '/admin/grant-reconcile'],
+  ['repairGrantReconcile', () => api.repairGrantReconcile(), '/admin/grant-reconcile/repair', { method: 'POST' }],
+
   ['adminDeleteOrgSmtp', () => api.adminDeleteOrgSmtp('o1'), '/admin/organizations/o1/smtp', { method: 'DELETE' }],
   ['adminTestOrgSmtp', () => api.adminTestOrgSmtp('o1'), '/admin/organizations/o1/smtp/test', { method: 'POST' }],
+
+  // ── OAuth2 clients ──────────────────────────────────────────────
+  ['listHydraClients', () => api.listHydraClients(), '/admin/hydra/clients'],
+  ['createHydraClient', () => api.createHydraClient({ client_name: 'Billing', grant_types: ['authorization_code'], redirect_uris: ['https://b.test/cb'] }),
+    '/admin/hydra/clients',
+    { method: 'POST', body: json({ client_name: 'Billing', grant_types: ['authorization_code'], redirect_uris: ['https://b.test/cb'] }) }],
+  // A client id is caller-chosen and only bounded by an allowlist server-side, so it has to
+  // survive being a path segment.
+  ['getHydraClient', () => api.getHydraClient('billing.web'), '/admin/hydra/clients/billing.web'],
+  ['deleteHydraClient', () => api.deleteHydraClient('billing.web'),
+    '/admin/hydra/clients/billing.web', { method: 'DELETE' }],
 ];
 
 describe('the wire contract', () => {

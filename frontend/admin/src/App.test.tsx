@@ -48,6 +48,8 @@ vi.mock('./pages/system/OrgDetail', () => stub('OrgDetail'));
 vi.mock('./pages/system/SystemProjectDetail', () => stub('SystemProjectDetail'));
 vi.mock('./pages/system/SystemProjects', () => stub('SystemProjects'));
 vi.mock('./pages/system/SystemHealth', () => stub('SystemHealth'));
+vi.mock('./pages/system/GrantReconcile', () => stub('GrantReconcile'));
+vi.mock('./pages/system/OAuth2Clients', () => stub('OAuth2Clients'));
 vi.mock('./pages/shared/ServiceAccountDetail', () => stub('ServiceAccountDetail'));
 vi.mock('./pages/shared/OrgAdmins', () => stub('OrgAdmins'));
 vi.mock('./pages/shared/UserListDetail', () => stub('UserListDetail'));
@@ -60,6 +62,7 @@ vi.mock('./pages/org/OrgSettings', () => stub('OrgSettings'));
 vi.mock('./pages/project/ProjectDashboard', () => stub('ProjectDashboard'));
 vi.mock('./pages/project/ProjectUsers', () => stub('ProjectUsers'));
 vi.mock('./pages/project/ProjectRoles', () => stub('ProjectRoles'));
+vi.mock('./pages/project/ProjectAuditLog', () => stub('ProjectAuditLog'));
 // One page for all three levels now, stubbed once.
 vi.mock('./pages/shared/ServiceAccounts', () => stub('ServiceAccounts'));
 vi.mock('./pages/shared/AuditLog', () => stub('AuditLog'));

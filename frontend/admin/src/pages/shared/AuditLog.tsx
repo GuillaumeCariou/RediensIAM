@@ -3,6 +3,7 @@ import { exportOrgAuditLog, exportSystemAuditLog, getAuditLog } from '@/api';
 import { useOrgContext } from '@/hooks/useOrgContext';
 import PageHeader from '@/components/layout/PageHeader';
 import AuditLogTable, { type AuditEntry } from '@/components/AuditLogTable';
+import AuditChainCheck from '@/components/AuditChainCheck';
 import type { Level } from '@/scope';
 
 /**
@@ -103,6 +104,9 @@ export default function AuditLog({ level }: Readonly<{ level: Level }>) {
         description={level === 'deployment'
           ? 'Complete history of all administrative actions'
           : 'Administrative actions in this organisation'}
+        // `/admin/audit-chain` walks every organisation's chain at once, so it belongs on the
+        // deployment page and is refused to anyone else.
+        actions={level === 'deployment' ? [<AuditChainCheck key="chain" />] : []}
       />
       {exportError && (
         <div className="iam-alert iam-alert-danger" style={{ margin: '0 24px 12px' }}>{exportError}</div>

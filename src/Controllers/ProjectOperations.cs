@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using RediensIAM.Config;
 using RediensIAM.Data;
 using RediensIAM.Data.Entities;
 using RediensIAM.Services;
@@ -32,6 +33,9 @@ namespace RediensIAM.Controllers;
 /// </summary>
 public static class ProjectOperations
 {
+    /// <summary>Le rôle demandé, quel que soit le type de requête que la surface appelante a lié.</summary>
+    public readonly record struct NewRole(string? Name, string? Description, int? Rank);
+
     /// <summary>The scopes every project has, whatever it adds to them.</summary>
     public static readonly string[] BuiltInScopes = ["openid", "profile", "offline_access"];
 
@@ -159,5 +163,50 @@ public static class ProjectOperations
             })
             .ToListAsync();
         return new OkObjectResult(providers);
+    }
+
+    /// <summary>
+    /// Crée un rôle de projet.
+    ///
+    /// <para>
+    /// Septième opération écrite deux fois, et les deux copies avaient divergé : la route système
+    /// journalisait <c>role.created</c> avec une organisation nulle, donc invisible dans le
+    /// journal d'audit du locataire à qui le projet appartient.
+    /// </para>
+    ///
+    /// <para>
+    /// Surtout : ni l'une ni l'autre ne vérifiait l'unicité que l'index <c>(ProjectId, Name)</c>
+    /// impose. Un nom déjà pris ne remontait pas en refus mais en <c>DbUpdateException</c>, que
+    /// rien n'attrape — la console recevait <c>500 internal_error</c> pour une saisie que
+    /// l'opérateur pouvait corriger lui-même s'il avait su ce qu'on lui reprochait.
+    /// </para>
+    ///
+    /// <para>
+    /// <c>orgId</c> est l'organisation propriétaire du projet, écrite au journal d'audit, et
+    /// <c>locationPrefix</c> le préfixe du <c>Location</c> du 201 — la seule chose qui diffère
+    /// réellement entre les deux surfaces.
+    /// </para>
+    /// </summary>
+    public static async Task<IActionResult> CreateRoleAsync(
+        RediensIamDbContext db, AuditLogService audit, Guid actorId,
+        Guid projectId, Guid? orgId, NewRole body, string locationPrefix)
+    {
+        if (Roles.ProjectRoleNameError(body.Name) is { } nameErr)
+            return new BadRequestObjectResult(new { error = nameErr, reserved = Roles.Management });
+
+        if (await db.Roles.AnyAsync(r => r.ProjectId == projectId && r.Name == body.Name))
+            return new ConflictObjectResult(new { error = "role_name_exists" });
+
+        var role = new Role
+        {
+            ProjectId = projectId, Name = body.Name!, Description = body.Description,
+            Rank = body.Rank ?? 100, CreatedBy = actorId, CreatedAt = DateTimeOffset.UtcNow,
+        };
+        db.Roles.Add(role);
+        await db.SaveChangesAsync();
+
+        await audit.RecordAsync(orgId, projectId, actorId, "role.created", "role", role.Id.ToString(),
+            new() { ["name"] = role.Name });
+        return new CreatedResult($"{locationPrefix}/{role.Id}", new { role.Id, role.Name, role.Rank });
     }
 }

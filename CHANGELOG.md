@@ -8,6 +8,80 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.9.1] — 2026-08-07
+
+**La surface que la console n'atteignait pas.** Le backend exposait 194 routes ; la console en
+appelait 129. Les 36 manquantes n'étaient pas des fonctions à écrire — elles existaient, testées,
+sans aucune porte pour les atteindre. Un audit qui comparait les chemins sans le verbe en avait
+d'abord masqué douze : un `PATCH` disparaissait derrière le `DELETE` qui partage son URL.
+
+### Corrigé — trois refus que la console gardait pour elle
+
+**Créer un rôle échouait sans rien dire.** `ProjectRoles.handleCreate` n'avait pas de `catch` : le
+400 partait en rejet de promesse non attrapé, la boîte restait ouverte et inchangée, et le motif
+n'existait que dans la console du navigateur. Le champ minuscule la saisie et remplace les espaces
+par des soulignés — « Super Admin » arrive donc en `super_admin`, qui est réservé. Le refus est
+maintenant écrit à l'écran, avec un libellé par code ; la suppression et l'assignation de rôle ne
+l'avalent plus non plus.
+
+**Un nom de rôle déjà pris rendait `500 internal_error`** au lieu d'un **409 `role_name_exists`** :
+l'index unique est `(ProjectId, Name)` et rien ne le testait avant l'insertion. La création était
+écrite deux fois et les copies avaient divergé — la route système journalisait `role.created` avec
+une organisation nulle, donc invisible dans l'audit du locataire propriétaire. Les deux passent par
+`ProjectOperations.CreateRoleAsync`.
+
+**Une user list n'était supprimable de nulle part.** La route d'organisation existait sans fonction
+cliente, et `/admin/userlists/{id}` n'avait pas de `DELETE` : un super-admin n'en supprimait aucune,
+et celles sans organisation n'étaient supprimables par personne. La suppression côté organisation
+écrit enfin une entrée d'audit — c'était la seule opération de cette surface qui détruisait des
+comptes en cascade sans laisser de trace.
+
+### Corrigé — quatre défauts trouvés en câblant
+
+**`AdminDeleteRole` supprimait un tuple Keto qui n'existe pas.** Il passait le nom du rôle et l'id
+de l'utilisateur nus là où `KetoService` écrit `role:{nom}` et `user:{id}`. Keto répond 204 à une
+suppression sans correspondance : la ligne partait, **le grant restait**, et un rôle supprimé depuis
+la portée système laissait ses porteurs autorisés. Le test existant ne regardait que la ligne SQL.
+
+**Deux des trois `PATCH` projet ne journalisaient rien.** `project.updated` est un événement webhook
+souscriptible : un locataire qui surveille ses projets n'entendait jamais parler des changements de
+nom, de politique de mot de passe, de `redirect_uris` ou d'allowlist IP passés par `/org/projects`
+ou `/admin/projects`. Les trois passent par `ProjectUpdate.SaveAndAuditAsync`, qui garde l'ordre
+sauvegarde-puis-audit.
+
+**`PATCH /org/admins/{id}` ne pouvait pas effacer une portée** : promouvoir un `project_admin` en
+`org_admin` réécrivait son tuple sur `user:…|project:…` sous la relation `org_admin`, un grant
+qu'aucune vérification d'organisation ne trouve. Seul `project_admin` porte une portée.
+
+**Les scopes d'`OrgController` étaient ses seules routes projet sans échappement super-admin**, d'où
+un 404 sur un projet réel. `AdminListRoles` rendait `[]` sur projet inconnu, là où la portée projet
+rend 404.
+
+### Ajouté — 36 routes câblées
+
+Clients OAuth2 Hydra, rotation de clés, réconciliation des grants Keto, vérification de la chaîne
+d'audit, SAML en portée organisation **et son édition** (absente des deux portées), scopes OAuth2
+d'un projet (éditables nulle part jusqu'ici), rôles en portée système, journal et nettoyage de
+projet, détail d'un membre et révocation de ses sessions, création de membre en portée projet,
+export des utilisateurs d'une organisation, rotation du secret d'un webhook, ajout et édition de
+membre en portée organisation, détail d'un webhook, rôles d'un compte de service, modification d'un
+administrateur d'organisation, et l'édition d'un rôle.
+
+Un `project_admin` voit désormais ses membres : le panneau de l'administrateur d'organisation lit
+une route gardée plus haut et ne lui rendait que des 403.
+
+Quatre routes restent délibérément sans appelant : `POST /admin/impersonate`, parce qu'ouvrir une
+session d'impersonation frappe une credential et que ce refus est le garde-fou ; et les trois
+`PATCH|GET` projet des portées organisation et système, doublons purs de `/project/info`, qui
+couvre déjà les trois niveaux.
+
+### Documentation
+
+`docs/API.md` ignorait `InstanceController` en entier et annonçait 190 routes pour 194.
+`docs/CONSOLE.md` décrit les pages et capacités ajoutées.
+
+---
+
 ## [0.9.0] — 2026-08-07
 
 **La console, ses frontières, et tout au dernier compatible.** Le fil rouge est la suite

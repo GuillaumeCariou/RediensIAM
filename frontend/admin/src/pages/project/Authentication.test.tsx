@@ -30,7 +30,10 @@ import * as api from '@/api';
 // chacun de ceux que cette page appelle, sans quoi l'espion laisserait passer le vrai appel.
 vi.mock('@/api', { spy: true });
 
-const auth = vi.hoisted(() => ({ orgId: '', projectId: 'p1' }));
+// `isSuperAdmin` decides which scope's SAML routes the page calls, so it is part of the fixture.
+// It defaults to true here because the suite predates the org scope and asserts the `/admin` calls;
+// the org-scope tests set it to false explicitly.
+const auth = vi.hoisted(() => ({ orgId: '', projectId: 'p1', isSuperAdmin: true }));
 // Only `useAuth` is replaced: the module also exports the context object and the role constants,
 // and a partial mock breaks whatever imports them.
 vi.mock('@/context/AuthContext', async orig => ({
@@ -80,6 +83,7 @@ beforeEach(() => {
   // that a suite in that state can report false passes.
   vi.clearAllMocks();
   auth.projectId = 'p1';
+  auth.isSuperAdmin = true;
   vi.mocked(api.getProjectInfo).mockResolvedValue(PROJECT);
   vi.mocked(api.listRoles).mockResolvedValue({ roles: ROLES });
   vi.mocked(api.listSamlProviders).mockResolvedValue({ providers: SAML });
@@ -91,6 +95,11 @@ beforeEach(() => {
   // d'`apiFetch`, pas un corps JSON décodé. `{}` compilait sous `vi.fn()` — qui n'a aucun type de
   // retour à respecter — et cassait `tsc -b`, que le build de l'image lance et que vitest non.
   vi.mocked(api.deleteSamlProvider).mockResolvedValue(new Response(null, { status: 204 }));
+  vi.mocked(api.updateSamlProvider).mockResolvedValue({});
+  vi.mocked(api.orgListSamlProviders).mockResolvedValue({ providers: SAML });
+  vi.mocked(api.orgCreateSamlProvider).mockResolvedValue({});
+  vi.mocked(api.orgUpdateSamlProvider).mockResolvedValue({});
+  vi.mocked(api.orgDeleteSamlProvider).mockResolvedValue(new Response(null, { status: 204 }));
 });
 
 function show() {
@@ -558,6 +567,152 @@ describe('the SAML providers', () => {
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
     expect(api.createSamlProvider).not.toHaveBeenCalled();
+  });
+});
+
+describe('the scope the SAML calls go to', () => {
+  const providers = async (user: Awaited<ReturnType<typeof show>>) => {
+    await loaded();
+    await tab(user, 'Providers');
+  };
+
+  it('uses the system routes for a super admin', async () => {
+    const user = show();
+    await providers(user);
+
+    expect(api.listSamlProviders).toHaveBeenCalledWith('p1');
+    expect(api.orgListSamlProviders).not.toHaveBeenCalled();
+  });
+
+  it('uses the organisation routes for an org admin, the only ones they may call', async () => {
+    // The `/admin` ones require system authority: this page answered 403 on the tenant's own
+    // configuration and showed an empty section.
+    auth.isSuperAdmin = false;
+    const user = show();
+    await providers(user);
+
+    expect(api.orgListSamlProviders).toHaveBeenCalledWith('p1');
+    expect(api.listSamlProviders).not.toHaveBeenCalled();
+    expect(screen.getByText('https://saml-idp.test')).toBeInTheDocument();
+  });
+
+  it('adds and removes through the organisation routes for an org admin', async () => {
+    auth.isSuperAdmin = false;
+    vi.mocked(api.orgCreateSamlProvider).mockResolvedValue({ ...SAML[0], id: 'i2', entity_id: 'https://idp2.test' });
+    const user = show();
+    await providers(user);
+    // Removal first, while there is one row: the buttons are queried across the whole card.
+    await user.click([...screen.getByText('https://saml-idp.test').closest('div[style]')!
+      .parentElement!.querySelectorAll<HTMLButtonElement>('button')].at(-1)!);
+    await vi.waitFor(() => expect(api.orgDeleteSamlProvider).toHaveBeenCalledWith('p1', 'i1'));
+    expect(api.deleteSamlProvider).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Add IdP' }));
+    await user.fill(screen.getByLabelText(/Entity ID/), 'https://idp2.test');
+    await user.click(document.querySelector<HTMLButtonElement>('button[form="add-saml-form"]')!);
+
+    await vi.waitFor(() => expect(api.orgCreateSamlProvider).toHaveBeenCalled());
+    expect(api.createSamlProvider).not.toHaveBeenCalled();
+  });
+
+  it('says so when a removal is refused, and keeps the row', async () => {
+    // The delete had no `catch`: the row stayed and the page said nothing.
+    vi.mocked(api.deleteSamlProvider).mockRejectedValue(new Error('409'));
+    const user = show();
+    await providers(user);
+
+    await user.click([...screen.getByText('https://saml-idp.test').closest('div[style]')!
+      .parentElement!.querySelectorAll<HTMLButtonElement>('button')].at(-1)!);
+
+    expect(await screen.findByText('Could not remove that identity provider. It is still configured.'))
+      .toBeInTheDocument();
+    expect(screen.getByText('https://saml-idp.test')).toBeInTheDocument();
+  });
+});
+
+describe('editing a SAML provider', () => {
+  // Neither scope offered this: a provider could be registered and destroyed, never changed, so a
+  // rotated certificate meant deleting the IdP and re-adding it.
+  const openEdit = async () => {
+    const user = show();
+    await loaded();
+    await tab(user, 'Providers');
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    return user;
+  };
+  const submit = (user: Awaited<ReturnType<typeof show>>) =>
+    user.click(document.querySelector<HTMLButtonElement>('button[form="edit-saml-form"]')!);
+
+  it('opens on the provider\'s stored values', async () => {
+    await openEdit();
+
+    expect(screen.getByLabelText(/Entity ID/)).toHaveValue('https://saml-idp.test');
+    expect(screen.getByLabelText(/Metadata URL/)).toHaveValue('https://saml-idp.test/meta');
+    expect(screen.getByLabelText(/Name attribute/)).toHaveValue('cn');
+    expect(screen.getByLabelText('Active')).toBeChecked();
+  });
+
+  it('sends every field, `active` included — the PATCH accepts it where creation does not', async () => {
+    const user = await openEdit();
+
+    await user.fill(screen.getByLabelText(/Entity ID/), 'https://new-idp.test');
+    await user.click(screen.getByLabelText('Active'));
+    await submit(user);
+
+    await vi.waitFor(() => expect(api.updateSamlProvider).toHaveBeenCalledWith('p1', 'i1', {
+      entity_id: 'https://new-idp.test', metadata_url: 'https://saml-idp.test/meta',
+      email_attribute_name: 'email', display_name_attribute_name: 'cn',
+      jit_provisioning: true, active: false,
+    }));
+    expect(await screen.findByText('https://new-idp.test')).toBeInTheDocument();
+  });
+
+  it('goes to the organisation route for an org admin', async () => {
+    auth.isSuperAdmin = false;
+    const user = await openEdit();
+
+    await submit(user);
+
+    await vi.waitFor(() => expect(api.orgUpdateSamlProvider).toHaveBeenCalledWith('p1', 'i1',
+      expect.objectContaining({ active: true })));
+    expect(api.updateSamlProvider).not.toHaveBeenCalled();
+  });
+
+  it('shows what the server refused, and leaves the form open on it', async () => {
+    vi.mocked(api.updateSamlProvider).mockResolvedValue({ error: 'duplicate', error_description: 'Already registered.' });
+    const user = await openEdit();
+
+    await submit(user);
+
+    expect(await screen.findByText('Already registered.')).toBeInTheDocument();
+    expect(screen.getByLabelText(/Entity ID/)).toBeInTheDocument();
+  });
+
+  it('falls back to a generic message when the refusal carried none', async () => {
+    vi.mocked(api.updateSamlProvider).mockResolvedValue({ error: 'duplicate' });
+    const user = await openEdit();
+
+    await submit(user);
+
+    expect(await screen.findByText('Failed to save the provider.')).toBeInTheDocument();
+  });
+
+  it('reports a request that failed outright', async () => {
+    vi.mocked(api.updateSamlProvider).mockRejectedValue(new Error('network'));
+    const user = await openEdit();
+
+    await submit(user);
+
+    expect(await screen.findByText('Something went wrong.')).toBeInTheDocument();
+  });
+
+  it('does nothing on cancel', async () => {
+    const user = await openEdit();
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await vi.waitFor(() => expect(screen.queryByLabelText(/Entity ID/)).toBeNull());
+    expect(api.updateSamlProvider).not.toHaveBeenCalled();
   });
 });
 

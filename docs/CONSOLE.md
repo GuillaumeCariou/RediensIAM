@@ -79,10 +79,12 @@ is the prerequisite of the next.
 | **Projects** | Every project across every tenant |
 | **User Lists** | Every population, and their members |
 | **Service Accounts** | Machine identities at deployment level, and their API keys |
-| **Audit Log** | Every recorded action, hash-chained. Exportable |
+| **Audit Log** | Every recorded action, hash-chained. Exportable. **Verify integrity** recalcule la chaîne : « intacte » et « entièrement vérifiée » sont deux réponses différentes — une chaîne intacte mais invérifiable (lignes antérieures à sa mise sous clé, ou écrites sous une clé retirée) ne prouve rien, et la page les distingue |
 | **Metrics** | Counts and sign-in outcomes over time |
 | **Email** | Deployment-wide SMTP, used by any organisation that has not set its own |
 | **Health** | Whether the database, the cache, Hydra and Keto are answering |
+| **OAuth2 Clients** | Hydra's own client registry. Les clients frappés par la console pour chaque projet (`client_`) et chaque compte de service (`sa_`) y figurent et sont marqués comme tels : en supprimer un laisse un projet enregistré sans client, et plus personne ne s'y connecte |
+| **Grant reconciliation** | Les divergences entre les tuples Keto et la base. Un tuple sans ligne est un privilège vivant dont personne ne sait qui l'a accordé ; une ligne sans tuple n'autorise rien mais sert encore les scopes au consentement. La réparation révoque et supprime, elle ne crée jamais de tuple |
 
 ### Organisation scope
 
@@ -94,14 +96,23 @@ Two are worth calling out:
 - **Email** — an organisation's own SMTP relay. Set it when a tenant wants its mail to come from
   its own domain. It overrides the deployment's.
 - **Webhooks** — where this organisation's events are delivered. Deliveries are signed; the secret
-  is shown once, at creation, and never again.
+  is shown once, at creation, and never again — et **Rotate secret** le refrappe, ce que le message
+  d'erreur de création demandait déjà sans qu'aucun bouton ne sache le faire. Le secret courant
+  cesse d'être valide immédiatement : les receveurs qui vérifient les signatures rejettent les
+  livraisons jusqu'à l'installation du nouveau.
+
+Deux réglages système méritent aussi d'être signalés, dans **Settings** au niveau déploiement :
+**Key rotation** montre ce qui reste à rechiffrer sous la clé active et le fait en une passe — un
+balayage partiel est dit comme tel, parce que retirer une clé encore nécessaire perd les valeurs
+chiffrées sous elle.
 
 ### Project scope
 
 | Page | What you do there |
 |---|---|
-| **Users** | Who may sign in to this project, and with which roles |
-| **Role Definitions** | The roles this project emits, and their ranks |
+| **Users** | Who may sign in to this project, and with which roles. Un `project_admin` y voit son propre panneau, servi par les routes de portée projet — celui de l'administrateur d'organisation lit une route gardée plus haut et ne lui rendrait que des 403. On y crée un membre, on révoque ses sessions, et **Cleanup** propose d'abord un aperçu avant de supprimer quoi que ce soit |
+| **Audit Log** | Les actions enregistrées pour ce projet seul |
+| **Role Definitions** | The roles this project emits, and their ranks. Un rôle se modifie (description, rang) ; **son nom, non** — Keto écrit `role:{nom}` pour chaque porteur, et renommer laisserait ces tuples orphelins |
 | **Service Accounts** | Machine identities scoped to this project |
 | **Authentication** | The login page and the policy behind it — see below |
 | **Settings** | Name, slug, redirect URIs, deletion |
@@ -118,7 +129,14 @@ Two are worth calling out:
   needs an explicit confirmation on the retry;
 - the **IP allowlist** — CIDRs. An entry that does not parse is refused at save time, because an
   allowlist nobody matches is a tenant outage rather than a saved setting;
-- **allowed scopes** and **allowed email domains**.
+- **allowed scopes** and **allowed email domains**;
+- les **fournisseurs SAML** — création, modification et suppression, dans la portée de l'appelant :
+  un administrateur d'organisation configure le SAML de son propre projet, ce que la console ne
+  savait pas faire.
+
+Les **scopes OAuth2** du projet s'éditent dans **Settings**. `openid`, `profile` et
+`offline_access` sont implicites et ne se retirent pas ; les autres sont remplacés en bloc, et un
+nom que le serveur refuse est recopié tel qu'il l'a nommé.
 
 ### Your own account
 

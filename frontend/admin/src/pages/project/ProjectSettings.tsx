@@ -2,13 +2,34 @@ import { useCallback, useEffect, useState } from 'react';
 import { formatUriLines, parseUriLines } from '@/lib/projectForm';
 import { useNavigate } from 'react-router';
 import { useProjectContext } from '@/hooks/useOrgContext';
-import { IamDialog } from '@/components/iam';
-import { getProjectInfo, updateProject, deleteProject } from '@/api';
+import { useAuth } from '@/context/AuthContext';
+import { IamChip, IamDialog } from '@/components/iam';
+import {
+  getProjectInfo, updateProject, deleteProject,
+  getProjectScopes, updateProjectScopes,
+  adminGetProjectScopes, adminUpdateProjectScopes,
+} from '@/api';
+import { ApiError } from '@/auth';
 import PageHeader from '@/components/layout/PageHeader';
 
 interface Project {
   id: string; name: string; slug: string; active: boolean;
   require_role_to_login: boolean; hydra_client_id: string;
+}
+
+/**
+ * A scope name is validated server-side by a bounded regex, and the refusal names the scopes it
+ * rejected. Repeating those names is worth more than restating the rule here, where a second copy
+ * of the pattern would drift from the one that actually decides.
+ */
+function scopeErrorMessage(e: unknown, fallback: string): string {
+  const body = e instanceof ApiError
+    ? (e.body as { error?: string; detail?: string; invalid?: string[] } | null)
+    : null;
+  if (body?.error === 'invalid_scope_names' && body.invalid?.length) {
+    return `Refused: ${body.invalid.join(', ')}. A scope name may hold only a-z, 0-9, "_", ":", "." and "-".`;
+  }
+  return body?.detail ?? body?.error ?? fallback;
 }
 
 function Toggle({ checked, onChange }: Readonly<{ checked: boolean; onChange: (v: boolean) => void }>) {
@@ -18,8 +39,13 @@ function Toggle({ checked, onChange }: Readonly<{ checked: boolean; onChange: (v
 }
 
 export default function ProjectSettings() {
-  const { projectId } = useProjectContext();
+  const { projectId, isSystemCtx } = useProjectContext();
+  const { isSuperAdmin } = useAuth();
   const navigate = useNavigate();
+  // Même choix qu'à `ProjectUsers.handleAssignList` : la route d'organisation filtre sur
+  // l'organisation du jeton, qu'un super-admin n'a pas, et la route système est fermée à
+  // l'org_admin. Câbler une seule des deux laisse un rôle sur un 403.
+  const scopeAdmin = isSystemCtx || isSuperAdmin;
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -40,6 +66,12 @@ export default function ProjectSettings() {
   const [redirectUris, setRedirectUris] = useState('');
   const [postLogoutUris, setPostLogoutUris] = useState('');
 
+  const [builtInScopes, setBuiltInScopes] = useState<string[]>([]);
+  const [customScopes, setCustomScopes] = useState<string[]>([]);
+  const [newScope, setNewScope] = useState('');
+  const [scopeError, setScopeError] = useState('');
+  const [scopeBusy, setScopeBusy] = useState(false);
+
   const load = useCallback(() => {
     if (!projectId) { setLoading(false); return; }
     setLoading(true);
@@ -55,6 +87,40 @@ export default function ProjectSettings() {
   }, [projectId]);
 
   useEffect(load, [load]);
+
+  const loadScopes = useCallback(() => {
+    if (!projectId) return;
+    (scopeAdmin ? adminGetProjectScopes : getProjectScopes)(projectId)
+      .then(s => { setBuiltInScopes(s.built_in ?? []); setCustomScopes(s.custom_scopes ?? []); })
+      .catch(e => setScopeError(scopeErrorMessage(e, 'Could not read the scopes of this project.')));
+  }, [projectId, scopeAdmin]);
+
+  useEffect(loadScopes, [loadScopes]);
+
+  /** The PUT replaces the whole custom list, so both add and remove send the list they want. */
+  const saveScopes = async (next: string[], failure: string) => {
+    setScopeBusy(true);
+    setScopeError('');
+    try {
+      const r = await (scopeAdmin ? adminUpdateProjectScopes : updateProjectScopes)(projectId, next);
+      setCustomScopes(r.custom_scopes ?? next);
+      return true;
+    } catch (e) {
+      setScopeError(scopeErrorMessage(e, failure));
+      return false;
+    } finally { setScopeBusy(false); }
+  };
+
+  const handleAddScope = async (e: React.SyntheticEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const name = newScope.trim();
+    if (!name) return;
+    if (customScopes.includes(name) || builtInScopes.includes(name)) {
+      setScopeError(`"${name}" is already granted by this project.`);
+      return;
+    }
+    if (await saveScopes([...customScopes, name], 'Could not add that scope.')) setNewScope('');
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -184,6 +250,45 @@ export default function ProjectSettings() {
               <div className="iam-mono" style={{ fontSize: 12, background: 'var(--surface-2)', padding: '8px 12px', borderRadius: 6 }}>{project?.slug ?? '—'}</div>
             </div>
           </div>
+        </div>
+
+        <div className="iam-card iam-card-pad">
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>OAuth2 Scopes</div>
+          <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', marginBottom: 16 }}>
+            What this project's clients may ask for. A scope withdrawn here is refused at the next
+            token request, so an application still asking for it stops working.
+          </div>
+
+          <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginBottom: 6 }}>Always granted</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
+            {builtInScopes.map(s => <IamChip key={s} mono>{s}</IamChip>)}
+          </div>
+
+          <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginBottom: 6 }}>Added by this project</div>
+          {customScopes.length === 0 ? (
+            <p style={{ fontSize: 12, color: 'var(--fg-muted)', fontStyle: 'italic' }}>No custom scopes.</p>
+          ) : (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {customScopes.map(s => (
+                <span key={s} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  <IamChip tone="accent" mono>{s}</IamChip>
+                  <button type="button" className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm"
+                    style={{ color: 'var(--danger)' }} aria-label={`Remove ${s}`} disabled={scopeBusy}
+                    onClick={() => saveScopes(customScopes.filter(x => x !== s), 'Could not remove that scope.')}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          <form onSubmit={handleAddScope} style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+            <label className="iam-label" htmlFor="proj-scope-new" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>New scope</label>
+            <input id="proj-scope-new" className="iam-input iam-mono" style={{ maxWidth: 280 }}
+              value={newScope} onChange={e => setNewScope(e.target.value)} placeholder="read:orders" />
+            <button type="submit" className="iam-btn iam-btn-sm" disabled={scopeBusy}>Add scope</button>
+          </form>
+          {scopeError && <p style={{ fontSize: 12, color: 'var(--danger)', marginTop: 8 }}>{scopeError}</p>}
         </div>
 
         <div className="iam-card iam-card-pad" style={{ border: '1px solid color-mix(in oklch, var(--danger) 30%, transparent)' }}>

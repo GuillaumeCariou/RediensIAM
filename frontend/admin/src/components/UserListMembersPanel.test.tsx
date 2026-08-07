@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { userEvent } from 'vitest/browser';
 import UserListMembersPanel from './UserListMembersPanel';
+import { ApiError } from '@/auth';
 
 /**
  * The panel is the console's user-management surface, reused in three scopes. Two things about
@@ -16,8 +17,10 @@ import UserListMembersPanel from './UserListMembersPanel';
 
 const api = vi.hoisted(() => ({
   listSystemUserListMembers: vi.fn(), listUserListMembers: vi.fn(),
-  addUserToList: vi.fn(), removeSystemUserFromList: vi.fn(), removeUserFromList: vi.fn(),
+  addUserToList: vi.fn(), orgAddUserToList: vi.fn(),
+  removeSystemUserFromList: vi.fn(), removeUserFromList: vi.fn(),
   adminGetUser: vi.fn(), adminUpdateUser: vi.fn(),
+  orgGetUser: vi.fn(), orgUpdateListUser: vi.fn(),
   listProjectUsers: vi.fn(), listRoles: vi.fn(), assignRole: vi.fn(), removeRole: vi.fn(),
   resendInvite: vi.fn(), unlockUser: vi.fn(), getUserSessions: vi.fn(), revokeAllUserSessions: vi.fn(),
 }));
@@ -40,6 +43,7 @@ beforeEach(() => {
   api.listProjectUsers.mockResolvedValue({ users: [{ id: 'u1', roles: [{ id: 'r1', name: 'admin' }] }] });
   api.listRoles.mockResolvedValue({ roles: [{ id: 'r1', name: 'admin' }, { id: 'r2', name: 'viewer' }] });
   api.adminGetUser.mockResolvedValue({ ...ADA, phone: '+33600000000', email_verified: true });
+  api.orgGetUser.mockResolvedValue({ ...ADA, phone: '+33600000000', email_verified: true });
   api.getUserSessions.mockResolvedValue({ sessions: [{ client_id: 'portal', client_name: 'Portal' }] });
 });
 
@@ -137,10 +141,7 @@ describe('the rows', () => {
 });
 
 describe('adding a user', () => {
-  it('creates the account and reloads the list', async () => {
-    const { user, onChanged } = show();
-    await screen.findByText('ada#0001');
-
+  const fillAndSubmit = async (user: ReturnType<typeof show>['user']) => {
     await user.click(screen.getByRole('button', { name: /Add User/ }));
     await user.fill(screen.getByLabelText('Email'), 'grace@acme.test');
     await user.fill(screen.getByLabelText('Username'), 'grace');
@@ -148,12 +149,56 @@ describe('adding a user', () => {
     await user.click(screen.getByLabelText('Email verified'));
     // The dialog's submit, not the header button that opened it — both read "Add User".
     await user.click(document.querySelector<HTMLButtonElement>('button[form="userlistmemberspanel-form"]')!);
+  };
 
-    await vi.waitFor(() => expect(api.addUserToList).toHaveBeenCalledWith('l1', {
-      email: 'grace@acme.test', username: 'grace', password: 'hunter2hunter2', email_verified: true,
-    }));
+  const BODY = { email: 'grace@acme.test', username: 'grace', password: 'hunter2hunter2', email_verified: true };
+
+  it('creates the account and reloads the list', async () => {
+    const { user, onChanged } = show();
+    await screen.findByText('ada#0001');
+
+    await fillAndSubmit(user);
+
+    await vi.waitFor(() => expect(api.orgAddUserToList).toHaveBeenCalledWith('l1', BODY));
     expect(api.listUserListMembers).toHaveBeenCalledTimes(2);
     expect(onChanged).toHaveBeenCalledOnce();
+  });
+
+  // La portée était figée sur /admin, réservé au super admin : un org_admin recevait 403 en
+  // ajoutant un membre de sa propre liste, et sans catch la boîte restait ouverte, inchangée.
+  it.each([
+    ['an organisation list', false, 'orgAddUserToList', 'addUserToList'],
+    ['the system list', true, 'addUserToList', 'orgAddUserToList'],
+  ] as const)('creates through the right route for %s', async (_n, isSystemCtx, used, unused) => {
+    const { user } = show({ isSystemCtx });
+    await screen.findByText('ada#0001');
+
+    await fillAndSubmit(user);
+
+    await vi.waitFor(() => expect(api[used]).toHaveBeenCalledWith('l1', BODY));
+    expect(api[unused]).not.toHaveBeenCalled();
+  });
+
+  it('shows what the server refused, and keeps the form open', async () => {
+    api.orgAddUserToList.mockRejectedValue(new ApiError(409, { error: 'email_already_exists' }));
+    const { user, onChanged } = show();
+    await screen.findByText('ada#0001');
+
+    await fillAndSubmit(user);
+
+    expect(await screen.findByText('Someone in this list already uses that address.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Password')).toBeInTheDocument();
+    expect(onChanged).not.toHaveBeenCalled();
+  });
+
+  it('falls back to a plain sentence when the refusal has no known code', async () => {
+    api.orgAddUserToList.mockRejectedValue(new Error('500'));
+    const { user } = show();
+    await screen.findByText('ada#0001');
+
+    await fillAndSubmit(user);
+
+    expect(await screen.findByText('Failed to add this user.')).toBeInTheDocument();
   });
 
   it('demands a password long enough to be one', async () => {
@@ -173,7 +218,7 @@ describe('adding a user', () => {
     await user.click(screen.getByRole('button', { name: /Add User/ }));
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    expect(api.addUserToList).not.toHaveBeenCalled();
+    expect(api.orgAddUserToList).not.toHaveBeenCalled();
   });
 });
 
@@ -195,9 +240,45 @@ describe('editing a user', () => {
     await user.fill(screen.getByLabelText('Display name'), 'Ada L');
     await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
-    await vi.waitFor(() => expect(api.adminUpdateUser).toHaveBeenCalledWith('u1',
+    await vi.waitFor(() => expect(api.orgUpdateListUser).toHaveBeenCalledWith('l1', 'u1',
       expect.objectContaining({ display_name: 'Ada L' })));
     expect(onChanged).toHaveBeenCalledOnce();
+  });
+
+  // Même défaut que l'ajout : la lecture et l'écriture partaient sur /admin quelle que soit la
+  // portée, donc 403 pour un org_admin sur un membre de sa propre liste.
+  it.each([
+    ['an organisation list', false, 'orgGetUser', 'adminGetUser'],
+    ['the system list', true, 'adminGetUser', 'orgGetUser'],
+  ] as const)('reads the account through the right route for %s', async (_n, isSystemCtx, used, unused) => {
+    const { user } = show({ isSystemCtx });
+
+    await user.click(await screen.findByText('ada#0001'));
+
+    await vi.waitFor(() => expect(api[used]).toHaveBeenCalledWith('u1'));
+    expect(api[unused]).not.toHaveBeenCalled();
+  });
+
+  it('saves the system list through the admin route, taking no list id', async () => {
+    const { user } = show({ isSystemCtx: true });
+    await user.click(await screen.findByText('ada#0001'));
+    await screen.findByLabelText('Phone');
+
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await vi.waitFor(() => expect(api.adminUpdateUser).toHaveBeenCalledWith('u1', expect.any(Object)));
+    expect(api.orgUpdateListUser).not.toHaveBeenCalled();
+  });
+
+  it('shows what the server refused rather than a generic sentence', async () => {
+    api.orgUpdateListUser.mockRejectedValue(new ApiError(409, { error: 'email_already_exists' }));
+    const { user } = show();
+    await user.click(await screen.findByText('ada#0001'));
+    await screen.findByLabelText('Phone');
+
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    expect(await screen.findByText('Someone in this list already uses that address.')).toBeInTheDocument();
   });
 
   it('leaves the password out of the request when the field was untouched', async () => {
@@ -208,12 +289,12 @@ describe('editing a user', () => {
 
     await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
-    await vi.waitFor(() => expect(api.adminUpdateUser).toHaveBeenCalledWith('u1',
+    await vi.waitFor(() => expect(api.orgUpdateListUser).toHaveBeenCalledWith('l1', 'u1',
       expect.objectContaining({ new_password: undefined })));
   });
 
   it('says so, and keeps the dialog open, when the details cannot be read', async () => {
-    api.adminGetUser.mockRejectedValue(new Error('500'));
+    api.orgGetUser.mockRejectedValue(new Error('500'));
     const { user } = show();
 
     await user.click(await screen.findByText('ada#0001'));
@@ -222,7 +303,7 @@ describe('editing a user', () => {
   });
 
   it('says so, and keeps the dialog open, when the save is refused', async () => {
-    api.adminUpdateUser.mockRejectedValue(new Error('409'));
+    api.orgUpdateListUser.mockRejectedValue(new Error('409'));
     const { user } = show();
     await user.click(await screen.findByText('ada#0001'));
     await screen.findByLabelText('Phone');
@@ -481,7 +562,7 @@ describe('the remaining ways in and out of a dialog', () => {
     await user.keyboard('{Escape}');
 
     await vi.waitFor(() => expect(screen.queryByLabelText('Password')).toBeNull());
-    expect(api.addUserToList).not.toHaveBeenCalled();
+    expect(api.orgAddUserToList).not.toHaveBeenCalled();
   });
 
   it('closes the editor on Escape', async () => {
@@ -492,7 +573,7 @@ describe('the remaining ways in and out of a dialog', () => {
     await user.keyboard('{Escape}');
 
     await vi.waitFor(() => expect(screen.queryByLabelText('Phone')).toBeNull());
-    expect(api.adminUpdateUser).not.toHaveBeenCalled();
+    expect(api.orgUpdateListUser).not.toHaveBeenCalled();
   });
 
   it('closes the remove confirmation on Escape, and on Cancel', async () => {

@@ -3,17 +3,43 @@ import { useCallback, useEffect, useId, useState } from 'react';
 import { UserPlus, Trash2, Plus, MoreHorizontal } from 'lucide-react';
 import {
   listSystemUserListMembers, listUserListMembers,
-  addUserToList, removeSystemUserFromList, removeUserFromList,
-  adminGetUser, adminUpdateUser,
+  addUserToList, orgAddUserToList, removeSystemUserFromList, removeUserFromList,
+  adminGetUser, adminUpdateUser, orgGetUser, orgUpdateListUser,
   listProjectUsers, listRoles, assignRole, removeRole,
   resendInvite, unlockUser, getUserSessions, revokeAllUserSessions,
 } from '@/api';
+import { ApiError } from '@/auth';
 import { fmtDate } from '@/lib/utils';
 import EditUserDialog from '@/components/EditUserDialog';
 import type { UserEditFields } from '@/components/EditUserDialog';
 import SessionsDialog from '@/components/SessionsDialog';
 import type { OAuthSession } from '@/components/SessionsDialog';
 import { IamChip, IamDialog, IamMenu } from '@/components/iam';
+
+/**
+ * Ce que KetoService refuse, dit en clair. Il renvoie une phrase anglaise dans `error` plutôt
+ * qu'un code, donc on reconnaît celle qui a une cause actionnable et on laisse passer les autres
+ * telles quelles — les afficher reste mieux que le silence d'avant.
+ */
+function assignRoleMessage(e: unknown): string {
+  const msg = e instanceof ApiError ? (e.body as { error?: string } | null)?.error : undefined;
+  if (msg?.includes('assigned UserList')) {
+    return 'This project has no user list assigned, so nobody can hold its roles yet. Assign one above first.';
+  }
+  return msg ?? 'Failed to change this role.';
+}
+
+/** Ce que la création d'un compte peut refuser, dit en clair. Motif `apiErrorMessage`. */
+const ADD_ERRORS: Record<string, string> = {
+  email_already_exists: 'Someone in this list already uses that address.',
+  password_too_short:   'That password is too short for this deployment’s floor.',
+  unknown_organisation: 'This list points at an organisation that no longer exists.',
+};
+
+function apiErrorMessage(e: unknown, table: Record<string, string>, fallback: string): string {
+  const body = e instanceof ApiError ? (e.body as { error?: string; detail?: string } | null) : null;
+  return (body?.error && table[body.error]) ?? body?.detail ?? body?.error ?? fallback;
+}
 
 interface Member {
   id: string; email: string; username: string; discriminator: string;
@@ -60,6 +86,7 @@ export default function UserListMembersPanel({
   const [addOpen, setAddOpen] = useState(false);
   const [addForm, setAddForm] = useState({ email: '', username: '', password: '', email_verified: false });
   const [addSaving, setAddSaving] = useState(false);
+  const [addError, setAddError] = useState('');
 
   const [removeTarget, setRemoveTarget] = useState<Member | null>(null);
 
@@ -108,16 +135,22 @@ export default function UserListMembersPanel({
     load().catch(console.error).finally(() => setLoading(false));
   }, [load]);
 
+  /**
+   * L'ajout et l'édition suivaient `/admin` quelle que soit la portée, si bien qu'un org_admin
+   * recevait 403 sur sa propre liste — et sans `catch`, la boîte restait ouverte, inchangée. La
+   * portée se choisit ici comme elle se choisit déjà pour la lecture et le retrait.
+   */
   const handleAdd = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setAddSaving(true);
+    setAddSaving(true); setAddError('');
     try {
-      await addUserToList(listId, addForm);
+      await (isSystemCtx ? addUserToList : orgAddUserToList)(listId, addForm);
       setAddOpen(false);
       setAddForm({ email: '', username: '', password: '', email_verified: false });
       await load();
       onChanged?.();
-    } finally { setAddSaving(false); }
+    } catch (e) { setAddError(apiErrorMessage(e, ADD_ERRORS, 'Failed to add this user.')); }
+    finally { setAddSaving(false); }
   };
 
   const handleRemove = async () => {
@@ -132,7 +165,7 @@ export default function UserListMembersPanel({
   const openEdit = async (m: Member) => {
     setEditTarget(m); setEditError(''); setEditLoading(true); setSelectedRole('');
     try {
-      const u = await adminGetUser(m.id);
+      const u = await (isSystemCtx ? adminGetUser : orgGetUser)(m.id);
       setEditForm({
         email: u.email ?? '', username: u.username ?? '',
         display_name: u.display_name ?? '', phone: u.phone ?? '',
@@ -147,17 +180,19 @@ export default function UserListMembersPanel({
     e.preventDefault();
     if (!editTarget) return;
     setEditSaving(true); setEditError('');
+    const body = {
+      email: editForm.email, username: editForm.username,
+      display_name: editForm.display_name, phone: editForm.phone,
+      active: editForm.active, email_verified: editForm.email_verified,
+      clear_lock: editForm.clear_lock, new_password: editForm.new_password || undefined,
+    };
     try {
-      await adminUpdateUser(editTarget.id, {
-        email: editForm.email, username: editForm.username,
-        display_name: editForm.display_name, phone: editForm.phone,
-        active: editForm.active, email_verified: editForm.email_verified,
-        clear_lock: editForm.clear_lock, new_password: editForm.new_password || undefined,
-      });
+      if (isSystemCtx) await adminUpdateUser(editTarget.id, body);
+      else await orgUpdateListUser(listId, editTarget.id, body);
       setEditTarget(null);
       await load();
       onChanged?.();
-    } catch { setEditError('Failed to save changes.'); }
+    } catch (e) { setEditError(apiErrorMessage(e, ADD_ERRORS, 'Failed to save changes.')); }
     finally { setEditSaving(false); }
   };
 
@@ -165,12 +200,16 @@ export default function UserListMembersPanel({
     if (!editTarget || !selectedRole || !projectId) return;
     setRoleSaving(true);
     try { await assignRole(projectId, editTarget.id, selectedRole); setSelectedRole(''); await loadRoles(); }
+    // Le refus le plus fréquent est `User is not in this project's assigned UserList` : il part en
+    // 400 et n'était affiché nulle part, si bien que le bouton semblait ne rien faire.
+    catch (e) { flash(assignRoleMessage(e), true); }
     finally { setRoleSaving(false); }
   };
 
   const handleRemoveRole = async (userId: string, roleId: string) => {
     if (!projectId) return;
-    await removeRole(projectId, userId, roleId);
+    try { await removeRole(projectId, userId, roleId); }
+    catch (e) { flash(assignRoleMessage(e), true); return; }
     setMemberRoles(prev => {
       const next = new Map(prev);
       next.set(userId, (next.get(userId) ?? []).filter(r => r.id !== roleId));
@@ -220,7 +259,7 @@ export default function UserListMembersPanel({
       <div className="iam-card">
         <div className="iam-card-pad pb-0 pb-3 flex flex-row items-center justify-between">
           <h3 className="text-sm font-semibold text-sm font-medium">{title}</h3>
-          <button className="iam-btn iam-btn-primary iam-btn-sm" onClick={() => setAddOpen(true)}>
+          <button className="iam-btn iam-btn-primary iam-btn-sm" onClick={() => { setAddError(''); setAddOpen(true); }}>
             <UserPlus className="h-4 w-4" />Add User
           </button>
         </div>
@@ -283,6 +322,7 @@ export default function UserListMembersPanel({
               <button className="iam-btn iam-btn-primary" type="submit" form="userlistmemberspanel-form" disabled={addSaving}>{addSaving ? 'Adding…' : 'Add User'}</button></>}
     >
 <form id="userlistmemberspanel-form" onSubmit={handleAdd} className="space-y-4">
+            {addError && <p className="text-sm text-destructive">{addError}</p>}
             <div className="space-y-2"><label className="iam-label" htmlFor={`${uid}-add-email`}>Email</label><input className="iam-input" id={`${uid}-add-email`} type="email" value={addForm.email} onChange={e => setAddForm(f => ({ ...f, email: e.target.value }))} required autoFocus /></div>
             <div className="space-y-2"><label className="iam-label" htmlFor={`${uid}-add-username`}>Username</label><input className="iam-input" id={`${uid}-add-username`} value={addForm.username} onChange={e => setAddForm(f => ({ ...f, username: e.target.value }))} required /></div>
             <div className="space-y-2"><label className="iam-label" htmlFor={`${uid}-add-password`}>Password</label><input className="iam-input" id={`${uid}-add-password`} type="password" autoComplete="new-password" value={addForm.password} onChange={e => setAddForm(f => ({ ...f, password: e.target.value }))} required minLength={8} /></div>

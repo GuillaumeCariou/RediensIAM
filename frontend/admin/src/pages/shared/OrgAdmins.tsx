@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Shield, UserPlus, Trash2, Pencil } from 'lucide-react';
+import { Shield, ShieldCheck, UserPlus, Trash2, Pencil } from 'lucide-react';
+import { ApiError } from '@/auth';
 import {
   listOrgAdmins, assignOrgAdmin, removeOrgAdmin,
-  listOrgListManagers, assignOrgListManager, removeOrgListManager,
+  listOrgListManagers, assignOrgListManager, updateOrgListManager, removeOrgListManager,
   adminGetUser, adminUpdateUser, orgGetUser, orgUpdateUser,
   listProjects,
 } from '@/api';
@@ -22,6 +23,20 @@ interface Project { id: string; name: string; }
 
 const BLANK_FORM: UserEditFields = { email: '', username: '', display_name: '', phone: '', active: true, email_verified: false, clear_lock: false, new_password: '' };
 
+/** Ce que `PATCH /org/admins/{id}` refuse, dit en clair. Motif `apiErrorMessage`. */
+const GRANT_ERRORS: Record<string, string> = {
+  cannot_modify_own_role:        'You cannot change your own grant — ask another administrator.',
+  cannot_grant_super_admin:      'super_admin is not grantable from an organisation.',
+  insufficient_management_level: 'This grant outranks yours, so you cannot change it.',
+  unknown_role:                  'That is not a management role this deployment knows.',
+  project_not_in_org:            'That project belongs to another organisation.',
+};
+
+function apiErrorMessage(e: unknown, table: Record<string, string>, fallback: string): string {
+  const body = e instanceof ApiError ? (e.body as { error?: string; detail?: string } | null) : null;
+  return (body?.error && table[body.error]) ?? body?.detail ?? body?.error ?? fallback;
+}
+
 export default function OrgAdmins() {
   const { orgId, isSystemCtx } = useOrgContext();
 
@@ -40,6 +55,11 @@ export default function OrgAdmins() {
   const [editError, setEditError] = useState('');
 
   const [removeTarget, setRemoveTarget] = useState<{ id: string; label: string } | null>(null);
+
+  const [grantTarget, setGrantTarget] = useState<OrgRole | null>(null);
+  const [grantForm, setGrantForm] = useState({ role: 'org_admin', scope_id: '' });
+  const [grantSaving, setGrantSaving] = useState(false);
+  const [grantError, setGrantError] = useState('');
 
   const load = useCallback(async () => {
     if (!orgId) return;
@@ -102,6 +122,40 @@ export default function OrgAdmins() {
       await load();
     } catch { setEditError('Failed to save changes.'); }
     finally { setEditSaving(false); }
+  };
+
+  /**
+   * Modifier la délégation elle-même — son rang, ou le projet qu'elle porte — plutôt que le compte
+   * de la personne. Sans elle, corriger un project_admin nommé sur le mauvais projet demandait de
+   * révoquer puis de réassigner.
+   *
+   * Portée organisation seulement : `SystemAdminController` n'expose que GET, POST et DELETE sur
+   * `organizations/{id}/admins`, il n'y a pas de PATCH système à appeler.
+   */
+  const openGrant = (r: OrgRole) => {
+    setGrantTarget(r);
+    setGrantForm({ role: r.role, scope_id: r.scope_id ?? '' });
+    setGrantError('');
+  };
+
+  // Le serveur n'écrit `ScopeId` que lorsqu'il en reçoit un : il ne sait pas l'effacer. Passer une
+  // délégation projet en org_admin laisserait donc le tuple Keto écrit sur `user:…|project:…`,
+  // c'est-à-dire un org_admin qui n'en est pas un. On refuse ici plutôt que d'écrire ça.
+  const grantScopeStuck = !!grantTarget?.scope_id && grantForm.role !== 'project_admin';
+
+  const handleGrant = async (e: React.SyntheticEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!grantTarget || grantScopeStuck) return;
+    setGrantSaving(true); setGrantError('');
+    try {
+      await updateOrgListManager(grantTarget.id, {
+        role: grantForm.role,
+        scope_id: grantForm.role === 'project_admin' ? grantForm.scope_id : undefined,
+      });
+      setGrantTarget(null);
+      await load();
+    } catch (err) { setGrantError(apiErrorMessage(err, GRANT_ERRORS, 'Failed to change this grant.')); }
+    finally { setGrantSaving(false); }
   };
 
   const handleRemove = async () => {
@@ -173,6 +227,11 @@ export default function OrgAdmins() {
                         <button className="iam-btn iam-btn-ghost iam-btn-icon" onClick={() => openEdit(r.user_id, r.user_name)}>
                           <Pencil className="h-4 w-4" />
                         </button>
+                        {!isSystemCtx && (
+                          <button className="iam-btn iam-btn-ghost iam-btn-icon" aria-label={`Change grant for ${r.user_name}`} onClick={() => openGrant(r)}>
+                            <ShieldCheck className="h-4 w-4" />
+                          </button>
+                        )}
                         <button className="iam-btn iam-btn-ghost iam-btn-icon text-destructive hover:text-destructive hover:bg-[var(--danger-soft)]" onClick={() => setRemoveTarget({ id: r.id, label: `${r.user_name} — ${r.role}` })}>
                           <Trash2 className="h-4 w-4" />
                         </button>
@@ -212,6 +271,39 @@ export default function OrgAdmins() {
             )}
             
           </form>
+    </IamDialog>
+
+      <IamDialog open={!!grantTarget} onClose={() => setGrantTarget(null)}
+      title="Change Grant"
+      desc={<>Change what {grantTarget?.user_name} administers. This does not touch their account.</>}
+      footer={<><button className="iam-btn iam-btn-secondary" type="button" onClick={() => setGrantTarget(null)}>Cancel</button>
+              <button className="iam-btn iam-btn-primary" type="submit" form="orgadmins-grant-form" disabled={grantSaving || grantScopeStuck || (grantForm.role === 'project_admin' && !grantForm.scope_id)}>{grantSaving ? 'Saving…' : 'Save'}</button></>}
+    >
+      <form id="orgadmins-grant-form" onSubmit={handleGrant} className="space-y-4">
+        {grantError && <p className="text-sm text-destructive">{grantError}</p>}
+        <div className="space-y-2">
+          <label className="iam-label" htmlFor="org-grant-role">Role</label>
+          <select className="iam-select" id="org-grant-role" value={grantForm.role} onChange={e => (v => setGrantForm(f => ({ ...f, role: v })))(e.target.value)}>
+            <option value="org_admin">Org Admin</option>
+            <option value="project_admin">Project Admin</option>
+          </select>
+        </div>
+        {grantForm.role === 'project_admin' && (
+          <div className="space-y-2">
+            <label className="iam-label" htmlFor="org-grant-scope">Project scope</label>
+            <select className="iam-select" id="org-grant-scope" value={grantForm.scope_id} onChange={e => (v => setGrantForm(f => ({ ...f, scope_id: v })))(e.target.value)}>
+              <option value="" disabled>Select a project…</option>
+              {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+        )}
+        {grantScopeStuck && (
+          <p className="text-sm text-destructive">
+            This grant is tied to a project and the server cannot untie it. Revoke it and assign a
+            new one instead.
+          </p>
+        )}
+      </form>
     </IamDialog>
 
       <EditUserDialog

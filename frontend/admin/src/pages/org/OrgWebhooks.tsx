@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { IamChip, IamDialog } from '@/components/iam';
-import { listWebhooks, createWebhook, updateWebhook, deleteWebhook, testWebhook, listWebhookDeliveries } from '@/api';
+import { listWebhooks, createWebhook, getWebhook, updateWebhook, deleteWebhook, testWebhook, rotateWebhookSecret, listWebhookDeliveries } from '@/api';
 import PageHeader from '@/components/layout/PageHeader';
 import { useOrgContext } from '@/hooks/useOrgContext';
 import { fmtDate } from '@/lib/utils';
@@ -13,6 +13,12 @@ interface Webhook {
 interface Delivery {
   id: string; event: string; status_code: number | null;
   attempt_count: number; delivered_at: string | null; payload?: string | null;
+  error_message?: string | null;
+}
+
+/** Ce que `GET /org/webhooks/{id}` ajoute à la ligne du tableau : l'URL et les événements entiers. */
+interface WebhookDetail extends Webhook {
+  recent_deliveries?: Delivery[];
 }
 
 const EVENT_GROUPS: { label: string; events: string[] }[] = [
@@ -44,6 +50,11 @@ export default function OrgWebhooks() {
   const [deliveriesLoading, setDeliveriesLoading] = useState(false);
   const [expandedDelivery, setExpandedDelivery] = useState<string | null>(null);
   const [testMsg, setTestMsg] = useState<{ id: string; ok: boolean; text: string } | null>(null);
+  const [rotateTarget, setRotateTarget] = useState<Webhook | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detail, setDetail] = useState<WebhookDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState('');
 
   const load = () => {
     // /org/webhooks is scoped by the caller's own token, and there is no admin-scope equivalent —
@@ -94,12 +105,48 @@ export default function OrgWebhooks() {
     setWebhooks(ws => ws.filter(w => w.id !== id));
   };
 
+  /**
+   * Refrappe le secret et le montre. La boîte est celle de la création : le serveur renvoie le
+   * secret en clair une seule fois dans les deux cas, et rien ne peut le relire ensuite.
+   *
+   * Le message d'échec de création disait déjà « rotate the secret manually » — la route existait,
+   * la console n'avait aucun bouton pour l'appeler.
+   */
+  const handleRotateSecret = async (id: string) => {
+    setRotateTarget(null);
+    try {
+      const res = await rotateWebhookSecret(id);
+      if (!res.secret) {
+        setTestMsg({ id, ok: false, text: 'The server rotated the secret but did not return it. Rotate again.' });
+        setTimeout(() => setTestMsg(null), 4000);
+        return;
+      }
+      setNewSecret(res.secret);
+      setSecretOpen(true);
+    } catch {
+      setTestMsg({ id, ok: false, text: 'Failed to rotate the signing secret.' });
+      setTimeout(() => setTestMsg(null), 4000);
+    }
+  };
+
   const handleTest = async (id: string) => {
     setTestMsg(null);
     const res = await testWebhook(id);
     if (res.error) setTestMsg({ id, ok: false, text: `Test failed: ${res.error}` });
     else setTestMsg({ id, ok: true, text: 'Test payload sent.' });
     setTimeout(() => setTestMsg(null), 4000);
+  };
+
+  /**
+   * Le détail complet. Le tableau tronque l'URL et n'affiche que trois événements sur N ; cette
+   * route rend les deux entiers, plus les dix dernières livraisons. Elle n'avait aucun appelant.
+   */
+  const openDetail = (id: string) => {
+    setDetailOpen(true); setDetail(null); setDetailError(''); setDetailLoading(true);
+    getWebhook(id)
+      .then(setDetail)
+      .catch(() => setDetailError('Could not read this webhook.'))
+      .finally(() => setDetailLoading(false));
   };
 
   const openDeliveries = (id: string) => {
@@ -192,7 +239,9 @@ export default function OrgWebhooks() {
                         <span style={{ fontSize: 11, marginRight: 8, color: testMsg.ok ? 'var(--success)' : 'var(--danger)' }}>{testMsg.text}</span>
                       )}
                       <WebhookMenu
+                        onDetails={() => openDetail(wh.id)}
                         onTest={() => handleTest(wh.id)}
+                        onRotate={() => setRotateTarget(wh)}
                         onDeliveries={() => openDeliveries(wh.id)}
                         onDelete={() => handleDelete(wh.id)}
                       />
@@ -258,6 +307,21 @@ export default function OrgWebhooks() {
       </IamDialog>
 
       <IamDialog
+        open={!!rotateTarget}
+        onClose={() => setRotateTarget(null)}
+        title="Rotate this webhook's signing secret?"
+        desc="The current secret stops being valid immediately. Every receiver verifying signatures with it will reject deliveries until you install the new one."
+        footer={
+          <>
+            <button className="iam-btn iam-btn-ghost" onClick={() => setRotateTarget(null)}>Cancel</button>
+            <button className="iam-btn iam-btn-danger" onClick={() => rotateTarget && handleRotateSecret(rotateTarget.id)}>Rotate</button>
+          </>
+        }
+      >
+        <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', wordBreak: 'break-all' }}>{rotateTarget?.url}</div>
+      </IamDialog>
+
+      <IamDialog
         open={secretOpen}
         onClose={() => setSecretOpen(false)}
         title="Webhook Secret"
@@ -272,6 +336,66 @@ export default function OrgWebhooks() {
         <div style={{ padding: 14, background: 'var(--bg-sunken)', border: '1px solid var(--border)', borderRadius: 8, fontFamily: 'var(--font-mono)', fontSize: 12, wordBreak: 'break-all' }}>
           {newSecret}
         </div>
+      </IamDialog>
+
+      <IamDialog
+        open={detailOpen}
+        onClose={() => setDetailOpen(false)}
+        title="Webhook Details"
+        desc="The full endpoint and every event it is subscribed to."
+        wide
+        footer={<button className="iam-btn iam-btn-ghost" onClick={() => setDetailOpen(false)}>Close</button>}
+      >
+        {(() => {
+          if (detailError) return <div style={{ padding: '8px 12px', background: 'var(--danger-soft)', color: 'var(--danger)', borderRadius: 6, fontSize: 13 }}>{detailError}</div>;
+          if (detailLoading || !detail) return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {Array.from({ length: 3 }, (_, i) => <div key={i} style={{ height: 32, background: 'var(--surface-2)', borderRadius: 6 }} />)}
+            </div>
+          );
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, fontSize: 13 }}>
+              <div>
+                <span className="iam-label" style={{ display: 'block', marginBottom: 4 }}>URL</span>
+                <span className="iam-mono" style={{ wordBreak: 'break-all', fontSize: 12 }}>{detail.url}</span>
+              </div>
+              <div>
+                <span className="iam-label" style={{ display: 'block', marginBottom: 6 }}>Events ({detail.events.length})</span>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {detail.events.map(e => <span key={e} className="iam-chip iam-chip-mono" style={{ fontSize: 10 }}>{e}</span>)}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 20 }}>
+                <div>
+                  <span className="iam-label" style={{ display: 'block', marginBottom: 4 }}>Status</span>
+                  <IamChip tone={detail.active ? 'success' : 'default'}>{detail.active ? 'Active' : 'Paused'}</IamChip>
+                </div>
+                <div>
+                  <span className="iam-label" style={{ display: 'block', marginBottom: 4 }}>Created</span>
+                  <span style={{ color: 'var(--fg-muted)', fontSize: 12 }}>{fmtDate(detail.created_at)}</span>
+                </div>
+              </div>
+              <div>
+                <span className="iam-label" style={{ display: 'block', marginBottom: 6 }}>Recent deliveries</span>
+                {(detail.recent_deliveries ?? []).length === 0
+                  ? <span style={{ color: 'var(--fg-muted)', fontSize: 12 }}>No deliveries yet.</span>
+                  : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {(detail.recent_deliveries ?? []).map(d => (
+                        <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
+                          <span className="iam-mono" style={{ flex: 1 }}>{d.event}</span>
+                          {d.status_code == null
+                            ? <IamChip tone="default">pending</IamChip>
+                            : <IamChip tone={d.status_code >= 200 && d.status_code < 300 ? 'success' : 'danger'}>{d.status_code}</IamChip>}
+                          <span style={{ color: 'var(--fg-muted)', fontSize: 11 }}>{d.delivered_at ? fmtDate(d.delivered_at) : '—'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+              </div>
+            </div>
+          );
+        })()}
       </IamDialog>
 
       <IamDialog
@@ -324,7 +448,7 @@ export default function OrgWebhooks() {
   );
 }
 
-function WebhookMenu({ onTest, onDeliveries, onDelete }: Readonly<{ onTest: () => void; onDeliveries: () => void; onDelete: () => void; }>) {
+function WebhookMenu({ onDetails, onTest, onDeliveries, onRotate, onDelete }: Readonly<{ onDetails: () => void; onTest: () => void; onDeliveries: () => void; onRotate: () => void; onDelete: () => void; }>) {
   const [open, setOpen] = useState(false);
 
   // On the document, not on the scrim below — see the same note in system/Organisations.tsx.
@@ -344,8 +468,10 @@ function WebhookMenu({ onTest, onDeliveries, onDelete }: Readonly<{ onTest: () =
         <>
           <div role="none" style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} />
           <div style={{ position: 'absolute', right: 0, top: '100%', zIndex: 50, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: 'var(--shadow-md)', minWidth: 140, padding: 4 }}>
+            <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }} onClick={() => { setOpen(false); onDetails(); }}>View details</button>
             <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }} onClick={() => { setOpen(false); onTest(); }}>Test</button>
             <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }} onClick={() => { setOpen(false); onDeliveries(); }}>View deliveries</button>
+            <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13 }} onClick={() => { setOpen(false); onRotate(); }}>Rotate secret</button>
             <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
             <button className="iam-btn iam-btn-ghost" style={{ width: '100%', justifyContent: 'flex-start', padding: '6px 10px', fontSize: 13, color: 'var(--danger)' }} onClick={() => { setOpen(false); onDelete(); }}>Delete</button>
           </div>
