@@ -7,6 +7,7 @@ import {
   listSamlProviders, createSamlProvider, updateSamlProvider, deleteSamlProvider,
   orgListSamlProviders, orgCreateSamlProvider, orgUpdateSamlProvider, orgDeleteSamlProvider,
 } from '@/api';
+import { getIssuerUrl } from '@/auth';
 import PageHeader from '@/components/layout/PageHeader';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -519,7 +520,21 @@ export default function Authentication() {
   };
   const removeScope = (s: string) => setCustomScopes(prev => prev.filter(x => x !== s));
 
-  const spMetadataUrl = `${globalThis.location.origin}/admin/projects/${projectId}/saml/metadata`;
+  /**
+   * L'URL de métadonnées SP, telle que le serveur la sert réellement.
+   *
+   * La page annonçait `${location.origin}/admin/projects/{id}/saml/metadata` sous « donnez ceci à
+   * votre IdP ». Ce chemin n'existe dans aucun contrôleur : le seul point est
+   * `GET /auth/saml/metadata` (SamlController), anonyme, et son `entityID` comme son ACS sont
+   * construits sur `PublicUrl` — **une métadonnée pour tout le déploiement, pas une par projet**.
+   * Un opérateur qui suivait l'instruction configurait son IdP sur un 404.
+   *
+   * `location.origin` est faux deux fois : la console vit sur l'hôte d'administration, le SP sur
+   * l'hôte public. La valeur vient donc de `/console/config`, et tant qu'elle n'a pas répondu la
+   * page ne montre rien plutôt qu'une URL inventée.
+   */
+  const issuer = getIssuerUrl();
+  const spMetadataUrl = issuer ? `${issuer}/auth/saml/metadata` : '';
 
   /**
    * `samlForm.active` is deliberately not sent below: the create endpoint does not accept it and
@@ -809,11 +824,17 @@ export default function Authentication() {
                   </button>
                 </div>
                 <div className="iam-card iam-card-pad">
-                  <div style={{ fontSize: 11, color: 'var(--fg-muted)', marginBottom: 6 }}>SP Metadata URL — give this to your IdP</div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--surface-2)', borderRadius: 6, padding: '8px 12px' }}>
-                    <code className="iam-mono" style={{ fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{spMetadataUrl}</code>
-                    <CopyButton text={spMetadataUrl} />
+                  <div style={{ fontSize: 11, color: 'var(--fg-muted)', marginBottom: 6 }}>
+                    SP Metadata URL — give this to your IdP. One descriptor serves the whole deployment, not this project alone.
                   </div>
+                  {spMetadataUrl ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--surface-2)', borderRadius: 6, padding: '8px 12px' }}>
+                      <code className="iam-mono" style={{ fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{spMetadataUrl}</code>
+                      <CopyButton text={spMetadataUrl} />
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Reading the deployment&apos;s public address…</div>
+                  )}
                 </div>
                 {samlRowError && <div className="iam-alert iam-alert-danger">{samlRowError}</div>}
                 {samlProviders.length === 0 ? (

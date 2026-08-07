@@ -10,6 +10,7 @@ interface AdminConfig {
 
 let client: RediensIam | null = null;
 let serverVersion: string | null = null;
+let issuerUrl: string | null = null;
 let accessToken: string | null = null;
 /**
  * One-shot guard so concurrent 401 responses do not each fire a login redirect — the
@@ -39,6 +40,7 @@ async function getClient(): Promise<RediensIam> {
   const res = await fetch('/console/config');
   const cfg: AdminConfig = await res.json();
   serverVersion = cfg.version ?? null;
+  issuerUrl = cfg.hydra_url ?? null;
   try {
     const cfgOrigin = new URL(cfg.redirect_uri).origin;
     if (cfgOrigin !== globalThis.location.origin) {
@@ -71,6 +73,16 @@ export async function restoreSession(): Promise<void> {
  * a SPA built against one release and served by another would show the wrong one.
  */
 export function getServerVersion(): string | null { return serverVersion; }
+
+/**
+ * L'origine publique du déploiement — `PublicUrl` côté serveur, l'`issuer` que Hydra annonce.
+ *
+ * Ce n'est pas l'origine de cette console : la console vit sur l'hôte d'administration, le SP SAML
+ * sur l'hôte public. Construire une URL SAML à partir de `location.origin` donne un nom que rien
+ * ne sert. Null tant que `/console/config` n'a pas répondu, parce qu'inventer la valeur est
+ * exactement ce que ce correctif supprime.
+ */
+export function getIssuerUrl(): string | null { return issuerUrl; }
 
 export async function startLogin() {
   const c = await getClient();

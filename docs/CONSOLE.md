@@ -134,6 +134,11 @@ chiffrées sous elle.
   un administrateur d'organisation configure le SAML de son propre projet, ce que la console ne
   savait pas faire.
 
+L'**URL de métadonnées SP** affichée sur cette page est celle du déploiement entier
+(`{PublicUrl}/auth/saml/metadata`), pas une par projet : le serveur n'en sert qu'un descripteur, et
+sur l'hôte public — pas celui de la console. La page l'a longtemps annoncée sous un chemin par
+projet qui n'existait dans aucun contrôleur, et un IdP configuré dessus tombait sur un 404.
+
 Les **scopes OAuth2** du projet s'éditent dans **Settings**. `openid`, `profile` et
 `offline_access` sont implicites et ne se retirent pas ; les autres sont remplacés en bloc, et un
 nom que le serveur refuse est recopié tel qu'il l'a nommé.

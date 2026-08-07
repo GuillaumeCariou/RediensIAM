@@ -30,6 +30,14 @@ import * as api from '@/api';
 // chacun de ceux que cette page appelle, sans quoi l'espion laisserait passer le vrai appel.
 vi.mock('@/api', { spy: true });
 
+// L'origine publique du déploiement vient de /console/config, que ce test ne sert pas. La console
+// vit sur l'hôte d'administration et le SP SAML sur l'hôte public : les deux ne coïncident pas,
+// et c'est précisément ce que `location.origin` faisait croire.
+vi.mock('@/auth', async orig => ({
+  ...(await orig<typeof import('@/auth')>()),
+  getIssuerUrl: () => 'https://iam.example.test',
+}));
+
 // `isSuperAdmin` decides which scope's SAML routes the page calls, so it is part of the fixture.
 // It defaults to true here because the suite predates the org scope and asserts the `/admin` calls;
 // the org-scope tests set it to false explicitly.
@@ -445,13 +453,19 @@ describe('the SAML providers', () => {
     await tab(user, 'Providers');
   };
 
-  it('lists the ones already registered, and the URL to hand the IdP', async () => {
+  /**
+   * L'URL annoncée était `${location.origin}/admin/projects/{id}/saml/metadata`, un chemin qui
+   * n'existe dans aucun contrôleur — et ce test l'épinglait. Le seul point de métadonnées SP est
+   * `GET /auth/saml/metadata`, construit sur `PublicUrl` : **un descripteur pour tout le
+   * déploiement**, pas un par projet. Un opérateur qui suivait l'instruction configurait son IdP
+   * sur un 404.
+   */
+  it('lists the ones already registered, and the URL the server actually serves', async () => {
     const user = show();
     await providers(user);
 
     expect(screen.getByText('https://saml-idp.test')).toBeInTheDocument();
-    expect(screen.getByText(`${globalThis.location.origin}/admin/projects/p1/saml/metadata`))
-      .toBeInTheDocument();
+    expect(screen.getByText('https://iam.example.test/auth/saml/metadata')).toBeInTheDocument();
   });
 
   it('accepts a bare array as well as an envelope', async () => {
@@ -1283,10 +1297,10 @@ describe('the rest of the provider fields', () => {
     const user = show();
     await providers(user);
 
-    await user.click(screen.getByText(`${globalThis.location.origin}/admin/projects/p1/saml/metadata`)
+    await user.click(screen.getByText('https://iam.example.test/auth/saml/metadata')
       .parentElement!.querySelector<HTMLButtonElement>('button')!);
 
-    expect(writeText).toHaveBeenCalledWith(`${globalThis.location.origin}/admin/projects/p1/saml/metadata`);
+    expect(writeText).toHaveBeenCalledWith('https://iam.example.test/auth/saml/metadata');
     vi.restoreAllMocks();
   });
 });
