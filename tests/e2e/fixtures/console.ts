@@ -78,6 +78,27 @@ export async function gotoConsole(page: Page, path: string): Promise<void> {
 }
 
 /**
+ * Signs the browser in as someone other than the bootstrap administrator.
+ *
+ * The boundary tests need identities that are genuinely refused things, and the only way to hold
+ * one is to complete the real sign-in with it — a storageState captured for the super-admin proves
+ * nothing about what an organisation's own administrator may reach. Contexts using this must opt
+ * out of the project's stored state, or Hydra recognises the browser and skips the form.
+ */
+export async function signInAs(page: Page, email: string, password: string): Promise<void> {
+  await page.goto(`${CONSOLE_URL}/console/`);
+  await expect(shell(page).or(emailField(page))).toBeVisible({ timeout: 30_000 });
+
+  if (await emailField(page).isVisible()) {
+    await emailField(page).fill(email);
+    await page.getByRole('textbox', { name: /^password/i }).fill(password);
+    await page.getByRole('button', { name: /continue/i }).click();
+  }
+
+  await expect(shell(page)).toBeVisible({ timeout: 30_000 });
+}
+
+/**
  * The id of a seeded organisation, read from the URL its own tree node navigates to.
  *
  * Specs need real ids to build `/system/organisations/{id}/…` URLs, and the seed cannot supply

@@ -66,10 +66,26 @@ export const SEED = {
     acmeCustomers:{ org: 'acme',   name: 'Acme Customers' },
     globexStaff:  { org: 'globex', name: 'Globex Staff' },
   },
+  /** Ordinary members of a tenant. They sign in to a project; the console is not for them. */
   users: {
-    acmeAdmin:  { list: 'acmeStaff', email: 'admin@acme.test',  password: FIXTURE_PASSWORD },
-    acmeUser:   { list: 'acmeStaff', email: 'user@acme.test',   password: FIXTURE_PASSWORD },
-    acmeLocked: { list: 'acmeStaff', email: 'locked@acme.test', password: FIXTURE_PASSWORD },
+    acmeAdmin:  { list: 'acmeStaff', email: 'admin@acme.test',  password: FIXTURE_PASSWORD, org: 'acme' },
+    acmeUser:   { list: 'acmeStaff', email: 'user@acme.test',   password: FIXTURE_PASSWORD, org: 'acme' },
+    acmeLocked: { list: 'acmeStaff', email: 'locked@acme.test', password: FIXTURE_PASSWORD, org: 'acme' },
+  },
+
+  /**
+   * Console operators.
+   *
+   * In the SYSTEM list, and that is not a detail: `AdminLogin` admits only accounts whose user list
+   * is the immovable one with no organisation. A tenant's administrator is therefore a deployment
+   * account holding an `OrgRole` over that tenant — the role scopes what they see, membership of
+   * the tenant's own list would not let them in at all. PLAN §12 is a matrix of refusals, and a
+   * refusal cannot be asserted without an identity that is genuinely refused.
+   */
+  operators: {
+    acmeOrgAdmin:     { email: 'acme-admin@console.test',   password: FIXTURE_PASSWORD, org: 'acme',   role: 'org_admin' },
+    acmeProjectAdmin: { email: 'acme-project@console.test', password: FIXTURE_PASSWORD, org: 'acme',   role: 'project_admin', project: 'acmePortal' },
+    globexOrgAdmin:   { email: 'globex-admin@console.test', password: FIXTURE_PASSWORD, org: 'globex', role: 'org_admin' },
   },
   serviceAccounts: {
     deploymentBot: { level: 'deployment', name: 'deployment-bot' },
@@ -226,9 +242,10 @@ async function main() {
       () => api('POST', '/admin/organizations', { name: spec.name, slug: spec.slug }));
   }
 
-  for (const spec of Object.values(SEED.projects)) {
+  const projects = {};
+  for (const [key, spec] of Object.entries(SEED.projects)) {
     const org = orgs[spec.org];
-    await ensure(`project ${spec.name}`,
+    projects[key] = await ensure(`project ${spec.name}`,
       async () => (await api('GET', `/admin/organizations/${org.id}/projects`)).find(p => p.slug === spec.slug),
       () => api('POST', `/admin/organizations/${org.id}/projects`, {
         name: spec.name, slug: spec.slug,
@@ -244,16 +261,44 @@ async function main() {
       () => api('POST', '/admin/userlists', { name: spec.name, org_id: org.id }));
   }
 
-  for (const spec of Object.values(SEED.users)) {
+  const users = {};
+  for (const [key, spec] of Object.entries(SEED.users)) {
     const list = lists[spec.list];
-    await ensure(`user ${spec.email}`,
+    users[key] = await ensure(`user ${spec.email}`,
       async () => (await api('GET', `/admin/userlists/${list.id}/users`)).find(u => u.email === spec.email),
+      // org_id so the token these accounts get names their own tenant. Without it the organisation
+      // would come from the project, which is the historical behaviour and the wrong answer on a
+      // list several tenants could share.
       () => api('POST', `/admin/userlists/${list.id}/users`, {
         email: spec.email, password: spec.password, username: spec.email.split('@')[0],
+        org_id: orgs[spec.org].id,
       }));
   }
 
   const systemList = (await api('GET', '/admin/userlists')).find(l => l.org_id == null && l.immovable);
+
+  // The console operators, in the system list, then their grants. The grants come last because a
+  // project_admin is scoped to a project that has to exist — and they go through the same API a
+  // console operator uses, so the Keto tuple behind each one is written by the code under test
+  // rather than around it.
+  for (const spec of Object.values(SEED.operators)) {
+    const operator = await ensure(`operator ${spec.email}`,
+      async () => (await api('GET', `/admin/userlists/${systemList.id}/users`)).find(u => u.email === spec.email),
+      () => api('POST', `/admin/userlists/${systemList.id}/users`, {
+        email: spec.email, password: spec.password, username: spec.email.split('@')[0],
+      }));
+
+    const org = orgs[spec.org];
+    const scopeId = spec.project ? projects[spec.project].id : null;
+    const held = (await api('GET', `/admin/organizations/${org.id}/admins`))
+      .some(a => a.user_id === operator.id && a.role === spec.role);
+    if (held) { console.log(`  = ${spec.role} ${spec.email}`); continue; }
+    await api('POST', `/admin/organizations/${org.id}/admins`, {
+      user_id: operator.id, role: spec.role, scope_id: scopeId,
+    });
+    console.log(`  + ${spec.role} ${spec.email}`);
+  }
+
   for (const spec of Object.values(SEED.serviceAccounts)) {
     const listId = spec.level === 'deployment' ? systemList.id : lists[spec.list].id;
     await ensure(`service account ${spec.name}`,

@@ -170,7 +170,21 @@ The only area where the browser is not a convenience but the subject.
 
 ## 12 · Authorisation boundaries (≈40)
 
-The refusals. Each one is a page a role must not reach, asserted by going there:
+**Written, and two thirds of it blocked.** `boundaries.spec.ts` holds the whole section; the
+role-scoped half is `fixme` with the reason, because the console cannot currently hold a
+non-super-admin operator:
+
+- `AdminLogin` admits only accounts in the immovable system user list.
+- Membership of that same list *is* `System:rediensiam#super_admin`.
+
+So everyone who can sign in to the console is a super-admin, and the entire `org_admin` /
+`project_admin` surface — `OwnLevel` in the tree, the `superOnly` destinations, the two URL shapes
+per level, `ConsentForAdminAsync`'s `insufficient_role` — is unreachable. The code was plainly
+written for the other reading; which of the two rules gives is a decision about who may administer
+a deployment. The tests stay written and skipped until it is made.
+
+What runs today: the host boundary and the signed-out redirect. The refusals, asserted by going
+there:
 
 - An org admin opening a deployment URL lands back on their own home, not on a blank page.
 - A project admin opening an organisation URL, same.
