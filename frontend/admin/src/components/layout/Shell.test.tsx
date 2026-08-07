@@ -13,6 +13,8 @@ vi.mock('@/api', () => ({
   getMfaStatus: vi.fn(), listWebAuthnCredentials: vi.fn(),
   // Reached through the sidebar's tree.
   listOrgs: vi.fn().mockResolvedValue([]), listProjects: vi.fn().mockResolvedValue([]),
+  // Reached through the topbar, which resolves the ids in the URL into breadcrumb names.
+  getOrg: vi.fn().mockResolvedValue({}), getProjectInfo: vi.fn().mockResolvedValue({}),
 }));
 
 const show = () => {

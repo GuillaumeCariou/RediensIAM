@@ -150,6 +150,17 @@ export function scopeFromPath(pathname: string): Scope {
  * a prefix of everything.
  */
 export function activeKey(scope: Scope, pathname: string): string | null {
+  // A path belongs to exactly one level, and only that level may light a row for it.
+  //
+  // Without this, `/system/organisations/{id}/userlists` prefix-matches the DEPLOYMENT's
+  // `organisations` destination as well as the tenant's `userlists`, and the tree lit both — three
+  // rows once a project was open. A tree that says you are in two places says nothing, and it is
+  // the same defect as a breadcrumb disagreeing with the tree, one component over.
+  const here = scopeFromPath(pathname);
+  if (here.level !== scope.level || here.orgId !== scope.orgId || here.projectId !== scope.projectId) {
+    return null;
+  }
+
   const candidates = DESTINATIONS[scope.level]
     .map(d => ({ key: d.key, href: hrefFor(scope, d.key) }))
     .sort((a, b) => b.href.length - a.href.length);
