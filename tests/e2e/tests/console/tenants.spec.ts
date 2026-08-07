@@ -58,12 +58,14 @@ test.describe('organisations', () => {
     await page.getByRole('dialog').getByRole('button', { name: /Create|Save/i }).click();
     await expect(page.getByText(name).first()).toBeVisible({ timeout: 15_000 });
 
-    await page.getByRole('row', { name: new RegExp(name) })
-      .getByRole('button', { name: /suspend/i }).click();
+    // Row actions live behind a per-row menu, named for the tenant it acts on.
+    await page.getByRole('button', { name: `Actions for ${name}` }).click();
+    await page.getByRole('button', { name: 'Suspend', exact: true }).click();
 
-    // Suspension revokes every live session of the tenant, so it asks before it acts.
+    // Suspension revokes every live session of the tenant — its own administrators are signed out
+    // mid-task — so it asks before it acts, the way Delete does.
     await expect(page.getByRole('dialog')).toBeVisible();
-    await page.getByRole('dialog').getByRole('button', { name: /suspend/i }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Suspend', exact: true }).click();
 
     await expect(page.getByRole('row', { name: new RegExp(name) })).toContainText(/suspended|inactive/i);
   });
@@ -80,15 +82,28 @@ test.describe('projects', () => {
     await page.getByRole('dialog').getByRole('button', { name: /Create|Save/i }).click();
     await expect(page.getByText(org).first()).toBeVisible({ timeout: 15_000 });
 
-    await page.getByRole('link', { name: new RegExp(org) }).first().click();
-    await shell(page).getByRole('link', { name: /^Projects$/ }).first().click();
+    // Through the tree, and through the tenant's own Projects rather than the deployment's: both
+    // rows carry the label, and the deployment-wide list offers no way to create one because a
+    // project belongs to an organisation.
+    const tree = shell(page).getByRole('tree', { name: 'Console navigation' });
+    await tree.getByRole('button', { name: 'Collapse Deployment' }).click();
+    await tree.getByRole('button', { name: `Expand ${org}` }).click();
+    await tree.getByRole('link', { name: 'Projects', exact: true }).click();
 
     const project = unique('portal');
     await openDialog(page, /New project|Create project/i);
-    await page.getByLabel(/^Name/i).fill(project);
-    const pslug = page.getByLabel(/Slug/i);
-    if (await pslug.isVisible()) await pslug.fill(project);
-    await page.getByRole('dialog').getByRole('button', { name: /Create|Save/i }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel(/^Name/i).fill(project);
+    await dialog.getByLabel(/^Slug/i).fill(project);
+    // A redirect URI, because a project is an OIDC client and one with nowhere to send the browser
+    // back to is refused. The form does not mark the field required, so leaving it empty fails on
+    // the server and the dialog stays open carrying the reason.
+    await dialog.getByLabel('Redirect URIs (one per line)', { exact: true }).fill('https://portal.example.test/callback');
+    await dialog.getByRole('button', { name: /Create|Save/i }).click();
+
+    // The dialog closing is the first proof: it stays open and shows the reason when the server
+    // refuses, so asserting only on the row below would time out without saying why.
+    await expect(dialog).toBeHidden({ timeout: 15_000 });
 
     // Creation rolls back when Hydra is unreachable, so a visible row is also proof the OAuth2
     // client was registered — the one part no unit test can stand in for.

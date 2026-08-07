@@ -105,6 +105,24 @@ export async function createProject(body: {
 }) {
   return (await apiFetch('/org/projects', { method: 'POST', body: JSON.stringify(body) })).json();
 }
+/**
+ * The same action on the system surface, where the organisation comes from the URL.
+ *
+ * `/org/projects` reads the tenant from the CALLER's token, and a super-admin's token names none —
+ * so a super-admin creating a project inside a tenant sent `org_id` in a body nobody read, the
+ * insert went in with an empty organisation, and the foreign key answered with a 500. The console
+ * already draws this distinction for user lists (`createSystemUserList`); projects never got it.
+ */
+export async function createSystemProject(orgId: string, body: {
+  name: string; slug: string;
+  require_role_to_login?: boolean;
+  redirect_uris: string[];
+  post_logout_redirect_uris?: string[];
+}) {
+  return (await apiFetch(`/admin/organizations/${orgId}/projects`, {
+    method: 'POST', body: JSON.stringify(body),
+  })).json();
+}
 export async function getProjectInfo(projectId: string) {
   return (await apiFetch(`/project/info?project_id=${projectId}`)).json();
 }

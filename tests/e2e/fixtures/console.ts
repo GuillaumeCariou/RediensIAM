@@ -77,6 +77,21 @@ export async function gotoConsole(page: Page, path: string): Promise<void> {
   await expect(shell(page)).toBeVisible({ timeout: 30_000 });
 }
 
+/**
+ * The id of a seeded organisation, read from the URL its own tree node navigates to.
+ *
+ * Specs need real ids to build `/system/organisations/{id}/…` URLs, and the seed cannot supply
+ * them: it creates objects by name through the API, and the ids are whatever Postgres generated.
+ * Asking the console is also the only way that stays true if the fixture is rebuilt.
+ */
+export async function orgIdFor(page: Page, name: string): Promise<string> {
+  await gotoConsole(page, '/console/system/organisations');
+  await shell(page).getByRole('tree', { name: 'Console navigation' })
+    .getByRole('link', { name, exact: true }).click();
+  await page.waitForURL(/\/console\/system\/organisations\/[0-9a-f-]{36}/i, { timeout: 20_000 });
+  return /organisations\/([0-9a-f-]{36})/i.exec(page.url())![1];
+}
+
 export const test = base.extend<{ console: Page }>({
   console: async ({ page }, use) => {
     await signIn(page);

@@ -33,7 +33,11 @@ function MoreMenu({ org, onSuspend, onDelete }: Readonly<{
 
   return (
     <div style={{ position: 'relative' }}>
+      {/* Named: the button's whole content is an SVG, so without this a screen reader announces
+          "button" and nothing else, and there is one per row. */}
       <button className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm"
+        aria-label={`Actions for ${org.name}`}
+        aria-expanded={open}
         onClick={e => { e.stopPropagation(); setOpen(o => !o); }}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
       </button>
@@ -64,6 +68,7 @@ export default function Organisations() {
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Org | null>(null);
+  const [suspendTarget, setSuspendTarget] = useState<Org | null>(null);
   const [form, setForm] = useState({ name: '', slug: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -91,8 +96,27 @@ export default function Organisations() {
     finally { setSaving(false); }
   };
 
+  /**
+   * Suspension is confirmed, unsuspension is not.
+   *
+   * Suspending revokes every live session of the tenant — its own administrator is signed out
+   * mid-task and cannot sign back in. That is a destructive act on other people's work, and it
+   * used to happen on one click of a menu item, while Delete two rows below asked. Unsuspending
+   * takes nothing away, so it stays immediate.
+   */
   const handleSuspend = async (org: Org) => {
-    await (org.suspended_at ? unsuspendOrg(org.id) : suspendOrg(org.id));
+    if (org.suspended_at) {
+      await unsuspendOrg(org.id);
+      load();
+      return;
+    }
+    setSuspendTarget(org);
+  };
+
+  const confirmSuspend = async () => {
+    if (!suspendTarget) return;
+    await suspendOrg(suspendTarget.id);
+    setSuspendTarget(null);
     load();
   };
 
@@ -216,6 +240,23 @@ export default function Organisations() {
             <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 4 }}>Lowercase letters, numbers and hyphens only.</div>
           </div>
         </form>
+      </IamDialog>
+
+      <IamDialog
+        open={!!suspendTarget}
+        onClose={() => setSuspendTarget(null)}
+        title={`Suspend ${suspendTarget?.name}?`}
+        desc="Every live session of this tenant is revoked immediately, including its own administrators'. They cannot sign in again until it is unsuspended."
+        footer={
+          <>
+            <button className="iam-btn iam-btn-ghost" onClick={() => setSuspendTarget(null)}>Cancel</button>
+            <button className="iam-btn iam-btn-danger" onClick={confirmSuspend}>Suspend</button>
+          </>
+        }
+      >
+        <div style={{ padding: '4px 0', fontSize: 13, color: 'var(--fg-muted)' }}>
+          Organisation: <strong style={{ color: 'var(--fg)' }}>{suspendTarget?.name}</strong>
+        </div>
       </IamDialog>
 
       <IamDialog

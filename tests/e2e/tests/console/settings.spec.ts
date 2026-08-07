@@ -1,14 +1,18 @@
 import { test, expect } from '../../fixtures/console';
-import { gotoConsole, shell } from '../../fixtures/console';
+import { gotoConsole, orgIdFor, shell } from '../../fixtures/console';
+import { SEED } from '../../seed-dev.mjs';
 
 /**
- * Deployment settings, user lists, and the two navigation surfaces.
+ * Deployment settings and user lists.
  *
  * The settings page is the one place in the console where an end-to-end test can prove something a
  * component test structurally cannot: that a value typed into a form is still there after a
  * reload. The instance row is a configuration provider, and until 0.7.0 re-reading the environment
  * overwrote whatever the console had written — a control that did not hold. Only a real round trip
  * against a real row can tell the difference.
+ *
+ * The navigation tests this file used to carry now live in navigation.spec.ts, which covers PLAN
+ * §11 properly — three assertions about the tree and the palette were a thin copy of twenty-one.
  */
 
 const unique = (prefix: string) => `${prefix}-${Date.now().toString(36)}`;
@@ -58,14 +62,22 @@ test.describe('deployment settings', () => {
 });
 
 test.describe('user lists', () => {
-  test('a list created at deployment level appears and can be opened', async ({ console: page }) => {
-    await gotoConsole(page, '/console/system/userlists');
+  test('a list created inside a tenant appears on the deployment-wide index', async ({ console: page }) => {
+    // Created where creation lives. The deployment page offers no button on purpose — a user list
+    // belongs to an organisation, and `/system/userlists` is an index across every tenant, not a
+    // place to make one. What is worth an end-to-end test is that the two views agree: a list made
+    // inside Acme has to turn up in the list of all lists.
+    const acme = await orgIdFor(page, SEED.orgs.acme.name);
+    await gotoConsole(page, `/console/system/organisations/${acme}/userlists`);
 
     const name = unique('list');
-    await page.getByRole('button', { name: /New user list|Create list/i }).first().click();
+    await page.getByRole('button', { name: /New user list/i }).first().click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await page.getByLabel(/^Name/i).fill(name);
     await page.getByRole('dialog').getByRole('button', { name: /Create|Save/i }).click();
+    await expect(page.getByText(name).first()).toBeVisible({ timeout: 15_000 });
+
+    await gotoConsole(page, '/console/system/userlists');
 
     await expect(page.getByText(name).first()).toBeVisible({ timeout: 15_000 });
     await page.getByText(name).first().click();
@@ -73,40 +85,6 @@ test.describe('user lists', () => {
   });
 });
 
-test.describe('the navigation', () => {
-  test('the tree filter narrows to what matches', async ({ console: page }) => {
-    await gotoConsole(page, '/console/system');
-
-    const filter = shell(page).getByRole('textbox', { name: /Filter the tree/i });
-    await expect(filter).toBeVisible();
-    await filter.fill('impersonation');
-
-    await expect(shell(page).getByRole('link', { name: 'Impersonation' })).toBeVisible();
-    await expect(shell(page).getByRole('link', { name: 'Metrics' })).toHaveCount(0);
-  });
-
-  test('the tree opens a tenant onto its own destinations', async ({ console: page }) => {
-    await gotoConsole(page, '/console/system');
-
-    const expander = shell(page).getByRole('button', { name: /^Expand / }).nth(1);
-    test.skip(!(await expander.isVisible()), 'this deployment has no tenant to expand yet');
-    await expander.click();
-
-    await expect(shell(page).getByRole('link', { name: 'Webhooks' })).toBeVisible();
-  });
-
-  /** The palette is the shortcut over the tree; both are built from the same destination list. */
-  test('the command palette navigates', async ({ console: page }) => {
-    await gotoConsole(page, '/console/system');
-
-    await page.keyboard.press('Control+k');
-    await expect(page.getByRole('dialog')).toBeVisible();
-    await page.keyboard.type('audit');
-    await page.keyboard.press('Enter');
-
-    await expect(page).toHaveURL(/audit-log/);
-  });
-});
 
 test.describe('impersonation', () => {
   test('the page lists live sessions, and offers no way to open one', async ({ console: page }) => {

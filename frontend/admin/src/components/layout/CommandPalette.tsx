@@ -135,7 +135,11 @@ export default function CommandPalette({ onClose }: Readonly<CommandPaletteProps
                 tabIndex={-1}
                 className={`iam-cmdk-item${index === sel ? ' selected' : ''}`}
                 onClick={() => run(c)}
-                onMouseEnter={() => setSel(index)}
+                // Move, not enter. The list re-renders on every keystroke and on every arrow, and
+                // `mouseenter` fires whenever a row lands under a pointer that has not moved — so
+                // an operator typing with their hand still on the mouse had the row under the
+                // cursor silently take the selection back from the keyboard.
+                onMouseMove={() => setSel(index)}
               >
                 {ICONS[c.kind]}
                 <span>{c.label}</span>

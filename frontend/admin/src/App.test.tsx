@@ -28,6 +28,8 @@ const auth = vi.hoisted(() => ({
   // api.ts imports this, and the sidebar's tree pulls api.ts into the graph. A mock that omits it
   // fails the whole file at import time, before a single assertion runs.
   apiFetch: vi.fn(async () => new Response('[]', { headers: { 'content-type': 'application/json' } })),
+  // Same reason: the tree listens for it, so its absence fails the import rather than a test.
+  MUTATION_EVENT: 'rediensiam:mutated',
 }));
 vi.mock('./auth', () => auth);
 vi.mock('@/auth', () => auth);

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { userEvent } from 'vitest/browser';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import Organisations from './Organisations';
@@ -201,15 +201,40 @@ describe('the row menu', () => {
     expect(screen.getByRole('button', { name: 'Unsuspend' })).toBeInTheDocument();
   });
 
-  it('suspends, then reloads so the status is the server\'s and not a guess', async () => {
+  it('asks before suspending, because it signs the tenant out', async () => {
     const user = show();
     await screen.findByText('Acme Corp');
     await openMenu(user, 'Acme Corp');
 
     await user.click(screen.getByRole('button', { name: 'Suspend' }));
 
+    // The menu item opens the confirmation; it does not act. Suspending revokes every live session
+    // of the tenant, which is a destructive act on other people's work and used to take one click.
+    expect(api.suspendOrg).not.toHaveBeenCalled();
+    expect(await screen.findByRole('dialog')).toHaveTextContent('Suspend Acme Corp?');
+  });
+
+  it('suspends once confirmed, then reloads so the status is the server\'s and not a guess', async () => {
+    const user = show();
+    await screen.findByText('Acme Corp');
+    await openMenu(user, 'Acme Corp');
+    await user.click(screen.getByRole('button', { name: 'Suspend' }));
+
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Suspend' }));
+
     await vi.waitFor(() => expect(api.suspendOrg).toHaveBeenCalledWith('o1'));
     expect(api.listOrgs).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves the tenant alone when the confirmation is cancelled', async () => {
+    const user = show();
+    await screen.findByText('Acme Corp');
+    await openMenu(user, 'Acme Corp');
+    await user.click(screen.getByRole('button', { name: 'Suspend' }));
+
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+
+    expect(api.suspendOrg).not.toHaveBeenCalled();
   });
 
   it('unsuspends the one that is suspended', async () => {

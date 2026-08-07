@@ -19,7 +19,7 @@ const auth = vi.hoisted(() => ({
 vi.mock('@/context/AuthContext', () => ({ useAuth: () => auth }));
 
 const version = vi.hoisted(() => ({ get: vi.fn<() => string | null>(() => null) }));
-vi.mock('@/auth', () => ({ getServerVersion: () => version.get() }));
+vi.mock('@/auth', () => ({ getServerVersion: () => version.get(), MUTATION_EVENT: 'rediensiam:mutated' }));
 // The sidebar renders the tree, and the tree asks the server which tenants exist. Stubbed to
 // nothing here: what those calls produce is NavTree.test's subject, not this file's.
 vi.mock('@/api', () => ({ listOrgs: vi.fn().mockResolvedValue([]), listProjects: vi.fn().mockResolvedValue([]) }));

@@ -81,6 +81,12 @@ const ROUTES: readonly Route[] = [
   ['createProject', () => api.createProject({ org_id: 'o1', name: 'P', slug: 'p', redirect_uris: ['https://p.test/cb'] }),
     '/org/projects',
     { method: 'POST', body: json({ org_id: 'o1', name: 'P', slug: 'p', redirect_uris: ['https://p.test/cb'] }) }],
+  // Même raison que createSystemUserList ci-dessus : /org/projects lit le locataire dans le JETON
+  // de l'appelant, et un super-admin n'en porte aucun — l'insertion partait avec Guid.Empty et la
+  // clé étrangère répondait 500.
+  ['createSystemProject', () => api.createSystemProject('o1', { name: 'P', slug: 'p', redirect_uris: ['https://p.test/cb'] }),
+    '/admin/organizations/o1/projects',
+    { method: 'POST', body: json({ name: 'P', slug: 'p', redirect_uris: ['https://p.test/cb'] }) }],
   ['getProjectInfo', () => api.getProjectInfo('p1'), '/project/info?project_id=p1'],
   // PATCH goes to /project/info too — the project has no separate settings route.
   ['updateProject', () => api.updateProject('p1', { require_mfa: true }),

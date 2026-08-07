@@ -85,11 +85,19 @@ export default function Sidebar() {
   const version = getServerVersion();
   const userRef = useRef<HTMLDivElement>(null);
 
+  // Outside click and Escape both dismiss it. Escape was missing: every other transient surface in
+  // the console answers it — the command palette, the dialogs — and a popover that traps the
+  // keyboard user who opened it is the one place the pattern broke.
   useEffect(() => {
     if (!userOpen) return;
-    const h = (e: MouseEvent) => { if (!userRef.current?.contains(e.target as Node)) setUserOpen(false); };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
+    const onDown = (e: MouseEvent) => { if (!userRef.current?.contains(e.target as Node)) setUserOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setUserOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
   }, [userOpen]);
 
   return (

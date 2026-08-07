@@ -178,5 +178,18 @@ export async function apiFetch(path: string, opts: RequestInit = {}) {
     }
     throw new ApiError(res.status, body);
   }
+
+  // A write happened. Views that cache a list — the navigation tree is the only one today — have
+  // no other way to learn it: the operator creates a tenant on the Organisations page, the tree
+  // fetched its tenants once at mount, and the two disagree until a reload. Announced here, in the
+  // one funnel every request already passes through, rather than by asking each page that mutates
+  // something to remember to tell the sidebar. `setOrgName` is what that arrangement looks like
+  // after a while: fifteen call sites, none of them written.
+  if (opts.method && opts.method.toUpperCase() !== 'GET') {
+    globalThis.dispatchEvent(new CustomEvent(MUTATION_EVENT, { detail: { path } }));
+  }
   return res;
 }
+
+/** Fired on `globalThis` after any successful non-GET request. `detail.path` is the route written to. */
+export const MUTATION_EVENT = 'rediensiam:mutated';
