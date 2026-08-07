@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { userEvent } from 'vitest/browser';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import ProjectRoles from './ProjectRoles';
+import { ApiError } from '@/auth';
 import { fmtDate } from '@/lib/utils';
 
 /**
@@ -12,7 +13,8 @@ import { fmtDate } from '@/lib/utils';
  */
 
 const api = vi.hoisted(() => ({
-  listRoles: vi.fn(), createRole: vi.fn(), deleteRole: vi.fn(),
+  listRoles: vi.fn(), createRole: vi.fn(), updateRole: vi.fn(), deleteRole: vi.fn(),
+  adminListRoles: vi.fn(), adminCreateRole: vi.fn(), adminDeleteRole: vi.fn(),
   getProjectInfo: vi.fn(), updateProject: vi.fn(),
 }));
 vi.mock('@/api', () => api);
@@ -29,8 +31,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   auth.projectId = 'p1';
   api.listRoles.mockResolvedValue({ roles: ROLES });
+  api.adminListRoles.mockResolvedValue({ roles: ROLES });
   api.getProjectInfo.mockResolvedValue({ default_role_id: 'r2' });
 });
+
+/** Le même écran ouvert depuis /system/organisations/:oid/projects/:pid/roles. */
+const showSystem = () =>
+  show('/system/organisations/o9/projects/p9/roles',
+    '/system/organisations/:oid/projects/:pid/roles');
 
 function show(path = '/project/roles', pattern = '/project/roles') {
   const user = userEvent.setup();
@@ -296,5 +304,195 @@ describe('dismissing a dialog with Escape', () => {
 
     await vi.waitFor(() => expect(screen.queryByText('Delete role "admin"?')).toBeNull());
     expect(api.deleteRole).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `/project/roles?project_id=` répond au super admin, si bien que les trois routes système
+ * existaient sans appelant — et une porte sans appelant est ce qui a laissé les deux copies de la
+ * création de rôle diverger jusqu'à ce que l'une journalise l'audit sous une organisation nulle.
+ * Chaque appel part donc vers la portée d'où la page a été ouverte, et rien d'autre.
+ */
+describe('the scope each call goes to', () => {
+  it('reads the project route when opened from the project scope', async () => {
+    show();
+
+    await screen.findByText('admin');
+    expect(api.listRoles).toHaveBeenCalledWith('p1');
+    expect(api.adminListRoles).not.toHaveBeenCalled();
+  });
+
+  it('reads the system route, on the project in the path, when opened from the system scope', async () => {
+    showSystem();
+
+    await screen.findByText('admin');
+    expect(api.adminListRoles).toHaveBeenCalledWith('p9');
+    expect(api.listRoles).not.toHaveBeenCalled();
+  });
+
+  it('creates through the system route', async () => {
+    const user = showSystem();
+    await screen.findByText('admin');
+    await user.click(screen.getByRole('button', { name: /New Role/ }));
+
+    await user.fill(screen.getByLabelText('Name'), 'editor');
+    await user.click(submit());
+
+    await vi.waitFor(() => expect(api.adminCreateRole)
+      .toHaveBeenCalledWith('p9', { name: 'editor', description: undefined, rank: 100 }));
+    expect(api.createRole).not.toHaveBeenCalled();
+    expect(api.adminListRoles).toHaveBeenCalledTimes(2);
+  });
+
+  it('deletes through the system route', async () => {
+    const user = showSystem();
+    await screen.findByText('admin');
+    await user.click(rowFor('admin').querySelector('button')!);
+
+    await user.click(await screen.findByRole('button', { name: 'Delete' }));
+
+    await vi.waitFor(() => expect(api.adminDeleteRole).toHaveBeenCalledWith('p9', 'r1'));
+    expect(api.deleteRole).not.toHaveBeenCalled();
+    expect(api.adminListRoles).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('a refusal from either scope', () => {
+  const fillAndSubmit = async (user: ReturnType<typeof show>) => {
+    await user.click(screen.getByRole('button', { name: /New Role/ }));
+    await user.fill(screen.getByLabelText('Name'), 'super_admin');
+    await user.click(submit());
+  };
+
+  it('names the duplicate in the project scope', async () => {
+    api.createRole.mockRejectedValue(new ApiError(409, { error: 'role_name_exists' }));
+    const user = show();
+    await screen.findByText('admin');
+
+    await fillAndSubmit(user);
+
+    expect(await screen.findByText('This project already has a role with that name.')).toBeInTheDocument();
+  });
+
+  it('names the duplicate in the system scope too', async () => {
+    // La route système rendait 500 sur doublon avant d'être unifiée sur CreateRoleAsync ; elle
+    // rend le même 409 que la portée projet, donc la même phrase.
+    api.adminCreateRole.mockRejectedValue(new ApiError(409, { error: 'role_name_exists' }));
+    const user = showSystem();
+    await screen.findByText('admin');
+
+    await fillAndSubmit(user);
+
+    expect(await screen.findByText('This project already has a role with that name.')).toBeInTheDocument();
+  });
+
+  it('explains a reserved name, and leaves the form open to fix it', async () => {
+    api.adminCreateRole.mockRejectedValue(new ApiError(400, { error: 'role_name_reserved' }));
+    const user = showSystem();
+    await screen.findByText('admin');
+
+    await fillAndSubmit(user);
+
+    expect(await screen.findByText(/reserved for management roles/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Name')).toHaveValue('super_admin');
+    expect(submit()).toBeEnabled();
+  });
+
+  it('falls back to the server\'s own words for a code it does not know', async () => {
+    api.adminCreateRole.mockRejectedValue(new ApiError(400, { detail: 'Rank must be positive.' }));
+    const user = showSystem();
+    await screen.findByText('admin');
+
+    await fillAndSubmit(user);
+
+    expect(await screen.findByText('Rank must be positive.')).toBeInTheDocument();
+  });
+
+  it('shows a failed delete in the confirmation, which stays open', async () => {
+    api.adminDeleteRole.mockRejectedValue(new ApiError(403, null));
+    const user = showSystem();
+    await screen.findByText('admin');
+    await user.click(rowFor('admin').querySelector('button')!);
+
+    await user.click(await screen.findByRole('button', { name: 'Delete' }));
+
+    expect(await screen.findByText('Failed to delete the role.')).toBeInTheDocument();
+    expect(screen.getByText('Delete role "admin"?')).toBeInTheDocument();
+  });
+});
+
+/**
+ * L'édition n'a qu'une route, `PATCH /project/roles/{id}?project_id=`, et pas d'équivalent
+ * système : `?project_id=` est honoré dès le niveau OrgAdmin, donc le super-admin passe par la
+ * même. Le nom n'y figure pas — c'est la relation Keto écrite pour chaque porteur du rôle.
+ */
+describe('editing a role', () => {
+  const openEdit = (user: ReturnType<typeof show>, name: string) =>
+    user.click(screen.getByRole('button', { name: `Edit role ${name}` }));
+
+  it('opens on the role as it stands', async () => {
+    const user = show();
+    await screen.findByText('admin');
+
+    await openEdit(user, 'admin');
+
+    expect(await screen.findByLabelText('Description')).toHaveValue('Everything');
+    expect(screen.getByLabelText('Rank')).toHaveValue(1);
+  });
+
+  it('leaves the description empty for a role that has none', async () => {
+    const user = show();
+    await screen.findByText('viewer');
+
+    await openEdit(user, 'viewer');
+
+    expect(await screen.findByLabelText('Description')).toHaveValue('');
+  });
+
+  it('sends the new description and rank, then reloads', async () => {
+    const user = show();
+    await screen.findByText('admin');
+    await openEdit(user, 'admin');
+    await screen.findByLabelText('Description');
+
+    await user.clear(screen.getByLabelText('Description'));
+    await user.type(screen.getByLabelText('Description'), 'Reads only');
+    await user.clear(screen.getByLabelText('Rank'));
+    await user.type(screen.getByLabelText('Rank'), '20');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await vi.waitFor(() => expect(api.updateRole).toHaveBeenCalledWith('p1', 'r1', { description: 'Reads only', rank: 20 }));
+    await vi.waitFor(() => expect(api.listRoles).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText('Edit role "admin"')).not.toBeInTheDocument();
+  });
+
+  it('targets the project in the URL when opened from the system tree', async () => {
+    const user = showSystem();
+    await screen.findByText('admin');
+    await openEdit(user, 'admin');
+    await screen.findByLabelText('Rank');
+
+    await user.clear(screen.getByLabelText('Rank'));
+    await user.type(screen.getByLabelText('Rank'), '5');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await vi.waitFor(() => expect(api.updateRole).toHaveBeenCalledWith('p9', 'r1', { description: 'Everything', rank: 5 }));
+    // Le rechargement reste celui de la portée : la liste système, pas /project/roles.
+    await vi.waitFor(() => expect(api.adminListRoles).toHaveBeenCalledTimes(2));
+    expect(api.listRoles).not.toHaveBeenCalled();
+  });
+
+  it('shows a refused edit and keeps the form open on it', async () => {
+    api.updateRole.mockRejectedValue(new ApiError(400, { detail: 'Rank must be positive.' }));
+    const user = show();
+    await screen.findByText('admin');
+    await openEdit(user, 'admin');
+    await screen.findByLabelText('Rank');
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText('Rank must be positive.')).toBeInTheDocument();
+    expect(screen.getByText('Edit role "admin"')).toBeInTheDocument();
+    expect(api.listRoles).toHaveBeenCalledTimes(1);
   });
 });

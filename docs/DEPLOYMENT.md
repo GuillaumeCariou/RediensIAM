@@ -378,6 +378,7 @@ Carried forward deliberately; each has a runbook and a cost.
 | Gap | Where | Cost to close |
 |---|---|---|
 | Admin console served with a self-signed certificate | `09 §6.3` | internal CA, or ACME DNS-01 |
+| Client address flattened to one proxy IP | ingress | `externalTrafficPolicy: Local` — see below |
 | Local registry has no authentication and no TLS | `09 §6.2` | 2h; **required** if k3s is not on this host — bind and auth move together, never one without the other |
 | ACME / Let's Encrypt has **never been executed** | `33 §4` | The `letsencrypt` ClusterIssuer has never been applied to any cluster; HTTP-01 needs public DNS and port 80 reachable from the internet, and the prod-profile install used a self-signed ClusterIssuer instead. Whether a publicly trusted certificate can be issued here is unknown |
 | RLS off **in prod only** | `18 §3` / `29` / `33 §2.6` | Live and verified in dev: 19 tables `ENABLE` + `FORCE`, cross-tenant read/insert/update/delete refused at the database, backup still succeeding. Also turned on once on a from-scratch prod-profile install (V-25, 19 tables). `values.prod.yaml` does not override the `false` default, because on an existing prod database this is a migration, not an upgrade. **A database initdb'd before 2026-08-01 still needs `ALTER ROLE iam_backup BYPASSRLS` applied by hand** — the grant used to be conditional on RLS already being on, which no `setup.sh --prod` install ever was. RLS *does* now cover the tenant login path; the admin console, the token-keyed endpoints and the SAML ACS remain unscoped — [`SECURITY.md`](SECURITY.md#what-is-scoped-and-what-still-is-not) |
@@ -414,6 +415,33 @@ Three things that install changed and that affect an existing installation, incl
   failed. `deploy.sh` now runs `kubectl rollout status` on the workloads that actually render.
 
 ---
+
+### The client's address behind the ingress
+
+Every per-IP control the deployment has — the sign-in lockout, the audit trail — reads
+`RemoteIpAddress`. The application already does its half correctly: `X-Forwarded-For` is honoured
+only from the CIDRs in `App__TrustedProxies` (`rediensiam.app.trustedProxies` in the chart), and it
+**refuses to start in Production** if that value is missing, because trusting RFC1918 by default
+would let any pod in the cluster spoof the header.
+
+The half the application cannot do is make the proxy see the real client. On k3s it does not by
+default: ServiceLB (klipper-lb) sits in front of Traefik with `externalTrafficPolicy: Cluster`,
+which SNATs the source to its own pod IP before Traefik reads the packet. Every external caller
+then arrives as one address, and the lockout stops being a defence — five wrong passwords from
+anywhere lock sign-in for **every user at once**, for fifteen minutes.
+
+```bash
+helm upgrade traefik traefik/traefik -n kube-system --reuse-values \
+  --set service.spec.externalTrafficPolicy=Local
+```
+
+`deploy/cluster/traefik-source-ip.yaml` carries this, with the `HelmChartConfig` equivalent for a
+k3s-managed Traefik and the two caveats that matter: `Local` restricts traffic to nodes running a
+Traefik pod, and it cannot preserve the source of a request that originates *on* the node — a
+developer curling `iam.localhost` from the cluster machine is a hairpin through kube-proxy, which
+SNATs regardless. Verify from another machine, and read the address back out of the audit row.
+The reasoning in full is in [SECURITY.md §6](SECURITY.md).
+
 
 ## When something goes wrong
 

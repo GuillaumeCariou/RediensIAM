@@ -12,7 +12,21 @@ rediensiam:
   # the same domain as your application. If you don't fulfill this requirement, HTTP Cookies are
   # ignored by the browser." The production profile already satisfies it — its console host is a
   # subdomain of the issuer's registrable domain — and dev now mirrors that shape.
-  adminUrl:  "http://admin.iam.localhost"
+  # https, because that is what the admin ingress serves: cert-manager issues it a
+  # self-signed certificate and the router has no http entry. Declaring http here while
+  # serving https registered an OAuth2 client whose redirect_uri no browser would ever
+  # arrive on — the "one value, three names" family, caught by the console answering 404.
+  adminUrl:  "https://admin.iam.localhost"
+
+  # The host adminUrl names has to be served by something. The comment below has claimed since the
+  # subdomain move that the console is reached "through the admin ingress above" — and the ingress
+  # was never enabled in dev, so admin.iam.localhost answered 404 and the console was reachable
+  # only through the NodePort the same comment calls a troubleshooting door. A URL a deployment
+  # declares as its own and does not serve is the same defect as a route nothing mounts.
+  ingress:
+    admin:
+      enabled: true
+      host: "admin.iam.localhost"
 
   service:
     admin:
@@ -56,6 +70,16 @@ rediensiam:
     rls:
       enabled: true
 
+
+# ── Hydra (subchart) ─────────────────────────────────────────────────────────
+# At the ROOT, not under `rediensiam:`. Helm passes a subchart only the values under its own
+# name, so this block spent its life being parsed and ignored: Hydra kept its default issuer
+# `http://127.0.0.1:4444/`, refused it for lacking https without `dev`, and crash-looped. Every
+# dev install was one CrashLoopBackOff whose cause was two spaces of indentation.
+#
+# `rediensiam.hydra.local.enabled` stays where it is — that one the PARENT reads, as the
+# subchart condition in Chart.yaml.
+hydra:
   hydra:
     dev: true
     dangerousForceHttp: true
@@ -69,7 +93,7 @@ rediensiam:
         # the JSON controller behind this page — the browser landed on the raw challenge body and
         # nothing ever accepted the request, so the session outlived the sign-out.
         logout:                "http://iam.localhost/logout"
-        post_logout_redirect:  "http://localhost:30501/console/"
+        post_logout_redirect:  "https://admin.iam.localhost/console/"
         error:                 "http://iam.localhost/auth/oauth2/error"
       serve:
         public:
@@ -80,4 +104,4 @@ rediensiam:
               # from. It must track adminUrl: pointing it at the old NodePort origin left the
               # console with a CORS failure on discovery and a blank page, the browser's only
               # account of it being one console error.
-              - "http://admin.iam.localhost"
+              - "https://admin.iam.localhost"

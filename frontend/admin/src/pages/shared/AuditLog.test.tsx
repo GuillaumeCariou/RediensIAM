@@ -13,6 +13,9 @@ import AuditLog from '@/pages/shared/AuditLog';
 
 const api = vi.hoisted(() => ({
   getAuditLog: vi.fn(), exportSystemAuditLog: vi.fn(), exportOrgAuditLog: vi.fn(),
+  // Imported by the chain-integrity button in the header; the factory replaces the module, so it
+  // has to be here even though this file never clicks it. Its own suite is AuditChainCheck.test.
+  verifyAuditChain: vi.fn(),
 }));
 vi.mock('@/api', () => api);
 

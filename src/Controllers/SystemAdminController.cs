@@ -46,6 +46,12 @@ public class SystemAdminController(
     private static readonly string[] OAuth2ResponseTypes = ["code"];
     private const string AuditOrg = "organisation";
 
+    // The two columns OrganisationConfiguration declares, restated so an over-long value is a
+    // named 400 rather than a DbUpdateException. Changing one of these without the other is the
+    // drift that puts the 500 back.
+    private const int MaxOrgNameLength = 200;
+    private const int MaxOrgSlugLength = 100;
+
     /// <summary>Management role names accepted by the role-assignment endpoints.</summary>
     internal static readonly string[] KnownManagementRoles = Roles.Management;
 
@@ -150,27 +156,72 @@ var orgs = await db.Organisations
         return Ok(org);
     }
 
+    /// <summary>
+    /// Creates an organisation and the user list it owns.
+    ///
+    /// <para>
+    /// Every refusal below is stated before anything is written, and the writes that follow are one
+    /// transaction. Both halves matter and neither substitutes for the other:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item>Validating first is what turns the ordinary case — a second customer whose name
+    ///   derives the same slug — from a <c>DbUpdateException</c> and a 500 into a 409 naming the
+    ///   one field the caller can change. The same reasoning, and the same defect, as the unique
+    ///   index on (UserListId, Email) in <see cref="UserListOperations"/>.</item>
+    ///   <item>The transaction is what covers the failures nobody predicted. The list used to be
+    ///   committed before the organisation existed, so any error on the second write left an
+    ///   <c>Immovable</c> list with a null <c>OrgId</c> that nothing referenced and
+    ///   <c>DeleteOrg</c> could never reach — invisible, and one more per retry.</item>
+    /// </list>
+    /// </summary>
     [HttpPost("organizations")]
     public async Task<IActionResult> CreateOrg([FromBody] CreateOrgRequest body)
     {
-var actorId = GetActorId();
+        var actorId = GetActorId();
 
-        var orgList = new UserList { Name = $"{body.Name} Org List", Immovable = true, CreatedAt = DateTimeOffset.UtcNow };
-        db.UserLists.Add(orgList);
-        await db.SaveChangesAsync();
+        var name = body.Name?.Trim();
+        var slug = body.Slug?.Trim();
 
-        var org = new Organisation
+        if (string.IsNullOrEmpty(name))
+            return BadRequest(new { error = "name_required" });
+        if (string.IsNullOrEmpty(slug))
+            return BadRequest(new { error = "slug_required" });
+
+        // The columns are 200 and 100. Left to the database these are a third and fourth way to
+        // get a 500 through the same door as the duplicate slug.
+        if (name.Length > MaxOrgNameLength)
+            return BadRequest(new { error = "name_too_long", max_length = MaxOrgNameLength });
+        if (slug.Length > MaxOrgSlugLength)
+            return BadRequest(new { error = "slug_too_long", max_length = MaxOrgSlugLength });
+
+        if (await db.Organisations.AnyAsync(o => o.Slug == slug))
+            return Conflict(new { error = "slug_already_exists" });
+
+        Organisation org;
+        UserList orgList;
+        await using (var tx = await db.Database.BeginTransactionAsync())
         {
-            Name = body.Name, Slug = body.Slug, OrgListId = orgList.Id,
-            Active = true, CreatedBy = actorId,
-            CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
-        };
-        db.Organisations.Add(org);
-        await db.SaveChangesAsync();
+            orgList = new UserList { Name = $"{name} Org List", Immovable = true, CreatedAt = DateTimeOffset.UtcNow };
+            db.UserLists.Add(orgList);
+            await db.SaveChangesAsync();
 
-        orgList.OrgId = org.Id;
-        await db.SaveChangesAsync();
+            org = new Organisation
+            {
+                Name = name, Slug = slug, OrgListId = orgList.Id,
+                Active = true, CreatedBy = actorId,
+                CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+            };
+            db.Organisations.Add(org);
+            await db.SaveChangesAsync();
 
+            orgList.OrgId = org.Id;
+            await db.SaveChangesAsync();
+
+            await tx.CommitAsync();
+        }
+
+        // Outside the transaction, and after it: Keto and the audit log are other systems, and a
+        // database transaction cannot roll either of them back.
         await keto.WriteRelationTupleAsync(Roles.KetoOrgsNamespace, org.Id.ToString(), "org", $"{Roles.KetoSystemNamespace}:{Roles.KetoSystemObject}");
         await audit.RecordAsync(org.Id, null, actorId, "org.created", AuditOrg, org.Id.ToString());
         return Created($"/admin/organizations/{org.Id}", new { org.Id, org.Name, org.Slug, org_list_id = orgList.Id });
@@ -443,8 +494,12 @@ var ul = await UserListOperations.FindAsync(db, id);
     {
         var ul = await UserListOperations.FindAsync(db, id);
         if (ul == null) return NotFound();
+        // Surface système : l'organisation est nommée explicitement. C'est le seul endroit où
+        // elle peut l'être, et c'est ce qui permet de peupler une liste PARTAGÉE entre plusieurs
+        // locataires — le modèle décrit dans docs/ORGANIZATIONS.md.
         return await UserListOperations.AddUserAsync(
-            new UserListDeps(db, keto, audit, passwords, emailService, appConfig), GetActorId(), ul, body, "/admin/userlists");
+            new UserListDeps(db, keto, audit, passwords, emailService, appConfig), GetActorId(), ul, body,
+            "/admin/userlists", body.OrgId);
     }
 
     [HttpDelete("userlists/{id}/users/{uid}")]
@@ -461,6 +516,33 @@ var ul = await UserListOperations.FindAsync(db, id);
     public async Task<IActionResult> AdminCreateUserList([FromBody] AdminCreateUserListRequest body)
     {
 return await UserListOperations.CreateAsync(db, audit, GetActorId(), body.Name, body.OrgId, "/admin/userlists");
+    }
+
+    /// <summary>
+    /// Le pendant système de <c>DELETE /org/userlists/{id}</c>, qui n'existait pas : une liste
+    /// pouvait être créée depuis la console système et n'en être jamais retirée, y compris celles
+    /// sans organisation, que la route d'organisation ne voit pas.
+    ///
+    /// <para>
+    /// Mêmes deux refus que la route d'organisation, et pour les mêmes raisons : la liste
+    /// immuable porte l'administration du déploiement, et une liste encore assignée à un projet
+    /// laisserait ce projet sans population plutôt que sans liste.
+    /// </para>
+    /// </summary>
+    [HttpDelete("userlists/{id}")]
+    public async Task<IActionResult> AdminDeleteUserList(Guid id)
+    {
+        var ul = await db.UserLists.FirstOrDefaultAsync(ul => ul.Id == id);
+        if (ul == null) return NotFound();
+        if (ul.Immovable) return BadRequest(new { error = "cannot_delete_immovable" });
+        if (await db.Projects.AnyAsync(p => p.AssignedUserListId == id))
+            return BadRequest(new { error = "userlist_is_assigned_to_project" });
+
+        db.UserLists.Remove(ul);
+        await db.SaveChangesAsync();
+        await audit.RecordAsync(ul.OrgId, null, GetActorId(), "userlist.deleted", "userlist", id.ToString(),
+            new() { ["name"] = ul.Name });
+        return NoContent();
     }
 
     // ── Org Admins ────────────────────────────────────────────────────────────
@@ -552,6 +634,14 @@ var projects = await db.Projects
             .Join(db.Organisations, p => p.OrgId, o => o.Id,
                 (p, o) => new {
                     p.Id, p.Name, p.Slug, p.Active, p.OrgId,
+                    // The list whose members may sign in here. A consumer that provisions accounts
+                    // for a project has to know it, and the only other way to learn it was to read
+                    // every user list and look for one whose assigned_projects names this project —
+                    // a scan to recover something the project already holds. Left out, a caller
+                    // pins the id in its own configuration and silently keeps pointing at the old
+                    // list the day the assignment changes: accounts land somewhere nobody can sign
+                    // in through, and the symptom is "invalid credentials" on a valid account.
+                    p.AssignedUserListId,
                     OrgName = o.Name, p.HydraClientId, p.CreatedAt
                 })
             .OrderBy(p => p.OrgName).ThenBy(p => p.Name)
@@ -567,9 +657,33 @@ var projects = await db.Projects
         if (!await db.Organisations.AnyAsync(o => o.Id == id)) return NotFound();
         var projects = await db.Projects
             .Where(p => p.OrgId == id)
-            .Select(p => new { p.Id, p.Name, p.Slug, p.Active, p.HydraClientId, p.CreatedAt })
+            .Select(p => new { p.Id, p.Name, p.Slug, p.Active, p.OrgId, p.AssignedUserListId, p.HydraClientId, p.CreatedAt })
             .ToListAsync();
         return Ok(projects);
+    }
+
+    /// <summary>
+    /// One project, by id.
+    ///
+    /// <para>
+    /// It did not exist, and <c>AdminCreateProject</c> has been answering
+    /// <c>Location: /admin/projects/{id}</c> since it was written — a header pointing at a 404. A
+    /// caller holding a project id could only find it again by listing every project of every
+    /// organisation.
+    /// </para>
+    /// </summary>
+    [HttpGet("projects/{id}")]
+    public async Task<IActionResult> AdminGetProject(Guid id)
+    {
+        var project = await db.Projects
+            .Where(p => p.Id == id)
+            .Join(db.Organisations, p => p.OrgId, o => o.Id,
+                (p, o) => new {
+                    p.Id, p.Name, p.Slug, p.Active, p.OrgId, p.AssignedUserListId,
+                    OrgName = o.Name, p.HydraClientId, p.RequireRoleToLogin, p.CreatedAt, p.UpdatedAt
+                })
+            .FirstOrDefaultAsync();
+        return project == null ? NotFound() : Ok(project);
     }
 
     [HttpPost("organizations/{id}/projects")]
@@ -622,7 +736,7 @@ var actorId = GetActorId();
         var project = await db.Projects.FindAsync(id);
         if (project == null) return NotFound();
         if (await ProjectUpdate.ApplyAsync(db, hydra, audit, appConfig, GetActorId(), project, body) is { } err) return err;
-        await db.SaveChangesAsync();
+        await ProjectUpdate.SaveAndAuditAsync(db, audit, GetActorId(), project);
         return Ok(new { project.Id, project.Name });
     }
 
@@ -696,8 +810,14 @@ var project = await db.Projects.FindAsync(id);
     [HttpGet("projects/{id}/roles")]
     public async Task<IActionResult> AdminListRoles(Guid id)
     {
-var roles = await db.Roles
+        // 404 sur projet inconnu, comme ProjectController.ListRoles. Sans ce test la route rendait
+        // `[]`, que la console affiche en « No roles defined yet » : un id erroné dans l'URL était
+        // indiscernable d'un projet sans rôle.
+        if (!await db.Projects.AnyAsync(p => p.Id == id)) return NotFound();
+
+        var roles = await db.Roles
             .Where(r => r.ProjectId == id)
+            .OrderBy(r => r.Rank)
             .Select(r => new { r.Id, r.Name, r.Description, r.Rank })
             .ToListAsync();
         return Ok(roles);
@@ -706,19 +826,10 @@ var roles = await db.Roles
     [HttpPost("projects/{id}/roles")]
     public async Task<IActionResult> AdminCreateRole(Guid id, [FromBody] AdminCreateRoleRequest body)
     {
-        if (Roles.ProjectRoleNameError(body.Name) is { } nameErr)
-            return BadRequest(new { error = nameErr, reserved = KnownManagementRoles });
-        if (!await db.Projects.AnyAsync(p => p.Id == id)) return NotFound();
-        var role = new Role
-        {
-            ProjectId = id, Name = body.Name, Description = body.Description,
-            Rank = body.Rank ?? 100, CreatedBy = GetActorId(), CreatedAt = DateTimeOffset.UtcNow
-        };
-        db.Roles.Add(role);
-        await db.SaveChangesAsync();
-        await audit.RecordAsync(null, id, GetActorId(), "role.created", "role", role.Id.ToString(),
-            new() { ["name"] = role.Name });
-        return Created($"/admin/projects/{id}/roles/{role.Id}", new { role.Id, role.Name, role.Rank });
+        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id);
+        if (project == null) return NotFound();
+        return await ProjectOperations.CreateRoleAsync(db, audit, GetActorId(), project.Id, project.OrgId,
+            new ProjectOperations.NewRole(body.Name, body.Description, body.Rank), $"/admin/projects/{id}/roles");
     }
 
     [HttpDelete("projects/{id}/roles/{rid}")]
@@ -737,8 +848,13 @@ var role = await db.Roles
         {
             try
             {
+                // `role:{nom}` et `user:{id}`, pas les valeurs nues : c'est la forme que KetoService
+                // écrit à l'assignation et que ProjectController.DeleteRole supprime. Passer le nom
+                // et l'id bruts visait un tuple qui n'existe pas — la ligne partait, le grant Keto
+                // restait, et un rôle supprimé depuis la portée système laissait ses porteurs
+                // autorisés.
                 await keto.DeleteRelationTupleAsync(
-                    Roles.KetoProjectsNamespace, id.ToString(), role.Name, userId.ToString());
+                    Roles.KetoProjectsNamespace, id.ToString(), $"role:{role.Name}", $"user:{userId}");
             }
             catch (Exception ex)
             {
@@ -1171,7 +1287,14 @@ await hydra.DeleteOAuth2ClientAsync(id);
 }
 
 // ── Request records ───────────────────────────────────────────────────────────
-public record CreateOrgRequest(string Name, string Slug);
+/// <summary>
+/// Nullable on purpose, and not because either field is optional. Declared non-nullable, a body
+/// without <c>slug</c> binds to null anyway and the refusal comes from the NOT NULL constraint as a
+/// 500. Admitting the null here is what lets <c>CreateOrg</c> answer <c>slug_required</c> — the
+/// caller relays a 4xx and translates everything else to 502, so the difference is whether its
+/// operator reads "that name is taken" or "service unavailable".
+/// </summary>
+public record CreateOrgRequest(string? Name, string? Slug);
 public record UpdateOrgRequest(string? Name, int? AuditRetentionDays);
 public record AdminCreateUserRequest(string Email, string? Password, string? Username, bool? EmailVerified);
 public record AssignOrgAdminRequest([property: System.Text.Json.Serialization.JsonRequired] Guid UserId, string Role, Guid? ScopeId);

@@ -77,6 +77,42 @@ export async function gotoConsole(page: Page, path: string): Promise<void> {
   await expect(shell(page)).toBeVisible({ timeout: 30_000 });
 }
 
+/**
+ * Signs the browser in as someone other than the bootstrap administrator.
+ *
+ * The boundary tests need identities that are genuinely refused things, and the only way to hold
+ * one is to complete the real sign-in with it — a storageState captured for the super-admin proves
+ * nothing about what an organisation's own administrator may reach. Contexts using this must opt
+ * out of the project's stored state, or Hydra recognises the browser and skips the form.
+ */
+export async function signInAs(page: Page, email: string, password: string): Promise<void> {
+  await page.goto(`${CONSOLE_URL}/console/`);
+  await expect(shell(page).or(emailField(page))).toBeVisible({ timeout: 30_000 });
+
+  if (await emailField(page).isVisible()) {
+    await emailField(page).fill(email);
+    await page.getByRole('textbox', { name: /^password/i }).fill(password);
+    await page.getByRole('button', { name: /continue/i }).click();
+  }
+
+  await expect(shell(page)).toBeVisible({ timeout: 30_000 });
+}
+
+/**
+ * The id of a seeded organisation, read from the URL its own tree node navigates to.
+ *
+ * Specs need real ids to build `/system/organisations/{id}/…` URLs, and the seed cannot supply
+ * them: it creates objects by name through the API, and the ids are whatever Postgres generated.
+ * Asking the console is also the only way that stays true if the fixture is rebuilt.
+ */
+export async function orgIdFor(page: Page, name: string): Promise<string> {
+  await gotoConsole(page, '/console/system/organisations');
+  await shell(page).getByRole('tree', { name: 'Console navigation' })
+    .getByRole('link', { name, exact: true }).click();
+  await page.waitForURL(/\/console\/system\/organisations\/[0-9a-f-]{36}/i, { timeout: 20_000 });
+  return /organisations\/([0-9a-f-]{36})/i.exec(page.url())![1];
+}
+
 export const test = base.extend<{ console: Page }>({
   console: async ({ page }, use) => {
     await signIn(page);

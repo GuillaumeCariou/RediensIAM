@@ -96,8 +96,19 @@ public class OrganisationTests(TestFixture fixture)
         org!.Slug.Should().Be(slug);
     }
 
+    /// <summary>
+    /// A slug already taken is a 409 naming the field, not a 500.
+    ///
+    /// <para>
+    /// This assertion used to read <c>>= 400</c>, which a 500 satisfies — and a 500 is what the
+    /// route answered, because nothing checked the slug before the insert and the unique index
+    /// surfaced as a <c>DbUpdateException</c>. Two customers whose names derive the same slug is
+    /// the ordinary case, not the edge one, and a caller that relays 4xx and turns everything else
+    /// into a 502 showed "service unavailable" where it should have shown "that name is taken".
+    /// </para>
+    /// </summary>
     [Fact]
-    public async Task CreateOrg_DuplicateSlug_Returns409Or400()
+    public async Task CreateOrg_DuplicateSlug_Returns409NamingTheField()
     {
         var (_, _, client) = await SuperAdminClientAsync();
         fixture.Keto.AllowAll();
@@ -106,7 +117,68 @@ public class OrganisationTests(TestFixture fixture)
         await client.PostAsJsonAsync("/admin/organizations", new { name = "Org 1", slug });
         var res = await client.PostAsJsonAsync("/admin/organizations", new { name = "Org 2", slug });
 
-        ((int)res.StatusCode).Should().BeGreaterThanOrEqualTo(400);
+        res.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        (await res.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("error").GetString().Should().Be("slug_already_exists");
+    }
+
+    /// <summary>
+    /// A refused creation leaves nothing behind.
+    ///
+    /// <para>
+    /// The org list was committed before the organisation existed, so any failure on the second
+    /// write left an <c>Immovable</c> list with a null <c>OrgId</c> that nothing referenced and
+    /// <c>DeleteOrg</c> could never reach. Invisible to the caller — it sees a 500 and retries,
+    /// which makes another one. This is the test that fails if only the slug check is added: count
+    /// the orphans, not the status code.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task CreateOrg_Refused_LeavesNoOrphanUserList()
+    {
+        var (_, _, client) = await SuperAdminClientAsync();
+        fixture.Keto.AllowAll();
+        var slug = SeedData.UniqueSlug();
+        await client.PostAsJsonAsync("/admin/organizations", new { name = "Org 1", slug });
+
+        await fixture.RefreshDbAsync();
+        var before = await fixture.Db.UserLists.CountAsync(l => l.OrgId == null);
+
+        // Three retries, the way a caller that cannot tell 500 from 409 behaves.
+        for (var i = 0; i < 3; i++)
+            await client.PostAsJsonAsync("/admin/organizations", new { name = "Org 2", slug });
+
+        await fixture.RefreshDbAsync();
+        (await fixture.Db.UserLists.CountAsync(l => l.OrgId == null)).Should().Be(before);
+    }
+
+    [Fact]
+    public async Task CreateOrg_WithoutASlug_Returns400NamingTheField()
+    {
+        var (_, _, client) = await SuperAdminClientAsync();
+        fixture.Keto.AllowAll();
+
+        var res = await client.PostAsJsonAsync("/admin/organizations", new { name = "No Slug Org" });
+
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await res.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("error").GetString().Should().Be("slug_required");
+    }
+
+    [Fact]
+    public async Task CreateOrg_WithAnOverlongSlug_Returns400RatherThanA500()
+    {
+        var (_, _, client) = await SuperAdminClientAsync();
+        fixture.Keto.AllowAll();
+
+        // The column is 100. One character past it used to reach the database and come back a 500
+        // through the same door as the duplicate.
+        var res = await client.PostAsJsonAsync("/admin/organizations",
+            new { name = "Long Slug Org", slug = new string('a', 101) });
+
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await res.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("error").GetString().Should().Be("slug_too_long");
     }
 
     [Fact]

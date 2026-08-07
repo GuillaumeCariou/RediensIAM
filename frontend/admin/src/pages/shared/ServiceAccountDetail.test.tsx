@@ -4,6 +4,7 @@ import { userEvent } from 'vitest/browser';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import ServiceAccountDetail from './ServiceAccountDetail';
 import { fmtDateShort } from '@/lib/utils';
+import { ApiError } from '@/auth';
 
 /**
  * Two secrets are handed out here and each is shown exactly once: a PAT, and the private half of
@@ -18,7 +19,7 @@ import { fmtDateShort } from '@/lib/utils';
 const api = vi.hoisted(() => ({
   getServiceAccount: vi.fn(), deleteServiceAccount: vi.fn(),
   generatePat: vi.fn(), revokePat: vi.fn(),
-  assignSaRole: vi.fn(), removeSaRole: vi.fn(),
+  assignSaRole: vi.fn(), removeSaRole: vi.fn(), listSaRoles: vi.fn(),
   getSaApiKeys: vi.fn(), addSaApiKey: vi.fn(), removeSaApiKey: vi.fn(),
   listOrgs: vi.fn(), listProjects: vi.fn(),
 }));
@@ -51,6 +52,7 @@ beforeEach(() => {
   Object.assign(auth, { orgId: 'o1', projectId: '', isSuperAdmin: false });
   api.getServiceAccount.mockResolvedValue(SA);
   api.getSaApiKeys.mockResolvedValue({ client_id: null, has_key: false, kid: null });
+  api.listSaRoles.mockResolvedValue(SA.roles);
   api.generatePat.mockResolvedValue({ token: 'riam_pat_secret' });
   api.addSaApiKey.mockResolvedValue({ client_id: 'sa-client-1' });
   api.listOrgs.mockResolvedValue(ORGS);
@@ -182,7 +184,35 @@ describe('the assigned roles', () => {
     await user.click(screen.getAllByRole('button', { name: 'Remove' }).at(-1)!);
 
     await vi.waitFor(() => expect(api.removeSaRole).toHaveBeenCalledWith('s1', 'r1'));
-    expect(api.getServiceAccount).toHaveBeenCalledTimes(2);
+    // Les rôles seuls : recharger le compte entier repassait les PAT et la clé en squelette.
+    expect(api.listSaRoles).toHaveBeenCalledWith('s1');
+    expect(api.getServiceAccount).toHaveBeenCalledTimes(1);
+  });
+
+  it('takes the new list from the roles route, not from a stale render', async () => {
+    api.listSaRoles.mockResolvedValue([SA.roles[1]]);
+    const user = show();
+    await screen.findByRole('heading', { name: 'ci-deploy' });
+    await rowMenu(user, 'Assigned Roles', 'org_admin');
+    await user.click(screen.getByRole('button', { name: /Remove/ }));
+
+    await user.click(screen.getAllByRole('button', { name: 'Remove' }).at(-1)!);
+
+    await vi.waitFor(() => expect(section('Assigned Roles').queryByText('org: o1')).toBeNull());
+    expect(section('Assigned Roles').getByText('project: p1')).toBeInTheDocument();
+  });
+
+  it('says so when the revoke is refused, instead of leaving the row as if it had worked', async () => {
+    api.removeSaRole.mockRejectedValue(new Error('403'));
+    const user = show();
+    await screen.findByRole('heading', { name: 'ci-deploy' });
+    await rowMenu(user, 'Assigned Roles', 'org_admin');
+    await user.click(screen.getByRole('button', { name: /Remove/ }));
+
+    await user.click(screen.getAllByRole('button', { name: 'Remove' }).at(-1)!);
+
+    expect(await screen.findByText('Failed to remove this role.')).toBeInTheDocument();
+    expect(section('Assigned Roles').getByText('org: o1')).toBeInTheDocument();
   });
 
   it('does nothing on cancel', async () => {
@@ -230,7 +260,20 @@ describe('assigning a role as an org admin', () => {
 
     await vi.waitFor(() => expect(api.assignSaRole)
       .toHaveBeenCalledWith('s1', { role: 'org_admin', org_id: 'o1', project_id: undefined }));
-    expect(api.getServiceAccount).toHaveBeenCalledTimes(2);
+    expect(api.listSaRoles).toHaveBeenCalledWith('s1');
+    expect(api.getServiceAccount).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows what the server refused, and keeps the roles as they were', async () => {
+    // Sans catch, l'assignation refusée fermait la boîte comme une réussite.
+    api.assignSaRole.mockRejectedValue(new ApiError(403, { error: 'cannot_grant_super_admin' }));
+    const user = await openAssign();
+
+    await user.selectOptions(screen.getByLabelText('Role'), 'org_admin');
+    await user.click(screen.getByRole('button', { name: 'Assign' }));
+
+    expect(await screen.findByText('cannot_grant_super_admin')).toBeInTheDocument();
+    expect(api.listSaRoles).not.toHaveBeenCalled();
   });
 
   it('asks which project a project role is for, and will not submit without one', async () => {

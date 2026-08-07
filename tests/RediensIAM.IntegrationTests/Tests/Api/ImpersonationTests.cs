@@ -125,6 +125,82 @@ public class ImpersonationTests(TestFixture fixture)
             .GetProperty("error").GetString().Should().Be("project_not_in_org");
     }
 
+    // ── The shared surface ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The case the ownership check made impossible.
+    ///
+    /// <para>
+    /// `project_id` names the authentication boundary, not a possession. On a shared surface — one
+    /// login page, one gateway, every customer behind it — the project belongs to the operator's
+    /// own organisation and never to the customer being entered, so requiring
+    /// <c>project.OrgId == org_id</c> refused every pair a caller could form. What makes the
+    /// customer reachable is that its members sign in here, which is what the project's assigned
+    /// user list says.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Open_OnASharedSurfaceWhoseListHoldsAMemberOfTheOrganisation_Succeeds()
+    {
+        var (client, _)     = await OperatorClientAsync();
+        var (surfaceOrg, _) = await fixture.Seed.CreateOrgAsync();
+        var (customer, _)   = await fixture.Seed.CreateOrgAsync();
+
+        // One project, owned by the surface's organisation, with the list every customer signs in
+        // through — and one employee of the customer on it.
+        var sharedList = await fixture.Seed.CreateUserListAsync(surfaceOrg.Id);
+        var project    = await fixture.Seed.CreateProjectAsync(surfaceOrg.Id);
+        project.AssignedUserListId = sharedList.Id;
+        await fixture.Db.SaveChangesAsync();
+        await fixture.Seed.CreateUserAsync(sharedList.Id, orgId: customer.Id);
+
+        var res = await client.PostAsJsonAsync("/admin/impersonate", Body(customer.Id, project.Id));
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("org_id").GetString().Should().Be(customer.Id.ToString());
+        // And the project really is not the customer's — otherwise this would be the ordinary case.
+        project.OrgId.Should().NotBe(customer.Id);
+    }
+
+    /// <summary>
+    /// The refusal that survives the widening: an organisation with nobody on the surface's list
+    /// has no account there and therefore nothing to enter. An organisation created a moment ago,
+    /// with no user yet, is not impersonable — stated in docs/IMPERSONATION.md, and deliberate:
+    /// the alternative accepts every organisation for every project and so checks nothing.
+    /// </summary>
+    [Fact]
+    public async Task Open_OnASharedSurfaceWithNoMemberOfTheOrganisation_IsRefused()
+    {
+        var (client, _)     = await OperatorClientAsync();
+        var (surfaceOrg, _) = await fixture.Seed.CreateOrgAsync();
+        var (stranger, _)   = await fixture.Seed.CreateOrgAsync();
+
+        var sharedList = await fixture.Seed.CreateUserListAsync(surfaceOrg.Id);
+        var project    = await fixture.Seed.CreateProjectAsync(surfaceOrg.Id);
+        project.AssignedUserListId = sharedList.Id;
+        await fixture.Db.SaveChangesAsync();
+
+        var res = await client.PostAsJsonAsync("/admin/impersonate", Body(stranger.Id, project.Id));
+
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await res.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("error").GetString().Should().Be("project_not_in_org");
+    }
+
+    /// <summary>A project id naming nothing is its own answer, not "not in this organisation".</summary>
+    [Fact]
+    public async Task Open_WithAProjectThatDoesNotExist_SaysSo()
+    {
+        var (org, _, client, _) = await ScaffoldAsync();
+
+        var res = await client.PostAsJsonAsync("/admin/impersonate", Body(org.Id, Guid.NewGuid()));
+
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await res.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("error").GetString().Should().Be("project_not_found");
+    }
+
     // ── The token carries no authority ────────────────────────────────────────
 
     /// <summary>

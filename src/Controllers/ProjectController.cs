@@ -114,8 +114,7 @@ public class ProjectController(
         var project = await GetProjectAsync();
         if (project == null) return NotFound();
         if (await ProjectUpdate.ApplyAsync(db, hydra, audit, appConfig, ActorId, project, body) is { } err) return err;
-        await db.SaveChangesAsync();
-        await audit.RecordAsync(project.OrgId, project.Id, ActorId, "project.updated", "project", project.Id.ToString());
+        await ProjectUpdate.SaveAndAuditAsync(db, audit, ActorId, project);
         return Ok(new { project.Id, project.Name });
     }
 
@@ -323,21 +322,10 @@ public class ProjectController(
     [HttpPost("roles")]
     public async Task<IActionResult> CreateRole([FromBody] CreateRoleRequest body)
     {
-        if (Roles.ProjectRoleNameError(body.Name) is { } nameErr)
-            return BadRequest(new { error = nameErr, reserved = Roles.Management });
         var project = await GetProjectAsync();
         if (project == null) return NotFound();
-        var role = new Role
-        {
-            ProjectId = ProjectId, Name = body.Name,
-            Description = body.Description, Rank = body.Rank ?? 100,
-            CreatedBy = ActorId, CreatedAt = DateTimeOffset.UtcNow
-        };
-        db.Roles.Add(role);
-        await db.SaveChangesAsync();
-        await audit.RecordAsync(project.OrgId, project.Id, ActorId, "role.created", "role", role.Id.ToString(),
-            new() { ["name"] = role.Name });
-        return Created($"/project/roles/{role.Id}", new { role.Id, role.Name, role.Rank });
+        return await ProjectOperations.CreateRoleAsync(db, audit, ActorId, project.Id, project.OrgId,
+            new ProjectOperations.NewRole(body.Name, body.Description, body.Rank), "/project/roles");
     }
 
     [HttpPatch("roles/{id}")]

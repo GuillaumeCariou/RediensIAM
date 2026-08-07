@@ -107,7 +107,13 @@ function usePlacement(level: Level): Placement {
   }, [level, orgId, assignedListId]);
 
   const choices = level === 'org' ? orgLists : NO_CHOICES;
-  const createListId = level === 'deployment' ? systemListId : (level === 'project' ? assignedListId : null);
+
+  // The list a new account lands on, by level. Deployment and project each have exactly one, so
+  // there is nothing to choose; an organisation has several, which is why `choices` is populated
+  // for it alone and this is null.
+  let createListId: string | null = null;
+  if (level === 'deployment') createListId = systemListId;
+  else if (level === 'project') createListId = assignedListId;
 
   return { belongs, createListId, choices, ready: resolved };
 }

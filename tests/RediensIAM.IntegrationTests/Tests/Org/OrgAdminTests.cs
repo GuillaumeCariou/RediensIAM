@@ -307,4 +307,33 @@ public class OrgAdminTests(TestFixture fixture)
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
         body.ValueKind.Should().Be(JsonValueKind.Array);
     }
+    /// <summary>
+    /// Seul project_admin porte une portée. `ScopeId` n'étant qu'affectable, promouvoir un
+    /// project_admin en org_admin gardait son ancienne portée, et le tuple Keto réécrit partait
+    /// sur `user:{id}|project:{pid}` sous la relation `org_admin` — un grant que la vérification
+    /// d'organisation, qui interroge le sujet non scopé, ne trouve jamais.
+    /// </summary>
+    [Fact]
+    public async Task UpdateOrgListManager_PromotingAScopedManager_ClearsTheScope()
+    {
+        var (org, _, client) = await OrgAdminClientAsync();
+        var project = await fixture.Seed.CreateProjectAsync(org.Id);
+        var target  = await fixture.Seed.CreateUserAsync(org.OrgListId);
+        var grant   = new OrgRole
+        {
+            OrgId = org.Id, UserId = target.Id, Role = "project_admin",
+            ScopeId = project.Id, GrantedAt = DateTimeOffset.UtcNow,
+        };
+        fixture.Db.OrgRoles.Add(grant);
+        await fixture.Db.SaveChangesAsync();
+
+        var res = await client.PatchAsJsonAsync($"/org/admins/{grant.Id}", new { role = "org_admin" });
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await res.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("scope_id").ValueKind.Should().Be(JsonValueKind.Null);
+        await fixture.RefreshDbAsync();
+        (await fixture.Db.OrgRoles.FindAsync(grant.Id))!.ScopeId.Should().BeNull();
+    }
+
 }

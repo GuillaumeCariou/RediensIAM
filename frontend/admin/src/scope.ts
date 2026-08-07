@@ -55,11 +55,14 @@ export const DESTINATIONS: Record<Level, Destination[]> = {
     { key: 'projects',         label: 'Projects',         icon: 'folder',   superOnly: true },
     { key: 'userlists',        label: 'User lists',       icon: 'list',     superOnly: true },
     { key: 'service-accounts', label: 'Service accounts', icon: 'bot',      superOnly: true },
+    { key: 'oauth2-clients',   label: 'OAuth2 clients',   icon: 'key',      superOnly: true },
     { key: 'email',            label: 'Email',            icon: 'mail',     superOnly: true },
     { key: 'impersonation',    label: 'Impersonation',    icon: 'user',     superOnly: true },
     { key: 'audit-log',        label: 'Audit log',        icon: 'log' },
     { key: 'metrics',          label: 'Metrics',          icon: 'chart' },
     { key: 'health',           label: 'Health',           icon: 'heart',    superOnly: true },
+    { key: 'grant-reconcile',  label: 'Grant reconciliation', icon: 'shield', superOnly: true },
+    { key: 'settings',         label: 'Settings',         icon: 'settings', superOnly: true },
   ],
   org: [
     { key: '',                 label: 'Overview',         icon: 'dashboard' },
@@ -78,6 +81,7 @@ export const DESTINATIONS: Record<Level, Destination[]> = {
     { key: 'roles',            label: 'Roles',            icon: 'shield' },
     { key: 'service-accounts', label: 'Service accounts', icon: 'bot' },
     { key: 'authentication',   label: 'Authentication',   icon: 'key' },
+    { key: 'audit-log',        label: 'Audit log',        icon: 'log' },
     { key: 'settings',         label: 'Settings',         icon: 'settings' },
   ],
 };
@@ -149,6 +153,17 @@ export function scopeFromPath(pathname: string): Scope {
  * a prefix of everything.
  */
 export function activeKey(scope: Scope, pathname: string): string | null {
+  // A path belongs to exactly one level, and only that level may light a row for it.
+  //
+  // Without this, `/system/organisations/{id}/userlists` prefix-matches the DEPLOYMENT's
+  // `organisations` destination as well as the tenant's `userlists`, and the tree lit both — three
+  // rows once a project was open. A tree that says you are in two places says nothing, and it is
+  // the same defect as a breadcrumb disagreeing with the tree, one component over.
+  const here = scopeFromPath(pathname);
+  if (here.level !== scope.level || here.orgId !== scope.orgId || here.projectId !== scope.projectId) {
+    return null;
+  }
+
   const candidates = DESTINATIONS[scope.level]
     .map(d => ({ key: d.key, href: hrefFor(scope, d.key) }))
     .sort((a, b) => b.href.length - a.href.length);

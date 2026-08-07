@@ -79,6 +79,18 @@ public sealed class KetoStub : IDisposable
             .RespondWith(Response.Create().WithStatusCode(204));
     }
 
+    /// <summary>
+    /// Les suppressions de tuple observées, telles qu'elles sont parties sur le fil.
+    ///
+    /// Le stub répond 204 à tout, donc un appelant qui vise un tuple inexistant réussit sans rien
+    /// supprimer : c'est ainsi qu'une suppression de rôle a pu laisser ses porteurs autorisés sans
+    /// qu'aucun test ne s'en aperçoive. Le seul moyen de tenir la forme du tuple est de la lire.
+    /// </summary>
+    public IReadOnlyList<string> DeletedTupleUrls => _writeServer.LogEntries
+        .Where(e => e.RequestMessage?.Method == "DELETE")
+        .Select(e => e.RequestMessage?.Url ?? "")
+        .ToList();
+
     /// <summary>Makes tuple writes fail, so a dual-write's ordering is observable.</summary>
     public void FailTupleWrites()
     {

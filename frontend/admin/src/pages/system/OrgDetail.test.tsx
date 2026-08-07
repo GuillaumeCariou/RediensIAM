@@ -18,7 +18,8 @@ const api = vi.hoisted(() => ({
   listSystemUserListMembers: vi.fn(), listOrgAdmins: vi.fn(), assignOrgAdmin: vi.fn(),
   addUserToList: vi.fn(), removeSystemUserFromList: vi.fn(),
   listServiceAccounts: vi.fn(), listUserLists: vi.fn(), adminCreateUserList: vi.fn(),
-  listProjects: vi.fn(), adminCreateProject: vi.fn(),
+  adminListOrgProjects: vi.fn(), adminCreateProject: vi.fn(),
+  exportOrgUsers: vi.fn(),
 }));
 vi.mock('@/api', () => api);
 
@@ -59,7 +60,7 @@ beforeEach(() => {
   api.listOrgAdmins.mockResolvedValue(ROLES);
   api.listServiceAccounts.mockResolvedValue(SAS);
   api.listUserLists.mockResolvedValue({ user_lists: LISTS });
-  api.listProjects.mockResolvedValue({ projects: PROJECTS });
+  api.adminListOrgProjects.mockResolvedValue({ projects: PROJECTS });
 });
 
 function Here() {
@@ -109,7 +110,7 @@ describe('the organisation', () => {
     expect(api.listSystemUserListMembers).toHaveBeenCalledWith('ol1');
     expect(api.listOrgAdmins).toHaveBeenCalledWith('o1');
     expect(api.listUserLists).toHaveBeenCalledWith('o1');
-    expect(api.listProjects).toHaveBeenCalledWith('o1');
+    expect(api.adminListOrgProjects).toHaveBeenCalledWith('o1');
   });
 
   it('shows placeholders, and no actions, while loading', () => {
@@ -553,14 +554,14 @@ describe('the projects', () => {
   });
 
   it('says there are none', async () => {
-    api.listProjects.mockResolvedValue({ projects: [] });
+    api.adminListOrgProjects.mockResolvedValue({ projects: [] });
     show();
 
     expect(await screen.findByText('No projects.')).toBeInTheDocument();
   });
 
   it('accepts a bare array as well as an envelope', async () => {
-    api.listProjects.mockResolvedValue(PROJECTS);
+    api.adminListOrgProjects.mockResolvedValue(PROJECTS);
     show();
     await loaded();
 
@@ -712,5 +713,43 @@ describe('dismissing a dialog with Escape', () => {
 
     await vi.waitFor(() => expect(screen.queryByText('Remove grace#0002?')).toBeNull());
     expect(api.removeSystemUserFromList).not.toHaveBeenCalled();
+  });
+});
+
+describe('exporting the organisation\'s users', () => {
+  it('downloads a CSV named after the organisation and the day', async () => {
+    api.exportOrgUsers.mockResolvedValue(new Blob(['id,email\n']));
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const user = show();
+    await loaded();
+
+    await user.click(screen.getByRole('button', { name: /Export users/ }));
+
+    await vi.waitFor(() => expect(api.exportOrgUsers).toHaveBeenCalledWith('o1'));
+    expect(click).toHaveBeenCalled();
+    click.mockRestore();
+  });
+
+  // Le serveur limite ce débit et répond 429. Un export refusé qui ne dit rien se lit comme un
+  // export vide — l'opérateur croit que l'organisation n'a pas d'utilisateurs.
+  it('names the rate limit rather than downloading nothing in silence', async () => {
+    const { ApiError } = await import('@/auth');
+    api.exportOrgUsers.mockRejectedValue(new ApiError(429, { error: 'export_rate_limited' }));
+    const user = show();
+    await loaded();
+
+    await user.click(screen.getByRole('button', { name: /Export users/ }));
+
+    expect(await screen.findByText(/already taken recently/)).toBeInTheDocument();
+  });
+
+  it('says so when the export fails for any other reason', async () => {
+    api.exportOrgUsers.mockRejectedValue(new Error('500'));
+    const user = show();
+    await loaded();
+
+    await user.click(screen.getByRole('button', { name: /Export users/ }));
+
+    expect(await screen.findByText(/Nothing was downloaded/)).toBeInTheDocument();
   });
 });

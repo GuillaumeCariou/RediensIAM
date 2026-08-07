@@ -165,6 +165,52 @@ public class SystemAdminBranchCoverageTests(TestFixture fixture)
         res.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    // ── DELETE /admin/userlists/{id} ─────────────────────────────────────────
+    //
+    // La route d'organisation filtre sur l'organisation du jeton, qu'un super-admin n'a pas : sans
+    // ce pendant système, aucune liste n'était supprimable depuis la console système, et celles
+    // sans organisation ne l'étaient de nulle part.
+
+    [Fact]
+    public async Task AdminDeleteUserList_Movable_Returns204()
+    {
+        var (org, _, client) = await SuperAdminAsync();
+        var list = await fixture.Seed.CreateUserListAsync(org.Id);
+
+        var res = await client.DeleteAsync($"/admin/userlists/{list.Id}");
+
+        res.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        // AsNoTracking : la requête a supprimé la ligne dans SON contexte, pas dans celui du test,
+        // dont la carte d'identité rendrait encore l'instance chargée par le seed.
+        (await fixture.Db.UserLists.AsNoTracking().AnyAsync(ul => ul.Id == list.Id)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task AdminDeleteUserList_AssignedToProject_Returns400()
+    {
+        var (org, _, client) = await SuperAdminAsync();
+        var list    = await fixture.Seed.CreateUserListAsync(org.Id);
+        var project = await fixture.Seed.CreateProjectAsync(org.Id);
+        project.AssignedUserListId = list.Id;
+        await fixture.Db.SaveChangesAsync();
+
+        var res = await client.DeleteAsync($"/admin/userlists/{list.Id}");
+
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("error").GetString().Should().Be("userlist_is_assigned_to_project");
+    }
+
+    [Fact]
+    public async Task AdminDeleteUserList_NonExistent_Returns404()
+    {
+        var (_, _, client) = await SuperAdminAsync();
+
+        var res = await client.DeleteAsync($"/admin/userlists/{Guid.NewGuid()}");
+
+        res.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
     // ── POST /admin/userlists/{id}/users — not found (line 330) ──────────────
 
     [Fact]
@@ -1094,6 +1140,43 @@ public class SystemAdminExtendedTests(TestFixture fixture)
             .GetProperty("total_users").GetInt32().Should().Be(0);
     }
 
+    /// <summary>
+    /// Les trois routes de mise à jour d'un projet partagent <c>ProjectUpdate.ApplyAsync</c>, mais
+    /// la ligne d'audit vivait chez un seul appelant : <c>PATCH /project/info</c>. Les portées
+    /// organisation et système modifiaient nom, politique de mot de passe, <c>redirect_uris</c> et
+    /// allowlist IP sans rien journaliser, alors que <c>project.updated</c> est un événement
+    /// webhook souscriptible — un locataire qui surveille ses projets n'en entendait jamais parler.
+    /// </summary>
+    [Fact]
+    public async Task AdminUpdateProject_WritesTheProjectUpdatedEntry()
+    {
+        var (org, _, client) = await SuperAdminAsync();
+        var project = await fixture.Seed.CreateProjectAsync(org.Id);
+
+        var res = await client.PatchAsJsonAsync($"/admin/projects/{project.Id}", new { name = "Renamed" });
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        await fixture.RefreshDbAsync();
+        (await fixture.Db.AuditLogs.AnyAsync(a =>
+            a.Action == "project.updated" && a.TargetId == project.Id.ToString()))
+            .Should().BeTrue();
+    }
+
+    /// <summary>
+    /// La portée projet rend 404 pour un projet inconnu ; la portée système rendait `[]`, que la
+    /// console affiche en « No roles defined yet » — un id erroné était indiscernable d'un projet
+    /// sans rôle.
+    /// </summary>
+    [Fact]
+    public async Task AdminListRoles_NonExistentProject_Returns404()
+    {
+        var (_, _, client) = await SuperAdminAsync();
+
+        var res = await client.GetAsync($"/admin/projects/{Guid.NewGuid()}/roles");
+
+        res.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
     // ── DELETE /admin/projects/{id}/roles/{rid} ───────────────────────────────
 
     [Fact]
@@ -1110,6 +1193,37 @@ public class SystemAdminExtendedTests(TestFixture fixture)
         await fixture.RefreshDbAsync();
         var deleted = await fixture.Db.Roles.FindAsync(role.Id);
         deleted.Should().BeNull();
+    }
+
+    /// <summary>
+    /// La portée système supprimait un tuple qui n'existe pas : elle passait le nom du rôle et
+    /// l'id de l'utilisateur nus, là où <c>KetoService</c> écrit <c>role:{nom}</c> et
+    /// <c>user:{id}</c>. Keto répond 204 à une suppression sans correspondance, donc la ligne
+    /// partait, le grant restait, et le rôle supprimé laissait ses porteurs autorisés.
+    ///
+    /// <c>DeleteRole_ExistingRole_Returns204</c> ne voyait rien : il ne regarde que la ligne.
+    /// </summary>
+    [Fact]
+    public async Task DeleteRole_RevokesTheKetoGrantItsHoldersActuallyHave()
+    {
+        var (org, _, client) = await SuperAdminAsync();
+        var project = await fixture.Seed.CreateProjectAsync(org.Id);
+        var list    = await fixture.Seed.CreateUserListAsync(org.Id);
+        var holder  = await fixture.Seed.CreateUserAsync(list.Id);
+        var role    = await fixture.Seed.CreateRoleAsync(project.Id, "Holder");
+        fixture.Db.UserProjectRoles.Add(new UserProjectRole
+        {
+            UserId = holder.Id, ProjectId = project.Id, RoleId = role.Id,
+            GrantedBy = holder.Id, GrantedAt = DateTimeOffset.UtcNow,
+        });
+        await fixture.Db.SaveChangesAsync();
+
+        var res = await client.DeleteAsync($"/admin/projects/{project.Id}/roles/{role.Id}");
+
+        res.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        fixture.Keto.DeletedTupleUrls.Should().Contain(u =>
+            u.Contains($"relation={Uri.EscapeDataString($"role:{role.Name}")}")
+            && u.Contains($"subject_id={Uri.EscapeDataString($"user:{holder.Id}")}"));
     }
 
     [Fact]

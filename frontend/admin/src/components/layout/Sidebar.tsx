@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router';
+import { useNavigate } from 'react-router';
 import { useAuth } from '@/context/AuthContext';
 import NavTree from './NavTree';
 import { useTheme } from '@/context/ThemeContext';
@@ -48,18 +48,6 @@ function roleLabel(isSuperAdmin: boolean, isOrgAdmin: boolean): string {
   return 'project_admin';
 }
 
-// ── NavLink ────────────────────────────────────────────────────────────────────
-
-function NavLink({ item, active, superAdmin }: Readonly<{ item: NavItem; active: boolean; superAdmin: boolean }>) {
-  if (item.superOnly && !superAdmin) return null;
-  return (
-    <Link to={item.to} className={`iam-nav-item${active ? ' active' : ''}`}>
-      <span className="iam-nav-icon"><Icon path={ICONS[item.icon]} size={15} /></span>
-      {item.label}
-    </Link>
-  );
-}
-
 // ── User popover ───────────────────────────────────────────────────────────────
 
 function UserPopover({ onClose }: Readonly<{ onClose: () => void }>) {
@@ -90,19 +78,26 @@ function UserPopover({ onClose }: Readonly<{ onClose: () => void }>) {
 
 
 export default function Sidebar() {
-  const { pathname } = useLocation();
-  const { isSuperAdmin, isOrgAdmin, isProjectManager } = useAuth();
+  const { isSuperAdmin, isOrgAdmin } = useAuth();
   const [userOpen, setUserOpen] = useState(false);
   const { dark, toggleDark } = useTheme();
   // Read once at mount: /console/config has already been fetched by the time a session exists.
   const version = getServerVersion();
   const userRef = useRef<HTMLDivElement>(null);
 
+  // Outside click and Escape both dismiss it. Escape was missing: every other transient surface in
+  // the console answers it — the command palette, the dialogs — and a popover that traps the
+  // keyboard user who opened it is the one place the pattern broke.
   useEffect(() => {
     if (!userOpen) return;
-    const h = (e: MouseEvent) => { if (!userRef.current?.contains(e.target as Node)) setUserOpen(false); };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
+    const onDown = (e: MouseEvent) => { if (!userRef.current?.contains(e.target as Node)) setUserOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setUserOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
   }, [userOpen]);
 
   return (

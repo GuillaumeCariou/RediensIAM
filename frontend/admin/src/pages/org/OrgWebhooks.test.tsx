@@ -20,6 +20,7 @@ import { fmtDate } from '@/lib/utils';
 const api = vi.hoisted(() => ({
   listWebhooks: vi.fn(), createWebhook: vi.fn(), updateWebhook: vi.fn(),
   deleteWebhook: vi.fn(), testWebhook: vi.fn(), listWebhookDeliveries: vi.fn(),
+  rotateWebhookSecret: vi.fn(), getWebhook: vi.fn(),
 }));
 vi.mock('@/api', () => api);
 
@@ -55,6 +56,7 @@ beforeEach(() => {
   api.createWebhook.mockResolvedValue({ secret: 'whsec_abcdef' });
   api.testWebhook.mockResolvedValue({});
   api.listWebhookDeliveries.mockResolvedValue(DELIVERIES);
+  api.getWebhook.mockResolvedValue({ ...WEBHOOKS[0], recent_deliveries: DELIVERIES.slice(0, 2) });
 });
 
 function show(path = '/org/webhooks', pattern = '/org/webhooks') {
@@ -79,6 +81,68 @@ describe('from the system console', () => {
     expect(await screen.findByText('Not available from the system console')).toBeInTheDocument();
     expect(api.listWebhooks).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: /Add Webhook/ })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Le tableau tronque : trois événements sur N, une URL coupée à 240px. `GET /org/webhooks/{id}`
+ * rend les deux entiers plus les dix dernières livraisons, et n'avait aucun appelant.
+ */
+describe('the detail view', () => {
+  const openDetail = async (user: Awaited<ReturnType<typeof show>>) => {
+    await screen.findByText('https://hooks.acme.test/iam');
+    await openMenu(user, '/iam');
+    await user.click(screen.getByRole('button', { name: 'View details' }));
+  };
+
+  it('reads the one webhook, not the whole list again', async () => {
+    const user = show();
+
+    await openDetail(user);
+
+    await vi.waitFor(() => expect(api.getWebhook).toHaveBeenCalledWith('w1'));
+    expect(api.listWebhooks).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows every event, including the ones the row hid', async () => {
+    const user = show();
+
+    await openDetail(user);
+
+    const dialog = await screen.findByText('Webhook Details');
+    const panel = dialog.closest('dialog')!;
+    expect(within(panel).getByText('role.assigned')).toBeInTheDocument();
+    expect(within(panel).getByText('Events (4)')).toBeInTheDocument();
+  });
+
+  it('lists the recent deliveries the route returns', async () => {
+    const user = show();
+
+    await openDetail(user);
+
+    const panel = (await screen.findByText('Webhook Details')).closest('dialog')!;
+    // Once as a subscribed event, once as a delivery of it.
+    expect(within(panel).getAllByText('user.created')).toHaveLength(2);
+    expect(within(panel).getByText('200')).toBeInTheDocument();
+    expect(within(panel).getByText('500')).toBeInTheDocument();
+  });
+
+  it('says so when there is nothing to show yet', async () => {
+    api.getWebhook.mockResolvedValue({ ...WEBHOOKS[2], recent_deliveries: [] });
+    const user = show();
+
+    await openDetail(user);
+
+    expect(await screen.findByText('No deliveries yet.')).toBeInTheDocument();
+  });
+
+  it('shows the refusal rather than an empty dialog', async () => {
+    api.getWebhook.mockRejectedValue(new Error('403'));
+    const user = show();
+
+    await openDetail(user);
+
+    expect(await screen.findByText('Could not read this webhook.')).toBeInTheDocument();
   });
 });
 
@@ -545,5 +609,57 @@ describe('dismissing a dialog with Escape', () => {
     await user.keyboard('{Escape}');
 
     await vi.waitFor(() => expect(screen.queryByText('3 attempts')).toBeNull());
+  });
+});
+
+
+describe('rotating the signing secret', () => {
+  it('confirms before rotating, naming the endpoint that will start failing', async () => {
+    const user = show();
+    await screen.findByText('https://hooks.acme.test/iam');
+    await openMenu(user, '/iam');
+
+    await user.click(screen.getByRole('button', { name: 'Rotate secret' }));
+
+    expect(await screen.findByText(/stops being valid immediately/)).toBeInTheDocument();
+    expect(api.rotateWebhookSecret).not.toHaveBeenCalled();
+  });
+
+  it('shows the new secret once, since nothing can read it back', async () => {
+    api.rotateWebhookSecret.mockResolvedValue({ secret: 's3cr3t-rotated' });
+    const user = show();
+    await screen.findByText('https://hooks.acme.test/iam');
+    await openMenu(user, '/iam');
+    await user.click(screen.getByRole('button', { name: 'Rotate secret' }));
+
+    await user.click(screen.getByRole('button', { name: 'Rotate' }));
+
+    await vi.waitFor(() => expect(api.rotateWebhookSecret).toHaveBeenCalledWith('w1'));
+    expect(await screen.findByText('s3cr3t-rotated')).toBeInTheDocument();
+    expect(screen.getByText(/won't be shown again/)).toBeInTheDocument();
+  });
+
+  it('says so when the server rotated but returned nothing', async () => {
+    api.rotateWebhookSecret.mockResolvedValue({ message: 'store_secret_shown_once' });
+    const user = show();
+    await screen.findByText('https://hooks.acme.test/iam');
+    await openMenu(user, '/iam');
+    await user.click(screen.getByRole('button', { name: 'Rotate secret' }));
+
+    await user.click(screen.getByRole('button', { name: 'Rotate' }));
+
+    expect(await screen.findByText(/did not return it/)).toBeInTheDocument();
+  });
+
+  it('does not swallow a refusal', async () => {
+    api.rotateWebhookSecret.mockRejectedValue(new Error('403'));
+    const user = show();
+    await screen.findByText('https://hooks.acme.test/iam');
+    await openMenu(user, '/iam');
+    await user.click(screen.getByRole('button', { name: 'Rotate secret' }));
+
+    await user.click(screen.getByRole('button', { name: 'Rotate' }));
+
+    expect(await screen.findByText('Failed to rotate the signing secret.')).toBeInTheDocument();
   });
 });

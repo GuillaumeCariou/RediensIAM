@@ -161,16 +161,28 @@ public class OrgController(
         var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && (isSuperAdmin || p.OrgId == OrgId));
         if (project == null) return NotFound();
         if (await ProjectUpdate.ApplyAsync(db, hydra, audit, appConfig, ActorId, project, body) is { } err) return err;
-        await db.SaveChangesAsync();
+        await ProjectUpdate.SaveAndAuditAsync(db, audit, ActorId, project);
         return Ok(new { project.Id, project.Name });
     }
 
     // ── Scopes ────────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Les deux routes de scopes étaient les seules de ce contrôleur sans échappatoire super-admin :
+    /// <c>UpdateProject</c> et <c>DeleteProject</c> en ont une, celles-ci filtraient sur
+    /// <c>OrgId</c> seul. Le jeton d'un super-admin n'en nomme aucune, donc il recevait un 404 —
+    /// indiscernable d'un projet inexistant — sur un projet parfaitement réel.
+    /// </summary>
+    private async Task<Project?> FindProjectForScopesAsync(Guid id)
+    {
+        var isSuperAdmin = Claims.Roles.Contains(Roles.SuperAdmin);
+        return await db.Projects.FirstOrDefaultAsync(p => p.Id == id && (isSuperAdmin || p.OrgId == OrgId));
+    }
+
     [HttpGet("projects/{id}/scopes")]
     public async Task<IActionResult> GetProjectScopes(Guid id)
     {
-        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
+        var project = await FindProjectForScopesAsync(id);
         if (project == null) return NotFound();
         return ProjectOperations.ReadScopes(project);
     }
@@ -178,7 +190,7 @@ public class OrgController(
     [HttpPut("projects/{id}/scopes")]
     public async Task<IActionResult> UpdateProjectScopes(Guid id, [FromBody] UpdateScopesRequest body)
     {
-        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == id && p.OrgId == OrgId);
+        var project = await FindProjectForScopesAsync(id);
         if (project == null) return NotFound();
 
         return await ProjectOperations.UpdateScopesAsync(db, hydra, audit, logger, ActorId, project, body.Scopes);
@@ -245,6 +257,10 @@ public class OrgController(
             return BadRequest(new { error = "userlist_is_assigned_to_project" });
         db.UserLists.Remove(ul);
         await db.SaveChangesAsync();
+        // La suppression cascade sur les comptes de la liste : c'est la seule opération de cette
+        // surface qui détruisait des utilisateurs sans laisser d'entrée au journal.
+        await audit.RecordAsync(ul.OrgId, null, ActorId, "userlist.deleted", "userlist", id.ToString(),
+            new() { ["name"] = ul.Name });
         return NoContent();
     }
 
@@ -318,8 +334,12 @@ public class OrgController(
     {
         var ul = await UserListOperations.FindAsync(db, id);
         if (ul == null || ul.OrgId != OrgId) return NotFound();
+        // `OrgId` de l'appelant, JAMAIS `body.OrgId` : un administrateur d'organisation qui
+        // pourrait nommer une autre organisation créerait des comptes dont les jetons
+        // revendiquent un locataire qui n'est pas le sien.
         return await UserListOperations.AddUserAsync(
-            new UserListDeps(db, keto, audit, passwords, emailService, appConfig), ActorId, ul, body, "/org/userlists");
+            new UserListDeps(db, keto, audit, passwords, emailService, appConfig), ActorId, ul, body,
+            "/org/userlists", OrgId);
     }
 
     [HttpPost("userlists/{id}/users/{uid}/resend-invite")]
@@ -506,6 +526,15 @@ public class OrgController(
 
         if (body.Role != null) role.Role = body.Role;
         if (body.ScopeId != null) role.ScopeId = body.ScopeId;
+
+        // Seul project_admin porte une portée : org_admin et super_admin valent sur toute
+        // l'organisation. `ScopeId` n'étant qu'affectable, jamais effaçable, promouvoir un
+        // project_admin en org_admin gardait son ancienne portée — et le tuple réécrit plus bas
+        // partait sur le sujet `user:…|project:…` sous la relation `org_admin`. Keto répondait donc
+        // « oui » à un org_admin dont le grant nomme un projet, et « non » au sujet non scopé que
+        // toute vérification d'organisation interroge.
+        if (role.Role != Roles.ProjectAdmin) role.ScopeId = null;
+
         await db.SaveChangesAsync();
 
         var newSubject = KetoSubject(role.UserId, role.ScopeId);

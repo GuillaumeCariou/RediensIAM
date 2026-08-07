@@ -38,6 +38,114 @@ public class SystemProjectTests(TestFixture fixture)
         res.StatusCode.Should().BeOneOf(HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden);
     }
 
+    /// <summary>
+    /// The list whose members may sign in to a project is part of the project, on every shape that
+    /// returns one.
+    ///
+    /// <para>
+    /// It was on none of them. A service that provisions accounts for a project has to know which
+    /// list to put them in, and the only way to learn it was to read every user list and look for
+    /// one whose <c>assigned_projects</c> named the project — a scan to recover something the
+    /// project already holds. The alternative a caller reaches for is worse: pin the id in its own
+    /// configuration, and keep pointing at the old list the day the assignment changes. Accounts
+    /// then land in a list nobody can sign in through, and the symptom is "invalid credentials" on
+    /// an account that is perfectly valid.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task ListAllProjects_CarriesTheAssignedUserList()
+    {
+        var client   = await SuperAdminClientAsync();
+        var (org, _) = await fixture.Seed.CreateOrgAsync();
+        var list     = await fixture.Seed.CreateUserListAsync(org.Id);
+        var project  = await fixture.Seed.CreateProjectAsync(org.Id);
+        project.AssignedUserListId = list.Id;
+        await fixture.Db.SaveChangesAsync();
+
+        var res  = await client.GetAsync("/admin/projects");
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+
+        var mine = body.EnumerateArray()
+            .First(p => p.GetProperty("id").GetString() == project.Id.ToString());
+        mine.GetProperty("assigned_user_list_id").GetString().Should().Be(list.Id.ToString());
+    }
+
+    [Fact]
+    public async Task ListOrgProjects_CarriesTheAssignedUserListAndTheOrganisation()
+    {
+        var client   = await SuperAdminClientAsync();
+        var (org, _) = await fixture.Seed.CreateOrgAsync();
+        var list     = await fixture.Seed.CreateUserListAsync(org.Id);
+        var project  = await fixture.Seed.CreateProjectAsync(org.Id);
+        project.AssignedUserListId = list.Id;
+        await fixture.Db.SaveChangesAsync();
+
+        var res  = await client.GetAsync($"/admin/organizations/{org.Id}/projects");
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+
+        var mine = body.EnumerateArray().First();
+        mine.GetProperty("assigned_user_list_id").GetString().Should().Be(list.Id.ToString());
+        mine.GetProperty("org_id").GetString().Should().Be(org.Id.ToString());
+    }
+
+    // ── GET /admin/projects/{id} ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetProject_ReturnsItWithItsAssignedUserList()
+    {
+        var client   = await SuperAdminClientAsync();
+        var (org, _) = await fixture.Seed.CreateOrgAsync();
+        var list     = await fixture.Seed.CreateUserListAsync(org.Id);
+        var project  = await fixture.Seed.CreateProjectAsync(org.Id);
+        project.AssignedUserListId = list.Id;
+        await fixture.Db.SaveChangesAsync();
+
+        var res = await client.GetAsync($"/admin/projects/{project.Id}");
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("id").GetString().Should().Be(project.Id.ToString());
+        body.GetProperty("assigned_user_list_id").GetString().Should().Be(list.Id.ToString());
+        body.GetProperty("org_name").GetString().Should().Be(org.Name);
+    }
+
+    [Fact]
+    public async Task GetProject_Unknown_Returns404()
+    {
+        var client = await SuperAdminClientAsync();
+
+        var res = await client.GetAsync($"/admin/projects/{Guid.NewGuid()}");
+
+        res.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    /// <summary>
+    /// The Location header of a created project resolves.
+    ///
+    /// <para>
+    /// It has answered <c>Location: /admin/projects/{id}</c> since it was written, and that route
+    /// did not exist — a header pointing at a 404. A caller following it, which is what a Location
+    /// header is for, learned nothing.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task CreateProject_LocationHeaderResolves()
+    {
+        var client   = await SuperAdminClientAsync();
+        var (org, _) = await fixture.Seed.CreateOrgAsync();
+
+        var created = await client.PostAsJsonAsync($"/admin/organizations/{org.Id}/projects", new
+        {
+            name = "Located", slug = SeedData.UniqueSlug(),
+            redirect_uris = new[] { "https://located.test/cb" },
+        });
+        created.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var res = await client.GetAsync(created.Headers.Location);
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
     // ── POST /admin/organizations/{id}/projects ────────────────────────────────
 
     [Fact]

@@ -5,7 +5,7 @@ import type { ProjectFormState } from '@/lib/projectForm';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { IamChip, IamDialog } from '@/components/iam';
-import { listProjects, createProject, deleteProject, listUserLists, assignUserList, unassignUserList } from '@/api';
+import { listProjects, createProject, createSystemProject, deleteProject, listUserLists, assignUserList, unassignUserList } from '@/api';
 import { ApiError } from '@/auth';
 import { useOrgContext } from '@/hooks/useOrgContext';
 import PageHeader from '@/components/layout/PageHeader';
@@ -62,7 +62,7 @@ function ProjectMenu({ onOpen, onAssign, onUnassign, hasUserList, onDelete }: Re
 
 export default function Projects() {
   const navigate = useNavigate();
-  const { orgId, projectUrl } = useOrgContext();
+  const { orgId, isSystemCtx, projectUrl } = useOrgContext();
   const [projects, setProjects] = useState<Project[]>([]);
   const [userLists, setUserLists] = useState<UserList[]>([]);
   const [loading, setLoading] = useState(true);
@@ -90,7 +90,12 @@ export default function Projects() {
     e.preventDefault();
     setSaving(true); setCreateError('');
     try {
-      await createProject({ org_id: orgId, ...toProjectPayload(form) });
+      // In system scope the organisation comes from the URL and the route that reads it; in org
+      // scope the caller's token is the authority. Same distinction, same reason, as the user-list
+      // page two files over.
+      await (isSystemCtx
+        ? createSystemProject(orgId, toProjectPayload(form))
+        : createProject({ org_id: orgId, ...toProjectPayload(form) }));
       setCreateOpen(false); setForm(emptyProjectForm); load();
     } catch (err) {
       const body = err instanceof ApiError ? (err.body as Record<string, string> | null) : null;

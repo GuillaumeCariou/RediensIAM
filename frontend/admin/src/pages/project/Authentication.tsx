@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { useProjectContext } from '@/hooks/useOrgContext';
+import { useAuth } from '@/context/AuthContext';
 import { IamChip, IamDialog } from '@/components/iam';
-import { getProjectInfo, updateProject, listRoles, listSamlProviders, createSamlProvider, deleteSamlProvider } from '@/api';
+import {
+  getProjectInfo, updateProject, listRoles,
+  listSamlProviders, createSamlProvider, updateSamlProvider, deleteSamlProvider,
+  orgListSamlProviders, orgCreateSamlProvider, orgUpdateSamlProvider, orgDeleteSamlProvider,
+} from '@/api';
+import { getIssuerUrl } from '@/auth';
 import PageHeader from '@/components/layout/PageHeader';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -225,6 +231,58 @@ function SecretInput({ value, saved: secretSaved, onChange }: Readonly<{ value: 
   );
 }
 
+interface SamlForm {
+  entity_id: string; metadata_url: string; email_attribute_name: string;
+  display_name_attribute_name: string; jit_provisioning: boolean; active: boolean;
+}
+
+const EMPTY_SAML_FORM: SamlForm = {
+  entity_id: '', metadata_url: '', email_attribute_name: 'email',
+  display_name_attribute_name: '', jit_provisioning: true, active: true,
+};
+
+/** The same fields in both SAML dialogs — the add form and the edit form differ only in what they send. */
+function SamlFields({ idPrefix, form, onChange }: Readonly<{
+  idPrefix: string; form: SamlForm; onChange: (patch: Partial<SamlForm>) => void;
+}>) {
+  return (
+    <>
+      <div>
+        <label className="iam-label" htmlFor={`${idPrefix}-entity-id`}>Entity ID <span style={{ color: 'var(--danger)' }}>*</span></label>
+        <input id={`${idPrefix}-entity-id`} className="iam-input" value={form.entity_id} onChange={e => onChange({ entity_id: e.target.value })} required placeholder="https://your-idp.example.com" />
+      </div>
+      <div>
+        <label className="iam-label" htmlFor={`${idPrefix}-metadata-url`}>Metadata URL <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>(recommended)</span></label>
+        <input id={`${idPrefix}-metadata-url`} className="iam-input" value={form.metadata_url} onChange={e => onChange({ metadata_url: e.target.value })} placeholder="https://your-idp.example.com/metadata" />
+        <p style={{ fontSize: 11, color: 'var(--fg-muted)', marginTop: 4 }}>Must use HTTPS. If provided, certificates are fetched automatically.</p>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <div>
+          <label className="iam-label" htmlFor={`${idPrefix}-email-attr`}>Email attribute</label>
+          <input id={`${idPrefix}-email-attr`} className="iam-input" value={form.email_attribute_name} onChange={e => onChange({ email_attribute_name: e.target.value })} placeholder="email" />
+        </div>
+        <div>
+          {/* `display_name_attribute_name` on the wire — the backend binds nothing called
+              `name_attribute_name` and dropped it without a word. */}
+          <label className="iam-label" htmlFor={`${idPrefix}-name-attr`}>Name attribute <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>(optional)</span></label>
+          <input id={`${idPrefix}-name-attr`} className="iam-input" value={form.display_name_attribute_name} onChange={e => onChange({ display_name_attribute_name: e.target.value })} placeholder="displayName" />
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <p style={{ fontSize: 13, fontWeight: 500 }}>JIT provisioning</p>
+          <p style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Automatically create users on first login</p>
+        </div>
+        <Toggle label="JIT provisioning" checked={form.jit_provisioning} onChange={v => onChange({ jit_provisioning: v })} />
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span className="iam-label" style={{ margin: 0 }}>Active</span>
+        <Toggle label="Active" checked={form.active} onChange={v => onChange({ active: v })} />
+      </div>
+    </>
+  );
+}
+
 type TabId = 'appearance' | 'providers' | 'registration' | 'verification' | 'security' | 'css';
 type PreviewMode = 'login' | 'register' | 'verify';
 
@@ -240,7 +298,20 @@ const TABS: { id: TabId; label: string }[] = [
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function Authentication() {
-  const { projectId } = useProjectContext();
+  const { projectId, isSystemCtx } = useProjectContext();
+  const { isSuperAdmin } = useAuth();
+  /**
+   * Which scope's SAML routes to call. The `/admin` ones require system authority, so an org_admin
+   * managing their own project got 403 on every one of them and the section stayed empty. Same
+   * choice as `ProjectUsers.handleAssignList`.
+   */
+  const systemScope = isSystemCtx || isSuperAdmin;
+  // Memoised because `load` depends on it: a fresh object each render would re-read the project
+  // on every render.
+  const samlApi = useMemo(() => systemScope
+    ? { list: listSamlProviders, create: createSamlProvider, update: updateSamlProvider, remove: deleteSamlProvider }
+    : { list: orgListSamlProviders, create: orgCreateSamlProvider, update: orgUpdateSamlProvider, remove: orgDeleteSamlProvider },
+  [systemScope]);
   const [tab, setTab] = useState<TabId>('appearance');
   const [theme, setTheme] = useState<Theme>(DEFAULT_THEME);
   const [customFont, setCustomFont] = useState('');
@@ -279,12 +350,17 @@ export default function Authentication() {
 
   const [samlProviders, setSamlProviders] = useState<SamlProvider[]>([]);
   const [addSamlOpen,   setAddSamlOpen]   = useState(false);
-  const [samlForm,      setSamlForm]      = useState({
-    entity_id: '', metadata_url: '', email_attribute_name: 'email',
-    display_name_attribute_name: '', jit_provisioning: true, active: true,
-  });
+  const [samlForm,      setSamlForm]      = useState<SamlForm>(EMPTY_SAML_FORM);
   const [samlSaving, setSamlSaving] = useState(false);
   const [samlError,  setSamlError]  = useState('');
+  // The provider being edited, and the form it opened with. Editing existed on neither scope: a
+  // provider could only be registered and destroyed, so a rotated certificate meant deleting the
+  // IdP and re-adding it.
+  const [editSaml,      setEditSaml]      = useState<SamlProvider | null>(null);
+  const [editSamlForm,  setEditSamlForm]  = useState<SamlForm>(EMPTY_SAML_FORM);
+  const [editSamlError, setEditSamlError] = useState('');
+  // Deleting had no `catch` at all: a refused DELETE left the row in place and said nothing.
+  const [samlRowError,  setSamlRowError]  = useState('');
 
   const load = useCallback(() => {
     if (!projectId) { setLoading(false); return; }
@@ -321,9 +397,9 @@ export default function Authentication() {
         setCustomScopes((p.allowed_scopes ?? []).filter((s: string) => !['openid', 'offline'].includes(s)));
       }),
       listRoles(projectId).then(r => setRoles((r.roles ?? r ?? []).sort((a: Role, b: Role) => a.rank - b.rank))),
-      listSamlProviders(projectId).then(r => setSamlProviders(r.providers ?? r ?? [])).catch(() => {}),
+      samlApi.list(projectId).then(r => setSamlProviders(r.providers ?? r ?? [])).catch(() => {}),
     ]).catch(err => { console.error(err); setLoadError(true); }).finally(() => setLoading(false));
-  }, [projectId]);
+  }, [projectId, samlApi]);
 
   useEffect(load, [load]);
 
@@ -444,7 +520,21 @@ export default function Authentication() {
   };
   const removeScope = (s: string) => setCustomScopes(prev => prev.filter(x => x !== s));
 
-  const spMetadataUrl = `${globalThis.location.origin}/admin/projects/${projectId}/saml/metadata`;
+  /**
+   * L'URL de métadonnées SP, telle que le serveur la sert réellement.
+   *
+   * La page annonçait `${location.origin}/admin/projects/{id}/saml/metadata` sous « donnez ceci à
+   * votre IdP ». Ce chemin n'existe dans aucun contrôleur : le seul point est
+   * `GET /auth/saml/metadata` (SamlController), anonyme, et son `entityID` comme son ACS sont
+   * construits sur `PublicUrl` — **une métadonnée pour tout le déploiement, pas une par projet**.
+   * Un opérateur qui suivait l'instruction configurait son IdP sur un 404.
+   *
+   * `location.origin` est faux deux fois : la console vit sur l'hôte d'administration, le SP sur
+   * l'hôte public. La valeur vient donc de `/console/config`, et tant qu'elle n'a pas répondu la
+   * page ne montre rien plutôt qu'une URL inventée.
+   */
+  const issuer = getIssuerUrl();
+  const spMetadataUrl = issuer ? `${issuer}/auth/saml/metadata` : '';
 
   /**
    * `samlForm.active` is deliberately not sent below: the create endpoint does not accept it and
@@ -455,7 +545,7 @@ export default function Authentication() {
     e.preventDefault();
     setSamlSaving(true); setSamlError('');
     try {
-      const res = await createSamlProvider(projectId, {
+      const res = await samlApi.create(projectId, {
         entity_id: samlForm.entity_id,
         metadata_url: samlForm.metadata_url || undefined,
         email_attribute_name: samlForm.email_attribute_name || 'email',
@@ -465,14 +555,55 @@ export default function Authentication() {
       if (res.error) { setSamlError(res.error_description ?? 'Failed to add provider.'); return; }
       setSamlProviders(prev => [...prev, res]);
       setAddSamlOpen(false);
-      setSamlForm({ entity_id: '', metadata_url: '', email_attribute_name: 'email', display_name_attribute_name: '', jit_provisioning: true, active: true });
+      setSamlForm(EMPTY_SAML_FORM);
     } catch { setSamlError('Something went wrong.'); }
     finally { setSamlSaving(false); }
   };
 
+  const openEditSaml = (idp: SamlProvider) => {
+    setEditSamlError('');
+    setEditSaml(idp);
+    setEditSamlForm({
+      entity_id: idp.entity_id,
+      metadata_url: idp.metadata_url ?? '',
+      email_attribute_name: idp.email_attribute_name,
+      display_name_attribute_name: idp.display_name_attribute_name ?? '',
+      jit_provisioning: idp.jit_provisioning,
+      active: idp.active,
+    });
+  };
+
+  /**
+   * Every field is sent, `active` included — unlike creation, the PATCH accepts it, and it is the
+   * only way to take a provider out of service without deleting it. A field cleared in the form is
+   * sent as an empty string, which is how the backend is told to clear it.
+   */
+  const handleEditSaml = async (e: React.SyntheticEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!editSaml) return;
+    setSamlSaving(true); setEditSamlError('');
+    try {
+      const res = await samlApi.update(projectId, editSaml.id, {
+        entity_id: editSamlForm.entity_id,
+        metadata_url: editSamlForm.metadata_url,
+        email_attribute_name: editSamlForm.email_attribute_name || 'email',
+        display_name_attribute_name: editSamlForm.display_name_attribute_name,
+        jit_provisioning: editSamlForm.jit_provisioning,
+        active: editSamlForm.active,
+      });
+      if (res.error) { setEditSamlError(res.error_description ?? 'Failed to save the provider.'); return; }
+      setSamlProviders(prev => prev.map(p => p.id === editSaml.id ? { ...p, ...editSamlForm } : p));
+      setEditSaml(null);
+    } catch { setEditSamlError('Something went wrong.'); }
+    finally { setSamlSaving(false); }
+  };
+
   const handleDeleteSaml = async (idpId: string) => {
-    await deleteSamlProvider(projectId, idpId);
-    setSamlProviders(prev => prev.filter(p => p.id !== idpId));
+    setSamlRowError('');
+    try {
+      await samlApi.remove(projectId, idpId);
+      setSamlProviders(prev => prev.filter(p => p.id !== idpId));
+    } catch { setSamlRowError('Could not remove that identity provider. It is still configured.'); }
   };
 
   // A load that failed leaves every field at its useState default. Rendering the form anyway means
@@ -693,12 +824,19 @@ export default function Authentication() {
                   </button>
                 </div>
                 <div className="iam-card iam-card-pad">
-                  <div style={{ fontSize: 11, color: 'var(--fg-muted)', marginBottom: 6 }}>SP Metadata URL — give this to your IdP</div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--surface-2)', borderRadius: 6, padding: '8px 12px' }}>
-                    <code className="iam-mono" style={{ fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{spMetadataUrl}</code>
-                    <CopyButton text={spMetadataUrl} />
+                  <div style={{ fontSize: 11, color: 'var(--fg-muted)', marginBottom: 6 }}>
+                    SP Metadata URL — give this to your IdP. One descriptor serves the whole deployment, not this project alone.
                   </div>
+                  {spMetadataUrl ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--surface-2)', borderRadius: 6, padding: '8px 12px' }}>
+                      <code className="iam-mono" style={{ fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{spMetadataUrl}</code>
+                      <CopyButton text={spMetadataUrl} />
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Reading the deployment&apos;s public address…</div>
+                  )}
                 </div>
+                {samlRowError && <div className="iam-alert iam-alert-danger">{samlRowError}</div>}
                 {samlProviders.length === 0 ? (
                   <div style={{ fontSize: 13, color: 'var(--fg-muted)', textAlign: 'center', padding: 16, border: '1px dashed var(--border)', borderRadius: 8 }}>
                     No SAML providers configured
@@ -713,6 +851,7 @@ export default function Authentication() {
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <IamChip tone={idp.active ? 'success' : 'default'}>{idp.active ? 'Active' : 'Inactive'}</IamChip>
+                          <button className="iam-btn iam-btn-ghost iam-btn-sm" onClick={() => openEditSaml(idp)}>Edit</button>
                           <button className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm" style={{ color: 'var(--danger)' }} onClick={() => handleDeleteSaml(idp.id)}>
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
                           </button>
@@ -968,36 +1107,27 @@ export default function Authentication() {
       >
         <form id="add-saml-form" onSubmit={handleAddSaml} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {samlError && <div style={{ padding: '8px 12px', background: 'var(--danger-soft)', color: 'var(--danger)', borderRadius: 6, fontSize: 13 }}>{samlError}</div>}
-          <div>
-            <label className="iam-label" htmlFor="saml-entity-id">Entity ID <span style={{ color: 'var(--danger)' }}>*</span></label>
-            <input id="saml-entity-id" className="iam-input" value={samlForm.entity_id} onChange={e => setSamlForm(f => ({ ...f, entity_id: e.target.value }))} required placeholder="https://your-idp.example.com" />
-          </div>
-          <div>
-            <label className="iam-label" htmlFor="saml-metadata-url">Metadata URL <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>(recommended)</span></label>
-            <input id="saml-metadata-url" className="iam-input" value={samlForm.metadata_url} onChange={e => setSamlForm(f => ({ ...f, metadata_url: e.target.value }))} placeholder="https://your-idp.example.com/metadata" />
-            <p style={{ fontSize: 11, color: 'var(--fg-muted)', marginTop: 4 }}>Must use HTTPS. If provided, certificates are fetched automatically.</p>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <div>
-              <label className="iam-label" htmlFor="saml-email-attr">Email attribute</label>
-              <input id="saml-email-attr" className="iam-input" value={samlForm.email_attribute_name} onChange={e => setSamlForm(f => ({ ...f, email_attribute_name: e.target.value }))} placeholder="email" />
-            </div>
-            <div>
-              <label className="iam-label" htmlFor="saml-name-attr">Name attribute <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>(optional)</span></label>
-              <input id="saml-name-attr" className="iam-input" value={samlForm.display_name_attribute_name} onChange={e => setSamlForm(f => ({ ...f, display_name_attribute_name: e.target.value }))} placeholder="displayName" />
-            </div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <p style={{ fontSize: 13, fontWeight: 500 }}>JIT provisioning</p>
-              <p style={{ fontSize: 11, color: 'var(--fg-muted)' }}>Automatically create users on first login</p>
-            </div>
-            <Toggle label="JIT provisioning" checked={samlForm.jit_provisioning} onChange={v => setSamlForm(f => ({ ...f, jit_provisioning: v }))} />
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span className="iam-label" style={{ margin: 0 }}>Active</span>
-            <Toggle label="Active" checked={samlForm.active} onChange={v => setSamlForm(f => ({ ...f, active: v }))} />
-          </div>
+          <SamlFields idPrefix="saml" form={samlForm} onChange={patch => setSamlForm(f => ({ ...f, ...patch }))} />
+        </form>
+      </IamDialog>
+
+      <IamDialog
+        open={!!editSaml}
+        onClose={() => { setEditSaml(null); setEditSamlError(''); }}
+        title="Edit SAML 2.0 Identity Provider"
+        desc={editSaml?.entity_id}
+        footer={
+          <>
+            <button className="iam-btn iam-btn-ghost" onClick={() => { setEditSaml(null); setEditSamlError(''); }}>Cancel</button>
+            <button className="iam-btn iam-btn-primary" form="edit-saml-form" type="submit" disabled={samlSaving}>
+              {samlSaving ? 'Saving…' : 'Save changes'}
+            </button>
+          </>
+        }
+      >
+        <form id="edit-saml-form" onSubmit={handleEditSaml} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {editSamlError && <div style={{ padding: '8px 12px', background: 'var(--danger-soft)', color: 'var(--danger)', borderRadius: 6, fontSize: 13 }}>{editSamlError}</div>}
+          <SamlFields idPrefix="saml-edit" form={editSamlForm} onChange={patch => setEditSamlForm(f => ({ ...f, ...patch }))} />
         </form>
       </IamDialog>
     </div>

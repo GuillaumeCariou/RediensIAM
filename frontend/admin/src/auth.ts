@@ -10,6 +10,7 @@ interface AdminConfig {
 
 let client: RediensIam | null = null;
 let serverVersion: string | null = null;
+let issuerUrl: string | null = null;
 let accessToken: string | null = null;
 /**
  * One-shot guard so concurrent 401 responses do not each fire a login redirect — the
@@ -39,6 +40,7 @@ async function getClient(): Promise<RediensIam> {
   const res = await fetch('/console/config');
   const cfg: AdminConfig = await res.json();
   serverVersion = cfg.version ?? null;
+  issuerUrl = cfg.hydra_url ?? null;
   try {
     const cfgOrigin = new URL(cfg.redirect_uri).origin;
     if (cfgOrigin !== globalThis.location.origin) {
@@ -71,6 +73,16 @@ export async function restoreSession(): Promise<void> {
  * a SPA built against one release and served by another would show the wrong one.
  */
 export function getServerVersion(): string | null { return serverVersion; }
+
+/**
+ * L'origine publique du déploiement — `PublicUrl` côté serveur, l'`issuer` que Hydra annonce.
+ *
+ * Ce n'est pas l'origine de cette console : la console vit sur l'hôte d'administration, le SP SAML
+ * sur l'hôte public. Construire une URL SAML à partir de `location.origin` donne un nom que rien
+ * ne sert. Null tant que `/console/config` n'a pas répondu, parce qu'inventer la valeur est
+ * exactement ce que ce correctif supprime.
+ */
+export function getIssuerUrl(): string | null { return issuerUrl; }
 
 export async function startLogin() {
   const c = await getClient();
@@ -178,5 +190,18 @@ export async function apiFetch(path: string, opts: RequestInit = {}) {
     }
     throw new ApiError(res.status, body);
   }
+
+  // A write happened. Views that cache a list — the navigation tree is the only one today — have
+  // no other way to learn it: the operator creates a tenant on the Organisations page, the tree
+  // fetched its tenants once at mount, and the two disagree until a reload. Announced here, in the
+  // one funnel every request already passes through, rather than by asking each page that mutates
+  // something to remember to tell the sidebar. `setOrgName` is what that arrangement looks like
+  // after a while: fifteen call sites, none of them written.
+  if (opts.method && opts.method.toUpperCase() !== 'GET') {
+    globalThis.dispatchEvent(new CustomEvent(MUTATION_EVENT, { detail: { path } }));
+  }
   return res;
 }
+
+/** Fired on `globalThis` after any successful non-GET request. `detail.path` is the route written to. */
+export const MUTATION_EVENT = 'rediensiam:mutated';

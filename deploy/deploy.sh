@@ -258,6 +258,11 @@ rediensiam:
         hydraPassword: ${db_hydra}
         ketoPassword: ${db_keto}
         backupPassword: ${db_backup}
+
+# At the ROOT, beside keto below and not under rediensiam: Helm hands a subchart only the values
+# written under its own name. Nested one level in, this block was parsed and ignored, Hydra started
+# with no dsn at all, and every fresh dev install crash-looped on `dsn must be set` — two spaces.
+hydra:
   hydra:
     config:
       dsn: "postgres://iam_hydra:${db_hydra}@${PG_HOST}:5432/hydra?sslmode=${ory_ssl}"

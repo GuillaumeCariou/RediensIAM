@@ -25,6 +25,15 @@ public class OrgMembershipTests(TestFixture fixture) : IAsyncLifetime
 
     private static string NewChallenge() => Guid.NewGuid().ToString("N");
 
+    /// <summary>Un client porteur d'un jeton super-admin, comme les tests système en montent un.</summary>
+    private async Task<HttpClient> SuperAdminClientAsync()
+    {
+        var (_, orgList) = await fixture.Seed.CreateOrgAsync();
+        var admin        = await fixture.Seed.CreateUserAsync(orgList.Id);
+        fixture.Keto.AllowAll();
+        return fixture.ClientWithToken(fixture.Seed.SuperAdminToken(admin.Id));
+    }
+
     /// <param name="memberOf">L'organisation dont l'utilisateur est membre, ou null pour le repli.</param>
     private async Task<(Project project, User user, Organisation projectOrg)> ScaffoldAsync(
         Func<Organisation, Task<Organisation?>>? memberOf = null, string password = "P@ssw0rd!Test")
@@ -122,5 +131,41 @@ public class OrgMembershipTests(TestFixture fixture) : IAsyncLifetime
 
         Assert.Contains($"\"{acme.Id}:{marie.Id}\"", fixture.Hydra.AcceptedLoginBody(cMarie)!);
         Assert.Contains($"\"{beta.Id}:{paul.Id}\"",  fixture.Hydra.AcceptedLoginBody(cPaul)!);
+    }
+
+    // ── Qui a le droit d'inscrire une organisation sur un compte ──────────────
+
+    [Fact]
+    public async Task AdminCreateUser_WithOrgId_StampsIt()
+    {
+        // La surface système est le SEUL endroit où l'organisation se nomme
+        // explicitement. C'est ce qui permet de peupler une liste PARTAGÉE entre
+        // plusieurs locataires.
+        var (host, _) = await fixture.Seed.CreateOrgAsync();
+        var list      = await fixture.Seed.CreateUserListAsync(host.Id);
+        var acme      = (await fixture.Seed.CreateOrgAsync()).Item1;
+
+        var client = await SuperAdminClientAsync();
+        var res = await client.PostAsJsonAsync($"/admin/userlists/{list.Id}/users",
+            new { email = $"marie{Guid.NewGuid():N}@acme.fr", password = "P@ssw0rd!Test", org_id = acme.Id });
+        res.EnsureSuccessStatusCode();
+
+        var created = await fixture.Db.Users.OrderByDescending(u => u.CreatedAt)
+            .FirstAsync(u => u.UserListId == list.Id);
+        Assert.Equal(acme.Id, created.OrgId);
+    }
+
+    [Fact]
+    public async Task AdminCreateUser_WithUnknownOrg_Is400_NotAnFkCrash()
+    {
+        // Une organisation inconnue remonterait en violation de clé étrangère, donc en 500 — qui
+        // ne dit rien à l'appelant sur la seule chose qu'il peut corriger.
+        var (host, _) = await fixture.Seed.CreateOrgAsync();
+        var list      = await fixture.Seed.CreateUserListAsync(host.Id);
+
+        var client = await SuperAdminClientAsync();
+        var res = await client.PostAsJsonAsync($"/admin/userlists/{list.Id}/users",
+            new { email = $"x{Guid.NewGuid():N}@nulle-part.fr", password = "P@ssw0rd!Test", org_id = Guid.NewGuid() });
+        Assert.Equal(global::System.Net.HttpStatusCode.BadRequest, res.StatusCode);
     }
 }

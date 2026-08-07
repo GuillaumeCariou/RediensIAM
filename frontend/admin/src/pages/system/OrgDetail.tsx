@@ -8,7 +8,7 @@ import { useParams, useNavigate } from 'react-router';
 import { useAuth } from '@/context/AuthContext';
 import {
   ArrowLeft, PauseCircle, PlayCircle, Pencil, UserPlus,
-  MoreHorizontal, Shield, Trash2, FolderKanban, List, Plus,
+  MoreHorizontal, Shield, Trash2, FolderKanban, List, Plus, Download,
 } from 'lucide-react';
 import {
   getOrg, suspendOrg, unsuspendOrg, updateOrg, deleteOrg,
@@ -17,7 +17,8 @@ import {
   addUserToList, removeSystemUserFromList,
   listServiceAccounts,
   listUserLists, adminCreateUserList,
-  listProjects, adminCreateProject,
+  adminListOrgProjects, adminCreateProject,
+  exportOrgUsers,
 } from '@/api';
 import { fmtDateShort } from '@/lib/utils';
 import { IamChip, IamDialog, IamMenu } from '@/components/iam';
@@ -42,6 +43,9 @@ export default function OrgDetail() {
   const [userLists, setUserLists] = useState<UserList[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
 
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameVal, setRenameVal] = useState('');
@@ -77,7 +81,7 @@ export default function OrgDetail() {
         listOrgAdmins(id),
         listServiceAccounts() as Promise<ServiceAccount[]>,
         listUserLists(id),
-        listProjects(id),
+        adminListOrgProjects(id),
       ]);
       setOrgListMembers(members ?? []);
       setOrgRoles(roles ?? []);
@@ -108,6 +112,34 @@ export default function OrgDetail() {
     if (!org) return;
     await deleteOrg(org.id);
     navigate('/system/organisations');
+  };
+
+  /**
+   * Export CSV des comptes. Même motif que l'export du journal d'audit et celui d'une user list :
+   * le blob est déclenché en téléchargement ici plutôt que suivi en navigation, parce que la route
+   * exige un jeton porteur qu'une balise <a> n'enverrait pas.
+   *
+   * Le serveur limite ce débit (`export_rl:` dans SystemAdminController) et répond 429 : le refus
+   * est affiché, il n'est pas avalé.
+   */
+  const handleExportUsers = async () => {
+    if (!id) return;
+    setExporting(true);
+    setExportError('');
+    try {
+      const blob = await exportOrgUsers(id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `users-${id.slice(0, 8)}-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      const code = err instanceof ApiError ? (err.body as { error?: string } | null)?.error : undefined;
+      setExportError(code === 'export_rate_limited'
+        ? 'An export was already taken recently. Wait before asking for another.'
+        : 'Could not export the users. Nothing was downloaded.');
+    } finally { setExporting(false); }
   };
 
   const handleRename = async (e: React.SyntheticEvent<HTMLFormElement>) => {
@@ -221,6 +253,9 @@ export default function OrgDetail() {
               <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={() => { setRenameVal(org.name); setRenameOpen(true); }}>
                 <Pencil className="h-4 w-4" />Rename
               </button>
+              <button className="iam-btn iam-btn-secondary iam-btn-sm" disabled={exporting} onClick={handleExportUsers}>
+                <Download className="h-4 w-4" />{exporting ? 'Exporting…' : 'Export users'}
+              </button>
               {isSuperAdmin && (
                 <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={handleSuspend}>
                   {org.suspended_at
@@ -236,6 +271,7 @@ export default function OrgDetail() {
               )}
             </div>
           )}
+          {exportError && <p style={{ fontSize: 12, color: 'var(--danger)', marginTop: 8 }}>{exportError}</p>}
         </div>
 
         <hr className="iam-sep" />

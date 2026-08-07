@@ -16,8 +16,10 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
-    /* Path aliases */
-    "baseUrl": ".",
+    /* Path aliases.
+       No baseUrl: TypeScript 6.0 deprecates it (TS5102) and 7.0 removes it. Since 5.0 `paths` is
+       resolved relative to the tsconfig that declares it, so the entries below already say what
+       baseUrl was saying — it was redundant before it was deprecated. */
     "paths": {
       "@/*": ["./src/*"],
       "rediensiam-web": ["../../sdk/typescript/rediensiam-web/src/index.ts"]

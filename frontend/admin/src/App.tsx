@@ -9,6 +9,7 @@ import Shell from './components/layout/Shell';
 import ServiceAccounts from './pages/shared/ServiceAccounts';
 import AuditLog from './pages/shared/AuditLog';
 import Impersonation from './pages/system/Impersonation';
+import DeploymentSettings from './pages/system/DeploymentSettings';
 import { DESTINATIONS, ROUTE_BASES, type Level } from './scope';
 
 import AccountPage from './pages/account/AccountPage';
@@ -23,6 +24,8 @@ import OrgDetail from './pages/system/OrgDetail';
 import SystemProjectDetail from './pages/system/SystemProjectDetail';
 import SystemProjects from './pages/system/SystemProjects';
 import SystemHealth from './pages/system/SystemHealth';
+import GrantReconcile from './pages/system/GrantReconcile';
+import OAuth2Clients from './pages/system/OAuth2Clients';
 import ServiceAccountDetail from './pages/shared/ServiceAccountDetail';
 import OrgAdmins from './pages/shared/OrgAdmins';
 import UserListDetail from './pages/shared/UserListDetail';
@@ -37,6 +40,7 @@ import OrgSettings from './pages/org/OrgSettings';
 import ProjectDashboard from './pages/project/ProjectDashboard';
 import ProjectUsers from './pages/project/ProjectUsers';
 import ProjectRoles from './pages/project/ProjectRoles';
+import ProjectAuditLog from './pages/project/ProjectAuditLog';
 import Authentication from './pages/project/Authentication';
 import ProjectSettings from './pages/project/ProjectSettings';
 
@@ -158,11 +162,14 @@ export const PAGES: Record<Level, Record<string, React.ReactElement>> = {
     'projects':         <SystemProjects />,
     'userlists':        <UserLists />,
     'service-accounts': <ServiceAccounts level="deployment" />,
+    'oauth2-clients':   <OAuth2Clients />,
     'email':            <SystemEmail />,
     'impersonation':    <Impersonation />,
+    'settings':         <DeploymentSettings />,
     'audit-log':        <AuditLog level="deployment" />,
     'metrics':          <SystemMetrics />,
     'health':           <SystemHealth />,
+    'grant-reconcile':  <GrantReconcile />,
   },
   org: {
     '':                 <OrgDashboardOrDetail />,
@@ -181,6 +188,7 @@ export const PAGES: Record<Level, Record<string, React.ReactElement>> = {
     'roles':            <ProjectRoles />,
     'service-accounts': <ServiceAccounts level="project" />,
     'authentication':   <Authentication />,
+    'audit-log':        <ProjectAuditLog />,
     'settings':         <ProjectSettings />,
   },
 };

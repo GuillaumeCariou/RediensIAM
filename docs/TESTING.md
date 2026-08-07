@@ -9,7 +9,7 @@ What exists, how to run it, and — just as usefully — what has no tests at al
 | Suite | Where | Count | Runs today? |
 |---|---|---:|---|
 | Backend integration tests | `tests/RediensIAM.IntegrationTests/` | **1597** | yes |
-| Admin SPA tests | `frontend/admin/src/**` | 1235 across 51 files | yes, ~31s |
+| Admin SPA tests | `frontend/admin/src/**` | 1251 across 54 files | yes, ~32s |
 | Login SPA unit tests | `frontend/login/src/**` | 300 across 13 files | yes, ~7s |
 | .NET SDK tests | `sdk/dotnet/RediensIAM.Client.Tests/` | 53 | yes |
 | Rust SDK tests | `sdk/rust/rediensiam-client/src/lib.rs` (inline) | 17 (15 unit + 2 doctests) | yes |
@@ -17,7 +17,7 @@ What exists, how to run it, and — just as usefully — what has no tests at al
 | Deploy-layer static tests | `deploy/tests.sh` | 58 checks | yes, no cluster needed |
 | Deployment verification | `deploy/verify-deployment.sh` | 26 checks | yes, against a live cluster |
 | Detection-rule self-test | `deploy/monitoring/selftest.sh` | 6 assertions | yes, against a live database |
-| Playwright E2E | `tests/e2e/` | 5, against a live deployment | yes — `npx playwright test`, no configuration |
+| Playwright E2E | `tests/e2e/` | 51 against a live deployment, plus 13 blocked | needs a deployment and a fixture — see below |
 
 ---
 
@@ -27,8 +27,9 @@ What exists, how to run it, and — just as usefully — what has no tests at al
 dotnet test tests/RediensIAM.IntegrationTests -p:SonarQubeTargetsImported=true
 ```
 
-**1460 tests**, and the number is exact rather than approximate: 1313 `[Fact]` + 37 `[Theory]`
-expanding to 147 `[InlineData]` rows, with no `[MemberData]` or `[ClassData]` anywhere.
+**1633 tests**, and the number is exact rather than approximate: 1418 `[Fact]` + 44 `[Theory]`
+expanding to 169 `[InlineData]` rows and one `[MemberData]` — `ConsoleRoutingTests`, which asks for
+every console route a browser can type.
 
 Roughly three minutes. They are "integration" tests in the real sense — the fixture starts three
 containers per run via Testcontainers:
@@ -308,11 +309,47 @@ OAuth2 client is registered, the challenge bound to a project, Keto answered on 
 minted a token and the console accepted it. That chain is what only an end-to-end test reaches.
 
 ```bash
-./deploy/setup.sh --dev            # the suite needs a deployment
+./deploy/dev-fixture.sh --yes      # tear down, reinstall, seed  (destructive)
 cd tests/e2e
 npm install && npx playwright install chromium     # first time
 npx playwright test
 ```
+
+### The fixture, and why the suite needs one
+
+A real deployment keeps its rows, and that has two consequences the suite had to answer. A test
+asserting "the list shows three organisations" passes once and never again; and a run that fails
+half way leaves its objects behind, so the next run starts from a state nobody described.
+
+`deploy/dev-fixture.sh` therefore destroys, reinstalls and seeds. What it creates is in
+`tests/e2e/seed-dev.mjs`, one file, so the tests and the seed cannot disagree about what exists:
+three organisations (one suspended), three projects, three user lists, three members, three console
+operators holding `org_admin` / `project_admin`, and two service accounts. Specs import `SEED`
+rather than repeating a name as a literal.
+
+Two rules that file keeps. **Idempotent** — seeding twice leaves the same objects, so a failed run
+is recovered with `--seed-only` rather than a reinstall. **Through the API, never the database** — a
+row written past the controller is a row whose Keto tuple, Hydra client and audit entry do not
+exist, and the first test to touch it fails for a reason that has nothing to do with the test.
+
+A spec that needs an object nobody else may touch still creates its own with a run-unique name; a
+spec that needs an object to *already exist* uses the fixture.
+
+### What is written, and what is deliberately skipped
+
+`tests/e2e/PLAN.md` is the inventory — roughly 470 tests across 13 sections — and the rule that
+decides what belongs: an item is an end-to-end test only if it asserts a chain, a refusal the server
+owns, persistence, or a crossing between origins. Anything asserting which text a page renders from
+data it was handed is a component test, and duplicating it here buys a slower copy.
+
+Written so far: **§11** navigation, search and shell (21), **§12** authorisation boundaries (7
+running), plus the tenant, settings and login specs.
+
+Thirteen tests of §12 are written and marked `fixme` rather than deleted. They cannot run because
+the console cannot currently hold a non-super-admin operator: `AdminLogin` admits only accounts in
+the immovable system user list, and membership of that same list *is* `super_admin`. Which of the
+two rules gives is a decision about who may administer a deployment — a deleted test is a question
+nobody asks again.
 
 **No configuration is needed.** With no `.env`, `global-setup.ts` reads the bootstrap administrator
 out of `deploy/rediensiam/values.secret.yaml` — the account the installer created alongside the

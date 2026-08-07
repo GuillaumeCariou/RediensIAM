@@ -28,6 +28,8 @@ const auth = vi.hoisted(() => ({
   // api.ts imports this, and the sidebar's tree pulls api.ts into the graph. A mock that omits it
   // fails the whole file at import time, before a single assertion runs.
   apiFetch: vi.fn(async () => new Response('[]', { headers: { 'content-type': 'application/json' } })),
+  // Same reason: the tree listens for it, so its absence fails the import rather than a test.
+  MUTATION_EVENT: 'rediensiam:mutated',
 }));
 vi.mock('./auth', () => auth);
 vi.mock('@/auth', () => auth);
@@ -46,6 +48,8 @@ vi.mock('./pages/system/OrgDetail', () => stub('OrgDetail'));
 vi.mock('./pages/system/SystemProjectDetail', () => stub('SystemProjectDetail'));
 vi.mock('./pages/system/SystemProjects', () => stub('SystemProjects'));
 vi.mock('./pages/system/SystemHealth', () => stub('SystemHealth'));
+vi.mock('./pages/system/GrantReconcile', () => stub('GrantReconcile'));
+vi.mock('./pages/system/OAuth2Clients', () => stub('OAuth2Clients'));
 vi.mock('./pages/shared/ServiceAccountDetail', () => stub('ServiceAccountDetail'));
 vi.mock('./pages/shared/OrgAdmins', () => stub('OrgAdmins'));
 vi.mock('./pages/shared/UserListDetail', () => stub('UserListDetail'));
@@ -58,10 +62,12 @@ vi.mock('./pages/org/OrgSettings', () => stub('OrgSettings'));
 vi.mock('./pages/project/ProjectDashboard', () => stub('ProjectDashboard'));
 vi.mock('./pages/project/ProjectUsers', () => stub('ProjectUsers'));
 vi.mock('./pages/project/ProjectRoles', () => stub('ProjectRoles'));
+vi.mock('./pages/project/ProjectAuditLog', () => stub('ProjectAuditLog'));
 // One page for all three levels now, stubbed once.
 vi.mock('./pages/shared/ServiceAccounts', () => stub('ServiceAccounts'));
 vi.mock('./pages/shared/AuditLog', () => stub('AuditLog'));
 vi.mock('./pages/system/Impersonation', () => stub('Impersonation'));
+vi.mock('./pages/system/DeploymentSettings', () => stub('DeploymentSettings'));
 vi.mock('./pages/project/Authentication', () => stub('Authentication'));
 vi.mock('./pages/project/ProjectSettings', () => stub('ProjectSettings'));
 // The shell fetches the operator's MFA status; the reminder inside it has its own tests.

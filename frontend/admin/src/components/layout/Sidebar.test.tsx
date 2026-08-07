@@ -19,7 +19,7 @@ const auth = vi.hoisted(() => ({
 vi.mock('@/context/AuthContext', () => ({ useAuth: () => auth }));
 
 const version = vi.hoisted(() => ({ get: vi.fn<() => string | null>(() => null) }));
-vi.mock('@/auth', () => ({ getServerVersion: () => version.get() }));
+vi.mock('@/auth', () => ({ getServerVersion: () => version.get(), MUTATION_EVENT: 'rediensiam:mutated' }));
 // The sidebar renders the tree, and the tree asks the server which tenants exist. Stubbed to
 // nothing here: what those calls produce is NavTree.test's subject, not this file's.
 vi.mock('@/api', () => ({ listOrgs: vi.fn().mockResolvedValue([]), listProjects: vi.fn().mockResolvedValue([]) }));
@@ -53,14 +53,9 @@ function show(path: string, dark = false) {
   return user;
 }
 
-/** The section headers, which are the only buttons carrying that class. */
-const sections = () =>
-  [...document.querySelectorAll('.iam-nav-section-header')].map(b => b.textContent);
-/** Scoped to the sidebar: the stand-in page beside it has links of its own. */
-const navLinks = () => [...document.querySelectorAll<HTMLAnchorElement>('aside a')];
-const links = () => navLinks().map(a => a.getAttribute('href'));
-const linkNames = () => navLinks().map(a => a.textContent);
-const navLink = (name: string) => navLinks().find(a => a.textContent === name);
+// The helpers that read the navigation left with it: the tree owns those assertions now, and
+// NavTree.test.tsx has them. Keeping dead readers here would be keeping a second description of a
+// structure this file no longer renders.
 
 beforeEach(() => {
   vi.clearAllMocks();

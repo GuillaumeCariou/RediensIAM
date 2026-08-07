@@ -4,6 +4,7 @@ import { userEvent } from 'vitest/browser';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import OrgAdmins from './OrgAdmins';
 import { fmtDate } from '@/lib/utils';
+import { ApiError } from '@/auth';
 
 /**
  * Every read and write on this page comes in a pair — the /admin route a super admin uses on
@@ -13,7 +14,8 @@ import { fmtDate } from '@/lib/utils';
 
 const api = vi.hoisted(() => ({
   listOrgAdmins: vi.fn(), assignOrgAdmin: vi.fn(), removeOrgAdmin: vi.fn(),
-  listOrgListManagers: vi.fn(), assignOrgListManager: vi.fn(), removeOrgListManager: vi.fn(),
+  listOrgListManagers: vi.fn(), assignOrgListManager: vi.fn(),
+  updateOrgListManager: vi.fn(), removeOrgListManager: vi.fn(),
   adminGetUser: vi.fn(), adminUpdateUser: vi.fn(), orgGetUser: vi.fn(), orgUpdateUser: vi.fn(),
   listProjects: vi.fn(),
 }));
@@ -66,7 +68,9 @@ function show(path = '/org/admins', pattern = '/org/admins') {
 
 const rowFor = (name: string) => screen.getByRole('row', { name: new RegExp(name) });
 const editButton = (name: string) => rowFor(name).querySelectorAll('button')[0];
-const removeButton = (name: string) => rowFor(name).querySelectorAll('button')[1];
+// Le dernier, pas le deuxième : la portée organisation intercale « changer la délégation ».
+const removeButton = (name: string) => [...rowFor(name).querySelectorAll('button')].at(-1)!;
+const grantButton = (name: string) => rowFor(name).querySelectorAll('button')[1];
 
 describe('which routes the page uses', () => {
   it('reads the token-scoped list for an org admin', async () => {
@@ -392,5 +396,108 @@ describe('dismissing a dialog with Escape', () => {
 
     await vi.waitFor(() => expect(screen.queryByText('Remove Ada — org_admin?')).toBeNull());
     expect(api.removeOrgListManager).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Changer la délégation elle-même — son rang, ou le projet qu'elle porte — plutôt que le compte de
+ * la personne. `PATCH /org/admins/{id}` existait sans appelant : corriger un project_admin nommé
+ * sur le mauvais projet demandait de révoquer puis de réassigner.
+ *
+ * Portée organisation seulement : `SystemAdminController` n'expose que GET, POST et DELETE sur
+ * `organizations/{id}/admins`, il n'y a pas de PATCH système à appeler.
+ */
+describe('changing a grant', () => {
+  const openGrant = async (name = 'Alan') => {
+    const user = show();
+    await screen.findByText('Ada');
+    await user.click(grantButton(name));
+    await screen.findByText('Change Grant');
+    return user;
+  };
+
+  it('is offered to an org admin and to nobody in the system console', async () => {
+    show(...SYSTEM);
+    await screen.findByText('Ada');
+
+    expect(screen.queryByLabelText('Change grant for Ada')).not.toBeInTheDocument();
+    expect(rowFor('Ada').querySelectorAll('button')).toHaveLength(2);
+  });
+
+  it('opens on what the grant currently is', async () => {
+    await openGrant();
+
+    expect(screen.getByLabelText('Role')).toHaveValue('project_admin');
+    expect(screen.getByLabelText('Project scope')).toHaveValue('p1');
+  });
+
+  it('moves a project grant to another project', async () => {
+    const user = await openGrant();
+
+    await user.selectOptions(screen.getByLabelText('Project scope'), 'p2');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await vi.waitFor(() => expect(api.updateOrgListManager)
+      .toHaveBeenCalledWith('g3', { role: 'project_admin', scope_id: 'p2' }));
+    expect(api.listOrgListManagers).toHaveBeenCalledTimes(2);
+  });
+
+  it('promotes an unscoped grant without sending a project', async () => {
+    const user = await openGrant('Ada');
+
+    await user.selectOptions(screen.getByLabelText('Role'), 'project_admin');
+    await user.selectOptions(screen.getByLabelText('Project scope'), 'p2');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await vi.waitFor(() => expect(api.updateOrgListManager)
+      .toHaveBeenCalledWith('g1', { role: 'project_admin', scope_id: 'p2' }));
+  });
+
+  it('will not save a project role with no project chosen', async () => {
+    const user = await openGrant('Ada');
+
+    await user.selectOptions(screen.getByLabelText('Role'), 'project_admin');
+
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+
+  // Le serveur n'écrit ScopeId que lorsqu'il en reçoit un : il ne sait pas l'effacer. Écrire
+  // org_admin sur une délégation qui garde son projet produirait un tuple Keto
+  // `user:…|project:…` sous la relation org_admin — un org_admin qui n'en est pas un.
+  it('refuses to untie a project grant, and says why', async () => {
+    const user = await openGrant();
+
+    await user.selectOptions(screen.getByLabelText('Role'), 'org_admin');
+
+    expect(await screen.findByText(/the server cannot untie it/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+
+  it('shows what the server refused, and keeps the dialog open', async () => {
+    api.updateOrgListManager.mockRejectedValue(new ApiError(403, { error: 'cannot_modify_own_role' }));
+    const user = await openGrant();
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText('You cannot change your own grant — ask another administrator.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Role')).toBeInTheDocument();
+  });
+
+  it('falls back to a plain sentence for a refusal it has no wording for', async () => {
+    api.updateOrgListManager.mockRejectedValue(new Error('500'));
+    const user = await openGrant();
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText('Failed to change this grant.')).toBeInTheDocument();
+  });
+
+  it('closes on Cancel without writing anything', async () => {
+    const user = await openGrant();
+
+    await user.click(screen.getAllByRole('button', { name: 'Cancel' }).at(-1)!);
+
+    await vi.waitFor(() => expect(screen.queryByText('Change Grant')).toBeNull());
+    expect(api.updateOrgListManager).not.toHaveBeenCalled();
   });
 });

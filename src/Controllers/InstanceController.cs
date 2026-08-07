@@ -143,34 +143,22 @@ public class InstanceController(
         if (row is null) return NotFound(new { error = "instance_row_missing" });
 
         var changed = new Dictionary<string, object>();
-        void Set<T>(string name, T? requested, T current, Action<T> apply) where T : struct
-        {
-            if (requested is not { } v || v.Equals(current)) return;
-            apply(v);
-            changed[name] = v;
-        }
-        void SetText(string name, string? requested, string current, Action<string> apply)
-        {
-            if (requested is null || requested == current) return;
-            apply(requested);
-            changed[name] = requested;
-        }
 
-        Set("max_login_attempts",    body.MaxLoginAttempts is { } a ? AppConfig.ClampMaxLoginAttempts(a) : null,   row.MaxLoginAttempts,   v => row.MaxLoginAttempts = v);
-        Set("lockout_minutes",       body.LockoutMinutes is { } b ? AppConfig.ClampLockoutMinutes(b) : null,       row.LockoutMinutes,     v => row.LockoutMinutes = v);
-        Set("otp_ttl_seconds",       body.OtpTtlSeconds is { } c ? AppConfig.ClampOtpTtlSeconds(c) : null,         row.OtpTtlSeconds,      v => row.OtpTtlSeconds = v);
-        Set("max_sms_per_window",    body.MaxSmsPerWindow is { } d ? AppConfig.ClampMaxSmsPerWindow(d) : null,     row.MaxSmsPerWindow,    v => row.MaxSmsPerWindow = v);
-        Set("sms_window_minutes",    body.SmsWindowMinutes is { } e ? AppConfig.ClampSmsWindowMinutes(e) : null,   row.SmsWindowMinutes,   v => row.SmsWindowMinutes = v);
-        Set("audit_retention_days",  body.AuditRetentionDays is { } f ? AppConfig.ClampRetention(f) : null,        row.AuditRetentionDays, v => row.AuditRetentionDays = v);
-        Set("invite_expiry_hours",   body.InviteExpiryHours is { } g ? AppConfig.ClampInviteExpiryHours(g) : null, row.InviteExpiryHours,  v => row.InviteExpiryHours = v);
-        Set("pat_cache_ttl_minutes", body.PatCacheTtlMinutes is { } h ? AppConfig.ClampPatCacheTtl(h) : null,      row.PatCacheTtlMinutes, v => row.PatCacheTtlMinutes = v);
-        Set("smtp_port",             body.SmtpPort is { } i ? AppConfig.ClampSmtpPort(i) : null,                   row.SmtpPort,           v => row.SmtpPort = v);
-        Set("smtp_start_tls",        body.SmtpStartTls,                                                            row.SmtpStartTls,       v => row.SmtpStartTls = v);
+        Set(changed, "max_login_attempts",    body.MaxLoginAttempts,   AppConfig.ClampMaxLoginAttempts,  row.MaxLoginAttempts,   v => row.MaxLoginAttempts = v);
+        Set(changed, "lockout_minutes",       body.LockoutMinutes,     AppConfig.ClampLockoutMinutes,    row.LockoutMinutes,     v => row.LockoutMinutes = v);
+        Set(changed, "otp_ttl_seconds",       body.OtpTtlSeconds,      AppConfig.ClampOtpTtlSeconds,     row.OtpTtlSeconds,      v => row.OtpTtlSeconds = v);
+        Set(changed, "max_sms_per_window",    body.MaxSmsPerWindow,    AppConfig.ClampMaxSmsPerWindow,   row.MaxSmsPerWindow,    v => row.MaxSmsPerWindow = v);
+        Set(changed, "sms_window_minutes",    body.SmsWindowMinutes,   AppConfig.ClampSmsWindowMinutes,  row.SmsWindowMinutes,   v => row.SmsWindowMinutes = v);
+        Set(changed, "audit_retention_days",  body.AuditRetentionDays, AppConfig.ClampRetention,         row.AuditRetentionDays, v => row.AuditRetentionDays = v);
+        Set(changed, "invite_expiry_hours",   body.InviteExpiryHours,  AppConfig.ClampInviteExpiryHours, row.InviteExpiryHours,  v => row.InviteExpiryHours = v);
+        Set(changed, "pat_cache_ttl_minutes", body.PatCacheTtlMinutes, AppConfig.ClampPatCacheTtl,       row.PatCacheTtlMinutes, v => row.PatCacheTtlMinutes = v);
+        Set(changed, "smtp_port",             body.SmtpPort,           AppConfig.ClampSmtpPort,          row.SmtpPort,           v => row.SmtpPort = v);
+        Set(changed, "smtp_start_tls",        body.SmtpStartTls,       Unclamped,                        row.SmtpStartTls,       v => row.SmtpStartTls = v);
 
-        SetText("smtp_host",         body.SmtpHost,        row.SmtpHost,        v => row.SmtpHost = v);
-        SetText("smtp_username",     body.SmtpUsername,    row.SmtpUsername,    v => row.SmtpUsername = v);
-        SetText("smtp_from_address", body.SmtpFromAddress, row.SmtpFromAddress, v => row.SmtpFromAddress = v);
-        SetText("smtp_from_name",    body.SmtpFromName,    row.SmtpFromName,    v => row.SmtpFromName = v);
+        SetText(changed, "smtp_host",         body.SmtpHost,        row.SmtpHost,        v => row.SmtpHost = v);
+        SetText(changed, "smtp_username",     body.SmtpUsername,    row.SmtpUsername,    v => row.SmtpUsername = v);
+        SetText(changed, "smtp_from_address", body.SmtpFromAddress, row.SmtpFromAddress, v => row.SmtpFromAddress = v);
+        SetText(changed, "smtp_from_name",    body.SmtpFromName,    row.SmtpFromName,    v => row.SmtpFromName = v);
 
         if (changed.Count == 0) return Ok(new { changed = Array.Empty<string>(), config_version = row.ConfigVersion });
 
@@ -191,6 +179,44 @@ public class InstanceController(
         (configuration as IConfigurationRoot)?.Reload();
 
         return Ok(new { changed = changed.Keys, config_version = row.ConfigVersion });
+    }
+
+    /// <summary>
+    /// Applies one requested setting, clamped, and records it as changed — or does nothing.
+    ///
+    /// <para>
+    /// The clamp is a parameter rather than applied at the call site, and that is the point: written
+    /// inline, each of the fourteen settings spelled `body.X is { } v ? Clamp(v) : null` and the
+    /// method that listed them carried all fourteen branches. Out of range is clamped and re-read
+    /// rather than refused, so a value that clamps back to what is already stored is not a change.
+    /// </para>
+    /// </summary>
+    private static void Set<T>(
+        Dictionary<string, object> changed, string name,
+        T? requested, Func<T, T> clamp, T current, Action<T> apply) where T : struct
+    {
+        if (requested is not { } v) return;
+        var clamped = clamp(v);
+        if (clamped.Equals(current)) return;
+        apply(clamped);
+        changed[name] = clamped;
+    }
+
+    /// <summary>The settings with no range to clamp to. Named so the call site reads as a choice.</summary>
+    private static T Unclamped<T>(T value) => value;
+
+    /// <summary>
+    /// The same, for text. Separate from <see cref="Set{T}"/> because a string is not a value type
+    /// and "absent" for it is null rather than an empty <c>Nullable</c> — an empty string is a
+    /// caller clearing the field, which is a change.
+    /// </summary>
+    private static void SetText(
+        Dictionary<string, object> changed, string name,
+        string? requested, string current, Action<string> apply)
+    {
+        if (requested is null || requested == current) return;
+        apply(requested);
+        changed[name] = requested;
     }
 
     private Task<Data.Entities.Instance?> Row() =>

@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { userEvent } from 'vitest/browser';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import ProjectUsers from './ProjectUsers';
+import { ApiError } from '@/auth';
 
 /**
  * A project with no user list assigned cannot be signed into at all, so this page is where that
@@ -15,6 +16,10 @@ const api = vi.hoisted(() => ({
   getProjectInfo: vi.fn(), listUserLists: vi.fn(),
   assignUserList: vi.fn(), unassignUserList: vi.fn(),
   adminAssignUserList: vi.fn(), adminUnassignUserList: vi.fn(),
+  // La portée projet : ce qu'un project_admin peut appeler, et lui seul dans cette page.
+  listProjectUsers: vi.fn(), listRoles: vi.fn(), assignRole: vi.fn(), removeRole: vi.fn(),
+  getProjectUser: vi.fn(), revokeProjectUserSessions: vi.fn(), cleanupProject: vi.fn(),
+  createProjectUser: vi.fn(),
 }));
 vi.mock('@/api', () => api);
 
@@ -43,12 +48,31 @@ const LISTS = [
   { id: 'sys', name: 'System', immovable: true },
 ];
 
+const MEMBERS = [
+  {
+    id: 'u1', username: 'ada', discriminator: '4242', email: 'ada@acme.test',
+    display_name: 'Ada', active: true, last_login_at: '2026-02-01T10:00:00Z',
+    roles: [{ id: 'r1', name: 'admin' }],
+  },
+];
+const ROLES = [{ id: 'r1', name: 'admin' }, { id: 'r2', name: 'viewer' }];
+const DETAIL = {
+  id: 'u1', username: 'ada', discriminator: '4242', email: 'ada@acme.test', active: true,
+  roles: [{ role_id: 'r1', name: 'admin', rank: 1 }],
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   panel.props = {};
   Object.assign(auth, { orgId: 'o1', projectId: 'p1', isOrgAdmin: false, isSuperAdmin: false });
   api.getProjectInfo.mockResolvedValue(ASSIGNED);
   api.listUserLists.mockResolvedValue({ user_lists: LISTS });
+  api.listProjectUsers.mockResolvedValue(MEMBERS);
+  api.listRoles.mockResolvedValue(ROLES);
+  api.getProjectUser.mockResolvedValue(DETAIL);
+  api.revokeProjectUserSessions.mockResolvedValue({ message: 'sessions_revoked' });
+  api.cleanupProject.mockImplementation((_p: string, dryRun: boolean) =>
+    Promise.resolve({ orphaned_roles_removed: 2, dry_run: dryRun }));
 });
 
 function show(path = '/project/users', pattern = '/project/users') {
@@ -81,11 +105,63 @@ describe('a project manager, who cannot reassign the list', () => {
     expect(await screen.findByText('No user list assigned')).toBeInTheDocument();
   });
 
-  it('does not see the members panel, which is an org admin\'s tool', async () => {
+  /**
+   * Le panneau de l'org admin lit `/org/userlists/{id}/users`, gardé en OrgAdmin : ouvert à un
+   * project_admin il ne rendrait que des 403. Il voit le sien, servi par `/project/users`.
+   */
+  it('gets the project-scoped members panel, not the org admin\'s', async () => {
     show();
 
-    await screen.findByText('Staff');
+    expect(await screen.findByText('ada#4242')).toBeInTheDocument();
     expect(screen.queryByText(/^members of/)).not.toBeInTheDocument();
+    expect(api.listProjectUsers).toHaveBeenCalledWith('p1');
+  });
+
+  // `POST /project/users` : la console ne savait créer un compte que par
+  // `/admin/userlists/{id}/users`, hors de portée d'un project_admin.
+  it('creates a member in the project\'s own list', async () => {
+    api.createProjectUser.mockResolvedValue({ id: 'u9' });
+    const user = show();
+    await screen.findByText('ada#4242');
+
+    await user.click(screen.getByRole('button', { name: 'Add member' }));
+    await user.fill(screen.getByLabelText('Email'), 'grace@acme.test');
+    await user.fill(screen.getByLabelText('Password'), 'Sup3r-Passw0rd!');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    await vi.waitFor(() => expect(api.createProjectUser).toHaveBeenCalledWith('p1', {
+      email: 'grace@acme.test', password: 'Sup3r-Passw0rd!', username: undefined,
+    }));
+  });
+
+  // Le plancher appliqué est le maximum entre le réglage du projet et le minimum absolu : le
+  // client ne peut pas le recalculer, il recopie `min_length`.
+  it('repeats the length the server actually requires', async () => {
+    const { ApiError } = await import('@/auth');
+    api.createProjectUser.mockRejectedValue(new ApiError(400, { error: 'password_too_short', min_length: 14 }));
+    const user = show();
+    await screen.findByText('ada#4242');
+
+    await user.click(screen.getByRole('button', { name: 'Add member' }));
+    await user.fill(screen.getByLabelText('Email'), 'grace@acme.test');
+    await user.fill(screen.getByLabelText('Password'), 'short');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    expect(await screen.findByText(/at least 14 characters/)).toBeInTheDocument();
+  });
+
+  it('names the duplicate rather than failing blankly', async () => {
+    const { ApiError } = await import('@/auth');
+    api.createProjectUser.mockRejectedValue(new ApiError(409, { error: 'email_already_exists' }));
+    const user = show();
+    await screen.findByText('ada#4242');
+
+    await user.click(screen.getByRole('button', { name: 'Add member' }));
+    await user.fill(screen.getByLabelText('Email'), 'ada@acme.test');
+    await user.fill(screen.getByLabelText('Password'), 'Sup3r-Passw0rd!');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    expect(await screen.findByText(/already in this project/)).toBeInTheDocument();
   });
 });
 
@@ -242,5 +318,161 @@ describe('loading and failure', () => {
     show();
 
     expect(api.getProjectInfo).not.toHaveBeenCalled();
+    expect(api.listProjectUsers).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Ce qu'un project_admin peut faire de ses membres sans jamais toucher à `/org` : les lire, ouvrir
+ * l'un d'eux, lui donner ou lui retirer un rôle, couper ses sessions. Toutes ces routes sont
+ * gardées en ProjectAdmin — c'est la console qui ne les appelait nulle part.
+ */
+describe('the project-scoped members panel', () => {
+  const dialog = () => screen.getByRole('dialog');
+  const rowFor = (name: string) => screen.getByRole('row', { name: new RegExp(name) });
+
+  it('lists the members with the roles they hold here', async () => {
+    show();
+
+    expect(await screen.findByText('ada@acme.test')).toBeInTheDocument();
+    expect(rowFor('ada')).toHaveTextContent('admin');
+    expect(api.listRoles).toHaveBeenCalledWith('p1');
+  });
+
+  it('says so plainly when nobody is in the list', async () => {
+    api.listProjectUsers.mockResolvedValue([]);
+    show();
+
+    expect(await screen.findByText('No members yet')).toBeInTheDocument();
+  });
+
+  it('shows the refusal instead of an empty table', async () => {
+    api.listProjectUsers.mockRejectedValue(new ApiError(403, { error: 'forbidden' }));
+    show();
+
+    expect(await screen.findByText('forbidden')).toBeInTheDocument();
+  });
+
+  it('reads one member through the project route', async () => {
+    const user = show();
+    await screen.findByText('ada@acme.test');
+
+    await user.click(rowFor('ada'));
+
+    await vi.waitFor(() => expect(api.getProjectUser).toHaveBeenCalledWith('p1', 'u1'));
+    expect(dialog()).toHaveTextContent('admin');
+  });
+
+  it('assigns a role from the detail and re-reads the member', async () => {
+    const user = show();
+    await screen.findByText('ada@acme.test');
+    await user.click(rowFor('ada'));
+    await vi.waitFor(() => expect(api.getProjectUser).toHaveBeenCalled());
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Project role to add' }), 'r2');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    await vi.waitFor(() => expect(api.assignRole).toHaveBeenCalledWith('p1', 'u1', 'r2'));
+    expect(api.getProjectUser).toHaveBeenCalledTimes(2);
+  });
+
+  it('says why a role could not be assigned', async () => {
+    api.assignRole.mockRejectedValue(new ApiError(400, { error: 'User is not in this project\'s assigned UserList' }));
+    const user = show();
+    await screen.findByText('ada@acme.test');
+    await user.click(rowFor('ada'));
+    await vi.waitFor(() => expect(api.getProjectUser).toHaveBeenCalled());
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Project role to add' }), 'r2');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(await screen.findByText(/not in this project/)).toBeInTheDocument();
+  });
+
+  it('revokes the sessions only after a confirmation that names the member', async () => {
+    const user = show();
+    await screen.findByText('ada@acme.test');
+    await user.click(rowFor('ada'));
+    await vi.waitFor(() => expect(api.getProjectUser).toHaveBeenCalled());
+
+    await user.click(screen.getByRole('button', { name: 'Revoke sessions' }));
+
+    expect(dialog()).toHaveTextContent('Revoke every session of ada#4242?');
+    expect(api.revokeProjectUserSessions).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Revoke sessions' }));
+
+    await vi.waitFor(() => expect(api.revokeProjectUserSessions).toHaveBeenCalledWith('p1', 'u1'));
+    expect(await screen.findByText(/Every session of ada#4242 was revoked/)).toBeInTheDocument();
+  });
+
+  it('shows the refusal when the revocation fails, and keeps the dialog open', async () => {
+    api.revokeProjectUserSessions.mockRejectedValue(new ApiError(500, null));
+    const user = show();
+    await screen.findByText('ada@acme.test');
+    await user.click(rowFor('ada'));
+    await vi.waitFor(() => expect(api.getProjectUser).toHaveBeenCalled());
+    await user.click(screen.getByRole('button', { name: 'Revoke sessions' }));
+
+    await user.click(screen.getByRole('button', { name: 'Revoke sessions' }));
+
+    expect(await screen.findByText(/Failed to revoke the sessions/)).toBeInTheDocument();
+  });
+});
+
+/** Destructif : il se propose en `dry_run`, montre le compte, et n'exécute qu'au second clic. */
+describe('the cleanup', () => {
+  const openCleanup = async (user: ReturnType<typeof show>) => {
+    await user.click(screen.getByRole('button', { name: 'Cleanup' }));
+  };
+
+  it('previews first, and deletes nothing while it does', async () => {
+    const user = show();
+    await openCleanup(user);
+
+    await user.click(screen.getByRole('button', { name: 'Preview' }));
+
+    await vi.waitFor(() => expect(api.cleanupProject).toHaveBeenCalledWith('p1', true));
+    expect(await screen.findByText(/would be removed/)).toBeInTheDocument();
+  });
+
+  it('offers nothing destructive before a preview has run', async () => {
+    const user = show();
+    await openCleanup(user);
+
+    expect(screen.queryByRole('button', { name: /^Remove/ })).not.toBeInTheDocument();
+  });
+
+  it('names the count on the button that actually deletes', async () => {
+    const user = show();
+    await openCleanup(user);
+    await user.click(screen.getByRole('button', { name: 'Preview' }));
+    await screen.findByText(/would be removed/);
+
+    await user.click(screen.getByRole('button', { name: 'Remove 2 role assignments' }));
+
+    await vi.waitFor(() => expect(api.cleanupProject).toHaveBeenLastCalledWith('p1', false));
+    expect(await screen.findByText(/were removed/)).toBeInTheDocument();
+  });
+
+  it('offers no deletion when the preview finds nothing', async () => {
+    api.cleanupProject.mockResolvedValue({ orphaned_roles_removed: 0, dry_run: true });
+    const user = show();
+    await openCleanup(user);
+
+    await user.click(screen.getByRole('button', { name: 'Preview' }));
+
+    await screen.findByText(/would be removed/);
+    expect(screen.queryByRole('button', { name: /^Remove/ })).not.toBeInTheDocument();
+  });
+
+  it('shows the refusal rather than closing on a failure', async () => {
+    api.cleanupProject.mockRejectedValue(new ApiError(400, null));
+    const user = show();
+    await openCleanup(user);
+
+    await user.click(screen.getByRole('button', { name: 'Preview' }));
+
+    expect(await screen.findByText(/could not run/)).toBeInTheDocument();
   });
 });

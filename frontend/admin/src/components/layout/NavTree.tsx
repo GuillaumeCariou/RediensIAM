@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router';
 import { listOrgs, listProjects } from '@/api';
 import { useAuth } from '@/context/AuthContext';
 import { DESTINATIONS, activeKey, hrefFor, scopeFromPath, type Level, type Scope } from '@/scope';
+import { MUTATION_EVENT } from '@/auth';
 
 /**
  * The console's navigation, as one tree.
@@ -100,12 +101,33 @@ export default function NavTree() {
     setOpen(o => ({ ...o, [key]: !o[key] }));
   }, []);
 
+  /**
+   * Reloads when something is written that this tree draws.
+   *
+   * The tenant list was fetched once, at mount, so an operator who created a tenant saw it appear
+   * on the page and not in the navigation until they reloaded — the console disagreeing with
+   * itself about what exists. `apiFetch` announces every successful write; only the paths this
+   * tree actually reads are worth a refetch, so editing a user does not redraw the sidebar.
+   */
+  const [writes, setWrites] = useState(0);
+  useEffect(() => {
+    const onWrite = (e: Event) => {
+      const path = (e as CustomEvent<{ path?: string }>).detail?.path ?? '';
+      if (/\/(organizations|projects)(\/|$)/.test(path)) setWrites(n => n + 1);
+    };
+    globalThis.addEventListener(MUTATION_EVENT, onWrite);
+    return () => globalThis.removeEventListener(MUTATION_EVENT, onWrite);
+  }, []);
+
   useEffect(() => {
     if (!isSuperAdmin) return;
     listOrgs()
       .then((r: OrgNode[]) => setOrgs(r ?? []))
       .catch(console.error);
-  }, [isSuperAdmin]);
+    // Dropped rather than merged: a project created, renamed or deleted changes one organisation's
+    // children, and clearing the cache lets the effect below refetch exactly the ones still open.
+    setProjects({});
+  }, [isSuperAdmin, writes]);
 
   // Projects are fetched when their organisation opens, not up front: a deployment with fifty
   // tenants would otherwise make fifty requests to draw a sidebar.

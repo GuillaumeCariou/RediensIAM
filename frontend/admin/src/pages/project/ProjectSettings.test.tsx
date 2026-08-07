@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { userEvent } from 'vitest/browser';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import ProjectSettings from './ProjectSettings';
+import { ApiError } from '@/auth';
 
 /**
  * The load-failure branch is the important one. Every field here starts at a useState default, so
@@ -12,10 +13,12 @@ import ProjectSettings from './ProjectSettings';
 
 const api = vi.hoisted(() => ({
   getProjectInfo: vi.fn(), updateProject: vi.fn(), deleteProject: vi.fn(),
+  getProjectScopes: vi.fn(), updateProjectScopes: vi.fn(),
+  adminGetProjectScopes: vi.fn(), adminUpdateProjectScopes: vi.fn(),
 }));
 vi.mock('@/api', () => api);
 
-const auth = vi.hoisted(() => ({ orgId: '', projectId: 'p1' }));
+const auth = vi.hoisted(() => ({ orgId: '', projectId: 'p1', isSuperAdmin: false }));
 vi.mock('@/context/AuthContext', () => ({ useAuth: () => auth }));
 
 const PROJECT = {
@@ -25,10 +28,17 @@ const PROJECT = {
   post_logout_redirect_uris: ['https://a.test/'],
 };
 
+const SCOPES = { built_in: ['openid', 'profile', 'offline_access'], custom_scopes: ['read:orders'] };
+
 beforeEach(() => {
   vi.clearAllMocks();
   auth.projectId = 'p1';
+  auth.isSuperAdmin = false;
   api.getProjectInfo.mockResolvedValue(PROJECT);
+  api.getProjectScopes.mockResolvedValue(SCOPES);
+  api.adminGetProjectScopes.mockResolvedValue(SCOPES);
+  api.updateProjectScopes.mockImplementation(async (_id: string, scopes: string[]) => ({ custom_scopes: scopes }));
+  api.adminUpdateProjectScopes.mockImplementation(async (_id: string, scopes: string[]) => ({ custom_scopes: scopes }));
 });
 
 function Here() {
@@ -247,5 +257,120 @@ describe('a project\'s redirect URIs', () => {
         redirect_uris: ['https://a.test/cb', 'https://b.test/cb', 'https://c.test/cb'],
         post_logout_redirect_uris: ['https://a.test/'],
       })));
+  });
+});
+
+/**
+ * Les scopes OAuth2 d'un projet n'étaient éditables nulle part : les quatre routes existaient, la
+ * console n'en appelait aucune. Les trois scopes implicites ne sont pas retirables, et le nom est
+ * validé serveur — le refus est affiché tel qu'il vient, il n'est pas redeviné ici.
+ */
+describe('a project\'s OAuth2 scopes', () => {
+  /** Le contexte système : /system/organisations/:oid/projects/:pid/settings. */
+  function showSystem() {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={['/system/organisations/o1/projects/p1/settings']}>
+        <Routes>
+          <Route path="/system/organisations/:oid/projects/:pid/settings" element={<ProjectSettings />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    return user;
+  }
+
+  const newScopeField = () => screen.getByLabelText('New scope');
+
+  it('shows the implicit three apart, with nothing to remove them with', async () => {
+    show();
+
+    expect(await screen.findByText('read:orders')).toBeInTheDocument();
+    for (const s of SCOPES.built_in) expect(screen.getByText(s)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove read:orders' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove openid' })).toBeNull();
+  });
+
+  it('reads the org route for an org admin', async () => {
+    show();
+
+    await vi.waitFor(() => expect(api.getProjectScopes).toHaveBeenCalledWith('p1'));
+    expect(api.adminGetProjectScopes).not.toHaveBeenCalled();
+  });
+
+  it('reads the system route in the system context', async () => {
+    showSystem();
+
+    await vi.waitFor(() => expect(api.adminGetProjectScopes).toHaveBeenCalledWith('p1'));
+    expect(api.getProjectScopes).not.toHaveBeenCalled();
+  });
+
+  it('writes through the system route when a super admin edits from the org context', async () => {
+    // Sinon un super-admin, dont le jeton ne nomme aucune organisation, prend un 404 sur sa propre
+    // requête : la route d'organisation filtre sur l'organisation du jeton.
+    auth.isSuperAdmin = true;
+    const user = show();
+    await screen.findByText('read:orders');
+
+    await user.fill(newScopeField(), 'write:orders');
+    await user.click(screen.getByRole('button', { name: 'Add scope' }));
+
+    await vi.waitFor(() => expect(api.adminUpdateProjectScopes)
+      .toHaveBeenCalledWith('p1', ['read:orders', 'write:orders']));
+    expect(api.updateProjectScopes).not.toHaveBeenCalled();
+  });
+
+  it('adds one, sending the whole list', async () => {
+    const user = show();
+    await screen.findByText('read:orders');
+
+    await user.fill(newScopeField(), 'write:orders');
+    await user.click(screen.getByRole('button', { name: 'Add scope' }));
+
+    await vi.waitFor(() => expect(api.updateProjectScopes)
+      .toHaveBeenCalledWith('p1', ['read:orders', 'write:orders']));
+    expect(await screen.findByText('write:orders')).toBeInTheDocument();
+    expect(newScopeField()).toHaveValue('');
+  });
+
+  it('removes one by sending the list without it', async () => {
+    const user = show();
+    await screen.findByText('read:orders');
+
+    await user.click(screen.getByRole('button', { name: 'Remove read:orders' }));
+
+    await vi.waitFor(() => expect(api.updateProjectScopes).toHaveBeenCalledWith('p1', []));
+    expect(await screen.findByText('No custom scopes.')).toBeInTheDocument();
+  });
+
+  it('repeats the server refusal, naming what it refused', async () => {
+    api.updateProjectScopes.mockRejectedValue(
+      new ApiError(400, { error: 'invalid_scope_names', invalid: ['read orders'] }));
+    const user = show();
+    await screen.findByText('read:orders');
+
+    await user.fill(newScopeField(), 'read orders');
+    await user.click(screen.getByRole('button', { name: 'Add scope' }));
+
+    expect(await screen.findByText(/Refused: read orders/)).toBeInTheDocument();
+    // Le champ garde la saisie : elle est à corriger, pas à retaper.
+    expect(newScopeField()).toHaveValue('read orders');
+  });
+
+  it('shows any other refusal rather than swallowing it', async () => {
+    api.updateProjectScopes.mockRejectedValue(new Error('500'));
+    const user = show();
+    await screen.findByText('read:orders');
+
+    await user.click(screen.getByRole('button', { name: 'Remove read:orders' }));
+
+    expect(await screen.findByText('Could not remove that scope.')).toBeInTheDocument();
+    expect(screen.getByText('read:orders')).toBeInTheDocument();
+  });
+
+  it('says so when the scopes cannot be read at all', async () => {
+    api.getProjectScopes.mockRejectedValue(new ApiError(403, { error: 'forbidden' }));
+    show();
+
+    expect(await screen.findByText('forbidden')).toBeInTheDocument();
   });
 });

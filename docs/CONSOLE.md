@@ -10,7 +10,7 @@ administrator may.
 
 ---
 
-## Three scopes, three sidebars
+## Three scopes, one tree
 
 The console is not one application with a permission filter over it. It has three scopes, and which
 one you are in decides both the navigation and the API prefix every page calls.
@@ -21,9 +21,20 @@ one you are in decides both the navigation and the API prefix every page calls.
 | **Organisation** | `org_admin` | One organisation: its projects, its user lists, its own administrators, its SMTP, its webhooks, its audit log |
 | **Project** | `project_admin` | One project: its users, its roles, its service accounts, its login page and authentication policy |
 
-An administrator holding several roles can move between scopes; the scope switcher sits in the top
-bar. A token carrying no management role at all does not reach the console — it is refused with an
+The three scopes are drawn as **one tree**, not three sidebars: the deployment at the root, its
+tenants under it, each tenant's projects under that, and every level's destinations as its children.
+The level is a *place* — you are on a node, and its children are what that node has. Expanding a
+tenant is what fetches its projects, so a deployment with fifty tenants does not make fifty requests
+to draw a sidebar. The top bar carries a breadcrumb that names where you are and clicks back up.
+
+A token carrying no management role at all does not reach the console — it is refused with an
 explanation rather than an empty screen, because a redirect loop was the alternative.
+
+⚠ **In practice every console operator is a super-admin today.** Sign-in admits only accounts in the
+immovable system user list, and membership of that list *is* deployment-wide administration. The
+organisation and project scopes below are built, routed and tested, and no account can currently
+hold one on its own. Which of the two rules gives is an open decision; `tests/e2e/PLAN.md` §12
+carries the matrix, written and skipped, so the question stays asked.
 
 ---
 
@@ -62,16 +73,18 @@ is the prerequisite of the next.
 | Page | What you do there |
 |---|---|
 | **Dashboard** | Counts across the deployment, and the sign-in activity of the last 24 hours from the audit log |
-| **Organisations** | Create, suspend, delete. Suspending revokes every member's sessions immediately |
+| **Organisations** | Create, suspend, delete. Suspending revokes every live session of the tenant — including its own administrators', who cannot sign back in — so it asks for confirmation first, the way Delete does. Unsuspending is immediate: it takes nothing away |
 | **Admins** | Who administers the deployment. Adding someone here grants `super_admin`, which is the most privileged grant there is and is audited as such |
 | **Users** | Every user across every tenant. Search, inspect, unlock, disable, reset |
 | **Projects** | Every project across every tenant |
 | **User Lists** | Every population, and their members |
 | **Service Accounts** | Machine identities at deployment level, and their API keys |
-| **Audit Log** | Every recorded action, hash-chained. Exportable |
+| **Audit Log** | Every recorded action, hash-chained. Exportable. **Verify integrity** recalcule la chaîne : « intacte » et « entièrement vérifiée » sont deux réponses différentes — une chaîne intacte mais invérifiable (lignes antérieures à sa mise sous clé, ou écrites sous une clé retirée) ne prouve rien, et la page les distingue |
 | **Metrics** | Counts and sign-in outcomes over time |
 | **Email** | Deployment-wide SMTP, used by any organisation that has not set its own |
 | **Health** | Whether the database, the cache, Hydra and Keto are answering |
+| **OAuth2 Clients** | Hydra's own client registry. Les clients frappés par la console pour chaque projet (`client_`) et chaque compte de service (`sa_`) y figurent et sont marqués comme tels : en supprimer un laisse un projet enregistré sans client, et plus personne ne s'y connecte |
+| **Grant reconciliation** | Les divergences entre les tuples Keto et la base. Un tuple sans ligne est un privilège vivant dont personne ne sait qui l'a accordé ; une ligne sans tuple n'autorise rien mais sert encore les scopes au consentement. La réparation révoque et supprime, elle ne crée jamais de tuple |
 
 ### Organisation scope
 
@@ -83,14 +96,23 @@ Two are worth calling out:
 - **Email** — an organisation's own SMTP relay. Set it when a tenant wants its mail to come from
   its own domain. It overrides the deployment's.
 - **Webhooks** — where this organisation's events are delivered. Deliveries are signed; the secret
-  is shown once, at creation, and never again.
+  is shown once, at creation, and never again — et **Rotate secret** le refrappe, ce que le message
+  d'erreur de création demandait déjà sans qu'aucun bouton ne sache le faire. Le secret courant
+  cesse d'être valide immédiatement : les receveurs qui vérifient les signatures rejettent les
+  livraisons jusqu'à l'installation du nouveau.
+
+Deux réglages système méritent aussi d'être signalés, dans **Settings** au niveau déploiement :
+**Key rotation** montre ce qui reste à rechiffrer sous la clé active et le fait en une passe — un
+balayage partiel est dit comme tel, parce que retirer une clé encore nécessaire perd les valeurs
+chiffrées sous elle.
 
 ### Project scope
 
 | Page | What you do there |
 |---|---|
-| **Users** | Who may sign in to this project, and with which roles |
-| **Role Definitions** | The roles this project emits, and their ranks |
+| **Users** | Who may sign in to this project, and with which roles. Un `project_admin` y voit son propre panneau, servi par les routes de portée projet — celui de l'administrateur d'organisation lit une route gardée plus haut et ne lui rendrait que des 403. On y crée un membre, on révoque ses sessions, et **Cleanup** propose d'abord un aperçu avant de supprimer quoi que ce soit |
+| **Audit Log** | Les actions enregistrées pour ce projet seul |
+| **Role Definitions** | The roles this project emits, and their ranks. Un rôle se modifie (description, rang) ; **son nom, non** — Keto écrit `role:{nom}` pour chaque porteur, et renommer laisserait ces tuples orphelins |
 | **Service Accounts** | Machine identities scoped to this project |
 | **Authentication** | The login page and the policy behind it — see below |
 | **Settings** | Name, slug, redirect URIs, deletion |
@@ -107,7 +129,19 @@ Two are worth calling out:
   needs an explicit confirmation on the retry;
 - the **IP allowlist** — CIDRs. An entry that does not parse is refused at save time, because an
   allowlist nobody matches is a tenant outage rather than a saved setting;
-- **allowed scopes** and **allowed email domains**.
+- **allowed scopes** and **allowed email domains**;
+- les **fournisseurs SAML** — création, modification et suppression, dans la portée de l'appelant :
+  un administrateur d'organisation configure le SAML de son propre projet, ce que la console ne
+  savait pas faire.
+
+L'**URL de métadonnées SP** affichée sur cette page est celle du déploiement entier
+(`{PublicUrl}/auth/saml/metadata`), pas une par projet : le serveur n'en sert qu'un descripteur, et
+sur l'hôte public — pas celui de la console. La page l'a longtemps annoncée sous un chemin par
+projet qui n'existait dans aucun contrôleur, et un IdP configuré dessus tombait sur un 404.
+
+Les **scopes OAuth2** du projet s'éditent dans **Settings**. `openid`, `profile` et
+`offline_access` sont implicites et ne se retirent pas ; les autres sont remplacés en bloc, et un
+nom que le serveur refuse est recopié tel qu'il l'a nommé.
 
 ### Your own account
 
@@ -142,6 +176,8 @@ purpose: it is the only thing standing between that one account and a password o
   the change would appear to work and would not. Delete and recreate.
 - **See a service account's key twice.** It is shown once, at creation.
 - **Silence the MFA reminder.**
+- **Create a user list at deployment level.** `/system/userlists` is an index across every tenant,
+  not a place to make one: a list belongs to an organisation. Create it inside the tenant.
 
 ---
 

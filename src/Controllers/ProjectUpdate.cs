@@ -109,6 +109,35 @@ public static class ProjectUpdate
     }
 
     /// <summary>
+    /// Persiste la mise à jour et la journalise.
+    ///
+    /// <para>
+    /// La ligne d'audit vivait chez un seul des trois appelants d'<see cref="ApplyAsync"/> :
+    /// <c>PATCH /project/info</c> l'écrivait, <c>PATCH /org/projects/{id}</c> et
+    /// <c>PATCH /admin/projects/{id}</c> non. Ces deux-là modifiaient le nom, la politique de mot
+    /// de passe, les <c>redirect_uris</c> et l'allowlist IP sans rien laisser au journal — et elles
+    /// sont atteignables au jeton personnel comme par <c>/api/manage</c>. <c>project.updated</c>
+    /// est de surcroît un événement webhook souscriptible
+    /// (<see cref="Services.WebhookService"/>) : un locataire qui surveille ses projets n'entendait
+    /// jamais parler des changements passés par ces routes.
+    /// </para>
+    ///
+    /// <para>
+    /// L'ordre compte et c'est pourquoi ceci n'est pas dans <see cref="ApplyAsync"/> :
+    /// <see cref="Services.AuditLogService.RecordAsync"/> écrit dans son propre
+    /// <c>DbContext</c>, donc journaliser avant la sauvegarde consignerait un changement qui peut
+    /// encore échouer.
+    /// </para>
+    /// </summary>
+    public static async Task SaveAndAuditAsync(
+        RediensIamDbContext db, AuditLogService audit, Guid actorId, Project project)
+    {
+        await db.SaveChangesAsync();
+        await audit.RecordAsync(project.OrgId, project.Id, actorId, "project.updated",
+            "project", project.Id.ToString());
+    }
+
+    /// <summary>
     /// Writes a project's redirect URIs, which live in Hydra rather than in this database, and the
     /// allowed origins derived from them. Public because the create paths need the same derivation.
     /// </summary>

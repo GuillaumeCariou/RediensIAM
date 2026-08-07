@@ -48,7 +48,7 @@ public class GatewayAuthMiddleware(RequestDelegate next, AppConfig appConfig)
         {
             ctx.Response.StatusCode = 403;
             ctx.Response.ContentType = "application/json";
-            await ctx.Response.WriteAsJsonAsync(new { error = "forbidden", detail = "token_audience_not_allowed" });
+            await ctx.Response.WriteAsJsonAsync(new { error = "forbidden", detail = "token_audience_not_allowed" }, ctx.RequestAborted);
             return;
         }
 
@@ -68,7 +68,7 @@ public class GatewayAuthMiddleware(RequestDelegate next, AppConfig appConfig)
         {
             ctx.Response.StatusCode = 403;
             ctx.Response.ContentType = "application/json";
-            await ctx.Response.WriteAsJsonAsync(new { error = "forbidden", detail = "no_authorisation_gate" });
+            await ctx.Response.WriteAsJsonAsync(new { error = "forbidden", detail = "no_authorisation_gate" }, ctx.RequestAborted);
             return;
         }
 

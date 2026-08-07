@@ -8,6 +8,257 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.9.1] — 2026-08-07
+
+**La surface que la console n'atteignait pas.** Le backend exposait 194 routes ; la console en
+appelait 129. Les 36 manquantes n'étaient pas des fonctions à écrire — elles existaient, testées,
+sans aucune porte pour les atteindre. Un audit qui comparait les chemins sans le verbe en avait
+d'abord masqué douze : un `PATCH` disparaissait derrière le `DELETE` qui partage son URL.
+
+### Corrigé — trois refus que la console gardait pour elle
+
+**Créer un rôle échouait sans rien dire.** `ProjectRoles.handleCreate` n'avait pas de `catch` : le
+400 partait en rejet de promesse non attrapé, la boîte restait ouverte et inchangée, et le motif
+n'existait que dans la console du navigateur. Le champ minuscule la saisie et remplace les espaces
+par des soulignés — « Super Admin » arrive donc en `super_admin`, qui est réservé. Le refus est
+maintenant écrit à l'écran, avec un libellé par code ; la suppression et l'assignation de rôle ne
+l'avalent plus non plus.
+
+**Un nom de rôle déjà pris rendait `500 internal_error`** au lieu d'un **409 `role_name_exists`** :
+l'index unique est `(ProjectId, Name)` et rien ne le testait avant l'insertion. La création était
+écrite deux fois et les copies avaient divergé — la route système journalisait `role.created` avec
+une organisation nulle, donc invisible dans l'audit du locataire propriétaire. Les deux passent par
+`ProjectOperations.CreateRoleAsync`.
+
+**Une user list n'était supprimable de nulle part.** La route d'organisation existait sans fonction
+cliente, et `/admin/userlists/{id}` n'avait pas de `DELETE` : un super-admin n'en supprimait aucune,
+et celles sans organisation n'étaient supprimables par personne. La suppression côté organisation
+écrit enfin une entrée d'audit — c'était la seule opération de cette surface qui détruisait des
+comptes en cascade sans laisser de trace.
+
+### Corrigé — quatre défauts trouvés en câblant
+
+**`AdminDeleteRole` supprimait un tuple Keto qui n'existe pas.** Il passait le nom du rôle et l'id
+de l'utilisateur nus là où `KetoService` écrit `role:{nom}` et `user:{id}`. Keto répond 204 à une
+suppression sans correspondance : la ligne partait, **le grant restait**, et un rôle supprimé depuis
+la portée système laissait ses porteurs autorisés. Le test existant ne regardait que la ligne SQL.
+
+**Deux des trois `PATCH` projet ne journalisaient rien.** `project.updated` est un événement webhook
+souscriptible : un locataire qui surveille ses projets n'entendait jamais parler des changements de
+nom, de politique de mot de passe, de `redirect_uris` ou d'allowlist IP passés par `/org/projects`
+ou `/admin/projects`. Les trois passent par `ProjectUpdate.SaveAndAuditAsync`, qui garde l'ordre
+sauvegarde-puis-audit.
+
+**`PATCH /org/admins/{id}` ne pouvait pas effacer une portée** : promouvoir un `project_admin` en
+`org_admin` réécrivait son tuple sur `user:…|project:…` sous la relation `org_admin`, un grant
+qu'aucune vérification d'organisation ne trouve. Seul `project_admin` porte une portée.
+
+**Les scopes d'`OrgController` étaient ses seules routes projet sans échappement super-admin**, d'où
+un 404 sur un projet réel. `AdminListRoles` rendait `[]` sur projet inconnu, là où la portée projet
+rend 404.
+
+### Ajouté — 36 routes câblées
+
+Clients OAuth2 Hydra, rotation de clés, réconciliation des grants Keto, vérification de la chaîne
+d'audit, SAML en portée organisation **et son édition** (absente des deux portées), scopes OAuth2
+d'un projet (éditables nulle part jusqu'ici), rôles en portée système, journal et nettoyage de
+projet, détail d'un membre et révocation de ses sessions, création de membre en portée projet,
+export des utilisateurs d'une organisation, rotation du secret d'un webhook, ajout et édition de
+membre en portée organisation, détail d'un webhook, rôles d'un compte de service, modification d'un
+administrateur d'organisation, et l'édition d'un rôle.
+
+Un `project_admin` voit désormais ses membres : le panneau de l'administrateur d'organisation lit
+une route gardée plus haut et ne lui rendait que des 403.
+
+Quatre routes restent délibérément sans appelant : `POST /admin/impersonate`, parce qu'ouvrir une
+session d'impersonation frappe une credential et que ce refus est le garde-fou ; et les trois
+`PATCH|GET` projet des portées organisation et système, doublons purs de `/project/info`, qui
+couvre déjà les trois niveaux.
+
+### Documentation
+
+`docs/API.md` ignorait `InstanceController` en entier et annonçait 190 routes pour 194.
+`docs/CONSOLE.md` décrit les pages et capacités ajoutées.
+
+---
+
+## [0.9.0] — 2026-08-07
+
+**La console, ses frontières, et tout au dernier compatible.** Le fil rouge est la suite
+end-to-end : chaque défaut ci-dessous a été trouvé en écrivant un test contre un déploiement réel,
+et aucun n'était visible depuis un test de composant.
+
+### Corrigé — cinq défauts de la console
+
+Un **super-admin ne pouvait pas créer de projet dans un locataire**. La page postait sur
+`/org/projects`, qui lit le locataire dans le JETON de l'appelant — et celui d'un super-admin n'en
+nomme aucun. L'insertion partait avec une organisation vide et la clé étrangère répondait :
+`internal_error`. `createSystemProject` fait désormais la distinction que la page User Lists faisait
+déjà.
+
+**L'arbre de navigation ignorait ce qui venait d'être créé.** `apiFetch` annonce maintenant chaque
+écriture réussie, dans le seul entonnoir que toutes les requêtes traversent, plutôt que de demander
+à chaque page de penser à prévenir la barre latérale.
+
+**L'arbre allumait plusieurs lignes à la fois** : `/system/organisations/{id}/userlists`
+correspondait aussi au préfixe `organisations` du niveau déploiement. Un chemin appartient à un seul
+niveau, et `activeKey` le vérifie.
+
+**Le fil d'Ariane n'a jamais affiché un nom.** `setOrgName` et `setProjectName` existaient sur le
+contexte de scope et n'étaient appelés nulle part : la tranche d'UUID, écrite comme repli
+transitoire, était le seul affichage possible. Résolu dans le topbar.
+
+**Suspendre un locataire ne demandait rien**, alors que ça révoque toutes ses sessions vivantes et
+déconnecte ses propres administrateurs — pendant que Supprimer, deux lignes plus bas, confirmait.
+Le bouton d'actions de chaque ligne a aussi reçu un nom accessible, et la palette de commandes ne
+perd plus la sélection au clavier quand une ligne se redessine sous un curseur immobile.
+
+### Ajouté — l'API dit enfin quelle liste sert un projet
+
+`GET /admin/projects` et `GET /admin/organizations/{id}/projects` portent
+**`assigned_user_list_id`**, et **`GET /admin/projects/{id}` existe** — la création renvoyait un
+`Location` vers cette route depuis toujours, c'est-à-dire vers un 404.
+
+Sans ce champ, un service qui provisionne des comptes pour un projet devait balayer toutes les
+listes pour retrouver celle dont `assigned_projects` nommait le projet, ou figer l'identifiant dans
+sa propre configuration — et continuer de pointer l'ancienne liste le jour où l'affectation change.
+Les comptes atterrissaient alors dans une liste par laquelle personne ne peut se connecter, et le
+symptôme était « identifiants refusés » sur un compte parfaitement valide.
+
+### Ajouté — PLAN §11 et §12 de la suite e2e
+
+**§11**, vingt et un tests : l'arbre, les vingt-cinq destinations des trois niveaux, les formes
+d'URL au chargement à froid, le fil d'Ariane, la palette, le thème après rechargement.
+
+**§12**, sept tests qui passent et treize écrits puis marqués bloqués. Ce qui passe : les deux
+hôtes — le même chemin répond 403 sur l'hôte public, refusé par l'ingress avant qu'un jeton soit lu,
+et 401 sur l'hôte admin, où c'est l'application qui répond — et le retour à la destination demandée
+après une authentification interrompue.
+
+Ce qui est bloqué, et pourquoi ce n'est pas supprimé : `AdminLogin` n'admet que les comptes de la
+liste système immuable, et `GrantsSuperAdmin` fait de l'appartenance à cette même liste un
+`super_admin`. Ensemble : **quiconque peut se connecter à la console est super-admin**, donc toute la
+surface `org_admin` / `project_admin` — `OwnLevel`, les destinations `superOnly`, les deux formes
+d'URL par niveau — est inatteignable. Laquelle des deux règles doit céder est une décision sur qui
+administre un déploiement.
+
+### Documenté — l'adresse du client derrière le proxy
+
+`SECURITY.md §6`, `DEPLOYMENT.md` et `deploy/cluster/traefik-source-ip.yaml`.
+
+L'application fait sa moitié correctement : `X-Forwarded-For` n'est honoré que depuis les CIDR de
+`App__TrustedProxies`, et Program.cs **refuse de démarrer en Production** sans, parce que faire
+confiance aux plages RFC1918 par défaut laisserait n'importe quel pod du cluster usurper l'en-tête.
+La moitié qu'elle ne peut pas faire, c'est que le proxy ait vu le vrai client : k3s place ServiceLB
+devant Traefik en `externalTrafficPolicy: Cluster`, qui SNAT avant que Traefik voie le paquet.
+
+Tous les appelants externes arrivent alors sous une seule adresse, et le verrou anti-force-brute
+cesse d'être une défense : **cinq mauvais mots de passe depuis n'importe où bloquent la connexion de
+tous les utilisateurs pendant quinze minutes**. Corrigé sur le service, avec les deux limites
+nommées — `Local` restreint le trafic aux nœuds portant un pod Traefik, et ne peut rien préserver
+pour une requête émise depuis le nœud lui-même.
+
+### Montée de version
+
+Ory **Hydra et Keto v25.4.0 → v26.2.0** (charts 0.60.1 → 0.63.0), image de construction
+**node:20 → node:26-alpine**, **TypeScript 5.9 → 6.0**, **ESLint 9 → 10**, Vite 8.2, Vitest 4.1.10,
+jest-dom 6 → 7, Playwright 1.59 → 1.62, plus douze paquets NuGet dont EF Core 10.0.10 et
+SonarAnalyzer 10.31.
+
+TypeScript 6 fait de `baseUrl` une erreur ; il est retiré, `paths` étant résolu depuis le tsconfig
+qui le déclare depuis la 5.0. La montée de Node n'est pas du confort : jest-dom 7 exige Node ≥ 22.
+
+Trois versions volontairement retenues : **tailwindcss reste en 3.4** (la 4.x est une réécriture, et
+la prendre à l'aveugle a fait tomber 417 tests sur 1251), **typescript reste en 6.0.3** là où
+`typescript-eslint` est présent (son pair déclare `<6.1.0`), et **postgres:16-alpine** n'est pas
+touché — un saut de majeure demande un dump/restore.
+
+---
+
+## [0.8.0] — 2026-08-06
+
+**Trois défauts remontés depuis `iam-handler-svc`, le service qui crée les organisations clientes
+en appelant l'API d'administration.** Aucun n'était contournable côté appelant : il relaie les 4xx
+tels quels et traduit tout le reste en 502, donc chacun de ces cas affichait « service
+indisponible » là où il fallait lire ce qui n'allait pas.
+
+### Corrigé — `POST /admin/organizations` refusait mal
+
+Un slug déjà pris répondait **500**. Rien ne le vérifiait avant l'insertion, l'index unique
+remontait en `DbUpdateException`, et deux clients dont le nom dérive le même slug est le cas
+NORMAL, pas le cas limite. Désormais **`409 slug_already_exists`**. Un corps sans `slug` répondait
+500 par la contrainte NOT NULL : **`400 slug_required`**. Un slug de 101 caractères passait par la
+même porte (`HasMaxLength(100)`) : **`400 slug_too_long`**, et **`400 name_required` /
+`name_too_long`** avec lui.
+
+C'est le raisonnement que `UserListOperations.AddUserAsync` tenait déjà pour l'unicité du courriel,
+appliqué mot pour mot.
+
+⚠️ Le test qui aurait dû l'attraper existait et disait `>= 400` — ce qu'un 500 satisfait. Il dit
+maintenant 409 et nomme l'erreur.
+
+### Corrigé — la même route laissait une `UserList` orpheline à chaque échec
+
+La liste de l'organisation était **commitée avant** l'organisation. Toute panne de la seconde
+écriture laissait derrière elle une liste `Immovable = true`, `OrgId = null`, que plus rien ne
+référençait et que `DeleteOrg` ne pouvait pas atteindre. Invisible : l'appelant voyait un 500 et
+rejouait, ce qui en créait une deuxième.
+
+Les trois écritures sont désormais **une transaction**, et la validation ci-dessus arrive avant la
+première. Les deux moitiés comptent : la validation couvre le cas courant, la transaction couvre
+les pannes qu'on n'a pas prévues.
+
+### Corrigé — `POST /admin/impersonate` était inatteignable sur une surface partagée
+
+`project_id` nomme **la frontière d'authentification**, pas une propriété de l'organisation. Le
+contrôle exigeait `project.OrgId == org_id`, ce qui n'est vrai que dans le modèle « un projet par
+locataire ». Sur une surface partagée — un seul projet, une page de connexion, une passerelle, tous
+les clients derrière — c'était faux pour **tous** les couples possibles, et la route répondait
+`project_not_in_org` à chaque appel.
+
+Un couple est maintenant accepté quand le projet appartient à l'organisation **ou** qu'un membre de
+cette organisation figure sur la liste assignée au projet (`user.org_id`, voir
+[ORGANIZATIONS.md](docs/ORGANIZATIONS.md)). Le refus inter-locataires reste entier.
+
+**Changement de contrat** : un `project_id` qui ne désigne rien répond désormais
+**`project_not_found`** et non plus `project_not_in_org`. Un appelant qui teste cette chaîne doit
+la connaître — c'est ce que ce bump de mineure signale.
+
+`docs/IMPERSONATION.md` affirmait les deux choses à la fois — ligne 222 « the authentication
+boundary », ligne 472 « must belong to `org_id` ». La seconde est corrigée et une section
+**Which pairs are accepted** dit ce qui est accepté et pourquoi. Elle tranche aussi le cas laissé
+ouvert : **une organisation sans aucun compte sur la surface n'est pas impersonnable**, y compris
+une organisation créée à l'instant — il n'y a rien à y voir, et la règle inverse n'en vérifierait
+aucune.
+
+### Corrigé — Hydra n'avait jamais de `dsn` sur une installation neuve
+
+`deploy/deploy.sh` écrivait le bloc `hydra:` **sous `rediensiam:`** dans le fichier de secrets
+généré, là où `keto:` était à la racine. Helm ne passe à un sous-chart que ce qui est écrit sous
+son propre nom, donc le bloc était analysé et ignoré : Hydra démarrait sans DSN et chaque
+`setup.sh --dev` sur une base neuve finissait en `CrashLoopBackOff` sur `dsn must be set`. Deux
+espaces d'indentation, et la même famille que le bloc `hydra:` de `values.dev.yaml` corrigé plus
+tôt.
+
+### Corrigé — la graine e2e
+
+`tests/e2e/seed-dev.mjs` ne pouvait pas s'exécuter de bout en bout. Trois défauts, chacun masquant
+le suivant : elle ne retirait que les guillemets doubles d'un mot de passe que le générateur écrit
+entre apostrophes (401 lu comme « mauvaises identifiants ») ; elle envoyait un POST à `/auth/consent`
+qui est une route GET (405) ; et elle appelait l'API d'administration sur l'hôte public, que
+l'ingress `rediensiam-public-admin-deny` refuse par conception (403 sans corps, de Traefik). Elle
+est aussi devenue importable — `main()` ne s'exécute plus que lancée comme script, ce qui est la
+condition pour qu'un spec puisse faire `import { SEED }` sans réamorcer le déploiement.
+
+### Qualité
+
+Porte SonarQube ramenée de 25 violations à 0 : sélecteurs CSS dupliqués, tags `<param>` manquants,
+assertions inutiles, ternaire imbriqué, et la complexité cognitive de `InstanceController.Patch`
+(17 → sous le seuil) en sortant les quatorze ternaires `is { } v ? Clamp(v) : null` dans le
+helper qui les applique.
+
+---
+
 ## [0.7.0] — 2026-08-06
 
 **Impersonation : un opérateur peut agir *pour* une organisation cliente.** Additif de bout en

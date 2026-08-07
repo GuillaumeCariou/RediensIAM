@@ -17,10 +17,11 @@ interface Props {
   loading: boolean;
   offset: number;
   hasMore: boolean;
-  exporting: boolean;
+  /** Absent où la portée n'a pas de route d'export — la portée projet n'en a aucune. */
+  exporting?: boolean;
   onPrev: () => void;
   onNext: () => void;
-  onExport: () => void;
+  onExport?: () => void;
   actionColors?: Record<string, 'default' | 'destructive' | 'success' | 'warning' | 'secondary'>;
 }
 
@@ -32,11 +33,13 @@ const ACTION_TONE = {
 export default function AuditLogTable({ entries, loading, offset, hasMore, exporting, onPrev, onNext, onExport, actionColors }: Readonly<Props>) {
   return (
     <div className="p-6 space-y-4">
-      <div className="flex justify-end">
-        <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={onExport} disabled={exporting}>
-          <Download className="h-4 w-4" />{exporting ? 'Exporting…' : 'Export CSV'}
-        </button>
-      </div>
+      {onExport && (
+        <div className="flex justify-end">
+          <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={onExport} disabled={exporting}>
+            <Download className="h-4 w-4" />{exporting ? 'Exporting…' : 'Export CSV'}
+          </button>
+        </div>
+      )}
       <div className="rounded-xl border bg-card overflow-hidden">
         <table className="iam-tbl">
           <thead>

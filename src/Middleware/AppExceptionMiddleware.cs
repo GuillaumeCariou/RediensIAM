@@ -16,37 +16,37 @@ public class AppExceptionMiddleware(RequestDelegate next, ILogger<AppExceptionMi
         {
             ctx.Response.StatusCode = 403;
             ctx.Response.ContentType = AppJson;
-            await ctx.Response.WriteAsJsonAsync(new { error = "forbidden", detail = ex.Message });
+            await ctx.Response.WriteAsJsonAsync(new { error = "forbidden", detail = ex.Message }, ctx.RequestAborted);
         }
         catch (NotFoundException ex)
         {
             ctx.Response.StatusCode = 404;
             ctx.Response.ContentType = AppJson;
-            await ctx.Response.WriteAsJsonAsync(new { error = "not_found", detail = ex.Message });
+            await ctx.Response.WriteAsJsonAsync(new { error = "not_found", detail = ex.Message }, ctx.RequestAborted);
         }
         catch (BadRequestException ex)
         {
             ctx.Response.StatusCode = 400;
             ctx.Response.ContentType = AppJson;
-            await ctx.Response.WriteAsJsonAsync(new { error = "bad_request", detail = ex.Message });
+            await ctx.Response.WriteAsJsonAsync(new { error = "bad_request", detail = ex.Message }, ctx.RequestAborted);
         }
         catch (ConflictException ex)
         {
             ctx.Response.StatusCode = 409;
             ctx.Response.ContentType = AppJson;
-            await ctx.Response.WriteAsJsonAsync(new { error = "conflict", detail = ex.Message });
+            await ctx.Response.WriteAsJsonAsync(new { error = "conflict", detail = ex.Message }, ctx.RequestAborted);
         }
         catch (RateLimitException ex)
         {
             ctx.Response.StatusCode = 429;
             ctx.Response.ContentType = AppJson;
-            await ctx.Response.WriteAsJsonAsync(new { error = "rate_limited", detail = ex.Message });
+            await ctx.Response.WriteAsJsonAsync(new { error = "rate_limited", detail = ex.Message }, ctx.RequestAborted);
         }
         catch (UnauthorizedException ex)
         {
             ctx.Response.StatusCode = 401;
             ctx.Response.ContentType = AppJson;
-            await ctx.Response.WriteAsJsonAsync(new { error = "unauthorized", detail = ex.Message });
+            await ctx.Response.WriteAsJsonAsync(new { error = "unauthorized", detail = ex.Message }, ctx.RequestAborted);
         }
         catch (Exception ex)
         {
@@ -57,7 +57,7 @@ public class AppExceptionMiddleware(RequestDelegate next, ILogger<AppExceptionMi
             if (ctx.Response.HasStarted) throw;
             ctx.Response.StatusCode = 500;
             ctx.Response.ContentType = AppJson;
-            await ctx.Response.WriteAsJsonAsync(new { error = "internal_error" });
+            await ctx.Response.WriteAsJsonAsync(new { error = "internal_error" }, ctx.RequestAborted);
         }
     }
 }

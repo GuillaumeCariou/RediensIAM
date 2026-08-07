@@ -1,0 +1,52 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Traefik — keep the client's address.
+#
+#   helm upgrade traefik traefik/traefik -n kube-system --reuse-values \
+#     --set service.spec.externalTrafficPolicy=Local
+#
+# Why
+# ───
+# k3s ships ServiceLB (klipper-lb) in front of Traefik, and its Service defaults to
+# `externalTrafficPolicy: Cluster`. That policy SNATs: klipper-lb replaces the source address with
+# its own pod IP before Traefik sees the packet. Traefik then writes a truthful
+# `X-Forwarded-For: 10.42.x.y` — the client it saw — and every external caller reaches the
+# application as one address.
+#
+# The application is not what is wrong. `App__TrustedProxies` is set, the header is honoured, and
+# Program.cs refuses to start in Production without it. The address is flattened one hop earlier.
+#
+# What it costs to leave alone: every per-IP control collapses into one shared budget. Five wrong
+# passwords from anywhere lock sign-in for FIFTEEN MINUTES for everyone — a denial of service that
+# costs five requests. The same trap waits behind any production load balancer that does not
+# preserve the source; there it is this policy again, or PROXY protocol.
+#
+# What `Local` costs: only nodes running a Traefik pod accept traffic for the service. On one node
+# that is every node; on several, run Traefik as a DaemonSet or let the load balancer health-check
+# its way to the right nodes.
+#
+# What `Local` cannot do
+# ──────────────────────
+# Preserve the source of a request that ORIGINATES ON THE NODE. A developer curling
+# http://iam.localhost from the machine that is also the cluster is a hairpin through kube-proxy,
+# which SNATs on the way in so the reply can find its way back. On a single-node dev box the
+# application will therefore still record a cluster address for local traffic, and that is correct
+# behaviour rather than this setting failing — verify from another machine.
+#
+# Applied as a Helm value because Traefik here is a standalone release (41.1.1). A HelmChartConfig
+# is the right mechanism only when k3s's own helm-controller owns the release; against a manually
+# installed one it tries to reconcile back to the k3s-bundled chart version and fails on missing
+# CRDs. Kept in the repository so the cluster and the repository do not drift — the failure this
+# documents is invisible until someone debugs a 429.
+#
+# The equivalent for a k3s-managed Traefik, for a cluster that has one:
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    service:
+      spec:
+        externalTrafficPolicy: Local

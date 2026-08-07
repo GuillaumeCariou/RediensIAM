@@ -1,7 +1,7 @@
 # Pin base images to digests in production.
 # Refresh with: docker pull <image> && docker inspect --format='{{index .RepoDigests 0}}' <image>
 # Stage 1 — build Login SPA
-FROM node:20-alpine AS login-build
+FROM node:26-alpine AS login-build
 WORKDIR /src/frontend/login
 COPY frontend/login/package*.json ./
 RUN npm ci
@@ -16,7 +16,7 @@ RUN npm run build
 # this stage AND sit at exactly that offset from the app. Building in a bare /app pointed the alias
 # outside the stage, and because deploy.sh builds the SPAs on the host first, a failed image build
 # still had a dist to ship: the deploy reported success and pushed a stale image.
-FROM node:20-alpine AS admin-build
+FROM node:26-alpine AS admin-build
 WORKDIR /src/frontend/admin
 COPY frontend/admin/package*.json ./
 RUN npm ci

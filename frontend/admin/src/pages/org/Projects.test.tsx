@@ -7,7 +7,8 @@ import { ApiError } from '@/auth';
 import { fmtDateShort } from '@/lib/utils';
 
 const api = vi.hoisted(() => ({
-  listProjects: vi.fn(), createProject: vi.fn(), deleteProject: vi.fn(),
+  listProjects: vi.fn(), createSystemProject: vi.fn().mockResolvedValue({ id: 'pNew' }),
+  createProject: vi.fn(), deleteProject: vi.fn(),
   listUserLists: vi.fn(), assignUserList: vi.fn(), unassignUserList: vi.fn(),
 }));
 vi.mock('@/api', () => api);

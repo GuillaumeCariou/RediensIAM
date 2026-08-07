@@ -20,7 +20,10 @@ import 'dotenv/config';
  * redirect crosses between them correctly.
  */
 export const APP_URL     = process.env.TEST_APP_URL     ?? 'http://iam.localhost';
-export const CONSOLE_URL = process.env.TEST_CONSOLE_URL ?? 'http://admin.iam.localhost';
+// https, and not by preference: the admin ingress is TLS-only — cert-manager issues it a
+// self-signed certificate and the router has no http entry, so http answers 404. `ignoreHTTPSErrors`
+// below is what makes that certificate usable from a test browser.
+export const CONSOLE_URL = process.env.TEST_CONSOLE_URL ?? 'https://admin.iam.localhost';
 
 export default defineConfig({
   testDir: './tests',
