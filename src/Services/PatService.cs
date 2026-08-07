@@ -68,7 +68,7 @@ public class PatService(
         var pat = await db.PersonalAccessTokens
             .Include(p => p.ServiceAccount)
                 .ThenInclude(sa => sa.UserList)
-                    .ThenInclude(ul => ul!.Organisation)
+                    .ThenInclude(ul => ul.Organisation)
             .Include(p => p.ServiceAccount)
                 .ThenInclude(sa => sa.Roles)
             .FirstOrDefaultAsync(p => p.TokenHash == hash);

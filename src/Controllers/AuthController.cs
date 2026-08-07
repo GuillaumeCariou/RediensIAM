@@ -187,7 +187,7 @@ public class AuthController(
             if (ParseSubjectOrgId(req.Subject) is { } skipOrgId) await PinScopeAsync(skipOrgId);
             var skipUser = await db.Users
                 .Include(u => u.UserList)
-                    .ThenInclude(ul => ul!.Organisation)
+                    .ThenInclude(ul => ul.Organisation)
                 .FirstOrDefaultAsync(u => u.Id == skipUserId.Value);
             var skipErr = ValidateSkipUser(skipUser);
             if (skipErr != null) return skipErr;
@@ -751,7 +751,7 @@ public class AuthController(
         var projectId = HttpContext.Session.GetString(MfaPendingProject);
         if (Guid.TryParse(projectId, out var pid))
         {
-            var org = await db.Projects.Where(p => p.Id == pid).Select(p => p.Organisation!.Name).FirstOrDefaultAsync();
+            var org = await db.Projects.Where(p => p.Id == pid).Select(p => p.Organisation.Name).FirstOrDefaultAsync();
             if (!string.IsNullOrEmpty(org)) issuer = org;
         }
 
@@ -1057,7 +1057,7 @@ public class AuthController(
         var user = await BuildUserAsync(project.AssignedUserListId!.Value, email, body.Username, body.Password);
         db.Users.Add(user);
         await db.SaveChangesAsync();
-        await keto.WriteRelationTupleAsync(Roles.KetoUserListsNamespace, project.AssignedUserListId!.Value.ToString(), "member", $"user:{user.Id}");
+        await keto.WriteRelationTupleAsync(Roles.KetoUserListsNamespace, project.AssignedUserListId.Value.ToString(), "member", $"user:{user.Id}");
         await audit.RecordAsync(project.OrgId, project.Id, user.Id, "user.registered");
         await keto.AssignDefaultRoleAsync(project, user);
 
@@ -1800,7 +1800,7 @@ public class AuthController(
 
         await keto.WriteRelationTupleAsync(
             Roles.KetoUserListsNamespace,
-            project.AssignedUserListId!.Value.ToString(),
+            project.AssignedUserListId.Value.ToString(),
             Roles.KetoMemberRelation,
             $"user:{user.Id}");
 

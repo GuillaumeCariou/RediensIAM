@@ -450,6 +450,7 @@ Neither runs on a schedule by default. See [`TESTING.md`](TESTING.md#detection-r
 | Image | pinned by `@sha256:` digest, `pullPolicy: IfNotPresent` |
 | Backup | nightly `pg_dumpall` CronJob; restore proven byte-identical once |
 | Management surface on the public host | denied at the ingress for `/admin`, `/org`, `/project`, `/service-accounts` |
+| Client address behind the proxy | honoured from `App__TrustedProxies` only; **mandatory in Production** — see below |
 
 Two of these need their qualifier stated, because a summary table elsewhere reads as unconditional:
 
@@ -494,6 +495,87 @@ survives anything, that an upgrade across a schema migration works — is listed
 report. A scratch namespace is not production.
 
 ---
+
+### The client's address, and what depends on it
+
+Everything the deployment does per-IP reads one value: `HttpContext.Connection.RemoteIpAddress`.
+The sign-in lockout counter is keyed on it (`rate:login:{ip}`), the audit log records it, and the
+SAML endpoint logs it. If that address is not the caller's, none of those controls mean what they
+say — and the lockout in particular stops being a defence and becomes a weapon: five wrong
+passwords from anywhere lock sign-in **for every user at once**, for fifteen minutes, at a cost of
+five requests.
+
+**What the application does, and why it is already right.** `X-Forwarded-For` is honoured only
+from addresses the operator has declared as proxies, in `App__TrustedProxies` — a CSV of CIDRs,
+carried by the chart (`rediensiam.app.trustedProxies`) and injected as an environment variable.
+Program.cs refuses to start without it in Production:
+
+```csharp
+if (env.IsProduction())
+    throw new InvalidOperationException(
+        "App__TrustedProxies must be set explicitly in Production. " +
+        "Silently trusting RFC1918 ranges allows any in-cluster pod to spoof X-Forwarded-For " +
+        "and bypass IP-based controls.");
+```
+
+That refusal is the control. Trusting RFC1918 by default would let **any pod in the cluster** send
+`X-Forwarded-For: <anything>` and inherit whichever IP it liked — bypassing the lockout, and
+poisoning the audit trail with addresses of its choosing. The RFC1918 literals in
+`AddDefaultTrustedNetworks` are the non-Production fallback and are deliberately *not*
+configurable: making the definition of "private network" an operator setting would let someone
+declare the public internet private, which is the exact failure the check above exists to prevent.
+
+**Where the address is lost anyway.** Trusting the proxy is necessary and not sufficient — the
+proxy has to have seen the real client. On k3s it does not, out of the box:
+
+```
+client (192.168.1.x) → node:80 → svclb-traefik (klipper-lb) → traefik → rediensiam
+```
+
+k3s ships ServiceLB in front of Traefik, and its Service defaults to `externalTrafficPolicy:
+Cluster`. That policy **SNATs**: klipper-lb replaces the source address with its own pod IP before
+Traefik sees the packet. Traefik then writes a perfectly truthful `X-Forwarded-For: 10.42.x.y` —
+the client it saw — the application trusts it correctly, and every external caller arrives as one
+address. Nothing in the code is wrong; the address was gone one hop earlier.
+
+The fix is on the Service:
+
+```yaml
+# k3s-managed Traefik: deploy/cluster/traefik-source-ip.yaml
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    service:
+      spec:
+        externalTrafficPolicy: Local
+```
+
+```bash
+# Traefik installed as a standalone Helm release instead:
+helm upgrade traefik traefik/traefik -n kube-system --reuse-values \
+  --set service.spec.externalTrafficPolicy=Local
+```
+
+`Local` costs one thing: only nodes running a Traefik pod accept traffic for the service. On a
+single node that is every node; on several, run Traefik as a DaemonSet or let the load balancer
+health-check its way to the right ones.
+
+**What `Local` still cannot do.** Preserve the source of a request that *originates on the node*.
+A developer curling `http://iam.localhost` from the machine that is also the cluster is a hairpin
+through kube-proxy, which SNATs on the way in so the reply can find its way home. On a single-node
+dev box the application will therefore keep recording a cluster address for local traffic. That is
+correct behaviour, not the setting failing — verify from another machine.
+
+**The same trap in production.** Any load balancer that terminates the connection without
+preserving the source has this shape: a cloud LB in "instance" mode, an nginx without
+`proxy_set_header X-Forwarded-For`, a service mesh sidecar. The answer is the same policy, or the
+PROXY protocol, and the thing to check is not the configuration but the outcome: sign in from a
+known address and read what the audit row recorded.
+
 
 ## 7. Application-layer controls, briefly
 

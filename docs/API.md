@@ -502,8 +502,9 @@ stack trace.
 
 | Method | Path | Action |
 |---|---|---|
-| GET | `/admin/projects` | `AdminListAllProjects` |
-| GET | `/admin/organizations/{id}/projects` | `AdminListOrgProjects` |
+| GET | `/admin/projects` | `AdminListAllProjects` — carries `assigned_user_list_id`: the list whose members may sign in to the project |
+| GET | `/admin/projects/{id}` | `AdminGetProject` — one project, with `assigned_user_list_id` and `org_name`. The `Location` of a created project points here |
+| GET | `/admin/organizations/{id}/projects` | `AdminListOrgProjects` — same fields, scoped to one organisation |
 | POST | `/admin/organizations/{id}/projects` | `AdminCreateProject` — same body as `POST /org/projects`, including `post_logout_redirect_uris` |
 | PATCH | `/admin/projects/{id}` | `AdminUpdateProject` — see the `require_mfa` downgrade guard |
 | DELETE | `/admin/projects/{id}` | `AdminDeleteProject` |

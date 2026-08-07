@@ -607,6 +607,14 @@ var projects = await db.Projects
             .Join(db.Organisations, p => p.OrgId, o => o.Id,
                 (p, o) => new {
                     p.Id, p.Name, p.Slug, p.Active, p.OrgId,
+                    // The list whose members may sign in here. A consumer that provisions accounts
+                    // for a project has to know it, and the only other way to learn it was to read
+                    // every user list and look for one whose assigned_projects names this project —
+                    // a scan to recover something the project already holds. Left out, a caller
+                    // pins the id in its own configuration and silently keeps pointing at the old
+                    // list the day the assignment changes: accounts land somewhere nobody can sign
+                    // in through, and the symptom is "invalid credentials" on a valid account.
+                    p.AssignedUserListId,
                     OrgName = o.Name, p.HydraClientId, p.CreatedAt
                 })
             .OrderBy(p => p.OrgName).ThenBy(p => p.Name)
@@ -622,9 +630,33 @@ var projects = await db.Projects
         if (!await db.Organisations.AnyAsync(o => o.Id == id)) return NotFound();
         var projects = await db.Projects
             .Where(p => p.OrgId == id)
-            .Select(p => new { p.Id, p.Name, p.Slug, p.Active, p.HydraClientId, p.CreatedAt })
+            .Select(p => new { p.Id, p.Name, p.Slug, p.Active, p.OrgId, p.AssignedUserListId, p.HydraClientId, p.CreatedAt })
             .ToListAsync();
         return Ok(projects);
+    }
+
+    /// <summary>
+    /// One project, by id.
+    ///
+    /// <para>
+    /// It did not exist, and <c>AdminCreateProject</c> has been answering
+    /// <c>Location: /admin/projects/{id}</c> since it was written — a header pointing at a 404. A
+    /// caller holding a project id could only find it again by listing every project of every
+    /// organisation.
+    /// </para>
+    /// </summary>
+    [HttpGet("projects/{id}")]
+    public async Task<IActionResult> AdminGetProject(Guid id)
+    {
+        var project = await db.Projects
+            .Where(p => p.Id == id)
+            .Join(db.Organisations, p => p.OrgId, o => o.Id,
+                (p, o) => new {
+                    p.Id, p.Name, p.Slug, p.Active, p.OrgId, p.AssignedUserListId,
+                    OrgName = o.Name, p.HydraClientId, p.RequireRoleToLogin, p.CreatedAt, p.UpdatedAt
+                })
+            .FirstOrDefaultAsync();
+        return project == null ? NotFound() : Ok(project);
     }
 
     [HttpPost("organizations/{id}/projects")]

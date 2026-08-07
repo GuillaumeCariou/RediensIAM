@@ -6,10 +6,10 @@ version: 0.8.0
 appVersion: "0.8.0"
 dependencies:
   - name: hydra
-    version: "0.60.1"
+    version: "0.63.0"
     repository: "https://k8s.ory.sh/helm/charts"
     condition: rediensiam.hydra.local.enabled
   - name: keto
-    version: "0.60.1"
+    version: "0.63.0"
     repository: "https://k8s.ory.sh/helm/charts"
     condition: rediensiam.keto.local.enabled

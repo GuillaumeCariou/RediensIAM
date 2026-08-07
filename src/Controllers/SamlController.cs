@@ -128,7 +128,13 @@ public class SamlController(
     // ── ACS: receive and validate SAMLResponse ────────────────────────────────
 
     [HttpPost("acs")]
+    // S4502 is a hotspot, and this is the review: the answer below is not "CSRF does not matter
+    // here", it is that the anti-forgery token cannot exist. The assertion arrives from an IdP the
+    // browser was redirected to, so there is no prior response of ours in which to have planted
+    // one. The SAML signature is the integrity and replay defence, and it is verified.
+#pragma warning disable S4502
     [Microsoft.AspNetCore.Mvc.IgnoreAntiforgeryToken]
+#pragma warning restore S4502
     // SAML ACS receives an IdP-signed assertion via the user agent; the SAML signature
     // verification IS the integrity / replay defence. ASP.NET anti-forgery tokens (designed
     // for browser-originated form posts) do not apply here.
