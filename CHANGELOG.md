@@ -8,6 +8,99 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.9.0] — 2026-08-07
+
+**La console, ses frontières, et tout au dernier compatible.** Le fil rouge est la suite
+end-to-end : chaque défaut ci-dessous a été trouvé en écrivant un test contre un déploiement réel,
+et aucun n'était visible depuis un test de composant.
+
+### Corrigé — cinq défauts de la console
+
+Un **super-admin ne pouvait pas créer de projet dans un locataire**. La page postait sur
+`/org/projects`, qui lit le locataire dans le JETON de l'appelant — et celui d'un super-admin n'en
+nomme aucun. L'insertion partait avec une organisation vide et la clé étrangère répondait :
+`internal_error`. `createSystemProject` fait désormais la distinction que la page User Lists faisait
+déjà.
+
+**L'arbre de navigation ignorait ce qui venait d'être créé.** `apiFetch` annonce maintenant chaque
+écriture réussie, dans le seul entonnoir que toutes les requêtes traversent, plutôt que de demander
+à chaque page de penser à prévenir la barre latérale.
+
+**L'arbre allumait plusieurs lignes à la fois** : `/system/organisations/{id}/userlists`
+correspondait aussi au préfixe `organisations` du niveau déploiement. Un chemin appartient à un seul
+niveau, et `activeKey` le vérifie.
+
+**Le fil d'Ariane n'a jamais affiché un nom.** `setOrgName` et `setProjectName` existaient sur le
+contexte de scope et n'étaient appelés nulle part : la tranche d'UUID, écrite comme repli
+transitoire, était le seul affichage possible. Résolu dans le topbar.
+
+**Suspendre un locataire ne demandait rien**, alors que ça révoque toutes ses sessions vivantes et
+déconnecte ses propres administrateurs — pendant que Supprimer, deux lignes plus bas, confirmait.
+Le bouton d'actions de chaque ligne a aussi reçu un nom accessible, et la palette de commandes ne
+perd plus la sélection au clavier quand une ligne se redessine sous un curseur immobile.
+
+### Ajouté — l'API dit enfin quelle liste sert un projet
+
+`GET /admin/projects` et `GET /admin/organizations/{id}/projects` portent
+**`assigned_user_list_id`**, et **`GET /admin/projects/{id}` existe** — la création renvoyait un
+`Location` vers cette route depuis toujours, c'est-à-dire vers un 404.
+
+Sans ce champ, un service qui provisionne des comptes pour un projet devait balayer toutes les
+listes pour retrouver celle dont `assigned_projects` nommait le projet, ou figer l'identifiant dans
+sa propre configuration — et continuer de pointer l'ancienne liste le jour où l'affectation change.
+Les comptes atterrissaient alors dans une liste par laquelle personne ne peut se connecter, et le
+symptôme était « identifiants refusés » sur un compte parfaitement valide.
+
+### Ajouté — PLAN §11 et §12 de la suite e2e
+
+**§11**, vingt et un tests : l'arbre, les vingt-cinq destinations des trois niveaux, les formes
+d'URL au chargement à froid, le fil d'Ariane, la palette, le thème après rechargement.
+
+**§12**, sept tests qui passent et treize écrits puis marqués bloqués. Ce qui passe : les deux
+hôtes — le même chemin répond 403 sur l'hôte public, refusé par l'ingress avant qu'un jeton soit lu,
+et 401 sur l'hôte admin, où c'est l'application qui répond — et le retour à la destination demandée
+après une authentification interrompue.
+
+Ce qui est bloqué, et pourquoi ce n'est pas supprimé : `AdminLogin` n'admet que les comptes de la
+liste système immuable, et `GrantsSuperAdmin` fait de l'appartenance à cette même liste un
+`super_admin`. Ensemble : **quiconque peut se connecter à la console est super-admin**, donc toute la
+surface `org_admin` / `project_admin` — `OwnLevel`, les destinations `superOnly`, les deux formes
+d'URL par niveau — est inatteignable. Laquelle des deux règles doit céder est une décision sur qui
+administre un déploiement.
+
+### Documenté — l'adresse du client derrière le proxy
+
+`SECURITY.md §6`, `DEPLOYMENT.md` et `deploy/cluster/traefik-source-ip.yaml`.
+
+L'application fait sa moitié correctement : `X-Forwarded-For` n'est honoré que depuis les CIDR de
+`App__TrustedProxies`, et Program.cs **refuse de démarrer en Production** sans, parce que faire
+confiance aux plages RFC1918 par défaut laisserait n'importe quel pod du cluster usurper l'en-tête.
+La moitié qu'elle ne peut pas faire, c'est que le proxy ait vu le vrai client : k3s place ServiceLB
+devant Traefik en `externalTrafficPolicy: Cluster`, qui SNAT avant que Traefik voie le paquet.
+
+Tous les appelants externes arrivent alors sous une seule adresse, et le verrou anti-force-brute
+cesse d'être une défense : **cinq mauvais mots de passe depuis n'importe où bloquent la connexion de
+tous les utilisateurs pendant quinze minutes**. Corrigé sur le service, avec les deux limites
+nommées — `Local` restreint le trafic aux nœuds portant un pod Traefik, et ne peut rien préserver
+pour une requête émise depuis le nœud lui-même.
+
+### Montée de version
+
+Ory **Hydra et Keto v25.4.0 → v26.2.0** (charts 0.60.1 → 0.63.0), image de construction
+**node:20 → node:26-alpine**, **TypeScript 5.9 → 6.0**, **ESLint 9 → 10**, Vite 8.2, Vitest 4.1.10,
+jest-dom 6 → 7, Playwright 1.59 → 1.62, plus douze paquets NuGet dont EF Core 10.0.10 et
+SonarAnalyzer 10.31.
+
+TypeScript 6 fait de `baseUrl` une erreur ; il est retiré, `paths` étant résolu depuis le tsconfig
+qui le déclare depuis la 5.0. La montée de Node n'est pas du confort : jest-dom 7 exige Node ≥ 22.
+
+Trois versions volontairement retenues : **tailwindcss reste en 3.4** (la 4.x est une réécriture, et
+la prendre à l'aveugle a fait tomber 417 tests sur 1251), **typescript reste en 6.0.3** là où
+`typescript-eslint` est présent (son pair déclare `<6.1.0`), et **postgres:16-alpine** n'est pas
+touché — un saut de majeure demande un dump/restore.
+
+---
+
 ## [0.8.0] — 2026-08-06
 
 **Trois défauts remontés depuis `iam-handler-svc`, le service qui crée les organisations clientes
