@@ -7,7 +7,8 @@ import {
 } from '@/api';
 import { ApiError } from '@/auth';
 import { useOrgContext } from '@/hooks/useOrgContext';
-import { IamChip, IamDialog } from '@/components/iam';
+import { IamChip } from '@/components/iam';
+import { OrgSuspendDialog, OrgDeleteDialog } from '@/components/OrgLifecycle';
 import PageHeader from '@/components/layout/PageHeader';
 
 /**
@@ -282,41 +283,13 @@ export default function OrgSettings() {
         )}
       </div>
 
-      <IamDialog
-        open={suspendOpen}
-        onClose={() => setSuspendOpen(false)}
-        title={suspended ? <>Unsuspend “{org?.name}”?</> : <>Suspend “{org?.name}”?</>}
-        desc={suspended
-          ? 'Sign-in is allowed again from now on. The sessions the suspension revoked stay revoked.'
-          : 'Every session in this organisation is revoked immediately — its own administrators included — and every sign-in is refused until you unsuspend. Nothing is deleted.'}
-        footer={
-          <>
-            <button type="button" className="iam-btn iam-btn-secondary" onClick={() => setSuspendOpen(false)}>Cancel</button>
-            <button type="button" className="iam-btn iam-btn-danger" onClick={toggleSuspend} disabled={dangerBusy}>
-              {suspended ? 'Unsuspend' : 'Suspend'}
-            </button>
-          </>
-        }
-      />
+      <OrgSuspendDialog
+        open={suspendOpen} name={org?.name} suspended={suspended} busy={dangerBusy}
+        onClose={() => setSuspendOpen(false)} onConfirm={toggleSuspend} />
 
-      <IamDialog
-        open={deleteOpen}
-        onClose={() => setDeleteOpen(false)}
-        title={<>Delete “{org?.name}”?</>}
-        desc={<>
-          This destroys the organisation and everything under it: every project and its OAuth2
-          client, every user list, every account in those lists, every admin grant in Keto, and this
-          tenant’s whole audit chain. Sessions are revoked as it goes. It cannot be undone.
-        </>}
-        footer={
-          <>
-            <button type="button" className="iam-btn iam-btn-secondary" onClick={() => setDeleteOpen(false)}>Cancel</button>
-            <button type="button" className="iam-btn iam-btn-danger" onClick={destroy} disabled={dangerBusy}>
-              {dangerBusy ? 'Deleting…' : 'Delete for good'}
-            </button>
-          </>
-        }
-      />
+      <OrgDeleteDialog
+        open={deleteOpen} name={org?.name} busy={dangerBusy}
+        onClose={() => setDeleteOpen(false)} onConfirm={destroy} />
     </div>
   );
 }

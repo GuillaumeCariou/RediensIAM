@@ -8,6 +8,35 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.9.6] — 2026-08-08
+
+### Corrigé — suspendre et supprimer une organisation
+
+Trois pages offraient ces deux actions avec **trois textes indépendants**, et l'écart n'était pas
+cosmétique.
+
+La liste des organisations annonçait « toutes les données associées » — donc rien. La vue d'ensemble
+d'un locataire nommait les listes, les projets et les comptes de service, en **omettant les comptes
+contenus dans ces listes, les grants d'administration dans Keto et la chaîne d'audit**. Seule la page
+Settings disait la vérité entière.
+
+Pire : **la vue d'ensemble suspendait sans rien demander.** Un clic, immédiat, alors que la
+suspension révoque toutes les sessions vivantes du locataire — celles de ses propres administrateurs
+comprises, qui ne peuvent plus se reconnecter. Les deux autres pages demandaient confirmation depuis
+toujours. Elle ne rendait pas non plus le refus du serveur : ni la suspension ni la suppression
+n'avaient de `catch`.
+
+Les deux confirmations vivent désormais dans `components/OrgLifecycle.tsx`, et les trois pages en
+héritent. Le texte de la cascade est écrit **une fois**. Un test tient le contenu plutôt que la mise
+en page : ce qui doit être nommé à quelqu'un sur le point de détruire un locataire, et le fait que la
+suspension dit aussi *ce qu'elle ne fait pas* — rien n'est supprimé, et les sessions révoquées ne
+reviennent pas au retour en arrière.
+
+Les actions restent offertes depuis les trois pages : un opérateur atteint une organisation par trois
+chemins, et lui en retirer deux aurait été de l'élégance payée par lui.
+
+---
+
 ## [0.9.5] — 2026-08-08
 
 ### Ajouté — `GET /org/users`

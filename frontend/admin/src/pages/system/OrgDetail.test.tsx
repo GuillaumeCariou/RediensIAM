@@ -158,7 +158,11 @@ describe('suspending', () => {
     const user = show();
     await loaded();
 
+    // La suspension révoque toutes les sessions vivantes du locataire, administrateurs compris.
+    // Elle partait ici sur un seul clic, sans rien demander ; les deux autres pages demandaient.
     await user.click(screen.getByRole('button', { name: /Suspend/ }));
+    expect(api.suspendOrg).not.toHaveBeenCalled();
+    await user.click(screen.getAllByRole('button', { name: 'Suspend' }).at(-1)!);
 
     await vi.waitFor(() => expect(api.suspendOrg).toHaveBeenCalledWith('o1'));
     expect(api.getOrg).toHaveBeenCalledTimes(2);
@@ -170,6 +174,7 @@ describe('suspending', () => {
     await loaded();
 
     await user.click(screen.getByRole('button', { name: /Unsuspend/ }));
+    await user.click(screen.getAllByRole('button', { name: 'Unsuspend' }).at(-1)!);
 
     await vi.waitFor(() => expect(api.unsuspendOrg).toHaveBeenCalledWith('o1'));
   });
@@ -208,8 +213,11 @@ describe('deleting the tenant', () => {
 
     await user.click(screen.getByRole('button', { name: /Delete/ }));
 
-    expect(await screen.findByText('Delete organisation "Acme"?')).toBeInTheDocument();
-    expect(screen.getByText(/All user lists, projects, and service accounts/)).toBeInTheDocument();
+    expect(await screen.findByText(/Delete .Acme.\?/)).toBeInTheDocument();
+    // Le texte partagé nomme ce que celui de cette page omettait : les comptes DANS les listes, les
+    // grants Keto et la chaîne d'audit.
+    expect(screen.getByText(/every account in those lists.*every admin grant in Keto.*audit chain/s))
+      .toBeInTheDocument();
     expect(api.deleteOrg).not.toHaveBeenCalled();
   });
 
@@ -218,7 +226,7 @@ describe('deleting the tenant', () => {
     await loaded();
     await user.click(screen.getByRole('button', { name: /Delete/ }));
 
-    await user.click(screen.getAllByRole('button', { name: 'Delete' }).at(-1)!);
+    await user.click(screen.getByRole('button', { name: 'Delete for good' }));
 
     await vi.waitFor(() => expect(api.deleteOrg).toHaveBeenCalledWith('o1'));
     await arrivedAt('/system/organisations');
@@ -228,7 +236,7 @@ describe('deleting the tenant', () => {
     const user = show();
     await loaded();
     await user.click(screen.getByRole('button', { name: /Delete/ }));
-    await screen.findByText('Delete organisation "Acme"?');
+    await screen.findByText(/Delete .Acme.\?/);
 
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
@@ -670,12 +678,12 @@ describe('creating a project in this organisation', () => {
 
 
 describe('dismissing a dialog with Escape', () => {
-  const cases: ReadonlyArray<readonly [string, (u: Awaited<ReturnType<typeof show>>) => Promise<unknown>, string]> = [
+  const cases: ReadonlyArray<readonly [string, (u: Awaited<ReturnType<typeof show>>) => Promise<unknown>, string | RegExp]> = [
     ['the rename form', u => u.click(screen.getByRole('button', { name: /Rename/ })), 'Rename Organisation'],
     ['the add-user form', u => u.click(screen.getByRole('button', { name: /Add User/ })), 'Add User to Org List'],
     ['the new-list form', u => u.click(section(/User Lists/).getByRole('button', { name: /New/ })), 'New User List'],
     ['the new-project form', u => u.click(section(/Projects/).getByRole('button', { name: /New/ })), 'New Project'],
-    ['the delete confirmation', u => u.click(screen.getByRole('button', { name: /Delete/ })), 'Delete organisation "Acme"?'],
+    ['the delete confirmation', u => u.click(screen.getByRole('button', { name: /Delete/ })), /Delete .Acme.\?/],
   ];
 
   it.each(cases)('closes %s', async (_n, open, heading) => {

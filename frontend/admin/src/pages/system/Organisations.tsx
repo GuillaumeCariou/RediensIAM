@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { IamChip, IamAvatar, IamDialog } from '@/components/iam';
 import { listOrgs, createOrg, suspendOrg, unsuspendOrg, deleteOrg } from '@/api';
+import { OrgSuspendDialog, OrgDeleteDialog } from '@/components/OrgLifecycle';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDateShort } from '@/lib/utils';
 
@@ -242,39 +243,13 @@ export default function Organisations() {
         </form>
       </IamDialog>
 
-      <IamDialog
-        open={!!suspendTarget}
-        onClose={() => setSuspendTarget(null)}
-        title={`Suspend ${suspendTarget?.name}?`}
-        desc="Every live session of this tenant is revoked immediately, including its own administrators'. They cannot sign in again until it is unsuspended."
-        footer={
-          <>
-            <button className="iam-btn iam-btn-ghost" onClick={() => setSuspendTarget(null)}>Cancel</button>
-            <button className="iam-btn iam-btn-danger" onClick={confirmSuspend}>Suspend</button>
-          </>
-        }
-      >
-        <div style={{ padding: '4px 0', fontSize: 13, color: 'var(--fg-muted)' }}>
-          Organisation: <strong style={{ color: 'var(--fg)' }}>{suspendTarget?.name}</strong>
-        </div>
-      </IamDialog>
+      <OrgSuspendDialog
+        open={!!suspendTarget} name={suspendTarget?.name} suspended={false}
+        onClose={() => setSuspendTarget(null)} onConfirm={confirmSuspend} />
 
-      <IamDialog
-        open={!!deleteTarget}
-        onClose={() => setDeleteTarget(null)}
-        title={`Delete ${deleteTarget?.name}?`}
-        desc="This will permanently delete the organisation and all associated data. This cannot be undone."
-        footer={
-          <>
-            <button className="iam-btn iam-btn-ghost" onClick={() => setDeleteTarget(null)}>Cancel</button>
-            <button className="iam-btn iam-btn-danger" onClick={handleDelete}>Delete permanently</button>
-          </>
-        }
-      >
-        <div style={{ padding: '4px 0', fontSize: 13, color: 'var(--fg-muted)' }}>
-          Organisation: <strong style={{ color: 'var(--fg)' }}>{deleteTarget?.name}</strong>
-        </div>
-      </IamDialog>
+      <OrgDeleteDialog
+        open={!!deleteTarget} name={deleteTarget?.name}
+        onClose={() => setDeleteTarget(null)} onConfirm={handleDelete} />
     </div>
   );
 }

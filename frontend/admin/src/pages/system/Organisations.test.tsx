@@ -211,7 +211,7 @@ describe('the row menu', () => {
     // The menu item opens the confirmation; it does not act. Suspending revokes every live session
     // of the tenant, which is a destructive act on other people's work and used to take one click.
     expect(api.suspendOrg).not.toHaveBeenCalled();
-    expect(await screen.findByRole('dialog')).toHaveTextContent('Suspend Acme Corp?');
+    expect(await screen.findByRole('dialog')).toHaveTextContent(/Suspend .Acme Corp.\?/);
   });
 
   it('suspends once confirmed, then reloads so the status is the server\'s and not a guess', async () => {
@@ -285,7 +285,7 @@ describe('deleting a tenant', () => {
 
     await user.click(screen.getByRole('button', { name: 'Delete' }));
 
-    expect(await screen.findByText('Delete Acme Corp?')).toBeInTheDocument();
+    expect(await screen.findByText(/Delete .Acme Corp.\?/)).toBeInTheDocument();
     expect(screen.getByText(/cannot be undone/)).toBeInTheDocument();
     expect(api.deleteOrg).not.toHaveBeenCalled();
   });
@@ -296,7 +296,7 @@ describe('deleting a tenant', () => {
     await openMenu(user, 'Acme Corp');
     await user.click(screen.getByRole('button', { name: 'Delete' }));
 
-    await user.click(await screen.findByRole('button', { name: 'Delete permanently' }));
+    await user.click(await screen.findByRole('button', { name: 'Delete for good' }));
 
     await vi.waitFor(() => expect(api.deleteOrg).toHaveBeenCalledWith('o1'));
     expect(api.listOrgs).toHaveBeenCalledTimes(2);
@@ -307,7 +307,7 @@ describe('deleting a tenant', () => {
     await screen.findByText('Acme Corp');
     await openMenu(user, 'Acme Corp');
     await user.click(screen.getByRole('button', { name: 'Delete' }));
-    await screen.findByText('Delete Acme Corp?');
+    await screen.findByText(/Delete .Acme Corp.\?/);
 
     await user.click(screen.getAllByRole('button', { name: 'Cancel' }).at(-1)!);
 
@@ -339,11 +339,11 @@ describe('dismissing a dialog with Escape', () => {
     await screen.findByText('Acme Corp');
     await openMenu(user, 'Acme Corp');
     await user.click(screen.getByRole('button', { name: 'Delete' }));
-    await screen.findByText('Delete Acme Corp?');
+    await screen.findByText(/Delete .Acme Corp.\?/);
 
     await user.keyboard('{Escape}');
 
-    await vi.waitFor(() => expect(screen.queryByText('Delete Acme Corp?')).toBeNull());
+    await vi.waitFor(() => expect(screen.queryByText(/Delete .Acme Corp.\?/)).toBeNull());
     expect(api.deleteOrg).not.toHaveBeenCalled();
   });
 });

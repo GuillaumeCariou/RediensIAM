@@ -22,6 +22,7 @@ import {
 } from '@/api';
 import { fmtDateShort } from '@/lib/utils';
 import { IamChip, IamDialog, IamMenu } from '@/components/iam';
+import { OrgSuspendDialog, OrgDeleteDialog } from '@/components/OrgLifecycle';
 
 interface Org { id: string; name: string; slug: string; active: boolean; suspended_at: string | null; created_at: string; org_list_id: string; }
 interface Member { id: string; username: string; discriminator: string; email: string; active: boolean; }
@@ -37,6 +38,9 @@ export default function OrgDetail() {
 
   const [org, setOrg] = useState<Org | null>(null);
   const [deleteOrgOpen, setDeleteOrgOpen] = useState(false);
+  const [suspendOpen, setSuspendOpen] = useState(false);
+  const [dangerBusy, setDangerBusy] = useState(false);
+  const [dangerError, setDangerError] = useState('');
   const [orgListMembers, setOrgListMembers] = useState<Member[]>([]);
   const [orgRoles, setOrgRoles] = useState<OrgRole[]>([]);
   const [serviceAccounts, setServiceAccounts] = useState<ServiceAccount[]>([]);
@@ -101,17 +105,35 @@ export default function OrgDetail() {
     return acc;
   }, {});
 
+  /**
+   * La suspension partait sur un seul clic, sans confirmation et sans `catch`, alors qu'elle révoque
+   * immédiatement toutes les sessions vivantes du locataire — celles de ses propres administrateurs
+   * comprises, qui ne peuvent plus se reconnecter. Les deux autres pages demandaient déjà.
+   */
   const handleSuspend = async () => {
     if (!org) return;
-    if (org.suspended_at) await unsuspendOrg(org.id);
-    else await suspendOrg(org.id);
-    load();
+    setDangerBusy(true); setDangerError('');
+    try {
+      if (org.suspended_at) await unsuspendOrg(org.id);
+      else await suspendOrg(org.id);
+      setSuspendOpen(false);
+      load();
+    } catch (e) {
+      const body = e instanceof ApiError ? (e.body as { error?: string; detail?: string } | null) : null;
+      setDangerError(body?.detail ?? body?.error ?? 'Could not change the suspension. Nothing was changed.');
+    } finally { setDangerBusy(false); }
   };
 
   const handleDeleteOrg = async () => {
     if (!org) return;
-    await deleteOrg(org.id);
-    navigate('/system/organisations');
+    setDangerBusy(true); setDangerError('');
+    try {
+      await deleteOrg(org.id);
+      navigate('/system/organisations');
+    } catch (e) {
+      const body = e instanceof ApiError ? (e.body as { error?: string; detail?: string } | null) : null;
+      setDangerError(body?.detail ?? body?.error ?? 'Could not delete this organisation. Nothing was destroyed.');
+    } finally { setDangerBusy(false); }
   };
 
   /**
@@ -257,7 +279,7 @@ export default function OrgDetail() {
                 <Download className="h-4 w-4" />{exporting ? 'Exporting…' : 'Export users'}
               </button>
               {isSuperAdmin && (
-                <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={handleSuspend}>
+                <button className="iam-btn iam-btn-secondary iam-btn-sm" onClick={() => { setDangerError(''); setSuspendOpen(true); }}>
                   {org.suspended_at
                     ? <><PlayCircle className="h-4 w-4" />Unsuspend</>
                     : <><PauseCircle className="h-4 w-4" />Suspend</>
@@ -272,6 +294,7 @@ export default function OrgDetail() {
             </div>
           )}
           {exportError && <p style={{ fontSize: 12, color: 'var(--danger)', marginTop: 8 }}>{exportError}</p>}
+          {dangerError && <p style={{ fontSize: 12, color: 'var(--danger)', marginTop: 8 }}>{dangerError}</p>}
         </div>
 
         <hr className="iam-sep" />
@@ -564,13 +587,13 @@ export default function OrgDetail() {
           </form>
     </IamDialog>
 
-      <IamDialog open={deleteOrgOpen} onClose={() => setDeleteOrgOpen(false)}
-      title={<>Delete organisation "{org?.name}"?</>}
-      desc="All user lists, projects, and service accounts belonging to this organisation will be permanently deleted. This cannot be undone."
-      footer={<><button type="button" onClick={() => setDeleteOrgOpen(false)} className="iam-btn iam-btn-secondary">Cancel</button><button className="iam-btn iam-btn-danger" onClick={handleDeleteOrg}>Delete</button></>}
-    >
+      <OrgSuspendDialog
+        open={suspendOpen} name={org?.name} suspended={!!org?.suspended_at} busy={dangerBusy}
+        onClose={() => setSuspendOpen(false)} onConfirm={handleSuspend} />
 
-    </IamDialog>
+      <OrgDeleteDialog
+        open={deleteOrgOpen} name={org?.name} busy={dangerBusy}
+        onClose={() => setDeleteOrgOpen(false)} onConfirm={handleDeleteOrg} />
     </div>
   );
 }

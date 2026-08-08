@@ -1,6 +1,6 @@
 {
   "name": "rediensiam-web",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "description": "Browser SDK for RediensIAM: OIDC authorization-code + PKCE login, in-memory tokens, authenticated fetch. Zero dependencies.",
   "type": "module",
   "main": "./dist/index.js",
