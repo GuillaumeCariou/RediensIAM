@@ -34,6 +34,12 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
         builder.HasIndex(x => new { x.UserListId, x.Username, x.Discriminator }).IsUnique();
         builder.HasIndex(x => new { x.UserListId, x.Active });
 
+        // Le tri et la recherche de la page Users du console sont GLOBAUX : `ORDER BY "Email"` sur
+        // toutes les listes à la fois. Les deux index uniques ci-dessus commencent par `UserListId`
+        // et ne peuvent donc pas le servir — sans celui-ci, afficher la première page triait toute
+        // la table à chaque chargement.
+        builder.HasIndex(x => x.Email);
+
         // L'appartenance à une organisation. `Restrict` et non `Cascade` : supprimer une
         // organisation ne doit pas effacer en silence les comptes de ses membres — c'est une
         // décision qui se prend explicitement, avec la liste sous les yeux.

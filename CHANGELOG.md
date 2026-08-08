@@ -8,6 +8,49 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.9.4] — 2026-08-08
+
+**La recherche d'utilisateurs cherche enfin.**
+
+### Cassant — `GET /admin/users` renvoie une enveloppe
+
+Le tableau nu devient `{ users, total, lists, tenants, page, page_size }`. `lists` et `tenants` sont
+des `COUNT(DISTINCT)` sur l'ensemble **filtré**, pas sur la page.
+
+### Ajouté — six filtres, appliqués par la base
+
+`q` cherchait `Email` ou `Username`. Il cherche désormais aussi le **nom affiché** et, quand la
+saisie est un GUID, l'**identifiant** — ce que le champ promettait déjà sans le faire.
+
+S'y ajoutent `org_id`, `user_list_id`, `status` (active / disabled / locked), `mfa` (yes / no) et
+`signed_in` (7d / 30d / never). Tous s'appliquent **avant** la pagination : filtrer les cinquante
+lignes déjà tirées aurait rendu un compte verrouillé sur une page pour toute la population.
+
+Trois décisions valent d'être écrites :
+
+- `active` **exclut** un compte en cours de verrouillage. Le ranger sous « Active » cacherait
+  précisément la ligne qu'on cherche.
+- Une valeur inconnue de `status`, `mfa` ou `signed_in` est refusée en **400 `invalid_filter`**. Un
+  filtre silencieusement ignoré rend la population entière sous l'étiquette d'une population filtrée.
+- Le tri passe de `Email` à `Email, Id` : `Email` n'est unique **que par liste**, si bien qu'une même
+  ligne pouvait apparaître en page 1 et en page 2.
+
+Migration `UserEmailSearchIndex` : les deux index uniques existants commencent par `UserListId` et ne
+pouvaient pas servir un `ORDER BY "Email"` global — sans le nouvel index, afficher la première page
+triait toute la table.
+
+### Su, non fait
+
+La portée **organisation** de cette page n'existe pas : `OrgController` sait lister les comptes
+d'**une** liste, pas chercher à travers celles d'un locataire. L'entrée n'a pas été ajoutée à la
+navigation — elle aurait mené à une page sans route. Il faut un `GET /org/users`.
+
+Les compteurs pré-calculés des recherches enregistrées, le total par groupe, l'export d'un jeu de
+résultats et le regroupement par locataire demandent chacun soit un `COUNT` par prédicat, soit une
+vue de l'ensemble que la page n'a pas. Rendus sans nombre, ou pas rendus.
+
+---
+
 ## [0.9.3] — 2026-08-08
 
 **Un projet peut accorder plusieurs rôles à l'inscription**, la console dit enfin ce que le

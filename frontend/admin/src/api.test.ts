@@ -45,6 +45,13 @@ const ROUTES: readonly Route[] = [
   // ── Users ───────────────────────────────────────────────────────
   // The query is encoded: an address with a `+` tag would otherwise arrive as a space.
   ['searchUsers', () => api.searchUsers('a+b@acme.test'), '/admin/users?q=a%2Bb%40acme.test'],
+  // Chaque filtre part sur le fil, avec la page : la restriction se fait dans la requête, pas sur
+  // les lignes déjà reçues. Une valeur vide est omise plutôt qu'envoyée nue — le serveur refuse un
+  // `status` qu'il ne connaît pas, et `status=` en est un.
+  ['searchUsers (filtré)', () => api.searchUsers('ada', {
+    org_id: 'o1', user_list_id: 'l1', status: 'locked', mfa: 'no', signed_in: '30d', page: 2,
+  }), '/admin/users?q=ada&org_id=o1&user_list_id=l1&status=locked&mfa=no&signed_in=30d&page=2'],
+  ['searchUsers (sans critère)', () => api.searchUsers(''), '/admin/users?'],
   ['adminGetUser', () => api.adminGetUser('u1'), '/admin/users/u1'],
   ['adminUpdateUser', () => api.adminUpdateUser('u1', { active: false }),
     '/admin/users/u1', { method: 'PATCH', body: json({ active: false }) }],

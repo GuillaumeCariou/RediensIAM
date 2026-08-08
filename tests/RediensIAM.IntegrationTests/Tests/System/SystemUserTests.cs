@@ -210,10 +210,12 @@ public class SystemUserTests(TestFixture fixture)
         res.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
 
-        var row = body.EnumerateArray()
+        var row = body.GetProperty("users").EnumerateArray()
             .First(u => u.GetProperty("email").GetString() == user.Email);
 
-        foreach (var field in new[] { "display_name", "org_name", "user_list_name", "locked_until" })
+        foreach (var field in new[] { "display_name", "org_name", "user_list_name", "locked_until",
+                                      // `web_authn_enabled`, as `/admin/users/{id}` already spells it.
+                                      "totp_enabled", "web_authn_enabled", "roles" })
             row.TryGetProperty(field, out _).Should().BeTrue($"the console renders {field}");
 
         row.GetProperty("locked_until").ValueKind.Should().NotBe(JsonValueKind.Null,

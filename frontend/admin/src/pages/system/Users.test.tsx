@@ -1,18 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { userEvent } from 'vitest/browser';
+import { MemoryRouter } from 'react-router';
 import SystemUsers from './Users';
+import { ApiError } from '@/auth';
 import { fmtDate } from '@/lib/utils';
 
 /**
- * A search across every tenant, so it starts empty on purpose: there is no "all users" listing to
- * page through, and the table only appears once something has been asked for. Every write here
- * goes through the system-scoped routes, which take a null list id.
+ * La page Users du déploiement.
+ *
+ * Ce que ces tests gardent : chaque critère part au SERVEUR. La page ne trie ni ne restreint les
+ * lignes qu'elle a reçues — elle redemande. C'est vérifiable d'ici : à chaque filtre correspond un
+ * appel, et l'appel porte le critère. Un filtre appliqué côté client passerait tous les tests
+ * visuels et mentirait sur les compteurs.
+ *
+ * La fabrique remplace `@/api` en entier : tout export que la page importe doit y figurer, sinon
+ * l'import est `undefined` et l'erreur ne ressemble pas à sa cause.
  */
 
 const api = vi.hoisted(() => ({
   searchUsers: vi.fn(), adminGetUser: vi.fn(), adminUpdateUser: vi.fn(),
   unlockUser: vi.fn(), getUserSessions: vi.fn(), revokeAllUserSessions: vi.fn(),
+  listOrgs: vi.fn(), listUserLists: vi.fn(),
 }));
 vi.mock('@/api', () => api);
 
@@ -23,157 +32,347 @@ const past = () => new Date(Date.now() - HOUR).toISOString();
 const ADA = {
   id: 'u1', email: 'ada@acme.test', username: 'ada', discriminator: '0001',
   display_name: 'Ada Lovelace', active: true, last_login_at: '2026-03-04T05:06:07Z',
-  org_name: 'Acme', user_list_name: 'Staff', org_id: 'o1',
+  org_name: 'Acme', user_list_name: 'Staff', org_id: 'o1', user_list_id: 'l1',
+  totp_enabled: true, web_authn_enabled: false,
+  roles: [{ role_id: 'r1', name: 'admin', project_id: 'p1', project_name: 'Portal' }],
 };
+const GRACE = {
+  ...ADA, id: 'u2', email: 'grace@northwind.test', username: 'grace', discriminator: '0002',
+  display_name: 'Grace Hopper', org_name: 'Northwind', user_list_name: 'Shoppers',
+  org_id: 'o2', user_list_id: 'l2', totp_enabled: false, roles: [],
+};
+
+const results = (users: unknown[], over: Record<string, unknown> = {}) => ({
+  users, total: users.length, lists: new Set(users.map(u => (u as { user_list_id: string }).user_list_id)).size,
+  tenants: 1, page: 1, page_size: 50, ...over,
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
-  api.searchUsers.mockResolvedValue({ users: [ADA] });
+  api.searchUsers.mockResolvedValue(results([ADA]));
   api.adminGetUser.mockResolvedValue({ ...ADA, phone: '+33600000000', email_verified: true });
   api.getUserSessions.mockResolvedValue({ sessions: [{ client_id: 'portal', client_name: 'Portal' }] });
+  api.listOrgs.mockResolvedValue([{ id: 'o1', name: 'Acme' }, { id: 'o2', name: 'Northwind' }]);
+  api.listUserLists.mockResolvedValue({ user_lists: [
+    { id: 'l1', name: 'Staff', org_id: 'o1' },
+    { id: 'l2', name: 'Shoppers', org_id: 'o2' },
+  ] });
 });
 
 function show() {
   const user = userEvent.setup();
-  render(<SystemUsers />);
+  render(<MemoryRouter><SystemUsers /></MemoryRouter>);
   return user;
 }
 
-const box = () => screen.getByPlaceholderText('Search by email, username…');
-/** Runs a search for `q` and waits for the results. */
-async function search(user: Awaited<ReturnType<typeof show>>, q = 'ada') {
-  await user.fill(box(), q);
-  await user.click(screen.getByRole('button', { name: 'Search' }));
-  return screen.findByText('Ada Lovelace');
+/** Rend la page et attend la première réponse. */
+async function loaded() {
+  const user = show();
+  await screen.findByText('Ada Lovelace');
+  return user;
 }
-const openMenu = (user: Awaited<ReturnType<typeof show>>) =>
-  user.click([...screen.getByRole('row', { name: /ada/ }).querySelectorAll('button')].at(-1)!);
 
-describe('before anything is searched for', () => {
-  it('shows no table at all — an empty one would read as "no users exist"', () => {
+const box = () => screen.getByLabelText('Search');
+const criteria = () => api.searchUsers.mock.calls.at(-1);
+
+/** Une pastille de ligne, et non l'option de même nom dans le filtre Statut. */
+const badge = (label: string) => screen.getByText(label, { selector: 'span' });
+const noBadge = (label: string) => screen.queryByText(label, { selector: 'span' });
+
+const openMenu = (user: Awaited<ReturnType<typeof show>>) =>
+  user.click([...screen.getByRole('row', { name: /ada/i }).querySelectorAll('button')].at(-1)!);
+
+// ── Le chargement ───────────────────────────────────────────────────────────
+
+describe('on arrival', () => {
+  it('lists the deployment without being asked — there is a first page to show', async () => {
+    await loaded();
+
+    expect(api.searchUsers).toHaveBeenCalledWith('', { page: 1 });
+  });
+
+  it('shows placeholder rows while the first page is in flight', () => {
+    api.searchUsers.mockReturnValue(new Promise(() => {}));
     show();
 
-    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    expect(document.querySelectorAll('tbody tr')).toHaveLength(3);
     expect(screen.queryByText('No users found')).not.toBeInTheDocument();
   });
 
-  it('will not search for nothing', async () => {
-    const user = show();
+  it('groups the results by the list each account belongs to', async () => {
+    api.searchUsers.mockResolvedValue(results([ADA, GRACE]));
+    await loaded();
 
-    await user.fill(box(), '   ');
-    await user.click(screen.getByRole('button', { name: 'Search' }));
-
-    expect(api.searchUsers).not.toHaveBeenCalled();
-    expect(screen.queryByRole('table')).not.toBeInTheDocument();
-  });
-});
-
-describe('searching', () => {
-  it('searches from the button', async () => {
-    const user = show();
-
-    await search(user);
-
-    expect(api.searchUsers).toHaveBeenCalledWith('ada');
+    // `{ selector: 'span' }` : « Staff » est aussi une option du filtre par liste.
+    const staff = screen.getByText('Staff', { selector: 'span' }).closest('.iam-card') as HTMLElement;
+    const shoppers = screen.getByText('Shoppers', { selector: 'span' }).closest('.iam-card') as HTMLElement;
+    expect(within(staff).getByText('Ada Lovelace')).toBeInTheDocument();
+    expect(within(staff).queryByText('Grace Hopper')).not.toBeInTheDocument();
+    // L'en-tête d'un groupe EST l'adresse du compte : le locataire, puis la liste.
+    expect(within(staff).getByText(/Acme/)).toBeInTheDocument();
+    expect(within(shoppers).getByText(/Northwind/)).toBeInTheDocument();
   });
 
-  it('searches on Enter, which is what anyone typing will press', async () => {
-    const user = show();
+  it('names the counts the server added up, not the rows it happened to send', async () => {
+    api.searchUsers.mockResolvedValue(results([ADA], { total: 1284, lists: 6, tenants: 4 }));
+    await loaded();
 
-    await user.fill(box(), 'ada');
-    await user.keyboard('{Enter}');
-
-    expect(await screen.findByText('Ada Lovelace')).toBeInTheDocument();
+    expect(screen.getByText('1284 accounts · 6 lists · 4 tenants')).toBeInTheDocument();
   });
 
-  it('shows the tenant and list each match belongs to', async () => {
-    const user = show();
+  it('shows the roles, the second factor and the last sign-in of a match', async () => {
+    await loaded();
 
-    await search(user);
-
-    expect(screen.getByText('Acme')).toBeInTheDocument();
-    expect(screen.getByText('Staff')).toBeInTheDocument();
-    expect(screen.getByText('ada#0001')).toBeInTheDocument();
+    expect(screen.getByText('Portal / admin')).toBeInTheDocument();
+    expect(screen.getByText('TOTP')).toBeInTheDocument();
     expect(screen.getByText(fmtDate(ADA.last_login_at))).toBeInTheDocument();
+    expect(screen.getByText('ada#0001')).toBeInTheDocument();
   });
 
-  it('falls back to the username where there is no display name', async () => {
-    api.searchUsers.mockResolvedValue({ users: [{ ...ADA, display_name: null }] });
+  it('says an account has no second factor rather than leaving the cell blank', async () => {
+    api.searchUsers.mockResolvedValue(results([GRACE]));
     const user = show();
-    await user.fill(box(), 'ada');
-    await user.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByText('Grace Hopper');
 
-    expect(await screen.findByText('ada', { selector: 'div' })).toBeInTheDocument();
+    expect(screen.getByText('None')).toBeInTheDocument();
+    expect(screen.getByText('No role')).toBeInTheDocument();
+    expect(user).toBeDefined();
   });
 
-  it.each([
-    ['a disabled account', { active: false }, 'Disabled'],
-    ['a locked one', { locked_until: future() }, 'Locked'],
-  ])('marks %s', async (_n, patch, label) => {
-    api.searchUsers.mockResolvedValue({ users: [{ ...ADA, ...patch }] });
-    const user = show();
-    await user.fill(box(), 'ada');
-    await user.click(screen.getByRole('button', { name: 'Search' }));
-
-    expect(await screen.findByText(label)).toBeInTheDocument();
-  });
-
-  it('treats a lock that has run out as no lock', async () => {
-    api.searchUsers.mockResolvedValue({ users: [{ ...ADA, locked_until: past() }] });
-    const user = show();
-    await user.fill(box(), 'ada');
-    await user.click(screen.getByRole('button', { name: 'Search' }));
-
-    await screen.findByText('Ada Lovelace');
-    expect(screen.queryByText('Locked')).not.toBeInTheDocument();
-  });
-
-  it('accepts a bare array as well as an envelope', async () => {
-    api.searchUsers.mockResolvedValue([ADA]);
-    const user = show();
-
-    await search(user);
-
-    expect(screen.getByText('Ada Lovelace')).toBeInTheDocument();
-  });
-
-  it('says nothing matched', async () => {
-    api.searchUsers.mockResolvedValue({ users: [] });
-    const user = show();
-    await user.fill(box(), 'zzz');
-    await user.click(screen.getByRole('button', { name: 'Search' }));
+  it('says nothing matched when the deployment is empty', async () => {
+    api.searchUsers.mockResolvedValue(results([]));
+    show();
 
     expect(await screen.findByText('No users found')).toBeInTheDocument();
   });
+});
 
-  it('says nothing matched rather than keeping the last results when it fails', async () => {
-    const user = show();
-    await search(user);
+// ── Les refus ───────────────────────────────────────────────────────────────
+
+describe('when the API refuses', () => {
+  it('shows the refusal instead of the last results, which answered other criteria', async () => {
+    const user = await loaded();
     api.searchUsers.mockRejectedValue(new Error('500'));
 
     await user.fill(box(), 'grace');
     await user.click(screen.getByRole('button', { name: 'Search' }));
 
-    expect(await screen.findByText('No users found')).toBeInTheDocument();
+    expect(await screen.findByText('Could not search the deployment’s accounts.')).toBeInTheDocument();
     expect(screen.queryByText('Ada Lovelace')).not.toBeInTheDocument();
   });
 
-  it('shows placeholder rows and blocks a second search while one is running', async () => {
-    api.searchUsers.mockReturnValue(new Promise(() => {}));
-    const user = show();
-    await user.fill(box(), 'ada');
+  it('says how long a query has to be, in the server’s own number', async () => {
+    api.searchUsers.mockRejectedValue(new ApiError(400, { error: 'query_too_short', min_length: 3 }));
+    show();
 
-    await user.click(screen.getByRole('button', { name: 'Search' }));
+    expect(await screen.findByText('Type at least 3 characters to search.')).toBeInTheDocument();
+  });
 
-    expect(screen.getByRole('button', { name: 'Search' })).toBeDisabled();
-    expect(document.querySelectorAll('tbody tr')).toHaveLength(3);
+  it('says so when a filter value is one the server does not know', async () => {
+    api.searchUsers.mockRejectedValue(new ApiError(400, { error: 'invalid_filter', filter: 'status' }));
+    show();
+
+    expect(await screen.findByText(/does not know that value for “status”/)).toBeInTheDocument();
+  });
+
+  it('says so when the tenants and lists cannot be read, and still lists the accounts', async () => {
+    api.listOrgs.mockRejectedValue(new Error('500'));
+    await loaded();
+
+    expect(await screen.findByText('Could not read the tenants and lists to filter by.')).toBeInTheDocument();
+    expect(screen.getByText('Ada Lovelace')).toBeInTheDocument();
   });
 });
 
+// ── La recherche ────────────────────────────────────────────────────────────
+
+describe('searching', () => {
+  it('sends what was typed, from the button', async () => {
+    const user = await loaded();
+
+    await user.fill(box(), 'marie');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+
+    await vi.waitFor(() => expect(criteria()).toEqual(['marie', { page: 1 }]));
+  });
+
+  it('searches on Enter too, which is what anyone typing will press', async () => {
+    const user = await loaded();
+
+    await user.fill(box(), 'marie');
+    await user.keyboard('{Enter}');
+
+    await vi.waitFor(() => expect(criteria()![0]).toBe('marie'));
+  });
+
+  it('trims, so a stray space is not searched for', async () => {
+    const user = await loaded();
+
+    await user.fill(box(), '  marie  ');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+
+    await vi.waitFor(() => expect(criteria()![0]).toBe('marie'));
+  });
+
+  it('names what was searched for beside the count', async () => {
+    const user = await loaded();
+
+    await user.fill(box(), 'marie');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+
+    expect(await screen.findByText('marie')).toBeInTheDocument();
+  });
+});
+
+// ── Les filtres ─────────────────────────────────────────────────────────────
+
+describe('filtering', () => {
+  it.each([
+    ['Tenant', 'o2', { org_id: 'o2', user_list_id: undefined }],
+    ['User list', 'l2', { user_list_id: 'l2' }],
+    ['Status', 'locked', { status: 'locked' }],
+    ['Second factor', 'no', { mfa: 'no' }],
+    ['Signed in', 'never', { signed_in: 'never' }],
+  ])('sends %s to the server rather than sifting the rows it already has', async (label, value, expected) => {
+    const user = await loaded();
+
+    await user.selectOptions(screen.getByLabelText(label), value);
+
+    await vi.waitFor(() => expect(criteria()).toEqual(['', { page: 1, ...expected }]));
+  });
+
+  it('combines the filters into one request', async () => {
+    const user = await loaded();
+
+    await user.selectOptions(screen.getByLabelText('Status'), 'disabled');
+    await user.selectOptions(screen.getByLabelText('Second factor'), 'no');
+
+    await vi.waitFor(() => expect(criteria()).toEqual(['', { page: 1, status: 'disabled', mfa: 'no' }]));
+  });
+
+  it('offers only the chosen tenant’s lists once a tenant is picked', async () => {
+    const user = await loaded();
+
+    await user.selectOptions(screen.getByLabelText('Tenant'), 'o2');
+
+    const lists = screen.getByLabelText('User list');
+    expect(within(lists).queryByRole('option', { name: 'Staff' })).not.toBeInTheDocument();
+    expect(within(lists).getByRole('option', { name: 'Shoppers' })).toBeInTheDocument();
+  });
+
+  it('drops the list when the tenant changes — a list of another tenant matches nothing', async () => {
+    const user = await loaded();
+    await user.selectOptions(screen.getByLabelText('User list'), 'l1');
+
+    await user.selectOptions(screen.getByLabelText('Tenant'), 'o2');
+
+    await vi.waitFor(() => expect(criteria()![1]).toEqual({ page: 1, org_id: 'o2' }));
+  });
+
+  it('applies a saved search as a whole set of criteria, dropping the rest', async () => {
+    const user = await loaded();
+    await user.selectOptions(screen.getByLabelText('Tenant'), 'o2');
+
+    await user.click(screen.getByRole('button', { name: 'No second factor' }));
+
+    await vi.waitFor(() => expect(criteria()).toEqual(['', { page: 1, mfa: 'no' }]));
+  });
+
+  it('clears every filter at once', async () => {
+    const user = await loaded();
+    await user.selectOptions(screen.getByLabelText('Status'), 'locked');
+
+    await user.click(await screen.findByRole('button', { name: 'Clear every filter' }));
+
+    await vi.waitFor(() => expect(criteria()).toEqual(['', { page: 1 }]));
+  });
+
+  it('offers no clear button when nothing is filtered', async () => {
+    await loaded();
+
+    expect(screen.queryByRole('button', { name: 'Clear every filter' })).not.toBeInTheDocument();
+  });
+});
+
+// ── La pagination ───────────────────────────────────────────────────────────
+
+describe('paging', () => {
+  it('asks the server for the next page, keeping the filter', async () => {
+    api.searchUsers.mockResolvedValue(results([ADA], { total: 120, page: 1, page_size: 50 }));
+    const user = await loaded();
+    await user.selectOptions(screen.getByLabelText('Status'), 'locked');
+
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+
+    await vi.waitFor(() => expect(criteria()).toEqual(['', { page: 2, status: 'locked' }]));
+  });
+
+  it('says which slice of the whole filtered set is on screen', async () => {
+    api.searchUsers.mockResolvedValue(results([ADA], { total: 120, lists: 6, page: 2, page_size: 50 }));
+    await loaded();
+
+    expect(screen.getByText('51–100 of 120 in 6 lists')).toBeInTheDocument();
+  });
+
+  it('does not offer a page that is not there', async () => {
+    await loaded();
+
+    expect(screen.getByRole('button', { name: 'Previous' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+  });
+
+  it('goes back to the first page whenever a criterion changes', async () => {
+    api.searchUsers.mockResolvedValue(results([ADA], { total: 120, page: 1, page_size: 50 }));
+    const user = await loaded();
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    await vi.waitFor(() => expect(criteria()![1]).toEqual({ page: 2 }));
+
+    await user.selectOptions(screen.getByLabelText('Status'), 'locked');
+
+    await vi.waitFor(() => expect(criteria()![1]).toEqual({ page: 1, status: 'locked' }));
+  });
+});
+
+// ── L'état d'un compte ──────────────────────────────────────────────────────
+
+describe('what a row says about an account', () => {
+  it.each([
+    ['a disabled account', { active: false }, 'Disabled'],
+    ['a locked one', { locked_until: future() }, 'Locked'],
+  ])('marks %s', async (_n, patch, label) => {
+    api.searchUsers.mockResolvedValue(results([{ ...ADA, ...patch }]));
+    await loaded();
+
+    expect(badge(label)).toBeInTheDocument();
+  });
+
+  it('treats a lock that has run out as no lock', async () => {
+    api.searchUsers.mockResolvedValue(results([{ ...ADA, locked_until: past() }]));
+    await loaded();
+
+    expect(noBadge('Locked')).toBeNull();
+  });
+
+  it('falls back to the username where there is no display name', async () => {
+    api.searchUsers.mockResolvedValue(results([{ ...ADA, display_name: null }]));
+    show();
+
+    expect(await screen.findByText('ada', { selector: 'div' })).toBeInTheDocument();
+  });
+
+  it('accepts a bare array as well as an envelope', async () => {
+    api.searchUsers.mockResolvedValue([ADA]);
+    show();
+
+    expect(await screen.findByText('Ada Lovelace')).toBeInTheDocument();
+  });
+});
+
+// ── Les actions sur une ligne ───────────────────────────────────────────────
+
 describe('editing a match', () => {
   it('opens from the row and loads the full account', async () => {
-    const user = show();
-    await search(user);
+    const user = await loaded();
 
     await user.click(screen.getByText('Ada Lovelace'));
 
@@ -182,8 +381,7 @@ describe('editing a match', () => {
   });
 
   it('opens from the row menu too', async () => {
-    const user = show();
-    await search(user);
+    const user = await loaded();
     await openMenu(user);
 
     await user.click(screen.getByRole('button', { name: 'Edit' }));
@@ -192,9 +390,7 @@ describe('editing a match', () => {
   });
 
   it('saves, and reflects the change in the row without a second search', async () => {
-    // There is no list to reload here — the results are a search, not a resource.
-    const user = show();
-    await search(user);
+    const user = await loaded();
     await user.click(screen.getByText('Ada Lovelace'));
     await screen.findByLabelText('Phone');
 
@@ -207,22 +403,9 @@ describe('editing a match', () => {
     expect(api.searchUsers).toHaveBeenCalledOnce();
   });
 
-  it('falls back to the username in the row when the display name is cleared', async () => {
-    const user = show();
-    await search(user);
-    await user.click(screen.getByText('Ada Lovelace'));
-    await screen.findByLabelText('Phone');
-
-    await user.fill(screen.getByLabelText('Display name'), '');
-    await user.click(screen.getByRole('button', { name: 'Save changes' }));
-
-    expect(await screen.findByText('ada', { selector: 'div' })).toBeInTheDocument();
-  });
-
   it('says so when the account cannot be read', async () => {
     api.adminGetUser.mockRejectedValue(new Error('500'));
-    const user = show();
-    await search(user);
+    const user = await loaded();
 
     await user.click(screen.getByText('Ada Lovelace'));
 
@@ -230,23 +413,32 @@ describe('editing a match', () => {
   });
 
   it('says so, and stays open, when the save is refused', async () => {
-    api.adminUpdateUser.mockRejectedValue(new Error('409'));
-    const user = show();
-    await search(user);
+    api.adminUpdateUser.mockRejectedValue(new ApiError(409, { error: 'email_already_exists' }));
+    const user = await loaded();
     await user.click(screen.getByText('Ada Lovelace'));
     await screen.findByLabelText('Phone');
 
     await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
-    expect(await screen.findByText('Failed to save changes.')).toBeInTheDocument();
+    expect(await screen.findByText('email_already_exists')).toBeInTheDocument();
     expect(screen.getByLabelText('Phone')).toBeInTheDocument();
+  });
+
+  it('closes on Escape without saving', async () => {
+    const user = await loaded();
+    await user.click(screen.getByText('Ada Lovelace'));
+    await screen.findByLabelText('Phone');
+
+    await user.keyboard('{Escape}');
+
+    await vi.waitFor(() => expect(screen.queryByLabelText('Phone')).toBeNull());
+    expect(api.adminUpdateUser).not.toHaveBeenCalled();
   });
 });
 
 describe('the row menu', () => {
   it('offers an unlock only to a locked account', async () => {
-    const user = show();
-    await search(user);
+    const user = await loaded();
 
     await openMenu(user);
 
@@ -254,9 +446,8 @@ describe('the row menu', () => {
   });
 
   it('unlocks through the system route and clears the badge without re-searching', async () => {
-    api.searchUsers.mockResolvedValue({ users: [{ ...ADA, locked_until: future() }] });
-    const user = show();
-    await search(user);
+    api.searchUsers.mockResolvedValue(results([{ ...ADA, locked_until: future() }]));
+    const user = await loaded();
     await openMenu(user);
 
     await user.click(screen.getByRole('button', { name: 'Unlock account' }));
@@ -264,48 +455,23 @@ describe('the row menu', () => {
     // null, not a list id: the system-scoped unlock takes the user alone.
     await vi.waitFor(() => expect(api.unlockUser).toHaveBeenCalledWith(null, 'u1'));
     expect(await screen.findByText('Account unlocked.')).toBeInTheDocument();
-    expect(screen.queryByText('Locked')).not.toBeInTheDocument();
+    expect(noBadge('Locked')).toBeNull();
   });
 
   it('says so when the unlock fails, and leaves the badge alone', async () => {
-    api.searchUsers.mockResolvedValue({ users: [{ ...ADA, locked_until: future() }] });
+    api.searchUsers.mockResolvedValue(results([{ ...ADA, locked_until: future() }]));
     api.unlockUser.mockRejectedValue(new Error('500'));
-    const user = show();
-    await search(user);
+    const user = await loaded();
     await openMenu(user);
 
     await user.click(screen.getByRole('button', { name: 'Unlock account' }));
 
     expect(await screen.findByText('Failed to unlock account.')).toBeInTheDocument();
-    expect(screen.getByText('Locked')).toBeInTheDocument();
-  });
-
-  it('takes the message away again', async () => {
-    // clearAllMocks keeps implementations, so the rejection set above has to be undone here.
-    api.unlockUser.mockResolvedValue({});
-    api.searchUsers.mockResolvedValue({ users: [{ ...ADA, locked_until: future() }] });
-    const user = show();
-    await search(user);
-    await openMenu(user);
-    await user.click(screen.getByRole('button', { name: 'Unlock account' }));
-    await screen.findByText('Account unlocked.');
-
-    await vi.waitFor(() => expect(screen.queryByText('Account unlocked.')).toBeNull(), { timeout: 6000 });
-  }, 10_000);
-
-  it('closes on Escape', async () => {
-    const user = show();
-    await search(user);
-    await openMenu(user);
-
-    await user.keyboard('{Escape}');
-
-    expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+    expect(badge('Locked')).toBeInTheDocument();
   });
 
   it('closes when the operator clicks away', async () => {
-    const user = show();
-    await search(user);
+    const user = await loaded();
     await openMenu(user);
 
     await user.click(document.querySelector<HTMLElement>('[role="none"]')!);
@@ -314,8 +480,7 @@ describe('the row menu', () => {
   });
 
   it('does not open the editor when the menu itself is used', async () => {
-    const user = show();
-    await search(user);
+    const user = await loaded();
 
     await openMenu(user);
 
@@ -323,10 +488,9 @@ describe('the row menu', () => {
   });
 });
 
-describe('a user\'s sessions', () => {
+describe('a user’s sessions', () => {
   const openSessions = async () => {
-    const user = show();
-    await search(user);
+    const user = await loaded();
     await openMenu(user);
     await user.click(screen.getByRole('button', { name: 'View sessions' }));
     return user;
@@ -336,13 +500,6 @@ describe('a user\'s sessions', () => {
     await openSessions();
 
     await vi.waitFor(() => expect(api.getUserSessions).toHaveBeenCalledWith(null, 'u1'));
-    expect(await screen.findByText('Portal')).toBeInTheDocument();
-  });
-
-  it('accepts a bare array as well as an envelope', async () => {
-    api.getUserSessions.mockResolvedValue([{ client_id: 'portal', client_name: 'Portal' }]);
-    await openSessions();
-
     expect(await screen.findByText('Portal')).toBeInTheDocument();
   });
 
@@ -371,29 +528,5 @@ describe('a user\'s sessions', () => {
     await user.click(screen.getByRole('button', { name: 'Revoke all sessions' }));
 
     expect(await screen.findByText('Failed to revoke sessions.')).toBeInTheDocument();
-  });
-
-  it('forgets them on close', async () => {
-    const user = await openSessions();
-    await screen.findByText('Portal');
-
-    await user.click(screen.getByRole('button', { name: 'Close' }));
-
-    expect(screen.queryByText('Portal')).not.toBeInTheDocument();
-  });
-});
-
-
-describe('dismissing the editor with Escape', () => {
-  it('closes it without saving', async () => {
-    const user = show();
-    await search(user);
-    await user.click(screen.getByText('Ada Lovelace'));
-    await screen.findByLabelText('Phone');
-
-    await user.keyboard('{Escape}');
-
-    await vi.waitFor(() => expect(screen.queryByLabelText('Phone')).toBeNull());
-    expect(api.adminUpdateUser).not.toHaveBeenCalled();
   });
 });

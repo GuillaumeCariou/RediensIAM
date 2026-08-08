@@ -248,7 +248,10 @@ public class OrgAdminTests(TestFixture fixture)
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
-        body.ValueKind.Should().Be(JsonValueKind.Array);
+        // An envelope, not a bare array: the page's "Showing" banner names counts that only the
+        // server can add up, and it cannot add them up from the fifty rows it was handed.
+        body.GetProperty("users").ValueKind.Should().Be(JsonValueKind.Array);
+        body.GetProperty("total").GetInt32().Should().BeGreaterThanOrEqualTo(1);
     }
 
     [Fact]
@@ -266,8 +269,9 @@ public class OrgAdminTests(TestFixture fixture)
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
-        body.GetArrayLength().Should().BeGreaterThanOrEqualTo(1);
-        body.EnumerateArray()
+        var users = body.GetProperty("users");
+        users.GetArrayLength().Should().BeGreaterThanOrEqualTo(1);
+        users.EnumerateArray()
             .Any(u => u.GetProperty("email").GetString()!.Contains(uniquePart))
             .Should().BeTrue();
     }

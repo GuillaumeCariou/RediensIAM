@@ -28,8 +28,25 @@ export async function unsuspendOrg(id: string) {
 }
 
 // ── Users (global) ────────────────────────────────────────────────
-export async function searchUsers(q: string) {
-  return (await apiFetch(`/admin/users?q=${encodeURIComponent(q)}`)).json();
+/**
+ * Les critères de la page Users, envoyés au SERVEUR. Aucun d'eux n'est appliqué à la page déjà
+ * reçue : restreindre cinquante lignes déjà tirées donnerait un compte faux dans le seul sens que
+ * personne ne vérifie.
+ */
+export interface UserSearchFilters {
+  org_id?: string;
+  user_list_id?: string;
+  status?: 'active' | 'disabled' | 'locked';
+  mfa?: 'yes' | 'no';
+  signed_in?: '7d' | '30d' | 'never';
+  page?: number;
+  pageSize?: number;
+}
+export async function searchUsers(q: string, filters: UserSearchFilters = {}) {
+  const p = new URLSearchParams();
+  if (q) p.set('q', q);
+  for (const [k, v] of Object.entries(filters)) if (v) p.set(k, String(v));
+  return (await apiFetch(`/admin/users?${p}`)).json();
 }
 export async function adminGetUser(id: string) {
   return (await apiFetch(`/admin/users/${id}`)).json();
