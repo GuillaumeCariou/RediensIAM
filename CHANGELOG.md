@@ -8,6 +8,38 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.9.8] — 2026-08-08
+
+### Corrigé — le tableau de bord et la page Metrics affichaient des zéros
+
+Les deux pages déclaraient **neuf champs** et les lisaient depuis toujours. `GET /admin/metrics` en
+servait **quatre**, dont deux sous d'autres noms : `org_count` là où la console lit `organisations`,
+`project_count` là où elle lit `projects`. Les sept autres — total des comptes, organisations
+actives, comptes de service, connexions du jour, événements d'audit — tombaient donc sur le `?? 0`
+du rendu, et « Users per organisation », absent de la réponse, ne s'affichait pas du tout.
+
+Un déploiement peuplé se présentait comme un déploiement vide. Le contrat était écrit côté console,
+avec ses tests ; c'est le serveur qui ne l'avait jamais honoré. Il sert désormais les neuf, plus la
+répartition par locataire — comptée à travers la user list, seule table qui porte l'organisation, si
+bien qu'une liste sans organisation comme `__system__` n'apparaît sous aucun nom.
+
+`recent_logins` et `audit_events_today` comptent **depuis minuit UTC**, pas sur 24 h glissantes :
+c'est ce que l'étiquette « Today » promet, et les deux ne coïncident qu'à minuit.
+
+### Corrigé — le graphique d'activité ne disait ni quand, ni combien
+
+Le survol n'était qu'un attribut `title` : il rendait l'horodatage ISO brut, après la seconde de
+latence que le navigateur impose, et n'existait pas au clavier. Il n'y avait ni axe, ni échelle.
+
+Chaque seau est maintenant un bouton nommé — donc lisible par un lecteur d'écran et atteignable en
+tabulant — et porte une infobulle qui donne l'heure et les deux comptes. L'axe montre quatre repères
+horaires, calculés sur la longueur reçue, et l'en-tête donne le maximum horaire et le total de la
+fenêtre : sans échelle, deux graphiques côte à côte se lisent comme comparables alors que leurs
+maxima diffèrent. La colonne entière est la cible du survol, pas la barre — une heure sans connexion
+est une information comme une autre.
+
+---
+
 ## [0.9.7] — 2026-08-08
 
 ### Cassant — `GET /project/users` renvoie une enveloppe, et nomme la clé `role_id`

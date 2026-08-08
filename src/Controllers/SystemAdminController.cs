@@ -1044,12 +1044,34 @@ var role = await db.Roles
             })
             .ToList();
 
+        // Les noms sont ceux que la console lit — et qu'elle lisait déjà. Le tableau de bord et la
+        // page Metrics déclaraient neuf champs depuis toujours ; la route en servait quatre, dont
+        // deux sous d'autres noms (`org_count`, `project_count`). Les sept autres tombaient donc sur
+        // le `?? 0` du rendu, et « Users per organisation », absent, ne s'affichait pas du tout : un
+        // déploiement peuplé se présentait comme un déploiement vide.
+        var midnight = new DateTimeOffset(now.Year, now.Month, now.Day, 0, 0, 0, TimeSpan.Zero);
+
         return Ok(new
         {
-            org_count    = await db.Organisations.CountAsync(),
-            active_users = await db.Users.CountAsync(u => u.Active),
-            project_count = await db.Projects.CountAsync(),
-            logins_by_hour = loginsByHour,
+            organisations        = await db.Organisations.CountAsync(),
+            active_organisations = await db.Organisations.CountAsync(o => o.Active),
+            total_users          = await db.Users.CountAsync(),
+            active_users         = await db.Users.CountAsync(u => u.Active),
+            projects             = await db.Projects.CountAsync(),
+            service_accounts     = await db.ServiceAccounts.CountAsync(),
+            // « Aujourd'hui » compte depuis minuit UTC, pas sur 24 h glissantes : c'est ce que
+            // l'étiquette promet, et les deux ne coïncident qu'à minuit.
+            recent_logins        = await db.AuditLogs.CountAsync(l => l.CreatedAt >= midnight && l.Action == "user.login.success"),
+            audit_events_today   = await db.AuditLogs.CountAsync(l => l.CreatedAt >= midnight),
+            logins_by_hour       = loginsByHour,
+            // Les comptes par locataire passent par la liste, seule table qui porte l'organisation.
+            // Les listes sans organisation — `__system__` — n'appartiennent à aucun locataire.
+            users_by_org = await db.Users
+                .Where(u => u.UserList.Organisation != null)
+                .GroupBy(u => u.UserList.Organisation!.Name)
+                .Select(g => new { org = g.Key, count = g.Count() })
+                .OrderByDescending(x => x.count)
+                .ToListAsync(),
         });
     }
 

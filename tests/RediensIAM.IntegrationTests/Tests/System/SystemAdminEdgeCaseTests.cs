@@ -1728,9 +1728,19 @@ public class SystemAdminMiscTests(TestFixture fixture)
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
-        body.TryGetProperty("org_count", out _).Should().BeTrue();
-        body.TryGetProperty("active_users", out _).Should().BeTrue();
-        body.TryGetProperty("project_count", out _).Should().BeTrue();
+        // Les NEUF champs que la console lit. Le tableau de bord et la page Metrics les déclaraient
+        // depuis toujours ; la route en servait quatre, dont deux sous d'autres noms — les sept
+        // autres tombaient donc sur le `?? 0` du rendu, et un déploiement peuplé se présentait comme
+        // un déploiement vide.
+        foreach (var field in new[]
+        {
+            "organisations", "active_organisations", "total_users", "active_users",
+            "projects", "service_accounts", "recent_logins", "audit_events_today",
+            "logins_by_hour", "users_by_org",
+        })
+        {
+            body.TryGetProperty(field, out _).Should().BeTrue($"la console lit `{field}`");
+        }
     }
 
     [Fact]
@@ -1744,8 +1754,32 @@ public class SystemAdminMiscTests(TestFixture fixture)
         var res  = await client.GetAsync("/admin/metrics");
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
 
-        body.GetProperty("org_count").GetInt32().Should().BeGreaterThanOrEqualTo(1);
+        body.GetProperty("organisations").GetInt32().Should().BeGreaterThanOrEqualTo(1);
         body.GetProperty("active_users").GetInt32().Should().BeGreaterThanOrEqualTo(1);
+        body.GetProperty("total_users").GetInt32()
+            .Should().BeGreaterThanOrEqualTo(body.GetProperty("active_users").GetInt32());
+    }
+
+    /// <summary>
+    /// Les comptes par locataire passent par la user list, seule table qui porte l'organisation.
+    /// Une liste sans organisation — `__system__` — n'appartient à aucun locataire et ne doit donc
+    /// apparaître sous aucun nom.
+    /// </summary>
+    [Fact]
+    public async Task GetMetrics_UsersByOrg_CountsThroughTheList()
+    {
+        var client   = await SuperAdminClientAsync();
+        var (org, _) = await fixture.Seed.CreateOrgAsync();
+        var list     = await fixture.Seed.CreateUserListAsync(org.Id);
+        await fixture.Seed.CreateUserAsync(list.Id);
+        await fixture.Seed.CreateUserAsync(list.Id);
+
+        var res  = await client.GetAsync("/admin/metrics");
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+
+        var row = body.GetProperty("users_by_org").EnumerateArray()
+            .First(r => r.GetProperty("org").GetString() == org.Name);
+        row.GetProperty("count").GetInt32().Should().BeGreaterThanOrEqualTo(2);
     }
 
     /// <summary>

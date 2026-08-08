@@ -96,29 +96,39 @@ describe('ActivityChart', () => {
     expect(screen.getByText('No sign-ins recorded in this window')).toBeInTheDocument();
   });
 
-  it('draws one column per hour, described for a pointer', () => {
-    const { container } = render(<ActivityChart data={[
-      { hour: '09:00', succeeded: 10, failed: 2 },
-      { hour: '10:00', succeeded: 4, failed: 0 },
+  /**
+   * Chaque seau est un bouton nommé, non un `div` porteur d'un `title`. Le `title` rendait
+   * l'horodatage brut après la latence que le navigateur impose, et n'existait pas au clavier.
+   */
+  it('draws one named column per hour, reachable without a mouse', () => {
+    render(<ActivityChart data={[
+      { hour: '2026-08-08T09:00:00Z', succeeded: 10, failed: 2 },
+      { hour: '2026-08-08T10:00:00Z', succeeded: 4, failed: 0 },
     ]} />);
 
-    expect(container.querySelectorAll('[title]')).toHaveLength(2);
-    expect(container.querySelector('[title]')).toHaveAttribute('title', '09:00: 10 succeeded, 2 failed');
+    expect(screen.getAllByRole('button')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: /10 succeeded, 2 failed/ })).toBeInTheDocument();
   });
 
   it('omits the half of a column that has no events', () => {
-    const { container } = render(<ActivityChart data={[{ hour: '09:00', succeeded: 3, failed: 0 }]} />);
-    expect(container.querySelector('[title]')!.children).toHaveLength(1);
+    render(<ActivityChart data={[{ hour: '2026-08-08T09:00:00Z', succeeded: 3, failed: 0 }]} />);
+    expect(screen.getByRole('button').children).toHaveLength(1);
   });
 
   it('scales the tallest column to the plot and keeps the smallest visible', () => {
     // A single failure among ten thousand successes still has to be a pixel or two, not nothing.
     const { container } = render(<ActivityChart data={[
-      { hour: '09:00', succeeded: 10000, failed: 1 },
+      { hour: '2026-08-08T09:00:00Z', succeeded: 10000, failed: 1 },
     ]} height={110} />);
-    const [failed, succeeded] = [...container.querySelectorAll<HTMLElement>('[title] > div')];
+    const [failed, succeeded] = [...container.querySelectorAll<HTMLElement>('button > div')];
 
     expect(Number.parseFloat(succeeded.style.height)).toBeCloseTo(100, 0);
     expect(Number.parseFloat(failed.style.height)).toBe(2);
+  });
+
+  /** Une série plus courte que vingt-quatre seaux faisait sortir les repères d'axe du tableau. */
+  it('survives a window shorter than a full day', () => {
+    render(<ActivityChart data={[{ hour: '2026-08-08T09:00:00Z', succeeded: 1, failed: 0 }]} />);
+    expect(screen.getByRole('button')).toBeInTheDocument();
   });
 });

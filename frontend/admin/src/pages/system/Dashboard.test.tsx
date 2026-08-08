@@ -72,10 +72,29 @@ describe.each([
     vi.restoreAllMocks();
   });
 
-  it('draws only the sign-ins the server reported', async () => {
+  /**
+   * Le survol n'était qu'un attribut `title` : horodatage ISO brut, une seconde de latence imposée
+   * par le navigateur, et rien au clavier. Chaque seau est maintenant un bouton nommé, donc lisible
+   * par un lecteur d'écran et atteignable en tabulant — et l'infobulle dit l'heure et les deux
+   * comptes.
+   */
+  it('names each hour and its two counts, reachable without a mouse', async () => {
     render(<Page />);
 
-    expect(await screen.findByTitle('09:00: 10 succeeded, 1 failed')).toBeInTheDocument();
+    const bar = await screen.findByRole('button', { name: /09:00 — 10 succeeded, 1 failed/ });
+    expect(bar).toBeInTheDocument();
+
+    bar.focus();
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('09:00');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('10 succeeded');
+    expect(screen.getByRole('tooltip')).toHaveTextContent('1 failed');
+  });
+
+  /** L'échelle : deux graphiques côte à côte se lisent comme comparables si rien ne dit leur maximum. */
+  it('says its scale and its total', async () => {
+    render(<Page />);
+
+    expect(await screen.findByText('11 max / h')).toBeInTheDocument();
   });
 
   it('says so when the window holds no sign-ins, rather than drawing something', async () => {
