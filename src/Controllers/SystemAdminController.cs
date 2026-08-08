@@ -150,7 +150,10 @@ var orgs = await db.Organisations
     {
         var org = await db.Organisations
             .Where(o => o.Id == id)
-            .Select(o => new { o.Id, o.Name, o.Slug, o.Active, o.SuspendedAt, o.CreatedAt, o.UpdatedAt, o.OrgListId, o.CreatedBy })
+            // AuditRetentionDays was absent, and PATCH on this same route writes it: a super-admin
+            // opening a tenant's Settings read no retention at all, which is indistinguishable from
+            // "no limit" — and saving that page then wrote the org's real setting away.
+            .Select(o => new { o.Id, o.Name, o.Slug, o.Active, o.SuspendedAt, o.CreatedAt, o.UpdatedAt, o.OrgListId, o.CreatedBy, o.AuditRetentionDays })
             .FirstOrDefaultAsync();
         if (org == null) return NotFound();
         return Ok(org);
@@ -815,12 +818,7 @@ var project = await db.Projects.FindAsync(id);
         // indiscernable d'un projet sans rôle.
         if (!await db.Projects.AnyAsync(p => p.Id == id)) return NotFound();
 
-        var roles = await db.Roles
-            .Where(r => r.ProjectId == id)
-            .OrderBy(r => r.Rank)
-            .Select(r => new { r.Id, r.Name, r.Description, r.Rank })
-            .ToListAsync();
-        return Ok(roles);
+        return await ProjectOperations.ListRolesAsync(db, id);
     }
 
     [HttpPost("projects/{id}/roles")]

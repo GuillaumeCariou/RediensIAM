@@ -61,6 +61,7 @@ public class RoleConfiguration : IEntityTypeConfiguration<Role>
         builder.Property(x => x.Id).HasDefaultValueSql("gen_random_uuid()");
         builder.Property(x => x.Name).IsRequired().HasMaxLength(100);
         builder.Property(x => x.Rank).HasDefaultValue(100);
+        builder.Property(x => x.IsDefault).HasDefaultValue(false);
         builder.Property(x => x.CreatedAt).HasDefaultValueSql("now()");
         builder.HasIndex(x => new { x.ProjectId, x.Name }).IsUnique();
         builder.HasMany(x => x.UserProjectRoles).WithOne(x => x.Role).HasForeignKey(x => x.RoleId).OnDelete(DeleteBehavior.Cascade);

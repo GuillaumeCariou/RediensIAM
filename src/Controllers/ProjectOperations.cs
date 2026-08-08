@@ -166,6 +166,30 @@ public static class ProjectOperations
     }
 
     /// <summary>
+    /// Les rôles d'un projet, du plus fort au plus faible.
+    ///
+    /// <para>
+    /// Huitième opération écrite deux fois, à l'identique. <c>is_default</c> et <c>holders</c>
+    /// n'existaient dans aucune des deux : la console listait les rôles ici puis relisait
+    /// <c>/project/info</c> pour savoir lequel était le défaut, ce qui ne dit plus rien depuis que
+    /// le défaut est un ensemble.
+    /// </para>
+    /// </summary>
+    public static async Task<IActionResult> ListRolesAsync(RediensIamDbContext db, Guid projectId)
+    {
+        var roles = await db.Roles
+            .Where(r => r.ProjectId == projectId)
+            .OrderBy(r => r.Rank)
+            .Select(r => new
+            {
+                r.Id, r.Name, r.Description, r.Rank, r.IsDefault, r.CreatedAt,
+                Holders = r.UserProjectRoles.Count,
+            })
+            .ToListAsync();
+        return new OkObjectResult(roles);
+    }
+
+    /// <summary>
     /// Crée un rôle de projet.
     ///
     /// <para>

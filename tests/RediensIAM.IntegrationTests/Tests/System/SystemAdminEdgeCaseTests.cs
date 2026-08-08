@@ -1254,8 +1254,7 @@ public class SystemAdminExtendedTests(TestFixture fixture)
         res.StatusCode.Should().Be(HttpStatusCode.OK);
 
         await fixture.RefreshDbAsync();
-        var updated = await fixture.Db.Projects.FindAsync(project.Id);
-        updated!.DefaultRoleId.Should().Be(role.Id);
+        fixture.Db.Roles.Find(role.Id)!.IsDefault.Should().BeTrue();
     }
 
     [Fact]
@@ -1278,7 +1277,7 @@ public class SystemAdminExtendedTests(TestFixture fixture)
         var (org, _, client) = await SuperAdminAsync();
         var project = await fixture.Seed.CreateProjectAsync(org.Id);
         var role    = await fixture.Seed.CreateRoleAsync(project.Id, "ToClear");
-        project.DefaultRoleId = role.Id;
+        role.IsDefault = true;
         await fixture.Db.SaveChangesAsync();
 
         var res = await client.PatchAsJsonAsync($"/admin/projects/{project.Id}", new
@@ -1289,8 +1288,7 @@ public class SystemAdminExtendedTests(TestFixture fixture)
         res.StatusCode.Should().Be(HttpStatusCode.OK);
 
         await fixture.RefreshDbAsync();
-        var updated = await fixture.Db.Projects.FindAsync(project.Id);
-        updated!.DefaultRoleId.Should().BeNull();
+        fixture.Db.Roles.Find(role.Id)!.IsDefault.Should().BeFalse();
     }
 
     [Fact]

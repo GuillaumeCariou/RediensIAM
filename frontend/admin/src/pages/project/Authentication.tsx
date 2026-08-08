@@ -329,7 +329,7 @@ export default function Authentication() {
   const [smsVerif,               setSmsVerif]               = useState(false);
   const [allowedDomains,         setAllowedDomains]         = useState('');
   const [emailFromName,          setEmailFromName]          = useState('');
-  const [defaultRoleId,          setDefaultRoleId]          = useState<string | null>(null);
+  const [defaultRoleIds, setDefaultRoleIds] = useState<string[]>([]);
   const [minPasswordLength,      setMinPasswordLength]      = useState(0);
   const [requireUppercase,       setRequireUppercase]       = useState(false);
   const [requireLowercase,       setRequireLowercase]       = useState(false);
@@ -387,7 +387,7 @@ export default function Authentication() {
         setSmsVerif(p.sms_verification_enabled ?? false);
         setAllowedDomains((p.allowed_email_domains ?? []).join(', '));
         setEmailFromName(p.email_from_name ?? '');
-        setDefaultRoleId(p.default_role_id ?? null);
+        setDefaultRoleIds(p.default_role_ids ?? (p.default_role_id ? [p.default_role_id] : []));
         setMinPasswordLength(p.min_password_length ?? 0);
         setRequireUppercase(p.password_require_uppercase ?? false);
         setRequireLowercase(p.password_require_lowercase ?? false);
@@ -451,8 +451,11 @@ export default function Authentication() {
         ip_allowlist: ipLines,
         allowed_scopes: ['openid', 'offline', ...customScopes],
       };
-      if (defaultRoleId) body.default_role_id = defaultRoleId;
-      else body.clear_default_role = true;
+      // L'ensemble entier, jamais le singulier : un projet peut avoir PLUSIEURS rôles par défaut
+      // depuis 0.9.3, et `default_role_id` ne sait en porter qu'un. Cet écran ne les édite pas —
+      // il les réémet tels qu'il les a lus — donc envoyer le champ singulier aurait écrasé la
+      // sélection faite sur la page Roles en ne gardant que le plus fort, sans rien dire.
+      body.default_role_ids = defaultRoleIds;
       await updateProject(projectId, body);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -962,15 +965,27 @@ export default function Authentication() {
                 </div>
 
                 <div className="iam-card iam-card-pad">
-                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Default Role</div>
-                  <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', marginBottom: 12 }}>Role automatically assigned when a user registers or signs in via social login for the first time.</div>
-                  <select className="iam-input" style={{ maxWidth: 256 }} aria-label="Default role"
-                    value={defaultRoleId ?? '__none__'} onChange={e => setDefaultRoleId(e.target.value === '__none__' ? null : e.target.value)}>
-                    <option value="__none__">No default role</option>
-                    {roles.map(r => (
-                      <option key={r.id} value={r.id}>{r.name} (rank {r.rank})</option>
-                    ))}
-                  </select>
+                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Roles granted on sign-up</div>
+                  <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', marginBottom: 12 }}>
+                    Assigned when a user registers, or signs in via social login for the first time.
+                    {/*
+                      * En lecture seule, et c'est le correctif : un projet peut avoir PLUSIEURS
+                      * rôles par défaut, cet écran n'en éditait qu'un. Le laisser écrire aurait
+                      * écrasé la sélection faite sur la page Roles en n'en gardant que le plus
+                      * fort — deux éditeurs pour une même donnée finissent toujours par diverger.
+                      */}
+                    {' '}They are chosen on the Roles page.
+                  </div>
+                  {defaultRoleIds.length === 0
+                    ? <span style={{ fontSize: 13, color: 'var(--fg-muted)', fontStyle: 'italic' }}>No default role</span>
+                    : (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {defaultRoleIds.map(id => {
+                          const r = roles.find(x => x.id === id);
+                          return <IamChip key={id} tone="accent">{r ? r.name : id}</IamChip>;
+                        })}
+                      </div>
+                    )}
                 </div>
               </div>
             )}

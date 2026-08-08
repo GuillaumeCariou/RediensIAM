@@ -8,6 +8,59 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.9.3] — 2026-08-08
+
+**Un projet peut accorder plusieurs rôles à l'inscription**, la console dit enfin ce que le
+déploiement sait faire, et une page explique le contrat aux intégrateurs.
+
+### Cassant — `Project.DefaultRoleId` disparaît
+
+Le rôle par défaut d'un projet devient un drapeau `Role.IsDefault` : un rôle appartient déjà à
+exactement un projet, donc un booléen par rôle porte la même information qu'une table de liaison,
+sans seconde source de vérité. Migration `ProjectDefaultRoles` : la colonne est ajoutée, **puis**
+les valeurs existantes recopiées, **puis seulement** l'ancienne colonne supprimée — la version
+générée par l'outil supprimait d'abord et aurait pris le défaut de chaque locataire.
+
+Le contrat d'API garde les deux formes. `default_role_ids` énonce l'ensemble entier et l'emporte ;
+`clear_default_role` puis `default_role_id` restent honorés pour les appelants existants.
+`GET /project/info` sert les deux, le singulier valant le défaut **le plus fort** — jamais un au
+hasard. Un identifiant inconnu est refusé en 400 `invalid_default_role` plutôt qu'ignoré.
+
+`SamlIdpConfig.DefaultRoleId` n'est pas touché : c'est le rôle qu'**un fournisseur SAML** accorde au
+provisionnement JIT, pas celui du projet. Les deux se composent.
+
+### Ajouté
+
+**Page Integration**, en portée projet : identité du client, forme du flux, URI de redirection et
+origines, scopes, endpoints, le jeton que l'application recevra — rôles affichés **qualifiés**,
+`{projectId}/{nom}`, comme le consommateur les lira — et de quoi valider un jeton depuis un
+backend, en curl ou en C#. Aucun secret n'y est rendu.
+
+Les pages **Settings** d'organisation et de déploiement sont refaites. Le déploiement expose
+`smtp_username` et `smtp_from_name`, jusqu'ici stockés et inatteignables depuis la console.
+
+### Corrigé
+
+**`GET /admin/organizations/{id}` ne renvoyait pas `AuditRetentionDays`** alors que le `PATCH` de la
+même route l'écrit. Un super admin ouvrant les réglages d'un locataire lisait donc *rien* —
+indistinguable de « aucune limite » — et enregistrer la page **effaçait la rétention configurée**.
+
+Côté console, l'option « Forever » envoyait `audit_retention_days: null`, que le serveur jette sur
+`HasValue` : elle n'écrivait rien, en silence. La sentinelle est `-1`. Le même sélecteur proposait
+30 et 60 jours, que le serveur refuse sans que le refus soit affiché.
+
+**L'écran Authentication éditait le rôle par défaut avec un sélecteur simple.** Il aurait écrasé
+une sélection multiple en n'en gardant que le plus fort. Il les montre désormais sans les toucher :
+la page Roles en est le seul éditeur.
+
+**Le dialogue d'attribution de rôle d'un compte de service était inutilisable pour un super admin.**
+Les rôles d'un projet n'étaient chargés que si le projet était déjà connu à l'ouverture — vrai pour
+un project_admin, faux pour lui — et le sélecteur de projet n'apparaissait qu'après avoir choisi un
+rôle. Il fallait le projet pour voir les rôles et un rôle pour désigner le projet. L'ordre est
+maintenant organisation → projet → rôle, et `super_admin`, qui n'a aucune portée, ignore les deux.
+
+---
+
 ## [0.9.2] — 2026-08-08
 
 ### Corrigé

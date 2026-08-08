@@ -908,33 +908,38 @@ describe('the password policy, on the registration tab', () => {
     expect(body()['check_breached_passwords']).toBe(false);
   });
 
-  it('sets the default role, and clears it with a flag rather than a null', async () => {
+  /**
+   * Cet écran ÉDITAIT le rôle par défaut avec un `<select>` simple. Un projet peut en avoir
+   * plusieurs depuis 0.9.3, et enregistrer cette page aurait donc écrasé la sélection faite sur la
+   * page Roles en n'en gardant que le plus fort — deux éditeurs pour une même donnée finissent
+   * toujours par diverger. Il les montre désormais sans les toucher.
+   */
+  it('shows the roles granted on sign-up without offering to change them here', async () => {
     const user = show();
     await security(user);
 
-    expect(screen.getByLabelText('Default role')).toHaveValue('r1');
-    await user.selectOptions(screen.getByLabelText('Default role'), '__none__');
+    expect(screen.queryByLabelText('Default role')).toBeNull();
+    expect(screen.getByText('admin')).toBeInTheDocument();
+    expect(screen.getByText(/chosen on the Roles page/)).toBeInTheDocument();
+  });
+
+  it('re-emits the whole set on save, so nothing is dropped', async () => {
+    const user = show();
+    await security(user);
+
     await save(user);
 
-    expect(body()['clear_default_role']).toBe(true);
+    expect(body()['default_role_ids']).toEqual(['r1']);
     expect(body()['default_role_id']).toBeUndefined();
+    expect(body()['clear_default_role']).toBeUndefined();
   });
 
-  it('offers the roles strongest first', async () => {
+  it('says so plainly when the project grants none', async () => {
+    vi.mocked(api.getProjectInfo).mockResolvedValue({ ...PROJECT, default_role_ids: [] });
     const user = show();
     await security(user);
 
-    const options = [...screen.getByLabelText('Default role').querySelectorAll('option')]
-      .map(o => o.textContent);
-    expect(options).toEqual(['No default role', 'admin (rank 1)', 'viewer (rank 100)']);
-  });
-
-  it('accepts a bare role array as well as an envelope', async () => {
-    vi.mocked(api.listRoles).mockResolvedValue(ROLES);
-    const user = show();
-    await security(user);
-
-    expect(screen.getByLabelText('Default role')).toHaveValue('r1');
+    expect(screen.getByText('No default role')).toBeInTheDocument();
   });
 });
 

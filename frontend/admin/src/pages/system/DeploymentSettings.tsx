@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router';
 import PageHeader from '@/components/layout/PageHeader';
-import { getInstanceConfig, updateInstanceConfig } from '@/api';
+import { getInstanceConfig, updateInstanceConfig, getMe } from '@/api';
+import { ApiError } from '@/auth';
+import { useAuth } from '@/context/AuthContext';
 import KeyRotationPanel from './KeyRotationPanel';
 
 /**
@@ -41,20 +44,58 @@ interface Config {
   environment_only: Record<string, string | number>;
 }
 
+interface Me { email: string; username: string; discriminator: string; totp_enabled: boolean }
+
 /** The numeric settings, with the label the operator reads and the bound the server will apply. */
 const NUMBERS: { key: keyof Settings; label: string; hint: string }[] = [
-  { key: 'max_login_attempts',    label: 'Failed logins before lockout', hint: '1–10' },
-  { key: 'lockout_minutes',       label: 'Lockout duration (minutes)',   hint: '1–1440' },
-  { key: 'otp_ttl_seconds',       label: 'One-time code lifetime (s)',   hint: '60–3600' },
-  { key: 'max_sms_per_window',    label: 'SMS codes per window',         hint: '1–20' },
-  { key: 'sms_window_minutes',    label: 'SMS window (minutes)',         hint: '1–1440' },
-  { key: 'audit_retention_days',  label: 'Audit retention (days)',       hint: '90–3650' },
-  { key: 'invite_expiry_hours',   label: 'Invitation expiry (hours)',    hint: '1–720' },
-  { key: 'pat_cache_ttl_minutes', label: 'Token cache freshness (min)',  hint: '0–15' },
+  { key: 'max_login_attempts',    label: 'Failed logins before lockout', hint: 'Clamped 1–10' },
+  { key: 'lockout_minutes',       label: 'Lockout duration (minutes)',   hint: 'Clamped 1–1440' },
+  { key: 'otp_ttl_seconds',       label: 'One-time code lifetime (s)',   hint: 'Clamped 60–3600' },
+  { key: 'max_sms_per_window',    label: 'SMS codes per window',         hint: 'Clamped 1–20' },
+  { key: 'sms_window_minutes',    label: 'SMS window (minutes)',         hint: 'Clamped 1–1440' },
+  { key: 'audit_retention_days',  label: 'Audit retention (days)',       hint: 'Clamped 90–3650' },
+  { key: 'invite_expiry_hours',   label: 'Invitation expiry (hours)',    hint: 'Clamped 1–720' },
+  { key: 'pat_cache_ttl_minutes', label: 'Token cache freshness (min)',  hint: 'Clamped 0–15' },
 ];
 
+/** The text settings of the relay. The password is deliberately absent — see the card's note. */
+const MAIL_TEXT: { key: keyof Settings; label: string }[] = [
+  { key: 'smtp_host',         label: 'SMTP host' },
+  { key: 'smtp_username',     label: 'Username' },
+  { key: 'smtp_from_address', label: 'From address' },
+  { key: 'smtp_from_name',    label: 'From name' },
+];
+
+/**
+ * Why each read-only setting is read-only, in the words of the operator hunting for it.
+ *
+ * Keyed on what `GET /admin/instance` actually sends, and unknown keys still render: a setting the
+ * server starts returning must appear here even before anybody writes a sentence about it.
+ */
+const ENVIRONMENT_ONLY_NOTES: Record<string, string> = {
+  public_url:        'Where this deployment answers from. Changing it invalidates the OAuth2 client registration this console signed in through.',
+  admin_spa_origin:  'The browser origin this console is served from; Hydra’s redirect_uri must match it exactly.',
+  domain:            'The mail and cookie domain this instance row carries.',
+  trusted_proxies:   'Whose X-Forwarded-* headers are honoured. A process must not learn who to trust from data it can write.',
+  hydra_admin_url:   'Environment only — a database write must not redirect the authorisation store.',
+  hydra_public_url:  'Environment only, same reason.',
+  keto_read_url:     'Environment only, same reason.',
+  keto_write_url:    'Environment only, same reason.',
+  argon_time_cost:   'Drives the pod’s memory limit. Raising the cost from a browser kills the pod that served the request.',
+  argon_memory_cost: 'Drives the pod’s memory limit, in KiB. Same reason.',
+  argon_parallelism: 'Drives the pod’s memory limit. Same reason.',
+};
+
+function apiErrorMessage(e: unknown, fallback: string): string {
+  const body = e instanceof ApiError ? (e.body as { error?: string; detail?: string } | null) : null;
+  return body?.detail ?? body?.error ?? fallback;
+}
+
 export default function DeploymentSettings() {
+  const { roles } = useAuth();
   const [config, setConfig] = useState<Config | null>(null);
+  const [me, setMe] = useState<Me | null>(null);
+  const [meError, setMeError] = useState('');
   const [draft, setDraft] = useState<Partial<Settings>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -63,10 +104,16 @@ export default function DeploymentSettings() {
   const load = useCallback(() => {
     getInstanceConfig()
       .then((r: Config) => { setConfig(r); setDraft({}); })
-      .catch(() => setError('Could not read the deployment settings.'));
+      .catch((e: unknown) => setError(apiErrorMessage(e, 'Could not read the deployment settings.')));
   }, []);
 
   useEffect(load, [load]);
+
+  useEffect(() => {
+    getMe()
+      .then(setMe)
+      .catch((e: unknown) => setMeError(apiErrorMessage(e, 'Could not read your own account.')));
+  }, []);
 
   const save = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -80,92 +127,132 @@ export default function DeploymentSettings() {
       // clamped rather than refused, so echoing the request would show a number nothing holds.
       setSaved(`Saved ${(res.changed ?? []).length} setting(s).`);
       load();
-    } catch {
-      setError('Could not save. Nothing was changed.');
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not save. Nothing was changed.'));
     } finally { setSaving(false); }
   };
+
+  const value = <K extends keyof Settings>(key: K): Settings[K] =>
+    draft[key] ?? config?.settings[key] as Settings[K];
+
+  const differs = (key: keyof Settings) => !!config && config.settings[key] !== config.stored[key];
+
+  /** Clearing a type="number" yields '', and Number('') is 0 — which for a lockout threshold is
+   *  "never lock anybody out", written by somebody who only emptied a field. An empty field means
+   *  nothing to send, so the key leaves the draft. */
+  const setNumber = (key: keyof Settings, raw: string) => setDraft(d => {
+    if (raw !== '') return { ...d, [key]: Number(raw) };
+    const rest: Partial<Settings> = { ...d };
+    delete rest[key];
+    return rest;
+  });
+
+  const numberField = (key: keyof Settings, label: string, hint: string) => (
+    <div key={key}>
+      <label className="iam-label" htmlFor={`s-${key}`}>{label}</label>
+      <input
+        id={`s-${key}`}
+        className="iam-input"
+        type="number"
+        value={String(value(key))}
+        onChange={e => setNumber(key, e.target.value)}
+      />
+      <p className="iam-help">
+        {hint}
+        {differs(key) && (
+          <>
+            {' · '}
+            <b>stored {String(config?.stored[key])}</b>, overridden by the environment
+          </>
+        )}
+      </p>
+    </div>
+  );
+
+  const accountCard = (
+    <div className="iam-card iam-card-pad" style={{ marginTop: 16 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Your own account</div>
+      {meError && <div className="iam-alert iam-alert-danger" style={{ marginBottom: 14 }}>{meError}</div>}
+      <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', marginBottom: 14 }}>
+        {me
+          ? <>{me.email} · <span className="iam-mono">{roles.join(', ') || 'no role'}</span> · {me.totp_enabled ? 'authenticator app enrolled' : 'no second factor'}</>
+          : '—'}
+      </div>
+      <Link className="iam-btn iam-btn-primary iam-btn-sm" to="/account">
+        Password, second factor and sessions
+      </Link>
+    </div>
+  );
 
   if (!config) {
     return (
       <div>
         <PageHeader title="Settings" description="Runtime configuration of this deployment" />
-        {error && <div className="iam-alert iam-alert-danger" style={{ margin: '0 24px' }}>{error}</div>}
+        <div className="iam-page">
+          {error && <div className="iam-alert iam-alert-danger">{error}</div>}
+          {accountCard}
+        </div>
       </div>
     );
   }
 
-  const value = <K extends keyof Settings>(key: K): Settings[K] =>
-    draft[key] ?? config.settings[key];
-
-  const differs = (key: keyof Settings) => config.settings[key] !== config.stored[key];
-
   return (
     <div>
       <PageHeader
-        title="Settings"
-        description={`Runtime configuration of this deployment · version ${config.config_version}`}
+        title="Deployment settings"
+        description={`What this instance is actually running with. Values from the environment are read-only here, on purpose · version ${config.config_version}`}
       />
 
-      {error && <div className="iam-alert iam-alert-danger" style={{ margin: '0 24px 12px' }}>{error}</div>}
-      {saved && <div className="iam-alert iam-alert-success" style={{ margin: '0 24px 12px' }}>{saved}</div>}
-
       <div className="iam-page">
+        {error && <div className="iam-alert iam-alert-danger" style={{ marginBottom: 12 }}>{error}</div>}
+        {saved && <div className="iam-alert iam-alert-success" style={{ marginBottom: 12 }}>{saved}</div>}
+
         <form onSubmit={save}>
-          <div className="iam-card" style={{ padding: 16 }}>
-            <h3 style={{ marginTop: 0 }}>Sign-in and lockout</h3>
-            {NUMBERS.map(({ key, label, hint }) => (
-              <div key={key} style={{ marginBottom: 12 }}>
-                <label className="iam-label" htmlFor={`s-${key}`}>{label}</label>
-                <input
-                  id={`s-${key}`}
-                  className="iam-input"
-                  type="number"
-                  value={String(value(key))}
-                  // Clearing a type="number" yields '', and Number('') is 0 — which for a lockout
-                  // threshold is "never lock anybody out", written by somebody who only emptied a
-                  // field. An empty field means nothing to send, so the key leaves the draft.
-                  onChange={e => setDraft(d => {
-                    if (e.target.value === '') { const { [key]: _dropped, ...rest } = d; return rest; }
-                    return { ...d, [key]: Number(e.target.value) };
-                  })}
-                />
-                <div style={{ fontSize: 11, color: 'var(--fg-muted)' }}>
-                  {hint}
+          <div className="iam-card iam-card-pad">
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>Mail</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+              {MAIL_TEXT.map(({ key, label }) => (
+                <div key={key}>
+                  <label className="iam-label" htmlFor={`s-${key}`}>{label}</label>
+                  <input
+                    id={`s-${key}`}
+                    className="iam-input"
+                    value={String(value(key))}
+                    onChange={e => setDraft(d => ({ ...d, [key]: e.target.value }))}
+                  />
                   {differs(key) && (
-                    <>
-                      {' · '}
+                    <p className="iam-help">
                       <b>stored {String(config.stored[key])}</b>, overridden by the environment
-                    </>
+                    </p>
                   )}
                 </div>
+              ))}
+              {numberField('smtp_port', 'SMTP port', 'Clamped 1–65535')}
+              <div>
+                <label className="iam-label" htmlFor="s-smtp_start_tls">STARTTLS</label>
+                <div>
+                  <input
+                    id="s-smtp_start_tls"
+                    className="iam-switch"
+                    type="checkbox"
+                    checked={value('smtp_start_tls')}
+                    onChange={e => setDraft(d => ({ ...d, smtp_start_tls: e.target.checked }))}
+                  />
+                </div>
+                <p className="iam-help">Negotiated on port 587. Turn off for implicit TLS on 465.</p>
               </div>
-            ))}
+            </div>
+            <p className="iam-help" style={{ marginTop: 14 }}>
+              The relay password is not here and cannot be: the instance row has no column for it, so
+              it comes from <span className="iam-mono">Smtp:Password</span> in the environment and
+              changing it is still a deployment operation.
+            </p>
           </div>
 
-          <div className="iam-card" style={{ padding: 16, marginTop: 16 }}>
-            <h3 style={{ marginTop: 0 }}>Mail relay</h3>
-            <div style={{ marginBottom: 12 }}>
-              <label className="iam-label" htmlFor="s-smtp_host">SMTP host</label>
-              <input id="s-smtp_host" className="iam-input" value={value('smtp_host')}
-                onChange={e => setDraft(d => ({ ...d, smtp_host: e.target.value }))} />
-            </div>
-            <div style={{ marginBottom: 12 }}>
-              <label className="iam-label" htmlFor="s-smtp_port">SMTP port</label>
-              <input id="s-smtp_port" className="iam-input" type="number" value={String(value('smtp_port'))}
-                onChange={e => setDraft(d => {
-                  if (e.target.value === '') { const { smtp_port: _dropped, ...rest } = d; return rest; }
-                  return { ...d, smtp_port: Number(e.target.value) };
-                })} />
-            </div>
-            <div style={{ marginBottom: 12 }}>
-              <label className="iam-label" htmlFor="s-smtp_from_address">From address</label>
-              <input id="s-smtp_from_address" className="iam-input" value={value('smtp_from_address')}
-                onChange={e => setDraft(d => ({ ...d, smtp_from_address: e.target.value }))} />
-            </div>
-            <div>
-              <label className="iam-label" htmlFor="s-smtp_start_tls">STARTTLS</label>
-              <input id="s-smtp_start_tls" type="checkbox" checked={value('smtp_start_tls')}
-                onChange={e => setDraft(d => ({ ...d, smtp_start_tls: e.target.checked }))} />
+          <div className="iam-card iam-card-pad" style={{ marginTop: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>Sign-in policy</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+              {NUMBERS.map(({ key, label, hint }) => numberField(key, label, hint))}
             </div>
           </div>
 
@@ -179,24 +266,37 @@ export default function DeploymentSettings() {
 
         {/* Shown, not hidden. An operator hunting a value that will not change needs to see the
             ones this page can never change, and why. */}
-        <div className="iam-card" style={{ padding: 16, marginTop: 16 }}>
-          <h3 style={{ marginTop: 0 }}>Set by the deployment only</h3>
+        <div className="iam-card iam-card-pad" style={{ marginTop: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>Trust anchors and posture</div>
+            <span className="iam-chip">read-only · environment</span>
+          </div>
           <p style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 0 }}>
             Argon2 costs drive the pod&apos;s memory limit; the Ory URLs and trusted proxies are trust
             anchors, which a process must not learn from data it can write; the URLs decide where the
             OAuth2 client this console signed in through points.
           </p>
-          <table className="iam-tbl">
-            <tbody>
-              {Object.entries(config.environment_only).map(([key, v]) => (
-                <tr key={key}>
-                  <td style={{ width: 220 }}>{key}</td>
-                  <td className="iam-mono" style={{ fontSize: 12 }}>{String(v) || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div>
+            {Object.entries(config.environment_only).map(([key, v]) => (
+              <div
+                key={key}
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, padding: '11px 0', borderTop: '1px solid var(--border)' }}
+              >
+                <div>
+                  <div style={{ fontSize: 13 }}>{key}</div>
+                  {ENVIRONMENT_ONLY_NOTES[key] && (
+                    <div style={{ fontSize: 11.5, color: 'var(--fg-muted)' }}>{ENVIRONMENT_ONLY_NOTES[key]}</div>
+                  )}
+                </div>
+                <span className="iam-mono" style={{ fontSize: 12, color: 'var(--fg-muted)', textAlign: 'right' }}>
+                  {String(v) || '—'}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
+
+        {accountCard}
 
         <KeyRotationPanel />
       </div>

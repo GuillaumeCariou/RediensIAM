@@ -42,6 +42,7 @@ import ProjectUsers from './pages/project/ProjectUsers';
 import ProjectRoles from './pages/project/ProjectRoles';
 import ProjectAuditLog from './pages/project/ProjectAuditLog';
 import Authentication from './pages/project/Authentication';
+import Integration from './pages/project/Integration';
 import ProjectSettings from './pages/project/ProjectSettings';
 
 function Loading() {
@@ -193,6 +194,7 @@ export const PAGES: Record<Level, Record<string, React.ReactElement>> = {
     'roles':            <ProjectRoles />,
     'service-accounts': <ServiceAccounts level="project" />,
     'authentication':   <Authentication />,
+    'integration':      <Integration />,
     'audit-log':        <ProjectAuditLog />,
     'settings':         <ProjectSettings />,
   },

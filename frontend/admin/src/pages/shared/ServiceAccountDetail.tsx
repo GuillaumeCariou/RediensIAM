@@ -228,8 +228,9 @@ export default function ServiceAccountDetail() {
   };
 
   /** No project fetch here on purpose: openRoleDialog already loaded them for a pre-filled org. */
+  // Le projet est choisi AVANT le rôle : le changer ne doit plus l'effacer.
   const handleRoleChange = (role: string) => {
-    setRoleForm(f => ({ ...f, role, project_id: isOrgAdmin ? '' : (scopeProjectId ?? '') }));
+    setRoleForm(f => ({ ...f, role }));
   };
 
   const handleOrgChange = (org_id: string) => {
@@ -259,10 +260,14 @@ export default function ServiceAccountDetail() {
     if (!saId || !roleForm.role) return;
     setRoleSaving(true); setRoleError('');
     try {
+      // `super_admin` porte le déploiement entier : ni organisation ni projet ne le qualifient.
+      // Les sélecteurs se remplissant avant le choix du rôle, ce qu'ils contiennent doit être
+      // ignoré ici plutôt qu'écrit sur un grant qui n'a pas de portée.
+      const scoped = roleForm.role !== 'super_admin';
       await assignSaRole(saId, {
         role: roleForm.role,
-        org_id: roleForm.org_id || undefined,
-        project_id: roleForm.project_id || undefined,
+        org_id: (scoped && roleForm.org_id) || undefined,
+        project_id: (scoped && roleForm.project_id) || undefined,
       });
       setRoleOpen(false);
       await reloadRoles();
@@ -473,6 +478,37 @@ export default function ServiceAccountDetail() {
               <button className="iam-btn iam-btn-primary" type="submit" form="serviceaccountdetail-form" disabled={roleSubmitDisabled}>{roleSaving ? 'Assigning…' : 'Assign'}</button></>}
     >
 <form id="serviceaccountdetail-form" onSubmit={handleAssignRole} className="space-y-4">
+            {/*
+              * L'organisation et le projet se choisissent AVANT le rôle, et cet ordre est le
+              * correctif.
+              *
+              * Les rôles qu'un projet définit ne peuvent être listés qu'une fois le projet connu.
+              * Tant que le sélecteur de projet n'apparaissait qu'après avoir choisi un rôle, ils
+              * étaient inatteignables pour quiconque n'a pas de projet dans son jeton — c'est-à-dire
+              * pour un super admin et un org admin : il fallait avoir choisi un rôle pour désigner
+              * le projet, et connaître le projet pour voir les rôles.
+              */}
+            {isSuperAdmin && (
+              <div className="space-y-2">
+                <label className="iam-label" htmlFor="sa-role-org">Organisation</label>
+                <select className="iam-select" id="sa-role-org" value={roleForm.org_id} onChange={e => handleOrgChange(e.target.value)} disabled={roleSaving}>
+                  <option value="" disabled>Select an organisation…</option>
+                  {orgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </select>
+              </div>
+            )}
+            {isOrgAdmin && roleForm.org_id && (
+              <div className="space-y-2">
+                <label className="iam-label" htmlFor="sa-role-project">Project</label>
+                <select className="iam-select" id="sa-role-project" value={roleForm.project_id} onChange={e => handleProjectChange(e.target.value)} disabled={roleSaving}>
+                  <option value="" disabled>Select a project…</option>
+                  {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+                <p style={{ fontSize: 11.5, color: 'var(--fg-muted)' }}>
+                  Needed for <span className="iam-mono">project_admin</span> and for any role this project defines.
+                </p>
+              </div>
+            )}
             <div className="space-y-2">
               <label className="iam-label" htmlFor="sa-role">Role</label>
               <select className="iam-select" id="sa-role" value={roleForm.role} onChange={e => handleRoleChange(e.target.value)} disabled={roleSaving}>
@@ -487,24 +523,6 @@ export default function ServiceAccountDetail() {
                   )}
 </select>
             </div>
-            {isSuperAdmin && (roleForm.role === 'org_admin' || roleForm.role === 'project_admin') && (
-              <div className="space-y-2">
-                <label className="iam-label" htmlFor="sa-role-org">Organisation</label>
-                <select className="iam-select" id="sa-role-org" value={roleForm.org_id} onChange={e => handleOrgChange(e.target.value)} disabled={roleSaving}>
-                  <option value="" disabled>Select an organisation…</option>
-{orgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-</select>
-              </div>
-            )}
-            {needsProject && roleForm.org_id && isOrgAdmin && (
-              <div className="space-y-2">
-                <label className="iam-label" htmlFor="sa-role-project">Project</label>
-                <select className="iam-select" id="sa-role-project" value={roleForm.project_id} onChange={e => handleProjectChange(e.target.value)} disabled={roleSaving}>
-                  <option value="" disabled>Select a project…</option>
-{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-</select>
-              </div>
-            )}
             {needsProject && !isOrgAdmin && (
               <p style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
                 Granted on this project. A project administrator may only grant it here.

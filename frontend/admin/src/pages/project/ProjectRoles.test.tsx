@@ -4,18 +4,17 @@ import { userEvent } from 'vitest/browser';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import ProjectRoles from './ProjectRoles';
 import { ApiError } from '@/auth';
-import { fmtDate } from '@/lib/utils';
 
 /**
  * Rank orders privilege the wrong way round from intuition — lower is stronger — and it is what
  * decides which roles a project manager may hand out. So the ordering is asserted everywhere it
- * shows: the table, and the default-role picker.
+ * shows: the table, and the roles listed as granted on sign-up.
  */
 
 const api = vi.hoisted(() => ({
   listRoles: vi.fn(), createRole: vi.fn(), updateRole: vi.fn(), deleteRole: vi.fn(),
   adminListRoles: vi.fn(), adminCreateRole: vi.fn(), adminDeleteRole: vi.fn(),
-  getProjectInfo: vi.fn(), updateProject: vi.fn(),
+  updateProject: vi.fn(),
 }));
 vi.mock('@/api', () => api);
 
@@ -23,16 +22,19 @@ const auth = vi.hoisted(() => ({ orgId: '', projectId: 'p1' }));
 vi.mock('@/context/AuthContext', () => ({ useAuth: () => auth }));
 
 const ROLES = [
-  { id: 'r2', name: 'viewer', description: null, rank: 100, created_at: '2026-01-02T00:00:00Z' },
-  { id: 'r1', name: 'admin', description: 'Everything', rank: 1, created_at: '2026-01-02T00:00:00Z' },
+  { id: 'r2', name: 'viewer', description: null, rank: 100, is_default: true, holders: 176 },
+  { id: 'r1', name: 'admin', description: 'Everything', rank: 1, is_default: false, holders: 7 },
 ];
+
+const listing = (roles: unknown[] = ROLES) => {
+  api.listRoles.mockResolvedValue({ roles });
+  api.adminListRoles.mockResolvedValue({ roles });
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
   auth.projectId = 'p1';
-  api.listRoles.mockResolvedValue({ roles: ROLES });
-  api.adminListRoles.mockResolvedValue({ roles: ROLES });
-  api.getProjectInfo.mockResolvedValue({ default_role_id: 'r2' });
+  listing();
 });
 
 /** Le même écran ouvert depuis /system/organisations/:oid/projects/:pid/roles. */
@@ -50,7 +52,7 @@ function show(path = '/project/roles', pattern = '/project/roles') {
   return user;
 }
 
-const picker = () => screen.getByRole('combobox');
+const tick = (name: string) => screen.getByRole('checkbox', { name: `Grant ${name} on sign-up` });
 const rowFor = (name: string) => screen.getByRole('row', { name: new RegExp(name) });
 const submit = () => document.querySelector<HTMLButtonElement>('button[form="create-role-form"]')!;
 
@@ -63,28 +65,46 @@ describe('the table', () => {
     expect(names).toEqual(['admin', 'viewer']);
   });
 
-  it('shows the description, the rank and when it was made', async () => {
+  it('shows the description, the rank and how many hold it', async () => {
     show();
 
     await screen.findByText('admin');
     expect(rowFor('admin')).toHaveTextContent('Everything');
     expect(rowFor('admin')).toHaveTextContent('1');
-    expect(rowFor('admin')).toHaveTextContent(fmtDate('2026-01-02T00:00:00Z'));
+    expect(rowFor('admin')).toHaveTextContent('7');
+  });
+
+  // Le nom nu est ambigu entre locataires : c'est `{projectId}/{nom}` que le serveur de ressources
+  // compare, et la seule forme dans laquelle le rôle atteint un jeton.
+  it('shows the qualified name the token will carry', async () => {
+    show();
+
+    expect(await screen.findByText('p1/admin')).toBeInTheDocument();
+  });
+
+  it('reads the holder count of a role nobody holds as zero', async () => {
+    listing([{ id: 'r3', name: 'editor', description: null, rank: 50 }]);
+    show();
+
+    await screen.findByText('editor');
+    expect(rowFor('editor')).toHaveTextContent('0');
   });
 
   it('prints an em dash for a role with no description', async () => {
     show();
 
-    await screen.findByText('viewer');
+    // `viewer` is in the table and again in the sign-up footer; `admin` marks the load too.
+    await screen.findByText('admin');
     expect(rowFor('viewer')).toHaveTextContent('—');
   });
 
-  it('marks which role new users are given', async () => {
+  it('ticks the roles new users are given, and only those', async () => {
     show();
 
-    await screen.findByText('viewer');
-    expect(rowFor('viewer')).toHaveTextContent('Default');
-    expect(rowFor('admin')).not.toHaveTextContent('Default');
+    // `viewer` is in the table and again in the sign-up footer; `admin` marks the load too.
+    await screen.findByText('admin');
+    expect(tick('viewer')).toBeChecked();
+    expect(tick('admin')).not.toBeChecked();
   });
 
   it('explains which way rank runs, but only when there are roles to rank', async () => {
@@ -93,12 +113,13 @@ describe('the table', () => {
     expect(await screen.findByText(/lower number = higher privilege/)).toBeInTheDocument();
   });
 
-  it('says there are none, without the ranking note', async () => {
-    api.listRoles.mockResolvedValue({ roles: [] });
+  it('says there are none, without the ranking note or the sign-up footer', async () => {
+    listing([]);
     show();
 
     expect(await screen.findByText('No roles defined yet')).toBeInTheDocument();
     expect(screen.queryByText(/lower number = higher privilege/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Granted on sign-up:')).not.toBeInTheDocument();
   });
 
   it('shows placeholder rows while loading', () => {
@@ -106,7 +127,7 @@ describe('the table', () => {
     show();
 
     expect(document.querySelectorAll('tbody tr')).toHaveLength(4);
-    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
   });
 
   it('accepts a bare array as well as an envelope', async () => {
@@ -135,62 +156,95 @@ describe('the table', () => {
   });
 });
 
-describe('the default role', () => {
-  it('opens on the project\'s current one, with the options in rank order', async () => {
+/**
+ * Le défaut est un ensemble, pas un rôle. Chaque écriture énonce l'ensemble entier : un PATCH qui
+ * n'enverrait que le rôle coché ne pourrait jamais en décocher un.
+ */
+describe('the roles granted on sign-up', () => {
+  const footer = () => screen.getByText('Granted on sign-up:').parentElement!;
+
+  it('lists the ticked ones, strongest first', async () => {
+    listing([{ ...ROLES[0] }, { ...ROLES[1], is_default: true }]);
     show();
 
-    await vi.waitFor(() => expect(picker()).toHaveValue('r2'));
-    expect([...picker().querySelectorAll('option')].map(o => o.textContent))
-      .toEqual(['No default role', 'admin (rank 1)', 'viewer (rank 100)']);
+    await screen.findByText('Granted on sign-up:');
+    expect([...footer().querySelectorAll('.iam-chip')].map(c => c.textContent))
+      .toEqual(['admin', 'viewer']);
   });
 
-  it('opens on "none" for a project that has none', async () => {
-    api.getProjectInfo.mockResolvedValue({ default_role_id: null });
+  it('says a project with none grants nothing, and offers nothing to clear', async () => {
+    listing(ROLES.map(r => ({ ...r, is_default: false })));
     show();
 
-    await vi.waitFor(() => expect(picker()).toHaveValue('__none__'));
+    expect(await screen.findByText(/a new account starts with no role/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clear all defaults' })).not.toBeInTheDocument();
   });
 
-  it('sets one', async () => {
+  it('adds one to the set rather than replacing it', async () => {
     const user = show();
-    await vi.waitFor(() => expect(picker()).toHaveValue('r2'));
+    await screen.findByText('admin');
 
-    await user.selectOptions(picker(), 'r1');
+    await user.click(tick('admin'));
 
-    await vi.waitFor(() => expect(api.updateProject).toHaveBeenCalledWith('p1', { default_role_id: 'r1' }));
-    expect(picker()).toHaveValue('r1');
+    await vi.waitFor(() => expect(api.updateProject)
+      .toHaveBeenCalledWith('p1', { default_role_ids: ['r2', 'r1'] }));
+    expect(tick('admin')).toBeChecked();
+    expect(tick('viewer')).toBeChecked();
   });
 
-  it('clears it with an explicit flag, not by sending null', async () => {
-    // A null default_role_id is indistinguishable from "field omitted" on a PATCH.
+  it('unticking sends the set without it', async () => {
     const user = show();
-    await vi.waitFor(() => expect(picker()).toHaveValue('r2'));
+    // `viewer` is in the table and again in the sign-up footer; `admin` marks the load too.
+    await screen.findByText('admin');
 
-    await user.selectOptions(picker(), '__none__');
+    await user.click(tick('viewer'));
 
-    await vi.waitFor(() => expect(api.updateProject).toHaveBeenCalledWith('p1', { clear_default_role: true }));
-    expect(picker()).toHaveValue('__none__');
+    await vi.waitFor(() => expect(api.updateProject).toHaveBeenCalledWith('p1', { default_role_ids: [] }));
+    expect(tick('viewer')).not.toBeChecked();
   });
 
-  it('says so, and leaves the picker where it was, when the save fails', async () => {
+  it('clears them all at once', async () => {
+    listing(ROLES.map(r => ({ ...r, is_default: true })));
+    const user = show();
+    await screen.findByText('Granted on sign-up:');
+
+    await user.click(screen.getByRole('button', { name: 'Clear all defaults' }));
+
+    await vi.waitFor(() => expect(api.updateProject).toHaveBeenCalledWith('p1', { default_role_ids: [] }));
+    expect(tick('admin')).not.toBeChecked();
+    expect(tick('viewer')).not.toBeChecked();
+  });
+
+  it('says so, and puts the tick back, when the save is refused', async () => {
+    api.updateProject.mockRejectedValue(new ApiError(400, { error: 'invalid_default_role' }));
+    const user = show();
+    await screen.findByText('admin');
+
+    await user.click(tick('admin'));
+
+    expect(await screen.findByText(/no longer belongs to this project/)).toBeInTheDocument();
+    expect(tick('admin')).not.toBeChecked();
+    expect(tick('viewer')).toBeChecked();
+  });
+
+  it('falls back to its own words for a failure that carries none', async () => {
     api.updateProject.mockRejectedValue(new Error('500'));
     const user = show();
-    await vi.waitFor(() => expect(picker()).toHaveValue('r2'));
+    await screen.findByText('admin');
 
-    await user.selectOptions(picker(), 'r1');
+    await user.click(tick('admin'));
 
-    expect(await screen.findByText('Failed to save default role.')).toBeInTheDocument();
-    expect(picker()).toHaveValue('r2');
+    expect(await screen.findByText('Failed to save the default roles.')).toBeInTheDocument();
   });
 
-  it('re-enables the picker after a failure', async () => {
+  it('re-enables the ticks after a failure', async () => {
     api.updateProject.mockRejectedValue(new Error('500'));
     const user = show();
-    await vi.waitFor(() => expect(picker()).toHaveValue('r2'));
+    await screen.findByText('admin');
 
-    await user.selectOptions(picker(), 'r1');
+    await user.click(tick('admin'));
 
-    await vi.waitFor(() => expect(picker()).toBeEnabled());
+    await vi.waitFor(() => expect(tick('admin')).toBeEnabled());
   });
 });
 
@@ -442,7 +496,8 @@ describe('editing a role', () => {
 
   it('leaves the description empty for a role that has none', async () => {
     const user = show();
-    await screen.findByText('viewer');
+    // `viewer` is in the table and again in the sign-up footer; `admin` marks the load too.
+    await screen.findByText('admin');
 
     await openEdit(user, 'viewer');
 

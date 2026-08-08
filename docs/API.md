@@ -236,8 +236,8 @@ Read [`INTEGRATION.md`](INTEGRATION.md#introspection--the-backend-path) before c
 
 | Method | Path | Action |
 |---|---|---|
-| GET | `/project/info` | `GetInfo` |
-| PATCH | `/project/info` | `UpdateInfo` |
+| GET | `/project/info` | `GetInfo` — rend `default_role_ids` / `default_role_names`, l'ensemble des rôles accordés à l'inscription, du rang le plus fort au plus faible. `default_role_id` / `default_role_name` restent servis pour les appelants antérieurs et valent le plus fort de cet ensemble, ou `null` |
+| PATCH | `/project/info` | `UpdateInfo` — `default_role_ids` énonce l'ensemble **entier** des rôles par défaut : `[]` n'en laisse aucun, et un identifiant étranger au projet est refusé en **400 `invalid_default_role`** (avec la liste `unknown`) plutôt qu'ignoré. `default_role_id` (réduit l'ensemble à ce seul rôle) et `clear_default_role` (le vide) sont conservés et honorés ; ils précèdent le pluriel, qui l'emporte s'il est présent. Même contrat sur `/org/projects/{id}` et `/admin/projects/{id}` |
 | GET | `/project/stats` | `GetStats` |
 | GET | `/project/users` | `ListUsers` |
 | POST | `/project/users` | `CreateUser` |
@@ -245,7 +245,7 @@ Read [`INTEGRATION.md`](INTEGRATION.md#introspection--the-backend-path) before c
 | POST | `/project/users/{id}/roles` | `AssignRole` |
 | DELETE | `/project/users/{id}/roles/{roleId}` | `RemoveRole` |
 | DELETE | `/project/users/{id}/sessions` | `ForceLogoutUser` |
-| GET | `/project/roles` | `ListRoles` |
+| GET | `/project/roles` | `ListRoles` — par rang croissant, avec `is_default` (accordé à l'inscription) et `holders` (nombre de porteurs). Partagé avec `/admin/projects/{id}/roles` via `ProjectOperations.ListRolesAsync` : les deux copies étaient identiques et aucune ne rendait ces deux champs |
 | POST | `/project/roles` | `CreateRole` — **409 `role_name_exists`** si le nom est pris. L'index unique est `(ProjectId, Name)` ; sans ce test le doublon remontait en `DbUpdateException`, donc en 500 |
 | PATCH | `/project/roles/{id}` | `UpdateRole` |
 | DELETE | `/project/roles/{id}` | `DeleteRole` |
@@ -526,7 +526,7 @@ tableau des comptes plus bas ne comptait pas ce contrôleur — d'où un total d
 | PUT | `/admin/projects/{id}/scopes` | `AdminUpdateProjectScopes` |
 | PUT | `/admin/projects/{id}/userlist` | `AdminAssignUserList` |
 | DELETE | `/admin/projects/{id}/userlist` | `AdminUnassignUserList` |
-| GET | `/admin/projects/{id}/roles` | `AdminListRoles` — **404 sur projet inconnu** et tri par rang, comme `/project/roles`. La route rendait `[]`, indiscernable d'un projet sans rôle |
+| GET | `/admin/projects/{id}/roles` | `AdminListRoles` — **404 sur projet inconnu**, puis `ProjectOperations.ListRolesAsync` : tri par rang, `is_default` et `holders`, exactement comme `/project/roles`. La route rendait `[]`, indiscernable d'un projet sans rôle |
 | POST | `/admin/projects/{id}/roles` | `AdminCreateRole` |
 | DELETE | `/admin/projects/{id}/roles/{rid}` | `AdminDeleteRole` |
 

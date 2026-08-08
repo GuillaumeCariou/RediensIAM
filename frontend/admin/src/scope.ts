@@ -41,10 +41,9 @@ export interface Destination {
 /**
  * Every destination the console has, by level, once.
  *
- * Order is the order they appear in the tree. The proposed design adds Impersonation and
- * deployment Settings here, and Integration and Login under a project; they are deliberately
- * absent until their pages exist, because a tree entry that leads nowhere is worse than a missing
- * one — it reads as a feature.
+ * Order is the order they appear in the tree. The proposed design also adds Login under a project;
+ * it is deliberately absent until its page exists, because a tree entry that leads nowhere is worse
+ * than a missing one — it reads as a feature.
  */
 export const DESTINATIONS: Record<Level, Destination[]> = {
   deployment: [
@@ -81,6 +80,7 @@ export const DESTINATIONS: Record<Level, Destination[]> = {
     { key: 'roles',            label: 'Roles',            icon: 'shield' },
     { key: 'service-accounts', label: 'Service accounts', icon: 'bot' },
     { key: 'authentication',   label: 'Authentication',   icon: 'key' },
+    { key: 'integration',      label: 'Integration',      icon: 'plug' },
     { key: 'audit-log',        label: 'Audit log',        icon: 'log' },
     { key: 'settings',         label: 'Settings',         icon: 'settings' },
   ],

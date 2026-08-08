@@ -1377,7 +1377,7 @@ public class OrgMoreCoverageTests(TestFixture fixture)
         var (org, _, client) = await OrgAdminClientAsync();
         var project = await fixture.Seed.CreateProjectAsync(org.Id);
         var role    = await fixture.Seed.CreateRoleAsync(project.Id, "Starter");
-        project.DefaultRoleId = role.Id;
+        role.IsDefault = true;
         await fixture.Db.SaveChangesAsync();
 
         var res = await client.PatchAsJsonAsync($"/org/projects/{project.Id}", new
@@ -1387,8 +1387,7 @@ public class OrgMoreCoverageTests(TestFixture fixture)
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
         await fixture.RefreshDbAsync();
-        var reloaded = fixture.Db.Projects.Find(project.Id);
-        reloaded!.DefaultRoleId.Should().BeNull();
+        fixture.Db.Roles.Find(role.Id)!.IsDefault.Should().BeFalse();
     }
 
     // ── DELETE /org/projects/{id} — Hydra client delete failure (line 238) ───
@@ -1645,8 +1644,7 @@ public class OrgProjectCoverageTests(TestFixture fixture)
         res.StatusCode.Should().Be(HttpStatusCode.OK);
 
         await fixture.RefreshDbAsync();
-        var updated = await fixture.Db.Projects.FindAsync(project.Id);
-        updated!.DefaultRoleId.Should().Be(role.Id);
+        fixture.Db.Roles.Find(role.Id)!.IsDefault.Should().BeTrue();
     }
 
     // ── PATCH /org/projects/{id} — invalid DefaultRoleId → 400 (line 177) ────

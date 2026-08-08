@@ -66,20 +66,30 @@ public class ProjectController(
     {
         var project = await db.Projects
             .Include(p => p.AssignedUserList)
-            .Include(p => p.DefaultRole)
             .FirstOrDefaultAsync(p => p.Id == ProjectId && (IsSuperAdmin || p.OrgId == CallerOrgId));
         if (project == null) return NotFound();
         var uris = project.HydraClientId is { } clientId
             ? await hydra.GetClientRedirectUrisAsync(clientId)
             : ([], []);
+        var defaults = await db.Roles
+            .Where(r => r.ProjectId == project.Id && r.IsDefault)
+            .OrderBy(r => r.Rank)
+            .Select(r => new { r.Id, r.Name })
+            .ToListAsync();
         return Ok(new
         {
             project.Id, project.Name, project.Slug, project.Active,
             project.HydraClientId, project.RequireRoleToLogin, project.RequireMfa,
             project.AssignedUserListId,
             AssignedUserListName   = project.AssignedUserList?.Name,
-            project.DefaultRoleId,
-            DefaultRoleName              = project.DefaultRole?.Name,
+            DefaultRoleIds               = defaults.Select(r => r.Id).ToArray(),
+            DefaultRoleNames             = defaults.Select(r => r.Name).ToArray(),
+            // Kept for the callers that predate the plural set, and reported as the strongest of
+            // the defaults rather than an arbitrary one. A caller reading this and writing it back
+            // narrows the set to one — which is the semantics it asked for, but it is why the
+            // console reads and writes the plural field.
+            DefaultRoleId                = defaults.Select(r => (Guid?)r.Id).FirstOrDefault(),
+            DefaultRoleName              = defaults.Select(r => r.Name).FirstOrDefault(),
             project.MinPasswordLength,
             project.PasswordRequireUppercase,
             project.PasswordRequireLowercase,
@@ -312,11 +322,7 @@ public class ProjectController(
     public async Task<IActionResult> ListRoles()
     {
         if (await GetProjectAsync() == null) return NotFound();
-        var roles = await db.Roles
-            .Where(r => r.ProjectId == ProjectId)
-            .OrderBy(r => r.Rank)
-            .Select(r => new { r.Id, r.Name, r.Description, r.Rank }).ToListAsync();
-        return Ok(roles);
+        return await ProjectOperations.ListRolesAsync(db, ProjectId);
     }
 
     [HttpPost("roles")]

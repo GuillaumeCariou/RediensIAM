@@ -44,6 +44,12 @@ public record ProjectUpdateRequest(
     bool? SmsVerificationEnabled = null,
     string[]? AllowedEmailDomains = null,
     string[]? AllowedScopes = null,
+    // A project grants a set of roles on sign-up, not one. `default_role_ids` states the whole set
+    // and is what the console sends. The two singular fields predate it and are still honoured —
+    // `default_role_id` narrows the set to that one role, `clear_default_role` empties it — because
+    // callers outside this repository send them and a PATCH that silently stopped applying would be
+    // the same data-loss bug the class comment above describes.
+    Guid[]? DefaultRoleIds = null,
     Guid? DefaultRoleId = null,
     bool? ClearDefaultRole = null,
     Dictionary<string, object>? LoginTheme = null,
@@ -92,7 +98,7 @@ public static class ProjectUpdate
         if (LoginThemeValidator.Validate(body.LoginTheme) is { } themeErr)
             return new BadRequestObjectResult(new { error = themeErr });
 
-        if (await ApplyDefaultRoleAsync(db, project, body) is { } roleErr) return roleErr;
+        if (await ApplyDefaultRolesAsync(db, project, body) is { } roleErr) return roleErr;
 
         ApplyPlainFields(project, body);
         ApplyPasswordPolicy(project, body);
@@ -177,15 +183,32 @@ public static class ProjectUpdate
             : null;
     }
 
-    private static async Task<IActionResult?> ApplyDefaultRoleAsync(
+    /// <summary>
+    /// Sets which of the project's roles are granted on sign-up. The set is stated whole, never
+    /// added to: a request that names two roles leaves exactly those two flagged, so unticking is
+    /// expressible without a second field.
+    ///
+    /// <para>
+    /// A role named here that belongs to another project is refused rather than ignored. Silently
+    /// dropping it would answer 200 to a request that granted nothing, and the console would show
+    /// the tick it never saved.
+    /// </para>
+    /// </summary>
+    private static async Task<IActionResult?> ApplyDefaultRolesAsync(
         RediensIamDbContext db, Project project, ProjectUpdateRequest body)
     {
-        if (body.ClearDefaultRole == true) { project.DefaultRoleId = null; return null; }
-        if (!body.DefaultRoleId.HasValue) return null;
+        Guid[] wanted;
+        if (body.DefaultRoleIds != null)        wanted = [.. body.DefaultRoleIds.Distinct()];
+        else if (body.ClearDefaultRole == true) wanted = [];
+        else if (body.DefaultRoleId.HasValue)   wanted = [body.DefaultRoleId.Value];
+        else return null;
 
-        var role = await db.Roles.FirstOrDefaultAsync(r => r.Id == body.DefaultRoleId && r.ProjectId == project.Id);
-        if (role == null) return new BadRequestObjectResult(new { error = "invalid_default_role" });
-        project.DefaultRoleId = body.DefaultRoleId;
+        var roles = await db.Roles.Where(r => r.ProjectId == project.Id).ToListAsync();
+        var unknown = wanted.Where(id => roles.TrueForAll(r => r.Id != id)).ToArray();
+        if (unknown.Length > 0)
+            return new BadRequestObjectResult(new { error = "invalid_default_role", unknown });
+
+        foreach (var role in roles) role.IsDefault = wanted.Contains(role.Id);
         return null;
     }
 

@@ -156,7 +156,11 @@ export async function getProjectInfo(projectId: string) {
 export async function updateProject(id: string, body: {
   name?: string; require_role_to_login?: boolean; allow_self_registration?: boolean;
   email_verification_enabled?: boolean; sms_verification_enabled?: boolean; active?: boolean;
-  allowed_email_domains?: string[]; default_role_id?: string; clear_default_role?: boolean;
+  allowed_email_domains?: string[];
+  /** The whole set of roles granted on sign-up. `[]` grants none. */
+  default_role_ids?: string[];
+  /** Predate `default_role_ids`, still accepted: one role, or none at all. */
+  default_role_id?: string; clear_default_role?: boolean;
   login_theme?: Record<string, unknown>; min_password_length?: number;
   password_require_uppercase?: boolean; password_require_lowercase?: boolean;
   password_require_digit?: boolean; password_require_special?: boolean;

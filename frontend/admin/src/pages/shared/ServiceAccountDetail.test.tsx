@@ -300,16 +300,21 @@ describe('assigning a role as an org admin', () => {
     expect(screen.getByRole('button', { name: 'Assign' })).toBeDisabled();
   });
 
-  it('forgets a chosen project when the role changes', async () => {
+  /**
+   * Le projet se choisit AVANT le rôle depuis 0.9.2 — sans lui on ne peut pas lister les rôles que
+   * le projet définit. Changer de rôle ne doit donc plus l'effacer : c'est la sélection qui vient
+   * en premier, pas celle qu'on jette.
+   */
+  it('keeps the project it was given when the role changes', async () => {
     const user = await openAssign();
-    await user.selectOptions(screen.getByLabelText('Role'), 'project_admin');
     await user.selectOptions(screen.getByLabelText('Project'), 'p2');
+    await user.selectOptions(screen.getByLabelText('Role'), 'project_admin');
 
-    await user.selectOptions(screen.getByLabelText('Role'), 'org_admin');
+    await user.selectOptions(screen.getByLabelText('Role'), 'project_admin');
     await user.click(screen.getByRole('button', { name: 'Assign' }));
 
     await vi.waitFor(() => expect(api.assignSaRole)
-      .toHaveBeenCalledWith('s1', expect.objectContaining({ project_id: undefined })));
+      .toHaveBeenCalledWith('s1', expect.objectContaining({ project_id: 'p2' })));
   });
 
   it('closes without granting anything', async () => {
@@ -331,12 +336,17 @@ describe('assigning a role as a super admin', () => {
     return user;
   };
 
-  it('offers super_admin, which needs no scope at all', async () => {
+  /**
+   * Les sélecteurs de portée se remplissent avant le choix du rôle, donc ils sont à l'écran même
+   * quand le rôle retenu n'en a que faire. Ce qu'ils contiennent doit alors être IGNORÉ : un
+   * `super_admin` porte le déploiement entier, et lui écrire une organisation en ferait un grant
+   * qui prétend une portée qu'il n'a pas.
+   */
+  it('drops the scope pickers\' contents for super_admin, which has none', async () => {
     const user = await openAssign();
+    await user.selectOptions(screen.getByLabelText('Organisation'), 'o1');
 
     await user.selectOptions(screen.getByLabelText('Role'), 'super_admin');
-    expect(screen.queryByLabelText('Organisation')).not.toBeInTheDocument();
-
     await user.click(screen.getByRole('button', { name: 'Assign' }));
 
     await vi.waitFor(() => expect(api.assignSaRole)
@@ -815,6 +825,47 @@ describe('assigning a role the project defines', () => {
 
     await vi.waitFor(() => expect(api.assignSaRole).toHaveBeenCalledWith('s1', {
       role: 'gestion_admin', org_id: 'o1', project_id: 'p9',
+    }));
+  });
+});
+
+describe('a super admin reaching a project\'s own roles', () => {
+  beforeEach(() => {
+    auth.isSuperAdmin = true; auth.isOrgAdmin = true;
+    api.listRoles.mockResolvedValue([{ id: 'r1', name: 'gestion_admin' }]);
+  });
+
+  /**
+   * Le premier correctif ne chargeait les rôles du projet QUE si le projet était déjà connu à
+   * l'ouverture — vrai pour un project_admin, faux pour un super admin. Et le sélecteur de projet
+   * n'apparaissait qu'après avoir choisi un rôle. Il fallait donc le projet pour voir les rôles, et
+   * un rôle pour désigner le projet : les rôles du projet étaient inatteignables.
+   */
+  it('sees them once the project is picked, without having to guess a role first', async () => {
+    const user = show('system');
+    await screen.findByRole('button', { name: /Assign role/i });
+    await user.click(screen.getByRole('button', { name: /Assign role/i }));
+
+    await user.selectOptions(screen.getByLabelText('Organisation'), 'o1');
+    await user.selectOptions(screen.getByLabelText('Project'), 'p2');
+
+    await vi.waitFor(() => expect(api.listRoles).toHaveBeenCalledWith('p2'));
+    expect(await screen.findByRole('option', { name: 'gestion_admin' })).toBeInTheDocument();
+  });
+
+  it('grants it against that project', async () => {
+    const user = show('system');
+    await screen.findByRole('button', { name: /Assign role/i });
+    await user.click(screen.getByRole('button', { name: /Assign role/i }));
+    await user.selectOptions(screen.getByLabelText('Organisation'), 'o1');
+    await user.selectOptions(screen.getByLabelText('Project'), 'p2');
+    await screen.findByRole('option', { name: 'gestion_admin' });
+
+    await user.selectOptions(screen.getByLabelText('Role'), 'gestion_admin');
+    await user.click(screen.getByRole('button', { name: 'Assign' }));
+
+    await vi.waitFor(() => expect(api.assignSaRole).toHaveBeenCalledWith('s1', {
+      role: 'gestion_admin', org_id: 'o1', project_id: 'p2',
     }));
   });
 });

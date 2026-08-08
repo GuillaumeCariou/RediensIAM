@@ -4,14 +4,14 @@ import { IamChip, IamDialog } from '@/components/iam';
 import {
   listRoles, createRole, updateRole, deleteRole,
   adminListRoles, adminCreateRole, adminDeleteRole,
-  getProjectInfo, updateProject,
+  updateProject,
 } from '@/api';
 import { ApiError } from '@/auth';
 import PageHeader from '@/components/layout/PageHeader';
-import { fmtDate } from '@/lib/utils';
 
 interface Role {
-  id: string; name: string; description: string | null; rank: number; created_at: string;
+  id: string; name: string; description: string | null; rank: number;
+  is_default?: boolean; holders?: number;
 }
 
 /**
@@ -23,6 +23,10 @@ interface Role {
  * rejet non attrapé, la boîte de dialogue restait ouverte, inchangée, et le 400 n'existait que
  * dans la console du navigateur.
  */
+const DEFAULT_ERRORS: Record<string, string> = {
+  invalid_default_role: 'One of those roles no longer belongs to this project. Reload and try again.',
+};
+
 const CREATE_ERRORS: Record<string, string> = {
   role_name_required:          'Give the role a name.',
   role_name_too_long:          'That name is too long — 64 characters at most.',
@@ -44,7 +48,6 @@ export default function ProjectRoles() {
   const [deleteTarget, setDeleteTarget] = useState<Role | null>(null);
   const [form, setForm] = useState({ name: '', description: '', rank: '100' });
   const [saving, setSaving] = useState(false);
-  const [defaultRoleId, setDefaultRoleId] = useState<string | null>(null);
   const [savingDefault, setSavingDefault] = useState(false);
   const [defaultRoleError, setDefaultRoleError] = useState('');
   const [createError, setCreateError] = useState('');
@@ -57,27 +60,38 @@ export default function ProjectRoles() {
   const load = () => {
     if (!projectId) { setLoading(false); return; }
     setLoading(true);
-    Promise.all([
-      (isSystemCtx ? adminListRoles : listRoles)(projectId).then(r => setRoles(r.roles ?? r ?? [])),
-      getProjectInfo(projectId).then(p => setDefaultRoleId(p.default_role_id ?? null)),
-    ]).catch(console.error).finally(() => setLoading(false));
+    (isSystemCtx ? adminListRoles : listRoles)(projectId)
+      .then(r => setRoles(r.roles ?? r ?? []))
+      .catch(console.error)
+      .finally(() => setLoading(false));
   };
   useEffect(load, [projectId, isSystemCtx]);
 
-  const handleDefaultRole = async (value: string) => {
+  const byRank = [...roles].sort((a, b) => a.rank - b.rank);
+  const defaults = byRank.filter(r => r.is_default);
+
+  /**
+   * Le PATCH énonce l'ensemble entier, jamais un delta : cocher et décocher passent par le même
+   * appel, et la case reflète l'état voulu tout de suite. Un refus la remet où elle était — la
+   * laisser cochée sur un 400 afficherait un rôle accordé qui ne l'est pas.
+   */
+  const saveDefaults = async (ids: string[]) => {
+    const before = roles;
     setSavingDefault(true);
     setDefaultRoleError('');
+    setRoles(rs => rs.map(r => ({ ...r, is_default: ids.includes(r.id) })));
     try {
-      if (value === '__none__') {
-        await updateProject(projectId, { clear_default_role: true });
-        setDefaultRoleId(null);
-      } else {
-        await updateProject(projectId, { default_role_id: value });
-        setDefaultRoleId(value);
-      }
-    } catch { setDefaultRoleError('Failed to save default role.'); }
-    finally { setSavingDefault(false); }
+      await updateProject(projectId, { default_role_ids: ids });
+    } catch (e) {
+      setRoles(before);
+      setDefaultRoleError(apiErrorMessage(e, DEFAULT_ERRORS, 'Failed to save the default roles.'));
+    } finally { setSavingDefault(false); }
   };
+
+  const toggleDefault = (role: Role) => saveDefaults(
+    role.is_default
+      ? defaults.filter(r => r.id !== role.id).map(r => r.id)
+      : [...defaults.map(r => r.id), role.id]);
 
   const handleCreate = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -133,8 +147,8 @@ export default function ProjectRoles() {
   return (
     <div>
       <PageHeader
-        title="Role Definitions"
-        description="Custom roles for this project — assigned to users to control access"
+        title="Roles"
+        description="Names with a rank. They are emitted into the access token qualified by this project, so two tenants' admin are never the same string."
         actions={projectId ? [
           <button key="new" className="iam-btn iam-btn-primary iam-btn-sm" onClick={() => setCreateOpen(true)}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -143,54 +157,48 @@ export default function ProjectRoles() {
         ] : []}
       />
       <div className="iam-page" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div className="iam-card iam-card-pad">
-          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Default Role</div>
-          <div style={{ fontSize: 12.5, color: 'var(--fg-muted)', marginBottom: 12 }}>Automatically assigned to new users on registration and social login.</div>
-          {loading ? (
-            <div style={{ height: 36, width: 192, background: 'var(--surface-2)', borderRadius: 6 }} />
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <select className="iam-input" style={{ maxWidth: 256 }}
-                value={defaultRoleId ?? '__none__'} onChange={e => handleDefaultRole(e.target.value)} disabled={savingDefault}>
-                <option value="__none__">No default role</option>
-                {[...roles].sort((a, b) => a.rank - b.rank).map(r => (
-                  <option key={r.id} value={r.id}>{r.name} (rank {r.rank})</option>
-                ))}
-              </select>
-              {defaultRoleError && <p style={{ fontSize: 12, color: 'var(--danger)' }}>{defaultRoleError}</p>}
-            </div>
-          )}
-        </div>
-
         <div className="iam-card">
+          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>Definitions</div>
+            <div style={{ fontSize: 11.5, color: 'var(--fg-muted)', marginTop: 2 }}>
+              Tick <strong>Default</strong> on as many roles as you want — every ticked role is granted to a new account. Untick them all for no default at all.
+            </div>
+          </div>
           <table className="iam-tbl">
             <thead>
               <tr>
-                <th>Name</th><th>Description</th><th>Rank</th><th>Created</th><th style={{ width: 72 }}></th>
+                <th style={{ width: 70 }}>Default</th><th>Name</th><th>Description</th>
+                <th style={{ width: 80 }}>Rank</th><th style={{ width: 90 }}>Holders</th>
+                <th>In the token</th><th style={{ width: 72 }}></th>
               </tr>
             </thead>
             <tbody>
               {(() => {
                 if (loading) return Array.from({ length: 4 }, (_, i) => (
-                  <tr key={i}>{Array.from({ length: 5 }, (_, j) => <td key={j}><div style={{ height: 14, background: 'var(--surface-2)', borderRadius: 4, width: '70%' }} /></td>)}</tr>
+                  <tr key={i}>{Array.from({ length: 7 }, (_, j) => <td key={j}><div style={{ height: 14, background: 'var(--surface-2)', borderRadius: 4, width: '70%' }} /></td>)}</tr>
                 ));
                 if (roles.length === 0) return (
-                  <tr><td colSpan={5}>
+                  <tr><td colSpan={7}>
                     <div className="iam-empty">
                       <div className="iam-empty-title">No roles defined yet</div>
                       <div className="iam-empty-desc">Create roles to control project access.</div>
                     </div>
                   </td></tr>
                 );
-                return [...roles].sort((a, b) => a.rank - b.rank).map(role => (
+                return byRank.map(role => (
                   <tr key={role.id}>
-                    <td style={{ fontWeight: 500 }}>
-                      <span className="iam-mono">{role.name}</span>
-                      {role.id === defaultRoleId && <span style={{ marginLeft: 8 }}><IamChip tone="accent">Default</IamChip></span>}
+                    <td>
+                      <input type="checkbox" className="iam-switch" aria-label={`Grant ${role.name} on sign-up`}
+                        checked={!!role.is_default} disabled={savingDefault}
+                        onChange={() => toggleDefault(role)} />
                     </td>
+                    <td style={{ fontWeight: 500 }}><span className="iam-mono">{role.name}</span></td>
                     <td style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{role.description ?? '—'}</td>
                     <td><span className="iam-mono" style={{ fontSize: 11, background: 'var(--surface-2)', padding: '2px 6px', borderRadius: 4 }}>{role.rank}</span></td>
-                    <td style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{fmtDate(role.created_at)}</td>
+                    <td>{role.holders ?? 0}</td>
+                    {/* Le nom nu ne veut rien dire d'un locataire à l'autre : c'est la forme
+                        qualifiée qu'un serveur de ressources compare (Roles.ProjectRoleClaim). */}
+                    <td><span className="iam-mono" style={{ fontSize: 11, color: 'var(--fg-muted)' }}>{projectId}/{role.name}</span></td>
                     <td style={{ display: 'flex', gap: 2 }}>
                       <button className="iam-btn iam-btn-ghost iam-btn-icon iam-btn-sm" aria-label={`Delete role ${role.name}`} style={{ color: 'var(--danger)' }} onClick={() => setDeleteTarget(role)}>
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
@@ -204,6 +212,20 @@ export default function ProjectRoles() {
               })()}
             </tbody>
           </table>
+          {!loading && roles.length > 0 && (
+            <div style={{ padding: '12px 18px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 12.5, color: 'var(--fg-muted)' }}>Granted on sign-up:</span>
+              {defaults.length === 0
+                ? <span style={{ fontSize: 12.5, color: 'var(--fg-muted)' }}>nothing — a new account starts with no role.</span>
+                : defaults.map(r => <IamChip key={r.id} tone="accent">{r.name}</IamChip>)}
+              {defaults.length > 0 && (
+                <button className="iam-btn iam-btn-ghost iam-btn-sm" disabled={savingDefault} onClick={() => saveDefaults([])}>
+                  Clear all defaults
+                </button>
+              )}
+              {defaultRoleError && <p style={{ fontSize: 12, color: 'var(--danger)', width: '100%', margin: 0 }}>{defaultRoleError}</p>}
+            </div>
+          )}
         </div>
         {roles.length > 0 && (
           <p style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Rank: lower number = higher privilege. Used for project_manager assignment restrictions.</p>

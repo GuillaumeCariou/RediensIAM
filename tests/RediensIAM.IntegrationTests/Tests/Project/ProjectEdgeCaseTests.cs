@@ -609,7 +609,7 @@ public class ProjectCoverageTests(TestFixture fixture)
     {
         var (_, project, _, _, client) = await ScaffoldAsync();
         var role = await fixture.Seed.CreateRoleAsync(project.Id, "Starter");
-        project.DefaultRoleId = role.Id;
+        role.IsDefault = true;
         await fixture.Db.SaveChangesAsync();
 
         var res = await client.PatchAsJsonAsync("/project/info", new
@@ -619,8 +619,75 @@ public class ProjectCoverageTests(TestFixture fixture)
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
         await fixture.RefreshDbAsync();
-        var reloaded = fixture.Db.Projects.Find(project.Id);
-        reloaded!.DefaultRoleId.Should().BeNull();
+        fixture.Db.Roles.Find(role.Id)!.IsDefault.Should().BeFalse();
+    }
+
+    // ── PATCH /project/info — default_role_ids, l'ensemble énoncé entier ──────
+
+    /// <summary>
+    /// Le champ pluriel remplace l'ensemble : les deux rôles nommés sont accordés à l'inscription,
+    /// et celui qui n'y figure plus ne l'est plus. Sans le second test un PATCH additif passerait.
+    /// </summary>
+    [Fact]
+    public async Task UpdateInfo_DefaultRoleIds_FlagsExactlyThoseRoles()
+    {
+        var (_, project, _, _, client) = await ScaffoldAsync();
+        var admin  = await fixture.Seed.CreateRoleAsync(project.Id, "Admin",  rank: 1);
+        var editor = await fixture.Seed.CreateRoleAsync(project.Id, "Editor", rank: 50);
+        var viewer = await fixture.Seed.CreateRoleAsync(project.Id, "Viewer", rank: 100);
+        viewer.IsDefault = true;
+        await fixture.Db.SaveChangesAsync();
+
+        var res = await client.PatchAsJsonAsync("/project/info", new
+        {
+            default_role_ids = new[] { admin.Id, editor.Id }
+        });
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        await fixture.RefreshDbAsync();
+        fixture.Db.Roles.Find(admin.Id)!.IsDefault.Should().BeTrue();
+        fixture.Db.Roles.Find(editor.Id)!.IsDefault.Should().BeTrue();
+        fixture.Db.Roles.Find(viewer.Id)!.IsDefault.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task UpdateInfo_EmptyDefaultRoleIds_LeavesNoDefaultAtAll()
+    {
+        var (_, project, _, _, client) = await ScaffoldAsync();
+        var role = await fixture.Seed.CreateRoleAsync(project.Id, "Starter");
+        role.IsDefault = true;
+        await fixture.Db.SaveChangesAsync();
+
+        var res = await client.PatchAsJsonAsync("/project/info", new
+        {
+            default_role_ids = Array.Empty<Guid>()
+        });
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        await fixture.RefreshDbAsync();
+        fixture.Db.Roles.Find(role.Id)!.IsDefault.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Un identifiant étranger au projet est refusé, pas ignoré : un 200 qui n'accorde rien laisse
+    /// la console afficher une case cochée qu'elle n'a jamais enregistrée.
+    /// </summary>
+    [Fact]
+    public async Task UpdateInfo_DefaultRoleIdsWithAnUnknownRole_Returns400AndChangesNothing()
+    {
+        var (_, project, _, _, client) = await ScaffoldAsync();
+        var role = await fixture.Seed.CreateRoleAsync(project.Id, "Starter");
+
+        var res = await client.PatchAsJsonAsync("/project/info", new
+        {
+            default_role_ids = new[] { role.Id, Guid.NewGuid() }
+        });
+
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("error").GetString().Should().Be("invalid_default_role");
+        await fixture.RefreshDbAsync();
+        fixture.Db.Roles.Find(role.Id)!.IsDefault.Should().BeFalse();
     }
 
     // ── PATCH /project/info — default_role_id invalid (lines 111-114) ────────
@@ -714,8 +781,7 @@ public class ProjectMoreCoverageTests(TestFixture fixture)
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
         await fixture.RefreshDbAsync();
-        var reloaded = fixture.Db.Projects.Find(project.Id);
-        reloaded!.DefaultRoleId.Should().Be(role.Id);
+        fixture.Db.Roles.Find(role.Id)!.IsDefault.Should().BeTrue();
     }
 
     // ── DELETE /project/users/{id}/roles/{roleId} — NotFoundException (line 184) ─

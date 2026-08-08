@@ -26,7 +26,6 @@ public class Project
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 
-    public Guid? DefaultRoleId { get; set; }
     public int MinPasswordLength { get; set; }
     public bool PasswordRequireUppercase { get; set; }
     public bool PasswordRequireLowercase { get; set; }
@@ -47,7 +46,8 @@ public class Project
 
     public Organisation Organisation { get; set; } = null!;
     public UserList? AssignedUserList { get; set; }
-    public Role? DefaultRole { get; set; }
+    // The roles granted on sign-up are the ones flagged Role.IsDefault, not a field here: a project
+    // may have several, or none.
     public ICollection<Role> Roles { get; set; } = [];
     public ICollection<UserProjectRole> UserProjectRoles { get; set; } = [];
 }

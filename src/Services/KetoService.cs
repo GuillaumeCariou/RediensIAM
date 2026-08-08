@@ -374,11 +374,26 @@ public class KetoService(IHttpClientFactory http, AppConfig appConfig, RediensIa
             "user", role.UserId.ToString(), new() { ["role"] = role.Role });
     }
 
+    /// <summary>
+    /// Grants every role the project flags as a default. A project may flag none, in which case a
+    /// new account starts with nothing.
+    /// </summary>
     public async Task AssignDefaultRoleAsync(Project project, User user)
     {
-        if (project.DefaultRoleId == null) return;
-        var role = await db.Roles.FindAsync(project.DefaultRoleId.Value);
-        if (role == null || role.ProjectId != project.Id) return;
+        var roles = await db.Roles
+            .Where(r => r.ProjectId == project.Id && r.IsDefault)
+            .OrderBy(r => r.Rank)
+            .ToListAsync();
+        foreach (var role in roles) await GrantAsync(project, user, role);
+    }
+
+    /// <summary>
+    /// One grant, tuple first and rolled back if the row does not take. Per role rather than per
+    /// batch: a failure on the third of three must not revoke the two already granted, which are
+    /// committed and correct.
+    /// </summary>
+    private async Task GrantAsync(Project project, User user, Role role)
+    {
         var already = await db.UserProjectRoles.AnyAsync(r =>
             r.UserId == user.Id && r.ProjectId == project.Id && r.RoleId == role.Id);
         if (already) return;

@@ -46,21 +46,25 @@ public class KetoServiceCoverageTests(TestFixture fixture)
     // ── AssignDefaultRoleAsync ────────────────────────────────────────────────
 
     /// <summary>
-    /// When a project has a DefaultRoleId, creating a user via POST /project/users
-    /// triggers AssignDefaultRoleAsync (lines 253-272).
+    /// Crée un projet, sa liste, et <paramref name="defaultCount"/> rôles marqués par défaut parmi
+    /// trois, puis inscrit un compte par <c>POST /project/users</c> — le chemin qui appelle
+    /// <c>AssignDefaultRoleAsync</c>. Rend les rôles marqués et ceux réellement accordés.
     /// </summary>
-    [Fact]
-    public async Task CreateProjectUser_ProjectHasDefaultRole_DefaultRoleAutoAssigned()
+    private async Task<(Guid[] Flagged, Guid[] Granted)> SignUpWithDefaultsAsync(int defaultCount)
     {
-        var (org, orgList) = await fixture.Seed.CreateOrgAsync();
-        var project        = await fixture.Seed.CreateProjectAsync(org.Id);
-        var list           = await fixture.Seed.CreateUserListAsync(org.Id);
+        var (org, _) = await fixture.Seed.CreateOrgAsync();
+        var project  = await fixture.Seed.CreateProjectAsync(org.Id);
+        var list     = await fixture.Seed.CreateUserListAsync(org.Id);
         project.AssignedUserListId = list.Id;
         await fixture.Db.SaveChangesAsync();
 
-        // Set a default role on the project
-        var defaultRole    = await fixture.Seed.CreateRoleAsync(project.Id, "DefaultRole", rank: 100);
-        project.DefaultRoleId = defaultRole.Id;
+        var roles = new List<Role>();
+        for (var i = 0; i < 3; i++)
+        {
+            var role = await fixture.Seed.CreateRoleAsync(project.Id, rank: (i + 1) * 10);
+            role.IsDefault = i < defaultCount;
+            roles.Add(role);
+        }
         await fixture.Db.SaveChangesAsync();
 
         var manager = await fixture.Seed.CreateUserAsync(list.Id);
@@ -68,14 +72,52 @@ public class KetoServiceCoverageTests(TestFixture fixture)
         fixture.Keto.AllowAll();
         var client  = fixture.ClientWithToken(token);
 
-        // POST /project/users → AssignDefaultRoleAsync is called
+        var email = SeedData.UniqueEmail();
         var res = await client.PostAsJsonAsync("/project/users", new
         {
-            email    = SeedData.UniqueEmail(),
+            email,
             password = "P@ssw0rd!Test"
         });
-
         res.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var user = await fixture.Db.Users.AsNoTracking()
+            .FirstAsync(u => u.UserListId == list.Id && u.Email == email);
+        var granted = await fixture.Db.UserProjectRoles.AsNoTracking()
+            .Where(r => r.UserId == user.Id && r.ProjectId == project.Id)
+            .Select(r => r.RoleId)
+            .ToArrayAsync();
+
+        return (roles.Where(r => r.IsDefault).Select(r => r.Id).ToArray(), granted);
+    }
+
+    /// <summary>
+    /// Le défaut est un ensemble : un projet qui en marque deux les accorde tous les deux. La
+    /// version à clé étrangère unique n'en accordait qu'un par construction, et rien ne disait au
+    /// locataire lequel des deux avait été perdu.
+    /// </summary>
+    [Fact]
+    public async Task CreateProjectUser_ProjectHasSeveralDefaultRoles_AllAreGranted()
+    {
+        var (flagged, granted) = await SignUpWithDefaultsAsync(2);
+
+        granted.Should().BeEquivalentTo(flagged);
+    }
+
+    [Fact]
+    public async Task CreateProjectUser_ProjectHasOneDefaultRole_ThatOneIsGranted()
+    {
+        var (flagged, granted) = await SignUpWithDefaultsAsync(1);
+
+        granted.Should().BeEquivalentTo(flagged);
+    }
+
+    /// <summary>Aucun coché : le compte démarre sans rôle, et non avec un rôle arbitraire.</summary>
+    [Fact]
+    public async Task CreateProjectUser_ProjectHasNoDefaultRole_NoRoleIsGranted()
+    {
+        var (_, granted) = await SignUpWithDefaultsAsync(0);
+
+        granted.Should().BeEmpty();
     }
 
     // ── GetActorManagementLevelForProjectAsync — OrgAdmin branch ─────────────
