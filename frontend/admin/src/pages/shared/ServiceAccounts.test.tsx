@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from 'vitest/browser';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter, useLocation } from 'react-router';
 import ServiceAccounts from './ServiceAccounts';
 
 /**
@@ -55,9 +55,14 @@ beforeEach(() => {
   api.generatePat.mockResolvedValue({ token: 'rediens_pat_shown_once' });
 });
 
+function Here() {
+  const { pathname, search } = useLocation();
+  return <output data-testid="here">{pathname}{search}</output>;
+}
+
 function show(level: 'deployment' | 'org' | 'project') {
   const user = userEvent.setup();
-  render(<MemoryRouter><ServiceAccounts level={level} /></MemoryRouter>);
+  render(<MemoryRouter><ServiceAccounts level={level} /><Here /></MemoryRouter>);
   return user;
 }
 
@@ -346,5 +351,33 @@ describe('cancelling', () => {
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
     expect(api.createServiceAccount).not.toHaveBeenCalled();
+  });
+});
+
+describe('opening one', () => {
+  /**
+   * `basePath` rend la forme système dès que orgId ET projectId sont renseignés — et ils le sont
+   * toujours, le jeton d'un project_admin portant les deux. Le lien pointait donc sur
+   * `/system/organisations/o1/projects/p1/...`, réservé au super-admin : le garde renvoyait à
+   * l'accueil et cliquer un compte de service depuis un projet ne faisait rien.
+   */
+  it('stays in the project scope instead of jumping to the system shape', async () => {
+    const user = show('project');
+    await screen.findByText('project-bot');
+
+    await user.click(screen.getByText('project-bot'));
+
+    await vi.waitFor(() => expect(screen.getByTestId('here').textContent)
+      .toBe('/project/service-accounts/prj?project_id=p1'));
+  });
+
+  it('opens an organisation account under the organisation', async () => {
+    const user = show('org');
+    await screen.findByText('org-bot');
+
+    await user.click(screen.getByText('org-bot'));
+
+    await vi.waitFor(() => expect(screen.getByTestId('here').textContent)
+      .toBe('/org/service-accounts/org'));
   });
 });

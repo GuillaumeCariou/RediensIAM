@@ -25,7 +25,7 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock('@/api', () => api);
 
-const auth = vi.hoisted(() => ({ orgId: 'o1', projectId: '', isSuperAdmin: false }));
+const auth = vi.hoisted(() => ({ orgId: 'o1', projectId: '', isSuperAdmin: false, isOrgAdmin: true }));
 vi.mock('@/context/AuthContext', () => ({ useAuth: () => auth }));
 
 const SA = {
@@ -49,7 +49,7 @@ let click: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  Object.assign(auth, { orgId: 'o1', projectId: '', isSuperAdmin: false });
+  Object.assign(auth, { orgId: 'o1', projectId: '', isSuperAdmin: false, isOrgAdmin: true });
   api.getServiceAccount.mockResolvedValue(SA);
   api.getSaApiKeys.mockResolvedValue({ client_id: null, has_key: false, kid: null });
   api.listSaRoles.mockResolvedValue(SA.roles);
@@ -63,13 +63,17 @@ beforeEach(() => {
 });
 
 function Here() {
-  return <output data-testid="here">{useLocation().pathname}</output>;
+  const { pathname, search } = useLocation();
+  return <output data-testid="here">{pathname}{search}</output>;
 }
 
 const ROUTES = {
   org: ['/org/service-accounts/s1', '/org/service-accounts/:saId'],
   system: ['/system/service-accounts/s1', '/system/service-accounts/:id'],
   tenant: ['/system/organisations/o9/service-accounts/s1', '/system/organisations/:id/service-accounts/:saId'],
+  project: ['/project/service-accounts/s1?project_id=p9', '/project/service-accounts/:saId'],
+  systemProject: ['/system/organisations/o9/projects/p9/service-accounts/s1',
+                  '/system/organisations/:oid/projects/:pid/service-accounts/:saId'],
 } as const;
 
 function show(route: keyof typeof ROUTES = 'org') {
@@ -318,6 +322,7 @@ describe('assigning a role as an org admin', () => {
 describe('assigning a role as a super admin', () => {
   const openAssign = async () => {
     auth.isSuperAdmin = true;
+    auth.isOrgAdmin = true;
     const user = show('system');
     await screen.findByRole('heading', { name: 'ci-deploy' });
     await user.click(screen.getByRole('button', { name: /Assign Role/ }));
@@ -708,5 +713,70 @@ describe('dismissing a dialog with Escape', () => {
 
     await vi.waitFor(() => expect(screen.queryByText('Delete "ci-deploy"?')).toBeNull());
     expect(api.deleteServiceAccount).not.toHaveBeenCalled();
+  });
+});
+
+describe('going back to the list it came from', () => {
+  /**
+   * Le retour partait de `orgBase`, donc toujours vers les comptes de service de l'ORGANISATION.
+   * Depuis un projet c'était la mauvaise liste, et pour un project_admin `/org/*` est fermé : le
+   * bouton « retour » le renvoyait à l'accueil.
+   */
+  it.each([
+    ['a project manager keeps their project, query and all', 'project', '/project/service-accounts?project_id=p9'],
+    ['a super admin keeps the project they are browsing', 'systemProject', '/system/organisations/o9/projects/p9/service-accounts'],
+    ['an org admin goes back to their organisation', 'org', '/org/service-accounts'],
+    ['a super admin browsing a tenant stays in it', 'tenant', '/system/organisations/o9/service-accounts'],
+    ['the deployment list stays the deployment list', 'system', '/system/service-accounts'],
+  ] as const)('%s', async (_n, route, expected) => {
+    const user = show(route);
+    await screen.findByRole('button', { name: /Back to Service Accounts/ });
+
+    await user.click(screen.getByRole('button', { name: /Back to Service Accounts/ }));
+
+    await arrivedAt(expected);
+  });
+});
+
+describe('assigning a role as a project admin', () => {
+  beforeEach(() => { auth.isOrgAdmin = false; auth.projectId = 'p9'; });
+
+  const openDialog = async () => {
+    const user = show('project');
+    await screen.findByRole('button', { name: /Assign role/i });
+    await user.click(screen.getByRole('button', { name: /Assign role/i }));
+    return user;
+  };
+
+  /**
+   * `listProjects` frappe `/org/projects`, gardé en OrgAdmin : un project_admin recevait 403, le
+   * `catch(console.error)` l'avalait, le sélecteur restait vide et « Assign » ne s'activait jamais.
+   */
+  it('does not ask a list it is not allowed to read', async () => {
+    await openDialog();
+
+    expect(api.listProjects).not.toHaveBeenCalled();
+    expect(api.listOrgs).not.toHaveBeenCalled();
+  });
+
+  it('offers only the role the server would accept from it', async () => {
+    await openDialog();
+
+    expect(screen.queryByRole('option', { name: 'super_admin' })).toBeNull();
+    expect(screen.queryByRole('option', { name: 'org_admin' })).toBeNull();
+    expect(screen.getByRole('option', { name: 'project_admin' })).toBeInTheDocument();
+  });
+
+  it('grants it on their own project, with no picker to fill', async () => {
+    const user = await openDialog();
+
+    await user.selectOptions(screen.getByLabelText('Role'), 'project_admin');
+    expect(screen.queryByLabelText('Project')).toBeNull();
+    expect(screen.getByText(/only grant it here/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Assign' }));
+
+    await vi.waitFor(() => expect(api.assignSaRole).toHaveBeenCalledWith('s1', {
+      role: 'project_admin', org_id: 'o1', project_id: 'p9',
+    }));
   });
 });

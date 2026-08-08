@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router';
+import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router';
 import { ArrowLeft, Plus, Trash2, MoreHorizontal, Copy, Check, KeyRound } from 'lucide-react';
 import {
   getServiceAccount, deleteServiceAccount,
@@ -9,7 +9,8 @@ import {
   listOrgs, listProjects,
 } from '@/api';
 import { ApiError } from '@/auth';
-import { useOrgContext } from '@/hooks/useOrgContext';
+import { useOrgContext, useProjectContext } from '@/hooks/useOrgContext';
+import { scopeFromPath, hrefFor } from '@/scope';
 import { useAuth } from '@/context/AuthContext';
 import { fmtDateShort } from '@/lib/utils';
 import { IamChip, IamDialog, IamMenu } from '@/components/iam';
@@ -110,8 +111,28 @@ export default function ServiceAccountDetail() {
   const saId = saIdParam ?? id ?? '';
   const navigate = useNavigate();
 
-  const { orgId, orgBase } = useOrgContext();
-  const { isSuperAdmin } = useAuth();
+  const { orgId } = useOrgContext();
+  const { projectId: scopeProjectId } = useProjectContext();
+  const { pathname } = useLocation();
+  const [searchParams] = useSearchParams();
+
+  /**
+   * La liste d'où l'on vient, lue dans le chemin plutôt que supposée.
+   *
+   * Le retour partait de `orgBase`, donc toujours vers les comptes de service de l'ORGANISATION —
+   * y compris depuis un projet, et y compris pour un project_admin, à qui `/org/*` est fermé : le
+   * bouton « retour » le renvoyait à l'accueil. `scopeFromPath` répond la portée réelle pour les
+   * cinq formes d'URL qui mènent ici.
+   */
+  const listHref = (() => {
+    const scope = scopeFromPath(pathname);
+    const base = hrefFor(scope, 'service-accounts');
+    const fromQuery = searchParams.get('project_id');
+    return scope.level === 'project' && !scope.projectId && fromQuery
+      ? `${base}?project_id=${fromQuery}`
+      : base;
+  })();
+  const { isSuperAdmin, isOrgAdmin } = useAuth();
 
   const [sa, setSa] = useState<Sa | null>(null);
   const [loading, setLoading] = useState(true);
@@ -147,7 +168,7 @@ export default function ServiceAccountDetail() {
   const handleDelete = async () => {
     if (!saId) return;
     await deleteServiceAccount(saId);
-    navigate(`${orgBase}/service-accounts`);
+    navigate(listHref);
   };
 
   const handleGeneratePat = async (e: React.SyntheticEvent<HTMLFormElement>) => {
@@ -171,12 +192,18 @@ export default function ServiceAccountDetail() {
 
   const openRoleDialog = () => {
     const prefilledOrg = isSuperAdmin ? '' : (orgId ?? '');
-    setRoleForm({ role: '', org_id: prefilledOrg, project_id: '' });
+    // Un project_admin n'a aucun projet à choisir : `ValidateProjectAdminRoleAssignment` exige le
+    // sien et refuse tout autre. Il n'a pas non plus le droit d'en lire la liste — `listProjects`
+    // frappe `/org/projects`, gardé en OrgAdmin, et son 403 était avalé par un `catch(console.error)`.
+    // Le sélecteur restait donc vide, `project_id` aussi, et le bouton « Assign » ne s'activait
+    // jamais : attribuer un rôle depuis un projet était impossible sans un mot d'explication.
+    const prefilledProject = isOrgAdmin ? '' : (scopeProjectId ?? '');
+    setRoleForm({ role: '', org_id: prefilledOrg, project_id: prefilledProject });
     setProjects([]);
     if (isSuperAdmin) {
       setOrgs([]);
       listOrgs().then((r: { id: string; name: string }[]) => setOrgs(r ?? [])).catch(console.error);
-    } else if (prefilledOrg) {
+    } else if (isOrgAdmin && prefilledOrg) {
       listProjects(prefilledOrg).then(r => setProjects(r.projects ?? r ?? [])).catch(console.error);
     }
     setRoleOpen(true);
@@ -184,7 +211,7 @@ export default function ServiceAccountDetail() {
 
   /** No project fetch here on purpose: openRoleDialog already loaded them for a pre-filled org. */
   const handleRoleChange = (role: string) => {
-    setRoleForm(f => ({ ...f, role, project_id: '' }));
+    setRoleForm(f => ({ ...f, role, project_id: isOrgAdmin ? '' : (scopeProjectId ?? '') }));
   };
 
   const handleOrgChange = (org_id: string) => {
@@ -245,7 +272,7 @@ export default function ServiceAccountDetail() {
 
   return (
     <div className="p-6 space-y-4">
-      <button className="iam-btn iam-btn-ghost iam-btn-sm -ml-1" onClick={() => navigate(`${orgBase}/service-accounts`)}>
+      <button className="iam-btn iam-btn-ghost iam-btn-sm -ml-1" onClick={() => navigate(listHref)}>
         <ArrowLeft className="h-4 w-4" />Back to Service Accounts
       </button>
 
@@ -423,7 +450,7 @@ export default function ServiceAccountDetail() {
               <select className="iam-select" id="sa-role" value={roleForm.role} onChange={e => handleRoleChange(e.target.value)} disabled={roleSaving}>
                   <option value="" disabled>Select a role…</option>
 {isSuperAdmin && <option value="super_admin">super_admin</option>}
-                  <option value="org_admin">org_admin</option>
+                  {isOrgAdmin && <option value="org_admin">org_admin</option>}
                   <option value="project_admin">project_admin</option>
 </select>
             </div>
@@ -436,7 +463,7 @@ export default function ServiceAccountDetail() {
 </select>
               </div>
             )}
-            {roleForm.role === 'project_admin' && roleForm.org_id && (
+            {roleForm.role === 'project_admin' && roleForm.org_id && isOrgAdmin && (
               <div className="space-y-2">
                 <label className="iam-label" htmlFor="sa-role-project">Project</label>
                 <select className="iam-select" id="sa-role-project" value={roleForm.project_id} onChange={e => (v => setRoleForm(f => ({ ...f, project_id: v })))(e.target.value)} disabled={roleSaving}>
@@ -444,6 +471,11 @@ export default function ServiceAccountDetail() {
 {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
 </select>
               </div>
+            )}
+            {roleForm.role === 'project_admin' && !isOrgAdmin && (
+              <p style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
+                Granted on this project. A project administrator may only grant it here.
+              </p>
             )}
             
           </form>

@@ -123,8 +123,8 @@ const NO_CHOICES: { id: string; name: string }[] = [];
 
 export default function ServiceAccounts({ level }: Readonly<{ level: Level }>) {
   const navigate = useNavigate();
-  const { orgId } = useOrgContext();
-  const { projectId } = useProjectContext();
+  const { orgBase } = useOrgContext();
+  const { projectId, isSystemCtx: projectSystemCtx, projectBase } = useProjectContext();
   const placement = usePlacement(level);
 
   const [accounts, setAccounts] = useState<ServiceAccount[]>([]);
@@ -154,10 +154,24 @@ export default function ServiceAccounts({ level }: Readonly<{ level: Level }>) {
 
   const targetList = placement.choices.length > 0 ? form.user_list_id : placement.createListId;
 
-  const detailHref = (id: string) =>
-    `${hrefFor(level === 'project'
-      ? { level: 'project', orgId, projectId }
-      : { level, orgId }, 'service-accounts')}/${id}`;
+  /**
+   * Le lien vers la fiche, construit depuis la portée AFFICHÉE et non depuis les ids ambiants.
+   *
+   * `basePath` rend la forme système dès que `orgId` ET `projectId` sont renseignés — et ils le
+   * sont toujours pour un project_admin, dont le jeton porte les deux. Le lien pointait donc sur
+   * `/system/organisations/…`, réservé au super-admin, et le garde renvoyait à l'accueil : cliquer
+   * un compte de service depuis un projet ne faisait rien du tout. `projectBase` vient des
+   * paramètres de route, qui disent la portée réelle.
+   *
+   * Hors contexte système, l'identité du projet vit dans `?project_id=` — c'est ainsi qu'un
+   * org_admin atteint un projet — et la perdre viderait la page d'arrivée.
+   */
+  const detailHref = (id: string) => {
+    if (level === 'deployment') return `${hrefFor({ level: 'deployment' }, 'service-accounts')}/${id}`;
+    if (level === 'org') return `${orgBase}/service-accounts/${id}`;
+    const query = projectSystemCtx || !projectId ? '' : `?project_id=${projectId}`;
+    return `${projectBase}/service-accounts/${id}${query}`;
+  };
 
   const handleCreate = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();

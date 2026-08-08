@@ -155,6 +155,28 @@ describe('the home each role lands on', () => {
   });
 });
 
+describe('a service account detail page', () => {
+  /**
+   * Aucune de ces deux formes n'était montée. Le clic depuis la liste d'un projet tombait donc sur
+   * le `path="*"` et repartait à l'accueil, sans message : rôle, PAT et clé API étaient
+   * inatteignables pour tout compte de service créé au niveau d'un projet.
+   */
+  it('opens under a project a super admin is browsing', async () => {
+    await boot(['super_admin'], '/system/organisations/o1/projects/p1/service-accounts/s1');
+    expect(await screen.findByRole('heading', { name: 'ServiceAccountDetail' })).toBeInTheDocument();
+  });
+
+  it('opens under a project manager\'s own project', async () => {
+    await boot(['project_admin'], '/project/service-accounts/s1');
+    expect(await screen.findByRole('heading', { name: 'ServiceAccountDetail' })).toBeInTheDocument();
+  });
+
+  it('still opens under an organisation', async () => {
+    await boot(['org_admin'], '/org/service-accounts/s1');
+    expect(await screen.findByRole('heading', { name: 'ServiceAccountDetail' })).toBeInTheDocument();
+  });
+});
+
 describe('the role guards', () => {
   it('let a super admin into the system pages', async () => {
     await boot(['super_admin'], '/system/organisations/o1/projects/p1/authentication');

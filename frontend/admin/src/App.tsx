@@ -124,6 +124,10 @@ function AppRoutes() {
           <Route path="system/userlists/:listId" element={<UserListDetail />} />
           <Route path="system/organisations/:id/userlists/:listId" element={<UserListDetail />} />
           <Route path="system/organisations/:id/service-accounts/:saId" element={<ServiceAccountDetail />} />
+          {/* La portée projet n'avait aucune fiche montée : un compte de service créé dans un
+              projet se listait, et le clic tombait sur le `path="*"` plus bas, qui renvoie à
+              l'accueil sans rien dire. Ni rôle, ni PAT, ni clé API n'étaient donc atteignables. */}
+          <Route path="system/organisations/:oid/projects/:pid/service-accounts/:saId" element={<ServiceAccountDetail />} />
         </Route>
 
         <Route element={isOrgAdmin ? <Outlet /> : <Navigate to={home} replace />}>
@@ -134,6 +138,7 @@ function AppRoutes() {
 
         <Route element={isProjectManager ? <Outlet /> : <Navigate to={home} replace />}>
           {routesFor('project', ownShape('project'))}
+          <Route path="project/service-accounts/:saId" element={<ServiceAccountDetail />} />
         </Route>
 
         <Route path="*" element={<Navigate to={home} replace />} />
