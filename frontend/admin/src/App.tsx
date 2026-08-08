@@ -180,6 +180,8 @@ export const PAGES: Record<Level, Record<string, React.ReactElement>> = {
   org: {
     '':                 <OrgDashboardOrDetail />,
     'projects':         <Projects />,
+    // La même page qu'au niveau déploiement : elle lit sa portée du chemin et choisit sa route.
+    'users':            <SystemUsers />,
     'userlists':        <UserLists />,
     'admins':           <OrgAdmins />,
     'service-accounts': <ServiceAccounts level="org" />,

@@ -2,7 +2,7 @@ import { rowActivation } from '../../components/iam/rowActivation';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { IamChip, IamDialog } from '@/components/iam';
-import { listUserLists, createUserList, createSystemUserList, deleteUserList, deleteSystemUserList } from '@/api';
+import { listUserLists, listOrgUserLists, createUserList, createSystemUserList, deleteUserList, deleteSystemUserList } from '@/api';
 import { ApiError } from '@/auth';
 import { useOrgContext } from '@/hooks/useOrgContext';
 import PageHeader from '@/components/layout/PageHeader';
@@ -38,14 +38,26 @@ export default function UserLists() {
   const [deleteTarget, setDeleteTarget] = useState<UserList | null>(null);
   const [deleteError, setDeleteError] = useState('');
 
+  const [loadError, setLoadError] = useState('');
+
+  /**
+   * `listUserLists` frappe `/admin/userlists`, réservé au super admin : un org_admin y recevait 403,
+   * que le `catch(console.error)` avalait, et la page affichait « No user lists yet ». Un refus rendu
+   * en état vide se lit comme une réponse — l'opérateur croyait n'avoir aucune liste.
+   *
+   * `/org/userlists` prend l'organisation dans le JETON, d'où l'absence de paramètre.
+   */
   const load = () => {
     setLoading(true);
-    listUserLists(orgId ?? undefined)
+    setLoadError('');
+    (isSystemCtx || isGlobal ? listUserLists(orgId ?? undefined) : listOrgUserLists())
       .then(r => setLists(r.user_lists ?? r ?? []))
-      .catch(console.error)
+      .catch(e => setLoadError(apiErrorCode(e) ?? 'Could not read the user lists.'))
       .finally(() => setLoading(false));
   };
-  useEffect(load, [orgId]);
+  // `isSystemCtx` décide MAINTENANT de la route lue : hors des dépendances, un changement de
+  // portée sans changement d'organisation aurait laissé la page sur la mauvaise.
+  useEffect(load, [orgId, isSystemCtx, isGlobal]);
 
   const filtered = isGlobal
     ? lists.filter(l =>
@@ -109,6 +121,8 @@ export default function UserLists() {
             </div>
           </div>
         )}
+
+        {loadError && <p style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 10 }}>{loadError}</p>}
 
         <div className="iam-card">
           <table className="iam-tbl">

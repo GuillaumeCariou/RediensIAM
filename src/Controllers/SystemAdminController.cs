@@ -355,30 +355,12 @@ var org = await db.Organisations.FindAsync(id);
 
     // ── Users ─────────────────────────────────────────────────────────────────
 
-    private static readonly string[] StatusFilters   = ["active", "disabled", "locked"];
-    private static readonly string[] MfaFilters      = ["yes", "no"];
-    private static readonly string[] SignedInFilters = ["7d", "30d", "never"];
-
     /// <summary>
-    /// The console's Users page, served whole.
+    /// The console's Users page, served whole, over every list in the deployment.
     ///
-    /// Every filter here is applied to the QUERY, before <c>Skip/Take</c>. Narrowing the fifty rows
-    /// a page already holds would answer "3 disabled accounts" for a deployment that has four
-    /// hundred — a count that is wrong in the one direction nobody checks.
-    ///
-    /// <para><c>q</c> matches what the search box promises: the address, the username, the display
-    /// name, or — when the text parses as one — the account id itself. It used to promise all four
-    /// and match the first two.</para>
-    ///
-    /// <para>An unknown value for <c>status</c>, <c>mfa</c> or <c>signed_in</c> is refused rather
-    /// than ignored: a filter silently dropped returns the unfiltered population under the label of
-    /// a filtered one.</para>
-    ///
-    /// <para>Indexes: the ordering and the address search ride <c>ix_users_email</c>; the list
-    /// filter rides the two <c>(UserListId, …)</c> uniques; the tenant filter rides
-    /// <c>user_lists.OrgId</c>. <c>signed_in</c> and <c>mfa</c> have no index of their own — they
-    /// are low-selectivity predicates evaluated over an already-bounded scan, and an index on a
-    /// boolean would not be chosen anyway.</para>
+    /// <para>The search itself is <see cref="UserSearch"/>, shared with <c>GET /org/users</c>. The
+    /// only thing this scope decides is the tenant: here the caller names it in <c>org_id</c>, or
+    /// names none and gets the whole deployment.</para>
     /// </summary>
     [HttpGet("users")]
 #pragma warning disable S107 // one query parameter per filter the page offers; bundling them into a DTO hides the wire contract
@@ -392,104 +374,8 @@ var org = await db.Organisations.FindAsync(id);
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50)
 #pragma warning restore S107
-    {
-        if (!string.IsNullOrEmpty(q) && q.Length < 3)
-            return BadRequest(new { error = "query_too_short", min_length = 3 });
-        if (Rejected(status, StatusFilters, "status", out var bad)) return bad;
-        if (Rejected(mfa, MfaFilters, "mfa", out bad)) return bad;
-        if (Rejected(signed_in, SignedInFilters, "signed_in", out bad)) return bad;
-
-        // Clamped like every other paged endpoint here: page=0 produced Skip(-50), which Postgres
-        // rejects outright, and an unbounded pageSize serialised the whole table.
-        page     = Math.Max(1, page);
-        pageSize = Math.Clamp(pageSize, 1, 200);
-
-        var now   = DateTimeOffset.UtcNow;
-        var query = db.Users.AsQueryable();
-
-        if (!string.IsNullOrEmpty(q))
-        {
-            var asId = Guid.TryParse(q, out var parsed) ? parsed : (Guid?)null;
-            query = query.Where(u =>
-                u.Email.Contains(q) || u.Username.Contains(q) ||
-                (u.DisplayName != null && u.DisplayName.Contains(q)) ||
-                (asId != null && u.Id == asId));
-        }
-        if (org_id is { } org)        query = query.Where(u => u.UserList.OrgId == org);
-        if (user_list_id is { } list) query = query.Where(u => u.UserListId == list);
-
-        query = status switch
-        {
-            // "Active" is the state an operator means by it: enabled AND not sitting out a lockout.
-            "active"   => query.Where(u => u.Active && (u.LockedUntil == null || u.LockedUntil <= now)),
-            "disabled" => query.Where(u => !u.Active),
-            "locked"   => query.Where(u => u.LockedUntil != null && u.LockedUntil > now),
-            _          => query,
-        };
-        // A second factor is the two flags on the account. Backup codes are deliberately not one:
-        // they exist only alongside TOTP, so counting them would report a factor nobody enrolled.
-        query = mfa switch
-        {
-            "yes" => query.Where(u => u.TotpEnabled || u.WebAuthnEnabled),
-            "no"  => query.Where(u => !u.TotpEnabled && !u.WebAuthnEnabled),
-            _     => query,
-        };
-        query = signed_in switch
-        {
-            "7d"    => query.Where(u => u.LastLoginAt != null && u.LastLoginAt >= now.AddDays(-7)),
-            "30d"   => query.Where(u => u.LastLoginAt != null && u.LastLoginAt >= now.AddDays(-30)),
-            "never" => query.Where(u => u.LastLoginAt == null),
-            _       => query,
-        };
-
-        // The three numbers the page's "Showing" banner names, over the FILTERED set — which is
-        // what makes it read as "3 matches in 3 lists" once something is typed, and as the
-        // deployment's own totals when nothing is. __system__ has no organisation, so it is a list
-        // without a tenant and must not inflate the tenant count.
-        var total   = await query.CountAsync();
-        var lists   = await query.Select(u => u.UserListId).Distinct().CountAsync();
-        var tenants = await query.Where(u => u.UserList.OrgId != null)
-                                 .Select(u => u.UserList.OrgId).Distinct().CountAsync();
-
-        var users = await query
-            // Email alone is unique per LIST, not per deployment: two lists holding the same address
-            // gave the sort no total order, and a row could appear on both page 1 and page 2.
-            .OrderBy(u => u.Email).ThenBy(u => u.Id)
-            .Skip((page - 1) * pageSize).Take(pageSize)
-            // display_name, org_name, user_list_name and locked_until are what the console's user
-            // table renders. Without locked_until its isLocked() was permanently false, so the
-            // Locked badge never appeared and the Unlock action it gates was unreachable.
-            .Select(u => new
-            {
-                u.Id, u.Username, u.Discriminator, u.Email, u.DisplayName, u.Active,
-                u.UserListId, u.LastLoginAt, u.LockedUntil, u.TotpEnabled, u.WebAuthnEnabled,
-                OrgId        = u.UserList.OrgId,
-                OrgName      = u.UserList.Organisation != null ? u.UserList.Organisation.Name : null,
-                UserListName = u.UserList.Name,
-                // Bounded by the page, and read from the grant table rather than from a token: a
-                // project may flag several roles as default, so a single "the default one" would
-                // be a guess. Named per project because the emitted claim is qualified too.
-                Roles = db.UserProjectRoles
-                    .Where(r => r.UserId == u.Id)
-                    .Select(r => new { r.RoleId, r.Role.Name, r.Role.ProjectId, ProjectName = r.Role.Project.Name })
-                    .ToList(),
-            })
-            .ToListAsync();
-
-        return Ok(new { Users = users, Total = total, Lists = lists, Tenants = tenants, Page = page, PageSize = pageSize });
-    }
-
-    /// <summary>A filter value the query cannot mean. Empty passes; anything else must be known.</summary>
-    private bool Rejected(string? value, string[] allowed, string name, out IActionResult refusal)
-    {
-        if (string.IsNullOrEmpty(value) || allowed.Contains(value))
-        {
-            refusal = null!;
-            return false;
-        }
-        refusal = BadRequest(new { error = "invalid_filter", filter = name, allowed });
-        return true;
-    }
+        => await UserSearch.RunAsync(db,
+            new UserSearch.Criteria(q, org_id, user_list_id, status, mfa, signed_in, page, pageSize));
 
     [HttpGet("users/{id}")]
     public async Task<IActionResult> GetUser(Guid id)

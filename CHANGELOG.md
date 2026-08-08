@@ -8,6 +8,39 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.9.5] — 2026-08-08
+
+### Ajouté — `GET /org/users`
+
+Un administrateur d'organisation peut enfin chercher à travers **toutes** les listes de son
+locataire. `OrgController` savait lister les comptes d'**une** liste et lire **un** compte ; rien ne
+cherchait entre les deux, et la page Users n'existait donc pas à cette portée.
+
+La recherche est extraite dans `UserSearch`, classe partagée sur le modèle de `UserListOperations` et
+`ProjectOperations` : les deux contrôleurs y passent, et **la portée est le seul argument qui
+diffère**. Ce qui est écrit deux fois diverge — la création de rôle l'avait déjà montré.
+
+`org_id` n'est **pas lié** sur cette route. Il n'apparaît pas dans la signature, donc rien ne peut
+l'honorer : un administrateur ne peut pas élargir sa recherche à un autre locataire, et il n'a pas
+fallu une ligne de code pour l'en empêcher.
+
+### Corrigé
+
+**La page User Lists interrogeait la mauvaise route en portée organisation.** `listUserLists` frappe
+`/admin/userlists`, réservé au super admin : un `org_admin` y recevait 403, avalé par un
+`catch(console.error)`, et la page affichait **« No user lists yet »**. Un refus rendu en état vide se
+lit comme une réponse — le locataire croyait n'avoir aucune liste. Cinq tests épinglaient cette
+mauvaise route.
+
+**Trois écritures dont l'échec ne se voyait pas.** L'interrupteur d'un webhook et celui des alertes
+de nouvel appareil posaient leur état **avant** l'appel, sans retour arrière : sur un refus, l'écran
+affirmait le contraire de ce que le serveur avait retenu. Une interface qui ment est pire qu'une
+erreur invisible, parce que l'opérateur ne peut pas s'en douter. Les deux reviennent maintenant à
+leur valeur d'avant et disent le refus ; la suppression d'un webhook ne retire la ligne qu'une fois
+la suppression acquise.
+
+---
+
 ## [0.9.4] — 2026-08-08
 
 **La recherche d'utilisateurs cherche enfin.**

@@ -52,6 +52,14 @@ const ROUTES: readonly Route[] = [
     org_id: 'o1', user_list_id: 'l1', status: 'locked', mfa: 'no', signed_in: '30d', page: 2,
   }), '/admin/users?q=ada&org_id=o1&user_list_id=l1&status=locked&mfa=no&signed_in=30d&page=2'],
   ['searchUsers (sans critère)', () => api.searchUsers(''), '/admin/users?'],
+  // Portée organisation : mêmes critères, moins le locataire. Il vient du jeton côté serveur, et
+  // `org_id` n'est pas lié par la route — l'envoyer donnerait une restriction jamais appliquée.
+  ['orgSearchUsers', () => api.orgSearchUsers('ada', {
+    user_list_id: 'l1', status: 'locked', mfa: 'no', signed_in: '30d', page: 2,
+  }), '/org/users?q=ada&user_list_id=l1&status=locked&mfa=no&signed_in=30d&page=2'],
+  ['orgSearchUsers (org_id ignoré)',
+    () => api.orgSearchUsers('ada', { org_id: 'o9' } as Record<string, string>), '/org/users?q=ada'],
+  ['listOrgUserLists', () => api.listOrgUserLists(), '/org/userlists'],
   ['adminGetUser', () => api.adminGetUser('u1'), '/admin/users/u1'],
   ['adminUpdateUser', () => api.adminUpdateUser('u1', { active: false }),
     '/admin/users/u1', { method: 'PATCH', body: json({ active: false }) }],

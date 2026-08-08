@@ -66,6 +66,7 @@ export const DESTINATIONS: Record<Level, Destination[]> = {
   org: [
     { key: '',                 label: 'Overview',         icon: 'dashboard' },
     { key: 'projects',         label: 'Projects',         icon: 'folder' },
+    { key: 'users',            label: 'Users',            icon: 'users' },
     { key: 'userlists',        label: 'User lists',       icon: 'list' },
     { key: 'admins',           label: 'Admins',           icon: 'shield' },
     { key: 'service-accounts', label: 'Service accounts', icon: 'bot' },

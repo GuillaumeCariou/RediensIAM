@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { IamChip, IamDialog } from '@/components/iam';
 import { listWebhooks, createWebhook, getWebhook, updateWebhook, deleteWebhook, testWebhook, rotateWebhookSecret, listWebhookDeliveries } from '@/api';
+import { ApiError } from '@/auth';
 import PageHeader from '@/components/layout/PageHeader';
 import { useOrgContext } from '@/hooks/useOrgContext';
 import { fmtDate } from '@/lib/utils';
@@ -27,6 +28,19 @@ const EVENT_GROUPS: { label: string; events: string[] }[] = [
   { label: 'Session events', events: ['session.revoked'] },
   { label: 'Project events', events: ['project.updated'] },
 ];
+
+/**
+ * Le refus du serveur, dit en clair.
+ *
+ * Ni `PATCH /org/webhooks/{id}` limité à `active`, ni `DELETE`, ne nomment leurs refus : c'est un
+ * 404 nu quand le point de terminaison n'est plus là, un `forbidden` porteur d'un `detail` quand la
+ * délégation a été retirée sous les pieds de l'opérateur. Il n'y a donc pas de table de codes ici —
+ * seulement le repli `detail`, puis `error`, puis la phrase générique.
+ */
+function apiErrorMessage(e: unknown, fallback: string): string {
+  const body = e instanceof ApiError ? (e.body as { error?: string; detail?: string } | null) : null;
+  return body?.detail ?? body?.error ?? fallback;
+}
 
 function Toggle({ checked, onChange }: Readonly<{ checked: boolean; onChange: () => void }>) {
   return (
@@ -95,14 +109,43 @@ export default function OrgWebhooks() {
     } finally { setCreating(false); }
   };
 
-  const handleToggleActive = async (wh: Webhook) => {
-    setWebhooks(ws => ws.map(w => w.id === wh.id ? { ...w, active: !w.active } : w));
-    await updateWebhook(wh.id, { active: !wh.active });
+  /** Le bandeau de ligne, posé puis repris tout seul — le seul endroit où cette page dit un échec. */
+  const flash = (id: string, text: string, ok = false) => {
+    setTestMsg({ id, ok, text });
+    setTimeout(() => setTestMsg(null), 4000);
   };
 
+  /**
+   * L'interrupteur bouge tout de suite, et REVIENT si le serveur refuse.
+   *
+   * L'état optimiste était posé sans `catch` : sur un refus, l'écran affichait « actif » pendant
+   * que le webhook restait inactif. Une interface qui ment est pire qu'une erreur invisible — c'est
+   * la seule des deux dont l'opérateur ne peut pas se douter.
+   */
+  const handleToggleActive = async (wh: Webhook) => {
+    const next = !wh.active;
+    setTestMsg(null);
+    setWebhooks(ws => ws.map(w => w.id === wh.id ? { ...w, active: next } : w));
+    try {
+      await updateWebhook(wh.id, { active: next });
+    } catch (e) {
+      setWebhooks(ws => ws.map(w => w.id === wh.id ? { ...w, active: wh.active } : w));
+      flash(wh.id, apiErrorMessage(e, next
+        ? 'Could not resume this endpoint — it is still paused.'
+        : 'Could not pause this endpoint — it is still delivering.'));
+    }
+  };
+
+  // La ligne ne part qu'une fois la suppression acquise ; il n'y a donc rien à défaire, seulement
+  // un refus à dire.
   const handleDelete = async (id: string) => {
-    await deleteWebhook(id);
-    setWebhooks(ws => ws.filter(w => w.id !== id));
+    setTestMsg(null);
+    try {
+      await deleteWebhook(id);
+      setWebhooks(ws => ws.filter(w => w.id !== id));
+    } catch (e) {
+      flash(id, apiErrorMessage(e, 'Failed to delete this endpoint. Reload the page and try again.'));
+    }
   };
 
   /**
@@ -117,24 +160,21 @@ export default function OrgWebhooks() {
     try {
       const res = await rotateWebhookSecret(id);
       if (!res.secret) {
-        setTestMsg({ id, ok: false, text: 'The server rotated the secret but did not return it. Rotate again.' });
-        setTimeout(() => setTestMsg(null), 4000);
+        flash(id, 'The server rotated the secret but did not return it. Rotate again.');
         return;
       }
       setNewSecret(res.secret);
       setSecretOpen(true);
     } catch {
-      setTestMsg({ id, ok: false, text: 'Failed to rotate the signing secret.' });
-      setTimeout(() => setTestMsg(null), 4000);
+      flash(id, 'Failed to rotate the signing secret.');
     }
   };
 
   const handleTest = async (id: string) => {
     setTestMsg(null);
     const res = await testWebhook(id);
-    if (res.error) setTestMsg({ id, ok: false, text: `Test failed: ${res.error}` });
-    else setTestMsg({ id, ok: true, text: 'Test payload sent.' });
-    setTimeout(() => setTestMsg(null), 4000);
+    if (res.error) flash(id, `Test failed: ${res.error}`);
+    else flash(id, 'Test payload sent.', true);
   };
 
   /**

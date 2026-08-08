@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import { IamChip, IamAvatar } from '@/components/iam';
 import { rowActivation } from '@/components/iam/rowActivation';
 import {
-  searchUsers, adminGetUser, adminUpdateUser, unlockUser,
-  getUserSessions, revokeAllUserSessions, listOrgs, listUserLists,
+  searchUsers, orgSearchUsers, adminGetUser, adminUpdateUser, orgGetUser, orgUpdateUser,
+  unlockUser, getUserSessions, revokeAllUserSessions, listOrgs, listUserLists, listOrgUserLists,
 } from '@/api';
 import type { UserSearchFilters } from '@/api';
+import { hrefFor, scopeFromPath } from '@/scope';
 import { ApiError } from '@/auth';
 import PageHeader from '@/components/layout/PageHeader';
 import { fmtDate } from '@/lib/utils';
@@ -101,7 +102,7 @@ function SecondFactor({ user }: Readonly<{ user: User }>) {
 }
 
 /**
- * Les comptes du déploiement, une page à la fois.
+ * Les comptes, une page à la fois — du déploiement entier ou d'un seul locataire.
  *
  * Tous les critères partent au serveur : la recherche, le locataire, la liste, le statut, le
  * second facteur, la dernière connexion. Aucun n'est appliqué aux lignes déjà reçues — le bandeau
@@ -111,9 +112,20 @@ function SecondFactor({ user }: Readonly<{ user: User }>) {
  * Les résultats restent groupés par liste parce que la liste EST l'adresse d'un compte : il n'y a
  * pas de compte « du déploiement », seulement des comptes d'une liste, qui appartient à une
  * organisation.
+ *
+ * La portée vient du CHEMIN, comme partout ailleurs dans la console, et décide de deux choses :
+ * quelle route est appelée (`ProjectRoles` fait le même choix), et si le filtre Tenant existe. En
+ * portée organisation il n'a pas lieu d'être — le locataire est celui du jeton, le serveur ne lit
+ * même pas `org_id` — donc il est masqué plutôt qu'envoyé.
  */
 export default function SystemUsers() {
   const navigate = useNavigate();
+  const scope = scopeFromPath(useLocation().pathname);
+  // `/org/users` est la seule forme dont le locataire vient du jeton ; `/system/organisations/:id`
+  // est un super-admin entré dans un locataire, et garde la route système épinglée sur lui.
+  const isSystemCtx    = scope.level !== 'org' || !!scope.orgId;
+  const pinnedOrg      = scope.level === 'org' ? scope.orgId : undefined;
+  const deploymentWide = scope.level === 'deployment';
 
   const [criteria, setCriteria] = useState<Criteria>(ALL);
   const [draft, setDraft] = useState('');
@@ -148,7 +160,10 @@ export default function SystemUsers() {
   /** Ne pose aucun état de façon synchrone, donc un effet peut l'appeler directement. */
   const fetchResults = useCallback(() => {
     const { q, ...filters } = criteria;
-    searchUsers(q, filters)
+    const search = isSystemCtx
+      ? searchUsers(q, pinnedOrg ? { ...filters, org_id: pinnedOrg } : filters)
+      : orgSearchUsers(q, filters);
+    search
       .then((r: Results | User[]) => {
         const rows = Array.isArray(r) ? r : (r.users ?? []);
         setResults(Array.isArray(r) ? { ...NOTHING, users: rows, total: rows.length } : r);
@@ -157,22 +172,32 @@ export default function SystemUsers() {
       .catch(e => {
         // Pas de repli sur les derniers résultats : ils répondaient à d'autres critères.
         setResults(NOTHING);
-        setError(apiErrorMessage(e, 'Could not search the deployment’s accounts.'));
+        setError(apiErrorMessage(e, deploymentWide
+          ? 'Could not search the deployment’s accounts.'
+          : 'Could not search this organisation’s accounts.'));
       })
       .finally(() => setLoading(false));
-  }, [criteria]);
+  }, [criteria, isSystemCtx, pinnedOrg, deploymentWide]);
 
   useEffect(fetchResults, [fetchResults]);
 
+  // Les locataires ne sont demandés que là où on peut en choisir un ; `/admin/organizations` et
+  // `/admin/userlists` sont réservés au super-admin, et les demander depuis la portée organisation
+  // n'aurait produit qu'un 403 affiché sous un filtre qui n'existe pas.
   const fetchOptions = useCallback(() => {
-    Promise.all([listOrgs(), listUserLists()])
+    Promise.all([
+      deploymentWide ? listOrgs() : Promise.resolve([]),
+      isSystemCtx ? listUserLists(pinnedOrg) : listOrgUserLists(),
+    ])
       .then(([o, l]) => {
         setOrgs(o.organisations ?? o ?? []);
         setLists(l.user_lists ?? l ?? []);
         setOptionsError('');
       })
-      .catch(e => setOptionsError(apiErrorMessage(e, 'Could not read the tenants and lists to filter by.')));
-  }, []);
+      .catch(e => setOptionsError(apiErrorMessage(e, deploymentWide
+        ? 'Could not read the tenants and lists to filter by.'
+        : 'Could not read the lists to filter by.')));
+  }, [deploymentWide, isSystemCtx, pinnedOrg]);
 
   useEffect(fetchOptions, [fetchOptions]);
 
@@ -186,10 +211,16 @@ export default function SystemUsers() {
 
   const reset = () => { setDraft(''); setLoading(true); setCriteria(ALL); };
 
+  /**
+   * La liste d'accueil du compte, que seules les routes d'organisation nomment. `null` choisit la
+   * route système — voir `unlockUser` dans `api.ts`, qui porte les deux formes.
+   */
+  const listOf = (u: User) => (isSystemCtx ? null : u.user_list_id);
+
   const openEdit = async (u: User) => {
     setEditTarget(u); setEditError(''); setEditLoading(true);
     try {
-      const data = await adminGetUser(u.id);
+      const data = await (isSystemCtx ? adminGetUser : orgGetUser)(u.id);
       setEditForm({
         email: data.email ?? '', username: data.username ?? '',
         display_name: data.display_name ?? '', phone: data.phone ?? '',
@@ -208,7 +239,7 @@ export default function SystemUsers() {
     if (!editTarget) return;
     setEditSaving(true); setEditError('');
     try {
-      await adminUpdateUser(editTarget.id, {
+      await (isSystemCtx ? adminUpdateUser : orgUpdateUser)(editTarget.id, {
         email: editForm.email, username: editForm.username,
         display_name: editForm.display_name, phone: editForm.phone,
         active: editForm.active, email_verified: editForm.email_verified,
@@ -222,7 +253,7 @@ export default function SystemUsers() {
 
   const handleUnlock = async (u: User) => {
     try {
-      await unlockUser(null, u.id);
+      await unlockUser(listOf(u), u.id);
       patchRow(u.id, { locked_until: null });
       flash('Account unlocked.');
     } catch (e) { flash(apiErrorMessage(e, 'Failed to unlock account.'), true); }
@@ -231,7 +262,7 @@ export default function SystemUsers() {
   const openSessions = async (u: User) => {
     setSessionsUser(u); setSessions([]); setSessionsLoading(true);
     try {
-      const res = await getUserSessions(null, u.id);
+      const res = await getUserSessions(listOf(u), u.id);
       setSessions(res.sessions ?? res ?? []);
     } catch { setSessions([]); }
     finally { setSessionsLoading(false); }
@@ -241,7 +272,7 @@ export default function SystemUsers() {
     if (!sessionsUser) return;
     setRevokeAllLoading(true);
     try {
-      await revokeAllUserSessions(null, sessionsUser.id);
+      await revokeAllUserSessions(listOf(sessionsUser), sessionsUser.id);
       setSessions([]);
       flash('All sessions revoked.');
     } catch (e) { flash(apiErrorMessage(e, 'Failed to revoke sessions.'), true); }
@@ -270,10 +301,12 @@ export default function SystemUsers() {
     <div>
       <PageHeader
         title="Users"
-        description="Search every account in the deployment. Results stay grouped by the list an account belongs to."
+        description={deploymentWide
+          ? 'Search every account in the deployment. Results stay grouped by the list an account belongs to.'
+          : 'Search every account in this organisation. Results stay grouped by the list an account belongs to.'}
         actions={[
           <button key="lists" className="iam-btn iam-btn-secondary iam-btn-sm"
-            onClick={() => navigate('/system/userlists')}>Browse user lists →</button>,
+            onClick={() => navigate(hrefFor(scope, 'userlists'))}>Browse user lists →</button>,
         ]}
       />
       <div className="iam-page">
@@ -291,11 +324,15 @@ export default function SystemUsers() {
         {/* Ce que la page montre, compté par le serveur sur l'ensemble filtré. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, padding: '9px 14px', border: '1px solid var(--border)', borderRadius: 'var(--iam-radius-sm)', background: 'var(--surface-2)', fontSize: 12.5, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--fg-subtle)' }}>Showing</span>
-          <IamChip tone="danger">Deployment</IamChip>
+          {deploymentWide
+            ? <IamChip tone="danger">Deployment</IamChip>
+            : <IamChip tone="accent">Organisation</IamChip>}
           <span>
             {results.total} {results.total === 1 ? 'account' : 'accounts'}
             {' · '}{results.lists} {results.lists === 1 ? 'list' : 'lists'}
-            {' · '}{results.tenants} {results.tenants === 1 ? 'tenant' : 'tenants'}
+            {/* Le locataire n'est un compteur que là où il peut y en avoir plusieurs : confinée à
+                une organisation, la réponse vaut 1 et ne dit rien. */}
+            {deploymentWide && <>{' · '}{results.tenants} {results.tenants === 1 ? 'tenant' : 'tenants'}</>}
           </span>
           <div style={{ flex: 1 }} />
           {filtered && (
@@ -325,14 +362,18 @@ export default function SystemUsers() {
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 10 }}>
-              <div>
-                <label className="iam-label" htmlFor="u-t">Tenant</label>
-                <select id="u-t" className="iam-input" value={criteria.org_id ?? ''}
-                  onChange={e => apply({ org_id: e.target.value || undefined, user_list_id: undefined })}>
-                  <option value="">All {orgs.length} tenants</option>
-                  {orgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-                </select>
-              </div>
+              {/* Absent hors du déploiement : le locataire y est implicite, et l'envoyer serait
+                  une restriction que la route d'organisation ne lit même pas. */}
+              {deploymentWide && (
+                <div>
+                  <label className="iam-label" htmlFor="u-t">Tenant</label>
+                  <select id="u-t" className="iam-input" value={criteria.org_id ?? ''}
+                    onChange={e => apply({ org_id: e.target.value || undefined, user_list_id: undefined })}>
+                    <option value="">All {orgs.length} tenants</option>
+                    {orgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="iam-label" htmlFor="u-l">User list</label>
                 <select id="u-l" className="iam-input" value={criteria.user_list_id ?? ''}
@@ -421,9 +462,14 @@ export default function SystemUsers() {
               <div className="iam-empty" style={{ padding: '26px 20px' }}>
                 <div className="iam-empty-title">No users found</div>
                 <div className="iam-empty-desc">
-                  {filtered
-                    ? 'Every list in the deployment was searched under these criteria.'
-                    : 'This deployment holds no accounts yet.'}
+                  {(() => {
+                    if (filtered) return deploymentWide
+                      ? 'Every list in the deployment was searched under these criteria.'
+                      : 'Every list in this organisation was searched under these criteria.';
+                    return deploymentWide
+                      ? 'This deployment holds no accounts yet.'
+                      : 'This organisation holds no accounts yet.';
+                  })()}
                 </div>
               </div>
             </div>

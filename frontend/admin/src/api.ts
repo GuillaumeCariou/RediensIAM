@@ -48,6 +48,18 @@ export async function searchUsers(q: string, filters: UserSearchFilters = {}) {
   for (const [k, v] of Object.entries(filters)) if (v) p.set(k, String(v));
   return (await apiFetch(`/admin/users?${p}`)).json();
 }
+/**
+ * La même recherche, en portée organisation. Le locataire vient du JETON côté serveur, jamais
+ * d'ici : `org_id` est absent de la signature parce que la route ne le lit pas — un `org_id`
+ * envoyé serait une restriction que le serveur n'applique pas, donc une page qui montre autre
+ * chose que ce qu'elle annonce. C'est la faute que `createUserList` a faite dans l'autre sens.
+ */
+export async function orgSearchUsers(q: string, filters: Omit<UserSearchFilters, 'org_id'> = {}) {
+  const p = new URLSearchParams();
+  if (q) p.set('q', q);
+  for (const [k, v] of Object.entries(filters)) if (v && k !== 'org_id') p.set(k, String(v));
+  return (await apiFetch(`/org/users?${p}`)).json();
+}
 export async function adminGetUser(id: string) {
   return (await apiFetch(`/admin/users/${id}`)).json();
 }
@@ -71,6 +83,12 @@ export async function orgUpdateUser(id: string, body: {
 export async function listUserLists(orgId?: string) {
   const q = orgId ? `?org_id=${orgId}` : '';
   return (await apiFetch(`/admin/userlists${q}`)).json();
+}
+// La même liste, lisible par un administrateur d'organisation. `/admin/userlists` est réservé au
+// super-admin : demandée depuis la portée organisation, elle répondait 403, et le seul symptôme
+// était un filtre par liste vide.
+export async function listOrgUserLists() {
+  return (await apiFetch('/org/userlists')).json();
 }
 // Deux routes, comme pour la lecture (`getUserList` / `getSystemUserList`) : la création n'avait
 // que la variante OrgAdmin. `/org/userlists` prend l'organisation dans le JETON de l'appelant et

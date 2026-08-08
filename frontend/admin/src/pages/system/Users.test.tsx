@@ -19,9 +19,11 @@ import { fmtDate } from '@/lib/utils';
  */
 
 const api = vi.hoisted(() => ({
-  searchUsers: vi.fn(), adminGetUser: vi.fn(), adminUpdateUser: vi.fn(),
+  searchUsers: vi.fn(), orgSearchUsers: vi.fn(),
+  adminGetUser: vi.fn(), adminUpdateUser: vi.fn(),
+  orgGetUser: vi.fn(), orgUpdateUser: vi.fn(),
   unlockUser: vi.fn(), getUserSessions: vi.fn(), revokeAllUserSessions: vi.fn(),
-  listOrgs: vi.fn(), listUserLists: vi.fn(),
+  listOrgs: vi.fn(), listUserLists: vi.fn(), listOrgUserLists: vi.fn(),
 }));
 vi.mock('@/api', () => api);
 
@@ -47,27 +49,32 @@ const results = (users: unknown[], over: Record<string, unknown> = {}) => ({
   tenants: 1, page: 1, page_size: 50, ...over,
 });
 
+const LISTS = { user_lists: [
+  { id: 'l1', name: 'Staff', org_id: 'o1' },
+  { id: 'l2', name: 'Shoppers', org_id: 'o2' },
+] };
+
 beforeEach(() => {
   vi.clearAllMocks();
   api.searchUsers.mockResolvedValue(results([ADA]));
+  api.orgSearchUsers.mockResolvedValue(results([ADA]));
   api.adminGetUser.mockResolvedValue({ ...ADA, phone: '+33600000000', email_verified: true });
+  api.orgGetUser.mockResolvedValue({ ...ADA, phone: '+33600000000', email_verified: true });
   api.getUserSessions.mockResolvedValue({ sessions: [{ client_id: 'portal', client_name: 'Portal' }] });
   api.listOrgs.mockResolvedValue([{ id: 'o1', name: 'Acme' }, { id: 'o2', name: 'Northwind' }]);
-  api.listUserLists.mockResolvedValue({ user_lists: [
-    { id: 'l1', name: 'Staff', org_id: 'o1' },
-    { id: 'l2', name: 'Shoppers', org_id: 'o2' },
-  ] });
+  api.listUserLists.mockResolvedValue(LISTS);
+  api.listOrgUserLists.mockResolvedValue(LISTS);
 });
 
-function show() {
+function show(path = '/system/users') {
   const user = userEvent.setup();
-  render(<MemoryRouter><SystemUsers /></MemoryRouter>);
+  render(<MemoryRouter initialEntries={[path]}><SystemUsers /></MemoryRouter>);
   return user;
 }
 
 /** Rend la page et attend la première réponse. */
-async function loaded() {
-  const user = show();
+async function loaded(path?: string) {
+  const user = show(path);
   await screen.findByText('Ada Lovelace');
   return user;
 }
@@ -528,5 +535,111 @@ describe('a user’s sessions', () => {
     await user.click(screen.getByRole('button', { name: 'Revoke all sessions' }));
 
     expect(await screen.findByText('Failed to revoke sessions.')).toBeInTheDocument();
+  });
+});
+
+// ── La portée ───────────────────────────────────────────────────────────────
+
+/**
+ * La même page sert trois URL, et le CHEMIN décide de la route appelée. C'est la seule chose qui
+ * change entre les portées, et c'est le contrôle : `/org/users` confine la recherche au locataire
+ * du jeton, `/admin/users` ne confine rien. Appeler la route système depuis la portée organisation
+ * répondrait 403, et le seul symptôme serait une page titrée et vide.
+ *
+ * Le filtre Tenant suit la même règle : dans une organisation il n'a pas lieu d'être — masqué,
+ * plutôt qu'envoyé à une route qui ne le lit pas.
+ */
+describe('the scope the page is opened in', () => {
+  it('searches the deployment through the system route', async () => {
+    await loaded('/system/users');
+
+    expect(api.searchUsers).toHaveBeenCalledWith('', { page: 1 });
+    expect(api.orgSearchUsers).not.toHaveBeenCalled();
+  });
+
+  it('searches a tenant through the organisation route, which reads the tenant from the token', async () => {
+    await loaded('/org/users');
+
+    expect(api.orgSearchUsers).toHaveBeenCalledWith('', { page: 1 });
+    expect(api.searchUsers).not.toHaveBeenCalled();
+  });
+
+  it('keeps the system route, pinned to the tenant, when a super-admin browses into one', async () => {
+    await loaded('/system/organisations/o2/users');
+
+    expect(api.searchUsers).toHaveBeenCalledWith('', { page: 1, org_id: 'o2' });
+    expect(api.orgSearchUsers).not.toHaveBeenCalled();
+  });
+
+  it('offers the Tenant filter where there is more than one tenant to choose from', async () => {
+    await loaded('/system/users');
+
+    expect(screen.getByLabelText('Tenant')).toBeInTheDocument();
+  });
+
+  it.each(['/org/users', '/system/organisations/o2/users'])(
+    'hides the Tenant filter on %s — the tenant is implicit there', async path => {
+      await loaded(path);
+
+      expect(screen.queryByLabelText('Tenant')).not.toBeInTheDocument();
+      expect(screen.getByLabelText('User list')).toBeInTheDocument();
+    });
+
+  it('reads the lists to filter by through the organisation route too', async () => {
+    await loaded('/org/users');
+
+    expect(api.listOrgUserLists).toHaveBeenCalled();
+    expect(api.listUserLists).not.toHaveBeenCalled();
+    expect(api.listOrgs).not.toHaveBeenCalled();
+  });
+
+  it('sends the other filters unchanged from the organisation scope', async () => {
+    const user = await loaded('/org/users');
+
+    await user.selectOptions(screen.getByLabelText('Status'), 'locked');
+
+    await vi.waitFor(() => expect(api.orgSearchUsers.mock.calls.at(-1))
+      .toEqual(['', { page: 1, status: 'locked' }]));
+  });
+
+  it('says nothing matched when the organisation is empty', async () => {
+    api.orgSearchUsers.mockResolvedValue(results([]));
+    show('/org/users');
+
+    expect(await screen.findByText('No users found')).toBeInTheDocument();
+    expect(await screen.findByText(/This organisation holds no accounts yet/)).toBeInTheDocument();
+  });
+
+  it('shows the refusal rather than the last results, in the organisation scope as well', async () => {
+    api.orgSearchUsers.mockRejectedValue(new Error('500'));
+    show('/org/users');
+
+    expect(await screen.findByText('Could not search this organisation’s accounts.')).toBeInTheDocument();
+    expect(screen.queryByText('Ada Lovelace')).not.toBeInTheDocument();
+  });
+
+  it('opens and saves an account through the organisation routes', async () => {
+    const user = await loaded('/org/users');
+
+    await user.click(screen.getByText('Ada Lovelace'));
+    await screen.findByLabelText('Phone');
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    expect(api.orgGetUser).toHaveBeenCalledWith('u1');
+    await vi.waitFor(() => expect(api.orgUpdateUser).toHaveBeenCalledWith('u1', expect.anything()));
+    expect(api.adminGetUser).not.toHaveBeenCalled();
+    expect(api.adminUpdateUser).not.toHaveBeenCalled();
+  });
+
+  it('names the account’s own list on the actions the organisation routes hang off a list', async () => {
+    api.orgSearchUsers.mockResolvedValue(results([{ ...ADA, locked_until: future() }]));
+    const user = await loaded('/org/users');
+    await openMenu(user);
+
+    await user.click(screen.getByRole('button', { name: 'Unlock account' }));
+
+    // `l1`, pas `null` : `/org/userlists/{list}/users/{uid}/unlock` nomme la liste, la route
+    // système prend le compte seul.
+    await vi.waitFor(() => expect(api.unlockUser).toHaveBeenCalledWith('l1', 'u1'));
   });
 });

@@ -7,6 +7,7 @@ import {
   createServiceAccount, deleteServiceAccount, generatePat, getProjectInfo,
   listPats, listServiceAccounts, listUserLists, revokePat,
 } from '@/api';
+import { ApiError } from '@/auth';
 import { useOrgContext, useProjectContext } from '@/hooks/useOrgContext';
 import { hrefFor, type Level } from '@/scope';
 import { fmtDate } from '@/lib/utils';
@@ -121,6 +122,29 @@ function usePlacement(level: Level): Placement {
 /** One array, so a level that offers no choice does not hand the page a new one each render. */
 const NO_CHOICES: { id: string; name: string }[] = [];
 
+/**
+ * Ce que `POST /service-accounts` refuse, dit en clair.
+ *
+ * Les trois écritures de cette page — créer, révoquer un jeton, supprimer — partaient en rejet non
+ * attrapé : la boîte restait ouverte, inchangée, et le refus n'existait que dans la console du
+ * navigateur. La création est la seule des trois qui nomme ses refus ; suppression et révocation
+ * répondent 404 nu, d'où la table vide et le repli sur `detail` puis `error`.
+ *
+ * `forbidden` n'est délibérément pas traduit : c'est le code générique du filtre de niveau, et son
+ * `detail` (`role_no_longer_granted`) en dit plus que ne le ferait une phrase fixe.
+ */
+const CREATE_ERRORS: Record<string, string> = {
+  user_list_not_found:                     'That user list no longer exists. Reload the page and try again.',
+  list_not_in_your_org:                    'That list belongs to another organisation.',
+  no_project_context:                      'Your session carries no project, so there is nowhere to put this account. Sign in again from the project.',
+  can_only_create_sa_in_your_project_list: 'A project admin can only create accounts on the list assigned to their own project.',
+};
+
+function apiErrorMessage(e: unknown, table: Record<string, string>, fallback: string): string {
+  const body = e instanceof ApiError ? (e.body as { error?: string; detail?: string } | null) : null;
+  return (body?.error && table[body.error]) ?? body?.detail ?? body?.error ?? fallback;
+}
+
 export default function ServiceAccounts({ level }: Readonly<{ level: Level }>) {
   const navigate = useNavigate();
   const { orgBase } = useOrgContext();
@@ -139,6 +163,9 @@ export default function ServiceAccounts({ level }: Readonly<{ level: Level }>) {
   const [patForm, setPatForm] = useState({ name: '', expires_at: '' });
   const [issued, setIssued] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [patError, setPatError] = useState('');
+  const [deleteError, setDeleteError] = useState('');
 
   const { belongs, ready } = placement;
   const load = useCallback(() => {
@@ -177,6 +204,7 @@ export default function ServiceAccounts({ level }: Readonly<{ level: Level }>) {
     e.preventDefault();
     if (!targetList) return;
     setSaving(true);
+    setCreateError('');
     try {
       await createServiceAccount({
         name: form.name,
@@ -186,11 +214,14 @@ export default function ServiceAccounts({ level }: Readonly<{ level: Level }>) {
       setCreateOpen(false);
       setForm({ name: '', description: '', user_list_id: '' });
       load();
+    } catch (e) {
+      setCreateError(apiErrorMessage(e, CREATE_ERRORS, 'Failed to create the service account.'));
     } finally { setSaving(false); }
   };
 
   const openPats = async (sa: ServiceAccount) => {
     setPatsFor(sa);
+    setPatError('');
     const res = await listPats(sa.id);
     setPats(res.pats ?? res ?? []);
   };
@@ -213,17 +244,29 @@ export default function ServiceAccounts({ level }: Readonly<{ level: Level }>) {
     setCopied(true);
   };
 
+  // La ligne du jeton ne part qu'une fois la révocation acquise : la retirer d'abord afficherait un
+  // jeton révoqué qui accepte toujours des requêtes.
   const handleRevoke = async (patId: string) => {
     if (!patsFor) return;
-    await revokePat(patsFor.id, patId);
-    setPats(p => p.filter(x => x.id !== patId));
+    setPatError('');
+    try {
+      await revokePat(patsFor.id, patId);
+      setPats(p => p.filter(x => x.id !== patId));
+    } catch (e) {
+      setPatError(apiErrorMessage(e, {}, 'Failed to revoke this token. It is still valid.'));
+    }
   };
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
-    await deleteServiceAccount(deleteTarget.id);
-    setDeleteTarget(null);
-    load();
+    setDeleteError('');
+    try {
+      await deleteServiceAccount(deleteTarget.id);
+      setDeleteTarget(null);
+      load();
+    } catch (e) {
+      setDeleteError(apiErrorMessage(e, {}, 'Failed to delete this service account. Reload the page and try again.'));
+    }
   };
 
   // Creation needs somewhere to put the account. At project level with no list assigned, and at
@@ -277,7 +320,7 @@ export default function ServiceAccounts({ level }: Readonly<{ level: Level }>) {
                   <td onClick={e => e.stopPropagation()}>
                     <button className="iam-btn iam-btn-ghost iam-btn-sm" onClick={() => openPats(sa)}>Tokens</button>
                     <button className="iam-btn iam-btn-ghost iam-btn-sm" style={{ color: 'var(--danger)' }}
-                      onClick={() => setDeleteTarget(sa)}>Delete</button>
+                      onClick={() => { setDeleteError(''); setDeleteTarget(sa); }}>Delete</button>
                   </td>
                 </tr>
               ))}
@@ -320,6 +363,7 @@ export default function ServiceAccounts({ level }: Readonly<{ level: Level }>) {
               </select>
             </div>
           )}
+          {createError && <p style={{ fontSize: 12, color: 'var(--danger)' }}>{createError}</p>}
         </form>
       </IamDialog>
 
@@ -335,6 +379,7 @@ export default function ServiceAccounts({ level }: Readonly<{ level: Level }>) {
           </>
         }
       >
+        {patError && <p style={{ fontSize: 12, color: 'var(--danger)' }}>{patError}</p>}
         {pats.length === 0
           ? <div className="iam-empty-desc">No tokens.</div>
           : (
@@ -410,7 +455,9 @@ export default function ServiceAccounts({ level }: Readonly<{ level: Level }>) {
           </>
         }
       >
-        <div />
+        {deleteError
+          ? <p style={{ fontSize: 12, color: 'var(--danger)' }}>{deleteError}</p>
+          : <div />}
       </IamDialog>
     </div>
   );

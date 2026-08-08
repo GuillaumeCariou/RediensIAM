@@ -1,10 +1,23 @@
 import { useEffect, useState } from 'react';
 import { User, Shield, Key, Copy, Check, RefreshCw, Eye, EyeOff, MonitorSmartphone, LogOut, Fingerprint, Trash2 } from 'lucide-react';
 import { getMe, updateMe, changePassword, getMfaStatus, setupTotp, confirmTotp, regenerateBackupCodes, getSessions, revokeSession, revokeAllSessions, setupPhone, verifyPhone, removePhone, beginWebAuthnRegistration, completeWebAuthnRegistration, listWebAuthnCredentials, deleteWebAuthnCredential, getSocialAccounts, unlinkSocialAccount } from '@/api';
+import { ApiError } from '@/auth';
 import PageHeader from '@/components/layout/PageHeader';
 import { useReauth } from '@/components/ReauthDialog';
 import { fmtDate } from '@/lib/utils';
 import { IamChip, IamDialog } from '@/components/iam';
+
+/**
+ * Le refus du serveur, dit en clair.
+ *
+ * `PATCH /account/me` ne nomme aucun refus : c'est un 404 nu quand le compte n'existe plus, un
+ * `internal_error` porteur d'un `detail` sinon. Il n'y a donc pas de table de codes à écrire —
+ * seulement le repli `detail`, puis `error`, puis la phrase générique.
+ */
+function apiErrorMessage(e: unknown, fallback: string): string {
+  const body = e instanceof ApiError ? (e.body as { error?: string; detail?: string } | null) : null;
+  return body?.detail ?? body?.error ?? fallback;
+}
 
 interface Me {
   id: string; username: string; discriminator: string; email: string;
@@ -29,21 +42,40 @@ function ProfileTab({ me, onUpdated }: Readonly<{ me: Me; onUpdated: () => void 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [newDeviceAlerts, setNewDeviceAlerts] = useState(me.new_device_alerts_enabled);
+  const [error, setError] = useState('');
 
   const handleSave = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSaving(true);
+    setError('');
     try {
       await updateMe({ display_name: displayName || undefined });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
       onUpdated();
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Failed to save your display name.'));
     } finally { setSaving(false); }
   };
 
+  /**
+   * L'interrupteur bouge tout de suite, et REVIENT si le serveur refuse.
+   *
+   * Il n'y a pas de bouton « Enregistrer » ici : le clic EST l'enregistrement, et sans retour en
+   * arrière un refus laissait l'écran affirmer que les alertes étaient coupées alors qu'elles
+   * continuaient de partir — ou l'inverse, ce qui est pire : croire être averti et ne pas l'être.
+   */
   const handleToggleNewDeviceAlerts = async (value: boolean) => {
+    setError('');
     setNewDeviceAlerts(value);
-    await updateMe({ new_device_alerts_enabled: value });
+    try {
+      await updateMe({ new_device_alerts_enabled: value });
+    } catch (err) {
+      setNewDeviceAlerts(!value);
+      setError(apiErrorMessage(err, value
+        ? 'Could not turn new-device alerts on — they are still off.'
+        : 'Could not turn new-device alerts off — they are still on.'));
+    }
   };
 
   let saveLabel;
@@ -112,6 +144,9 @@ function ProfileTab({ me, onUpdated }: Readonly<{ me: Me; onUpdated: () => void 
               {saveLabel}
             </button>
           </form>
+          {/* Un seul bandeau pour les deux écritures de cette carte : le nom affiché et
+              l'interrupteur d'alertes. Aucune des deux ne disait son refus. */}
+          {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex items-center justify-between pt-4 border-t">
             <div>
               <p className="font-medium text-sm">New device login alerts</p>

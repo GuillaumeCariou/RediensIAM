@@ -385,6 +385,36 @@ public class OrgController(
         return await UserHelpers.ApplyAdminUpdateAsync(db, hydra, audit, passwords, ActorId, user, body);
     }
 
+    /// <summary>
+    /// La page Users du locataire : la même recherche que <c>GET /admin/users</c>, confinée à
+    /// l'organisation de l'appelant.
+    ///
+    /// <para>
+    /// Elle passe par <see cref="UserSearch"/>, comme la surface système. La portée est la seule
+    /// différence, et c'est le contrôle : le locataire vient du JETON. <c>org_id</c> n'est pas lié
+    /// ici, donc rien ne peut l'honorer — un administrateur d'organisation qui pourrait en nommer
+    /// une autre lirait des comptes qui ne sont pas les siens. Même faute que <c>createUserList</c>
+    /// dans l'autre sens.
+    /// </para>
+    ///
+    /// <para>
+    /// <c>tenants</c> reste dans l'enveloppe et reste calculé : confiné à un locataire il vaut 0 ou
+    /// 1, ce qui est vrai des deux côtés, et une valeur en dur serait une seconde chose à tenir en
+    /// accord avec la première.
+    /// </para>
+    /// </summary>
+    [HttpGet("users")]
+    public async Task<IActionResult> SearchOrgUsers(
+        [FromQuery] string? q,
+        [FromQuery] Guid? user_list_id,
+        [FromQuery] string? status,
+        [FromQuery] string? mfa,
+        [FromQuery] string? signed_in,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50)
+        => await UserSearch.RunAsync(db,
+            new UserSearch.Criteria(q, OrgId, user_list_id, status, mfa, signed_in, page, pageSize));
+
     [HttpGet("users/{uid}")]
     public async Task<IActionResult> GetOrgUser(Guid uid)
     {

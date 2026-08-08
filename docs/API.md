@@ -284,7 +284,7 @@ project's assigned list. Creating or scoping a grant to a foreign `org_id` is re
 
 ---
 
-## `/org` — OrgController · 41 routes
+## `/org` — OrgController · 42 routes
 
 **OrgAdmin · admin-only.** Scoped to the caller's own organisation throughout.
 
@@ -326,6 +326,7 @@ project's assigned list. Creating or scoping a grant to a foreign `org_id` is re
 | POST | `/org/userlists/{id}/users/{uid}/unlock` | `UnlockUser` |
 | GET | `/org/userlists/{id}/users/{uid}/sessions` | `ListUserSessions` |
 | DELETE | `/org/userlists/{id}/users/{uid}/sessions` | `RevokeUserSessions` |
+| GET | `/org/users` | `SearchOrgUsers` — la recherche de `/admin/users`, partagée par `UserSearch`, confinée à l'organisation du JETON. `org_id` n'est pas lié par cette route : un administrateur d'organisation qui pourrait en nommer une autre lirait des comptes qui ne sont pas les siens. `tenants` reste dans l'enveloppe et vaut 0 ou 1 par construction |
 | GET | `/org/users/{uid}` | `GetOrgUser` |
 | PATCH | `/org/users/{uid}` | `UpdateOrgUser` |
 
@@ -440,7 +441,7 @@ stack trace.
 ## `/admin/instance` · `/api/manage/instance` — InstanceController · 2 routes
 
 **SuperAdmin.** Les réglages du déploiement lui-même. Cette section manquait au document, et le
-tableau des comptes plus bas ne comptait pas ce contrôleur — d'où un total de 190 pour 194 routes.
+tableau des comptes plus bas ne comptait pas ce contrôleur — d'où un total de 190 pour 195 routes.
 
 | Method | Path | Action |
 |---|---|---|
@@ -585,18 +586,18 @@ Known gap; plan both lists up front.
 | `IntrospectionController` | `/api` | 2 | service account | yes |
 | `ProjectController` | `/project` | 15 | ProjectAdmin | **no** |
 | `ServiceAccountController` | `/service-accounts` | 13 | ProjectAdmin + per-object | **no** |
-| `OrgController` | `/org` | 41 | OrgAdmin | **no** |
+| `OrgController` | `/org` | 42 | OrgAdmin | **no** |
 | `OrgWebhookController` | `/org/webhooks` | 8 | OrgAdmin | **no** |
 | `AdminWebhookController` | `/admin/webhooks` + `/api/manage/webhooks` | 3 | SuperAdmin | via `/api/manage` only |
 | `SystemHealthController` | `/admin/system` + `/api/manage/system` | 1 | SuperAdmin | via `/api/manage` only |
 | `SystemAdminController` | `/admin` + `/api/manage` | 60 | SuperAdmin | via `/api/manage` only |
 | `InstanceController` | `/admin/instance` + `/api/manage/instance` | 2 | SuperAdmin | via `/api/manage` only |
 | `ImpersonationController` | `/admin/impersonate` + `/api/manage/impersonate` | 3 | SuperAdmin + service account | via `/api/manage` only |
-| | | **194** | | |
+| | | **195** | | |
 
 Plus the five non-controller endpoints listed above (`/health`, `/health/ready`, `/console/config`,
 `/metrics`, `/swagger`) and the two SPA fallbacks, which are not controller actions and are not
-counted in the 194.
+counted in the 195.
 
 The per-controller numbers are the count of `[HttpGet|HttpPost|HttpPut|HttpPatch|HttpDelete]`
 attributes in `src/Controllers/*.cs`. The two aliased prefixes are **one** action each and are

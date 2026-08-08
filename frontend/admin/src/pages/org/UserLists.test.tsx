@@ -16,6 +16,7 @@ import UserLists from './UserLists';
 const api = vi.hoisted(() => ({
   listUserLists: vi.fn(), createUserList: vi.fn(), createSystemUserList: vi.fn(),
   deleteUserList: vi.fn(), deleteSystemUserList: vi.fn(),
+  listOrgUserLists: vi.fn(),
 }));
 vi.mock('@/api', () => api);
 
@@ -31,6 +32,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   auth.orgId = 'o1';
   api.listUserLists.mockResolvedValue({ user_lists: LISTS });
+  api.listOrgUserLists.mockResolvedValue({ user_lists: LISTS });
 });
 
 function Here() {
@@ -62,7 +64,9 @@ describe('an organisation\'s own lists', () => {
     show();
 
     expect(await screen.findByText('Staff')).toBeInTheDocument();
-    expect(api.listUserLists).toHaveBeenCalledWith('o1');
+    // `/org/userlists`, pas `/admin/userlists` : cette dernière est réservée au super admin et
+    // rendait 403 à un org_admin, avalé en état vide.
+    expect(api.listOrgUserLists).toHaveBeenCalled();
     expect(screen.getByText('40')).toBeInTheDocument();
   });
 
@@ -117,7 +121,7 @@ describe('an organisation\'s own lists', () => {
     await vi.waitFor(() => expect(api.createUserList)
       .toHaveBeenCalledWith({ name: 'Contractors' }));
     expect(api.createSystemUserList).not.toHaveBeenCalled();
-    expect(api.listUserLists).toHaveBeenCalledTimes(2);
+    expect(api.listOrgUserLists).toHaveBeenCalledTimes(2);
   });
 
   it('requires a name', async () => {
@@ -140,7 +144,7 @@ describe('an organisation\'s own lists', () => {
   });
 
   it('says the organisation has none yet', async () => {
-    api.listUserLists.mockResolvedValue({ user_lists: [] });
+    api.listOrgUserLists.mockResolvedValue({ user_lists: [] });
     show();
 
     expect(await screen.findByText('No user lists yet')).toBeInTheDocument();
@@ -201,7 +205,7 @@ describe('every list on the platform', () => {
 
 describe('loading and failure', () => {
   it('shows placeholder rows', () => {
-    api.listUserLists.mockReturnValue(new Promise(() => {}));
+    api.listOrgUserLists.mockReturnValue(new Promise(() => {}));
     show();
 
     expect(document.querySelectorAll('tbody tr')).toHaveLength(4);
@@ -215,12 +219,12 @@ describe('loading and failure', () => {
   });
 
   it('survives a listing that fails', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    api.listUserLists.mockRejectedValue(new Error('500'));
+    // Un échec de lecture n'est plus rendu en « aucune liste » : l'état vide est une réponse, le
+    // refus en est une autre, et les confondre a fait croire à des locataires qu'ils n'avaient rien.
+    api.listOrgUserLists.mockRejectedValue(new Error('500'));
     show();
 
-    expect(await screen.findByText('No user lists yet')).toBeInTheDocument();
-    vi.restoreAllMocks();
+    expect(await screen.findByText('Could not read the user lists.')).toBeInTheDocument();
   });
 });
 
@@ -251,7 +255,7 @@ describe('deleting a list', () => {
     await user.click(await screen.findByRole('button', { name: 'Delete' }));
 
     await vi.waitFor(() => expect(api.deleteUserList).toHaveBeenCalledWith('l1'));
-    expect(api.listUserLists).toHaveBeenCalledTimes(2);
+    expect(api.listOrgUserLists).toHaveBeenCalledTimes(2);
   });
 
   // La liste immuable porte l'administration du déploiement : la route la refuse, et la ligne
@@ -273,5 +277,36 @@ describe('deleting a list', () => {
     await user.click(await screen.findByRole('button', { name: 'Delete' }));
 
     expect(await screen.findByText(/still assigned to a project/)).toBeInTheDocument();
+  });
+});
+
+describe('reading the lists at the right scope', () => {
+  /**
+   * `listUserLists` frappe `/admin/userlists`, réservé au super admin. Un org_admin y recevait 403,
+   * que le `catch(console.error)` avalait, et la page affichait « No user lists yet » : un refus
+   * rendu en état vide se lit comme une réponse.
+   */
+  it('asks the organisation route in organisation scope', async () => {
+    show();
+
+    await screen.findByText('Staff');
+    expect(api.listOrgUserLists).toHaveBeenCalled();
+    expect(api.listUserLists).not.toHaveBeenCalled();
+  });
+
+  it('asks the deployment route from the system console', async () => {
+    showGlobal();
+
+    await screen.findByText('Staff');
+    expect(api.listUserLists).toHaveBeenCalledWith('');
+    expect(api.listOrgUserLists).not.toHaveBeenCalled();
+  });
+
+  it('says a refusal instead of showing an empty list', async () => {
+    const { ApiError } = await import('@/auth');
+    api.listOrgUserLists.mockRejectedValue(new ApiError(403, { error: 'forbidden' }));
+    show();
+
+    expect(await screen.findByText('forbidden')).toBeInTheDocument();
   });
 });
