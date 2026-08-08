@@ -40,7 +40,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   api.listUserListMembers.mockResolvedValue({ users: MEMBERS });
   api.listSystemUserListMembers.mockResolvedValue({ users: MEMBERS });
-  api.listProjectUsers.mockResolvedValue({ users: [{ id: 'u1', roles: [{ id: 'r1', name: 'admin' }] }] });
+  // `role_id`, comme la recherche partagée le sert désormais aux trois portées : c'est la clé
+  // de la ligne d'attribution, pas celle de la définition du rôle.
+  api.listProjectUsers.mockResolvedValue({ users: [{ id: 'u1', roles: [{ role_id: 'r1', name: 'admin' }] }] });
   api.listRoles.mockResolvedValue({ roles: [{ id: 'r1', name: 'admin' }, { id: 'r2', name: 'viewer' }] });
   api.adminGetUser.mockResolvedValue({ ...ADA, phone: '+33600000000', email_verified: true });
   api.orgGetUser.mockResolvedValue({ ...ADA, phone: '+33600000000', email_verified: true });

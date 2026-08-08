@@ -148,28 +148,34 @@ public class ProjectController(
 
     // ── Users ─────────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Les membres du projet, cherchables et filtrables comme aux deux autres portées.
+    ///
+    /// <para>
+    /// Même <see cref="UserSearch"/> que <c>/admin/users</c> et <c>/org/users</c> : la liste
+    /// assignée au projet borne la population, et <c>ProjectId</c> restreint les rôles projetés à
+    /// ceux de ce projet. Le filtre <c>role_id</c> n'existe qu'ici, parce qu'un rôle n'a de sens
+    /// que dans son projet.
+    /// </para>
+    /// </summary>
     [HttpGet("users")]
-    public async Task<IActionResult> ListUsers()
+    public async Task<IActionResult> ListUsers(
+        [FromQuery] string? q, [FromQuery] Guid? role_id, [FromQuery] string? status,
+        [FromQuery] string? mfa, [FromQuery] string? signed_in,
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
     {
         var project = await GetProjectAsync();
         if (project == null) return NotFound();
 
-        // Third instance of the same shape as the two stats handlers: no user list assigned means
-        // no users, which is a fact about a project that exists. The console fetches this beside
-        // the role list in one Promise.all, so a 404 here took the roles down with it and left the
-        // whole members panel empty on every freshly created project.
-        if (project.AssignedUserListId == null) return Ok(Array.Empty<object>());
+        // Pas de liste assignée : aucun membre, ce qui est un fait sur un projet qui existe. La
+        // console lit ceci à côté des rôles dans un même Promise.all, et un 404 emportait les rôles
+        // avec lui — le panneau restait vide sur tout projet fraîchement créé.
+        if (project.AssignedUserListId == null)
+            return Ok(new { users = Array.Empty<object>(), total = 0, lists = 0, tenants = 0, page = 1, page_size = pageSize });
 
-        var users = await db.Users
-            .Where(u => u.UserListId == project.AssignedUserListId)
-            .Select(u => new
-            {
-                u.Id, u.Username, u.Discriminator, u.Email, u.DisplayName, u.Active, u.LastLoginAt,
-                roles = db.UserProjectRoles
-                    .Where(r => r.UserId == u.Id && r.ProjectId == ProjectId)
-                    .Select(r => new { Id = r.RoleId, r.Role.Name }).ToList()
-            }).ToListAsync();
-        return Ok(users);
+        return await UserSearch.RunAsync(db, new UserSearch.Criteria(
+            q, null, project.AssignedUserListId, status, mfa, signed_in, page, pageSize,
+            ProjectId: project.Id, RoleId: role_id));
     }
 
     /// <summary>

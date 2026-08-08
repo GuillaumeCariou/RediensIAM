@@ -124,7 +124,10 @@ public class ProjectBranchCoverageTests(TestFixture fixture)
         var res = await client.GetAsync("/project/users");
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
-        (await res.Content.ReadFromJsonAsync<JsonElement>()).GetArrayLength().Should().Be(0);
+        // Enveloppe depuis que les trois portées partagent UserSearch : la liste vide reste une
+        // liste vide, mais elle voyage avec ses compteurs.
+        (await res.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("users").GetArrayLength().Should().Be(0);
     }
 
     // ── GET /project/users/{id} — no user list (line 149) ────────────────────

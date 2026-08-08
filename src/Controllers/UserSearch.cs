@@ -53,9 +53,15 @@ public static class UserSearch
     /// part ailleurs : c'est ce qui empêche un administrateur d'organisation d'en lire une autre.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// <c>ProjectId</c> est ce qui distingue la portée projet des deux autres, et il fait deux
+    /// choses : il restreint les rôles projetés à ceux de CE projet — le panneau des membres en
+    /// affiche des puces qu'on retire, ceux des autres projets n'y ont rien à faire — et il donne
+    /// son sens à <c>RoleId</c>, qui ne filtre que là où « rôle » désigne quelque chose.
+    /// </summary>
     public readonly record struct Criteria(
         string? Q, Guid? OrgId, Guid? UserListId, string? Status, string? Mfa, string? SignedIn,
-        int Page, int PageSize);
+        int Page, int PageSize, Guid? ProjectId = null, Guid? RoleId = null);
 
     /// <summary>
     /// <c>q</c> matches what the search box promises: the address, the username, the display name,
@@ -93,6 +99,12 @@ public static class UserSearch
         }
         if (c.OrgId is { } org)       query = query.Where(u => u.UserList.OrgId == org);
         if (c.UserListId is { } list) query = query.Where(u => u.UserListId == list);
+        // Un rôle n'a de sens que dans son projet : filtrer dessus sans le projet reviendrait à
+        // demander « qui est admin » sans dire admin de quoi, et deux locataires peuvent avoir le
+        // même nom de rôle.
+        if (c.RoleId is { } role && c.ProjectId is { } proj)
+            query = query.Where(u => db.UserProjectRoles.Any(r =>
+                r.UserId == u.Id && r.ProjectId == proj && r.RoleId == role));
 
         query = c.Status switch
         {
@@ -150,7 +162,7 @@ public static class UserSearch
                 // project may flag several roles as default, so a single "the default one" would
                 // be a guess. Named per project because the emitted claim is qualified too.
                 Roles = db.UserProjectRoles
-                    .Where(r => r.UserId == u.Id)
+                    .Where(r => r.UserId == u.Id && (c.ProjectId == null || r.ProjectId == c.ProjectId))
                     .Select(r => new { r.RoleId, r.Role.Name, r.Role.ProjectId, ProjectName = r.Role.Project.Name })
                     .ToList(),
             })

@@ -8,6 +8,28 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.9.7] — 2026-08-08
+
+### Cassant — `GET /project/users` renvoie une enveloppe, et nomme la clé `role_id`
+
+La troisième et dernière portée rejoint `UserSearch` : `/admin/users`, `/org/users` et
+`/project/users` sont désormais **la même recherche**, appelée avec des bornes différentes. La route
+projet gagne du même coup `q`, `status`, `mfa`, `signed_in` et la pagination, qu'elle n'avait pas.
+
+Deux choses distinguent cette portée, et elles sont portées par `Criteria` :
+
+- **`ProjectId` restreint les rôles projetés à ceux de ce projet.** Le panneau des membres en fait
+  des puces qu'on retire ; celles d'un autre projet y seraient à la fois fausses et irretirables.
+- **`RoleId` filtre par rôle, et n'existe qu'ici.** Un rôle n'a de sens que dans son projet : filtrer
+  dessus sans le projet reviendrait à demander « qui est admin » sans dire admin de quoi, et deux
+  locataires peuvent nommer un rôle pareil.
+
+La clé d'un rôle tenu s'appelle `role_id` partout. La liste la nommait `id` et le détail
+`role_id` — le fichier de la page portait un commentaire disant « deux formes, une page ». Il n'y en
+a plus qu'une.
+
+---
+
 ## [0.9.6] — 2026-08-08
 
 ### Corrigé — suspendre et supprimer une organisation

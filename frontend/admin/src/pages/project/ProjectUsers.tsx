@@ -23,12 +23,14 @@ interface Project {
   default_role_id: string | null;
 }
 interface Role { id: string; name: string; }
+/** Un rôle tenu par un membre. `role_id`, pas `id` : c'est la clé de la ligne d'attribution. */
+interface HeldRole { role_id: string; name: string; }
 interface Member {
   id: string; username: string; discriminator: string; email: string;
   display_name: string | null; active: boolean; last_login_at: string | null;
-  roles?: Role[];
+  roles?: HeldRole[];
 }
-/** `/project/users/{id}` nomme la clé `role_id`, la liste la nomme `id`. Deux formes, une page. */
+/** La liste et le détail nomment tous deux la clé `role_id` depuis que la recherche est partagée. */
 interface MemberDetail {
   id: string; username: string; discriminator: string; email: string; active: boolean;
   roles: { role_id: string; name: string; rank: number }[];
@@ -205,7 +207,7 @@ function ProjectMembersPanel({ projectId }: Readonly<{ projectId: string }>) {
                   <td>{m.active ? <IamChip tone="accent">Active</IamChip> : <IamChip tone="danger">Inactive</IamChip>}</td>
                   <td>
                     <div className="flex flex-wrap gap-1">
-                      {(m.roles ?? []).map(r => <IamChip tone="default" key={r.id}>{r.name}</IamChip>)}
+                      {(m.roles ?? []).map(r => <IamChip tone="default" key={r.role_id}>{r.name}</IamChip>)}
                       {(m.roles ?? []).length === 0 && <span className="text-xs text-muted-foreground">—</span>}
                     </div>
                   </td>

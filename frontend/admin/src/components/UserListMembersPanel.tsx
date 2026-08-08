@@ -48,6 +48,8 @@ interface Member {
 }
 
 interface Role { id: string; name: string; }
+/** Un rôle TENU : la recherche partagée le nomme `role_id`, comme la ligne d'attribution. */
+interface HeldRole { role_id: string; name: string; }
 
 interface Props {
   listId: string;
@@ -78,7 +80,7 @@ export default function UserListMembersPanel({
   const [loading, setLoading] = useState(true);
   const [actionMsg, setActionMsg] = useState<{ text: string; error?: boolean } | null>(null);
 
-  const [memberRoles, setMemberRoles] = useState<Map<string, Role[]>>(new Map());
+  const [memberRoles, setMemberRoles] = useState<Map<string, HeldRole[]>>(new Map());
   const [availableRoles, setAvailableRoles] = useState<Role[]>([]);
   const [selectedRole, setSelectedRole] = useState('');
   const [roleSaving, setRoleSaving] = useState(false);
@@ -118,8 +120,8 @@ export default function UserListMembersPanel({
   const loadRoles = useCallback(async () => {
     if (!projectId) return;
     const [usersRes, rolesRes] = await Promise.all([listProjectUsers(projectId), listRoles(projectId)]);
-    const projectUsers: { id: string; roles: Role[] }[] = usersRes.users ?? usersRes ?? [];
-    const map = new Map<string, Role[]>();
+    const projectUsers: { id: string; roles: HeldRole[] }[] = usersRes.users ?? usersRes ?? [];
+    const map = new Map<string, HeldRole[]>();
     for (const u of projectUsers) map.set(u.id, u.roles ?? []);
     setMemberRoles(map);
     setAvailableRoles(rolesRes.roles ?? rolesRes ?? []);
@@ -212,7 +214,7 @@ export default function UserListMembersPanel({
     catch (e) { flash(assignRoleMessage(e), true); return; }
     setMemberRoles(prev => {
       const next = new Map(prev);
-      next.set(userId, (next.get(userId) ?? []).filter(r => r.id !== roleId));
+      next.set(userId, (next.get(userId) ?? []).filter(r => r.role_id !== roleId));
       return next;
     });
   };
@@ -246,7 +248,7 @@ export default function UserListMembersPanel({
   };
 
   const userRoles = (userId: string) => memberRoles.get(userId) ?? [];
-  const unassignedRoles = (userId: string) => availableRoles.filter(r => !userRoles(userId).some(ur => ur.id === r.id));
+  const unassignedRoles = (userId: string) => availableRoles.filter(r => !userRoles(userId).some(ur => ur.role_id === r.id));
 
   return (
     <>
@@ -291,7 +293,7 @@ export default function UserListMembersPanel({
                       {projectId && (
                         <td>
                           <div className="flex flex-wrap gap-1">
-                            {userRoles(m.id).map(r => <IamChip tone="default" key={r.id}>{r.name}</IamChip>)}
+                            {userRoles(m.id).map(r => <IamChip tone="default" key={r.role_id}>{r.name}</IamChip>)}
                           </div>
                         </td>
                       )}
@@ -351,10 +353,10 @@ export default function UserListMembersPanel({
             <p className="iam-label">Project Roles</p>
             <div className="flex flex-wrap gap-1 min-h-6">
               {userRoles(editTarget.id).map(r => (
-                <IamChip className="gap-1 pr-1" tone="default" key={r.id}>
+                <IamChip className="gap-1 pr-1" tone="default" key={r.role_id}>
                   {r.name}
-                  {r.id === defaultRoleId && <span className="text-[10px] opacity-60 ml-0.5">default</span>}
-                  <button type="button" onClick={() => handleRemoveRole(editTarget.id, r.id)} className="ml-0.5 rounded-full hover:bg-[var(--surface-2)] p-0.5">
+                  {r.role_id === defaultRoleId && <span className="text-[10px] opacity-60 ml-0.5">default</span>}
+                  <button type="button" onClick={() => handleRemoveRole(editTarget.id, r.role_id)} className="ml-0.5 rounded-full hover:bg-[var(--surface-2)] p-0.5">
                     <Trash2 className="h-2.5 w-2.5" />
                   </button>
                 </IamChip>

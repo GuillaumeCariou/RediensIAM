@@ -30,8 +30,11 @@ public class ProjectUserTests(TestFixture fixture)
         var res = await client.GetAsync("/project/users");
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
+        // Enveloppe, comme aux deux autres portées : la recherche est partagée, donc la réponse
+        // aussi — sans quoi la console aurait trois formes à lire pour une même page.
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
-        body.ValueKind.Should().Be(JsonValueKind.Array);
+        body.GetProperty("users").ValueKind.Should().Be(JsonValueKind.Array);
+        body.TryGetProperty("total", out _).Should().BeTrue();
     }
 
     [Fact]
@@ -177,6 +180,58 @@ public class ProjectUserTests(TestFixture fixture)
 
         res.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
-        body.GetArrayLength().Should().Be(0);
+        body.GetProperty("users").GetArrayLength().Should().Be(0);
+    }
+
+    /// <summary>
+    /// Le filtre par rôle n'existe qu'à cette portée : un rôle n'a de sens que dans son projet, et
+    /// deux locataires peuvent en nommer un pareil.
+    /// </summary>
+    [Fact]
+    public async Task ListUsers_FilteredByRole_ReturnsOnlyItsHolders()
+    {
+        var (org, project, list, _, client) = await ScaffoldAsync();
+        var holder = await fixture.Seed.CreateUserAsync(list.Id);
+        await fixture.Seed.CreateUserAsync(list.Id);
+        var role = await fixture.Seed.CreateRoleAsync(project.Id, "porteur");
+        fixture.Db.UserProjectRoles.Add(new UserProjectRole
+        {
+            UserId = holder.Id, ProjectId = project.Id, RoleId = role.Id,
+            GrantedBy = holder.Id, GrantedAt = DateTimeOffset.UtcNow,
+        });
+        await fixture.Db.SaveChangesAsync();
+
+        var res  = await client.GetAsync($"/project/users?project_id={project.Id}&role_id={role.Id}");
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+
+        res.StatusCode.Should().Be(HttpStatusCode.OK);
+        body.GetProperty("total").GetInt32().Should().Be(1);
+        body.GetProperty("users")[0].GetProperty("id").GetString().Should().Be(holder.Id.ToString());
+    }
+
+    /// <summary>
+    /// Les rôles projetés sont ceux de CE projet. Le panneau des membres en fait des puces qu'on
+    /// retire ; celles d'un autre projet y seraient à la fois fausses et irretirables.
+    /// </summary>
+    [Fact]
+    public async Task ListUsers_DoesNotShowRolesOfAnotherProject()
+    {
+        var (org, project, list, _, client) = await ScaffoldAsync();
+        var other  = await fixture.Seed.CreateProjectAsync(org.Id);
+        var member = await fixture.Seed.CreateUserAsync(list.Id);
+        var ailleurs = await fixture.Seed.CreateRoleAsync(other.Id, "ailleurs");
+        fixture.Db.UserProjectRoles.Add(new UserProjectRole
+        {
+            UserId = member.Id, ProjectId = other.Id, RoleId = ailleurs.Id,
+            GrantedBy = member.Id, GrantedAt = DateTimeOffset.UtcNow,
+        });
+        await fixture.Db.SaveChangesAsync();
+
+        var res  = await client.GetAsync($"/project/users?project_id={project.Id}");
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+
+        var mine = body.GetProperty("users").EnumerateArray()
+            .First(u => u.GetProperty("id").GetString() == member.Id.ToString());
+        mine.GetProperty("roles").GetArrayLength().Should().Be(0);
     }
 }
