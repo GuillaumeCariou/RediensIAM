@@ -1368,3 +1368,21 @@ describe('the minimum password length', () => {
     expect(body()['min_password_length']).toBe(0);
   });
 });
+
+describe('the login preview frame', () => {
+  /**
+   * `allow-scripts` et `allow-same-origin` ensemble sur un cadre de MÊME ORIGINE annulent le bac à
+   * sable : le document encadré garde l'accès au parent et peut retirer l'attribut lui-même. Or ce
+   * cadre rend de la configuration que le locataire contrôle — thème, logo, CSS — donc c'est le
+   * seul contrôle qui l'y contient.
+   */
+  it('does not hand back the same origin it is meant to be sandboxed from', async () => {
+    show();
+    await loaded();
+
+    const sandbox = document.querySelector('iframe')!.getAttribute('sandbox') ?? '';
+
+    expect(sandbox).toContain('allow-scripts');
+    expect(sandbox).not.toContain('allow-same-origin');
+  });
+});

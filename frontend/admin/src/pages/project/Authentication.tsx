@@ -1085,7 +1085,20 @@ export default function Authentication() {
               </button>
             </div>
             <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-              <iframe key={previewUrl} src={previewUrl} sandbox="allow-scripts allow-same-origin" style={{ width: '100%', height: 620, border: 'none', pointerEvents: 'none', display: 'block' }} title="Login page preview" />
+              {/*
+                * `allow-scripts` sans `allow-same-origin`, et l'ordre des deux mots compte.
+                *
+                * Les porter ensemble sur un cadre de MÊME ORIGINE ne sandboxe rien : le document
+                * encadré garde l'accès au parent et peut retirer l'attribut lui-même. Or ce cadre
+                * rend de la configuration que le LOCATAIRE contrôle — thème, logo, CSS — donc le
+                * bac à sable est la seule chose qui l'y contient.
+                *
+                * Le retirer donne au cadre une origine opaque : les scripts tournent, la page se
+                * peint, mais elle ne peut plus toucher ni le parent ni le stockage de l'origine.
+                * `Preview` ne lit que le paramètre `cfg` de son URL et n'ouvre aucun stockage —
+                * vérifié avant de resserrer, sinon `localStorage` lèverait sous origine opaque.
+                */}
+              <iframe key={previewUrl} src={previewUrl} sandbox="allow-scripts" style={{ width: '100%', height: 620, border: 'none', pointerEvents: 'none', display: 'block' }} title="Login page preview" />
             </div>
           </div>
         </div>

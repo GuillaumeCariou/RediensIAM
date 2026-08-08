@@ -22,6 +22,7 @@ const api = vi.hoisted(() => ({
   assignSaRole: vi.fn(), removeSaRole: vi.fn(), listSaRoles: vi.fn(),
   getSaApiKeys: vi.fn(), addSaApiKey: vi.fn(), removeSaApiKey: vi.fn(),
   listOrgs: vi.fn(), listProjects: vi.fn(),
+  listRoles: vi.fn(),
 }));
 vi.mock('@/api', () => api);
 
@@ -50,6 +51,7 @@ let click: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   vi.clearAllMocks();
   Object.assign(auth, { orgId: 'o1', projectId: '', isSuperAdmin: false, isOrgAdmin: true });
+  api.listRoles.mockResolvedValue([]);
   api.getServiceAccount.mockResolvedValue(SA);
   api.getSaApiKeys.mockResolvedValue({ client_id: null, has_key: false, kid: null });
   api.listSaRoles.mockResolvedValue(SA.roles);
@@ -777,6 +779,42 @@ describe('assigning a role as a project admin', () => {
 
     await vi.waitFor(() => expect(api.assignSaRole).toHaveBeenCalledWith('s1', {
       role: 'project_admin', org_id: 'o1', project_id: 'p9',
+    }));
+  });
+});
+
+describe('assigning a role the project defines', () => {
+  beforeEach(() => {
+    auth.isOrgAdmin = false; auth.projectId = 'p9';
+    api.listRoles.mockResolvedValue([{ id: 'r1', name: 'gestion_admin' }]);
+  });
+
+  /**
+   * Le modèle portait déjà un nom libre et un ProjectId ; seule la validation refusait tout ce qui
+   * n'était pas l'un des trois rôles de gestion. Une automatisation ne pouvait donc présenter aucun
+   * des rôles que le projet définit à l'application qu'elle appelle.
+   */
+  it('offers them beside the management ones', async () => {
+    const user = show('project');
+    await screen.findByRole('button', { name: /Assign role/i });
+
+    await user.click(screen.getByRole('button', { name: /Assign role/i }));
+
+    await vi.waitFor(() => expect(api.listRoles).toHaveBeenCalledWith('p9'));
+    expect(await screen.findByRole('option', { name: 'gestion_admin' })).toBeInTheDocument();
+  });
+
+  it('grants one against the project that defines it', async () => {
+    const user = show('project');
+    await screen.findByRole('button', { name: /Assign role/i });
+    await user.click(screen.getByRole('button', { name: /Assign role/i }));
+    await screen.findByRole('option', { name: 'gestion_admin' });
+
+    await user.selectOptions(screen.getByLabelText('Role'), 'gestion_admin');
+    await user.click(screen.getByRole('button', { name: 'Assign' }));
+
+    await vi.waitFor(() => expect(api.assignSaRole).toHaveBeenCalledWith('s1', {
+      role: 'gestion_admin', org_id: 'o1', project_id: 'p9',
     }));
   });
 });

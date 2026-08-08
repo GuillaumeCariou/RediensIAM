@@ -119,7 +119,16 @@ public class PatService(
             Sub: $"sa:{sa.Id}",
             OrgId: orgId,
             ProjectId: projectId,
-            Roles: saRoles.Select(r => r.Role).Distinct().ToList(),
+            // Un rôle de locataire sort QUALIFIÉ par son projet, exactement comme celui d'un
+            // utilisateur (AuthController : « deux "admin" de deux locataires ne doivent pas être
+            // la même chaîne chez un consommateur, et aucun nom de locataire ne peut entrer en
+            // collision avec un rôle de gestion »). Les trois rôles de gestion sortent nus, eux :
+            // c'est le contrat que lit GatewayAuthMiddleware.
+            Roles: saRoles
+                .Select(r => RediensIAM.Config.Roles.Management.Contains(r.Role) || r.ProjectId is null
+                    ? r.Role
+                    : RediensIAM.Config.Roles.ProjectRoleClaim(r.ProjectId.Value.ToString(), r.Role))
+                .Distinct().ToList(),
             IsServiceAccount: true,
             ExpiresAt: pat.ExpiresAt);
 

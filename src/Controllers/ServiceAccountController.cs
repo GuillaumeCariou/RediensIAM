@@ -268,7 +268,7 @@ public class ServiceAccountController(
         var sa = await db.ServiceAccounts.Include(sa => sa.UserList).FirstOrDefaultAsync(sa => sa.Id == id);
         if (sa == null || !await CanAccessAsync(sa)) return NotFound();
 
-        var authErr = ValidateRoleAssignment(body);
+        var authErr = await ValidateRoleAssignmentAsync(body);
         if (authErr != null) return authErr;
 
         var existing = await db.ServiceAccountRoles.FirstOrDefaultAsync(r =>
@@ -323,7 +323,25 @@ public class ServiceAccountController(
         return NoContent();
     }
 
-    private IActionResult? ValidateRoleAssignment(AssignSaRoleRequest body)
+    /// <summary>
+    /// Deux familles de rôles passent ici, et elles ne se valident pas de la même façon.
+    ///
+    /// <para>
+    /// Les trois rôles de GESTION portent une autorité sur RediensIAM lui-même : ils se comparent
+    /// par rang, et un appelant ne peut jamais en accorder un plus privilégié que le sien.
+    /// </para>
+    ///
+    /// <para>
+    /// Un rôle de PROJET est un nom que le locataire a choisi dans sa propre table. Il n'accorde
+    /// aucune autorité sur la console — il est publié dans le jeton pour que l'application du
+    /// locataire décide. Il était refusé en <c>unknown_role</c> : un compte de service ne pouvait
+    /// donc porter aucun des rôles que le projet définit, alors que c'est exactement ce qu'une
+    /// automatisation doit présenter à l'application qu'elle appelle. Le modèle le permettait déjà
+    /// — <c>ServiceAccountRole</c> porte un nom libre et un <c>ProjectId</c> — seule cette
+    /// validation l'interdisait.
+    /// </para>
+    /// </summary>
+    private async Task<IActionResult?> ValidateRoleAssignmentAsync(AssignSaRoleRequest body)
     {
         var targetLevel = body.Role switch
         {
@@ -332,7 +350,7 @@ public class ServiceAccountController(
             Roles.ProjectAdmin => ManagementLevel.ProjectAdmin,
             _                  => ManagementLevel.None
         };
-        if (targetLevel == ManagementLevel.None) return BadRequest(new { error = "unknown_role" });
+        if (targetLevel == ManagementLevel.None) return await ValidateProjectRoleAsync(body);
         if (targetLevel < Level) return StatusCode(403, new { error = "insufficient_level_to_grant_this_role" });
         if (Level == ManagementLevel.ProjectAdmin
             && ValidateProjectAdminRoleAssignment(body) is { } projectErr) return projectErr;
@@ -346,6 +364,33 @@ public class ServiceAccountController(
         // chooses the boundary that is supposed to contain it.
         if (Level != ManagementLevel.SuperAdmin && body.OrgId != CallerOrgId)
             return StatusCode(403, new { error = "org_mismatch" });
+        return null;
+    }
+
+    /// <summary>
+    /// Un rôle de projet doit nommer une ligne existante de CE projet, et l'appelant doit avoir
+    /// autorité dessus. Rien de plus : le rang qui ordonne les rôles de gestion ne s'applique pas
+    /// ici, un rôle de locataire n'ordonnant que ce que son application en fait.
+    /// </summary>
+    private async Task<IActionResult?> ValidateProjectRoleAsync(AssignSaRoleRequest body)
+    {
+        if (body.OrgId == null || body.ProjectId == null)
+            return BadRequest(new { error = "org_id_and_project_id_required_for_project_role" });
+
+        var project = await db.Projects.FirstOrDefaultAsync(p => p.Id == body.ProjectId && p.OrgId == body.OrgId);
+        if (project == null) return BadRequest(new { error = "unknown_project" });
+
+        if (!await db.Roles.AnyAsync(r => r.ProjectId == body.ProjectId && r.Name == body.Role))
+            return BadRequest(new { error = "unknown_role" });
+
+        // Même porte que pour les rôles de gestion : un ProjectAdmin ne sort pas de son projet, et
+        // personne sous SuperAdmin ne sort de son organisation.
+        if (Level == ManagementLevel.ProjectAdmin
+            && (!Guid.TryParse(Claims.ProjectId, out var own) || body.ProjectId != own))
+            return StatusCode(403, new { error = "project_mismatch" });
+        if (Level != ManagementLevel.SuperAdmin && body.OrgId != CallerOrgId)
+            return StatusCode(403, new { error = "org_mismatch" });
+
         return null;
     }
 

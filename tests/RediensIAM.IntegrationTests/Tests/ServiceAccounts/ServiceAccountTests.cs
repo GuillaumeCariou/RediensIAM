@@ -262,6 +262,81 @@ public class ServiceAccountTests(TestFixture fixture)
         body.GetProperty("error").GetString().Should().Be("unknown_role");
     }
 
+    /// <summary>
+    /// Un rôle de PROJET sur un compte de service. Le modèle le permettait déjà —
+    /// <c>ServiceAccountRole</c> porte un nom libre et un <c>ProjectId</c> — mais la validation ne
+    /// connaissait que les trois rôles de gestion et refusait tout le reste en `unknown_role`. Une
+    /// automatisation ne pouvait donc présenter aucun des rôles que le projet définit à
+    /// l'application qu'elle appelle.
+    /// </summary>
+    [Fact]
+    public async Task AssignRole_RoleTheProjectDefines_Returns201()
+    {
+        var (org, project, list, client) = await ScaffoldAsync();
+        var sa = await fixture.Seed.CreateServiceAccountAsync(list.Id);
+        await fixture.Seed.CreateRoleAsync(project.Id, "gestion_admin");
+
+        var res = await client.PostAsJsonAsync($"/service-accounts/{sa.Id}/roles", new
+        {
+            role = "gestion_admin", org_id = org.Id, project_id = project.Id,
+        });
+
+        res.StatusCode.Should().Be(HttpStatusCode.Created);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("role").GetString().Should().Be("gestion_admin");
+    }
+
+    /// <summary>
+    /// Un nom qui n'est celui d'aucun rôle du projet reste refusé : la porte s'ouvre sur la table
+    /// du projet, pas sur une chaîne libre.
+    /// </summary>
+    [Fact]
+    public async Task AssignRole_RoleOfAnotherProject_Returns400()
+    {
+        var (org, project, list, client) = await ScaffoldAsync();
+        var other = await fixture.Seed.CreateProjectAsync(org.Id);
+        var sa    = await fixture.Seed.CreateServiceAccountAsync(list.Id);
+        await fixture.Seed.CreateRoleAsync(other.Id, "ailleurs");
+
+        var res = await client.PostAsJsonAsync($"/service-accounts/{sa.Id}/roles", new
+        {
+            role = "ailleurs", org_id = org.Id, project_id = project.Id,
+        });
+
+        res.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await res.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("error").GetString().Should().Be("unknown_role");
+    }
+
+    /// <summary>
+    /// Le jeton doit dire d'un rôle de locataire ce qu'AuthController en dit pour un utilisateur :
+    /// qualifié par son projet. Nu, « gestion_admin » ne serait reconnu par aucun consommateur qui
+    /// interroge <c>HasProjectRole(projectId, …)</c>, et deux locataires homonymes deviendraient la
+    /// même chaîne — précisément la collision que la qualification existe pour empêcher.
+    /// </summary>
+    [Fact]
+    public async Task Introspection_QualifiesATenantRoleByItsProject()
+    {
+        var (org, project, list, client) = await ScaffoldAsync();
+        var sa = await fixture.Seed.CreateServiceAccountAsync(list.Id);
+        await fixture.Seed.CreateRoleAsync(project.Id, "gestion_admin");
+        await client.PostAsJsonAsync($"/service-accounts/{sa.Id}/roles", new
+        {
+            role = "gestion_admin", org_id = org.Id, project_id = project.Id,
+        });
+        var patRes = await client.PostAsJsonAsync($"/service-accounts/{sa.Id}/pat", new
+        {
+            name = "Token", expires_in = 30,
+        });
+        var token = (await patRes.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetString()!;
+        await fixture.FlushCacheAsync();
+
+        var result = await fixture.GetService<RediensIAM.Services.PatService>().IntrospectAsync(token);
+
+        result!.Roles.Should().Contain($"{project.Id}/gestion_admin");
+        result.Roles.Should().NotContain("gestion_admin");
+    }
+
     [Fact]
     public async Task AssignRole_SuperAdminGrantsSuperAdmin_Returns200()
     {

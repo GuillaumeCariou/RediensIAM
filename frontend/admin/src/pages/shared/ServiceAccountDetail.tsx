@@ -6,7 +6,7 @@ import {
   generatePat, revokePat,
   assignSaRole, removeSaRole, listSaRoles,
   getSaApiKeys, addSaApiKey, removeSaApiKey,
-  listOrgs, listProjects,
+  listOrgs, listProjects, listRoles,
 } from '@/api';
 import { ApiError } from '@/auth';
 import { useOrgContext, useProjectContext } from '@/hooks/useOrgContext';
@@ -21,6 +21,9 @@ interface Sa {
   pats: Pat[]; roles: SaRole[];
 }
 interface Pat { id: string; name: string; expires_at: string | null; last_used_at: string | null; created_at: string; }
+/** Doit rester aligné sur src/Config/Roles.cs — tout le reste est un rôle de locataire. */
+const MANAGEMENT_ROLES = ['super_admin', 'org_admin', 'project_admin'];
+
 interface SaRole { id: string; role: string; org_id: string | null; project_id: string | null; granted_at: string; }
 
 // ── JWT Profile section ────────────────────────────────────────────────────────
@@ -149,6 +152,7 @@ export default function ServiceAccountDetail() {
   const [roleForm, setRoleForm] = useState({ role: '', org_id: '', project_id: '' });
   const [orgs, setOrgs] = useState<{ id: string; name: string }[]>([]);
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
+  const [projectRoles, setProjectRoles] = useState<{ id: string; name: string }[]>([]);
   const [removeRoleTarget, setRemoveRoleTarget] = useState<SaRole | null>(null);
   const [roleError, setRoleError] = useState('');
 
@@ -206,7 +210,21 @@ export default function ServiceAccountDetail() {
     } else if (isOrgAdmin && prefilledOrg) {
       listProjects(prefilledOrg).then(r => setProjects(r.projects ?? r ?? [])).catch(console.error);
     }
+    setProjectRoles([]);
+    if (prefilledProject) loadProjectRoles(prefilledProject);
     setRoleOpen(true);
+  };
+
+  /**
+   * Les rôles que CE projet définit. Ils sont assignables à un compte de service depuis 0.9.2 :
+   * le modèle les portait déjà, seule la validation les refusait. Ils n'accordent aucune autorité
+   * sur la console — ils sortent dans le jeton, qualifiés par le projet, pour que l'application du
+   * locataire décide.
+   */
+  const loadProjectRoles = (projectId: string) => {
+    listRoles(projectId)
+      .then(r => setProjectRoles(r.roles ?? r ?? []))
+      .catch(() => setProjectRoles([]));
   };
 
   /** No project fetch here on purpose: openRoleDialog already loaded them for a pre-filled org. */
@@ -217,7 +235,14 @@ export default function ServiceAccountDetail() {
   const handleOrgChange = (org_id: string) => {
     setRoleForm(f => ({ ...f, org_id, project_id: '' }));
     setProjects([]);
+    setProjectRoles([]);
     if (org_id) listProjects(org_id).then(r => setProjects(r.projects ?? r ?? [])).catch(console.error);
+  };
+
+  const handleProjectChange = (project_id: string) => {
+    setRoleForm(f => ({ ...f, project_id }));
+    setProjectRoles([]);
+    if (project_id) loadProjectRoles(project_id);
   };
 
   /**
@@ -266,9 +291,12 @@ export default function ServiceAccountDetail() {
 
   const closeTokenDialog = () => { setRawToken(null); load(); };
 
+  /** Un rôle de locataire est porté par un projet, comme `project_admin` : il en exige donc autant. */
+  const isTenantRole = !!roleForm.role && !MANAGEMENT_ROLES.includes(roleForm.role);
+  const needsProject = roleForm.role === 'project_admin' || isTenantRole;
   const roleSubmitDisabled = roleSaving || !roleForm.role
     || (roleForm.role === 'org_admin' && !roleForm.org_id)
-    || (roleForm.role === 'project_admin' && (!roleForm.org_id || !roleForm.project_id));
+    || (needsProject && (!roleForm.org_id || !roleForm.project_id));
 
   return (
     <div className="p-6 space-y-4">
@@ -452,6 +480,11 @@ export default function ServiceAccountDetail() {
 {isSuperAdmin && <option value="super_admin">super_admin</option>}
                   {isOrgAdmin && <option value="org_admin">org_admin</option>}
                   <option value="project_admin">project_admin</option>
+                  {projectRoles.length > 0 && (
+                    <optgroup label="Roles this project defines">
+                      {projectRoles.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                    </optgroup>
+                  )}
 </select>
             </div>
             {isSuperAdmin && (roleForm.role === 'org_admin' || roleForm.role === 'project_admin') && (
@@ -463,16 +496,16 @@ export default function ServiceAccountDetail() {
 </select>
               </div>
             )}
-            {roleForm.role === 'project_admin' && roleForm.org_id && isOrgAdmin && (
+            {needsProject && roleForm.org_id && isOrgAdmin && (
               <div className="space-y-2">
                 <label className="iam-label" htmlFor="sa-role-project">Project</label>
-                <select className="iam-select" id="sa-role-project" value={roleForm.project_id} onChange={e => (v => setRoleForm(f => ({ ...f, project_id: v })))(e.target.value)} disabled={roleSaving}>
+                <select className="iam-select" id="sa-role-project" value={roleForm.project_id} onChange={e => handleProjectChange(e.target.value)} disabled={roleSaving}>
                   <option value="" disabled>Select a project…</option>
 {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
 </select>
               </div>
             )}
-            {roleForm.role === 'project_admin' && !isOrgAdmin && (
+            {needsProject && !isOrgAdmin && (
               <p style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
                 Granted on this project. A project administrator may only grant it here.
               </p>

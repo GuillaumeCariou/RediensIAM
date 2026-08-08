@@ -8,6 +8,33 @@ all three SDKs and both SPAs share one number.
 
 ---
 
+## [0.9.2] — 2026-08-08
+
+### Corrigé
+
+**Un rôle de projet ne pouvait pas être donné à un compte de service.** Le modèle le permettait
+depuis toujours — `ServiceAccountRole` porte un nom libre et un `ProjectId` — mais la validation ne
+connaissait que `super_admin`, `org_admin` et `project_admin` et refusait tout le reste en
+`unknown_role`. Une automatisation ne pouvait donc présenter aucun des rôles que le projet définit
+à l'application qu'elle appelle, ce qui est pourtant l'usage. Un nom est désormais accepté s'il
+désigne une ligne de la table de **ce** projet ; une chaîne libre reste refusée.
+
+Le jeton les émet **qualifiés par leur projet** (`{projectId}/{nom}`), comme
+`AuthController` le fait pour un utilisateur. Nu, `gestion_admin` n'aurait été reconnu par aucun
+consommateur interrogeant `HasProjectRole(projectId, …)`, et deux locataires homonymes seraient
+devenus la même chaîne — la collision que la qualification existe pour empêcher. Les trois rôles de
+gestion continuent de sortir nus : c'est le contrat que lit `GatewayAuthMiddleware`.
+
+**L'aperçu de la page de connexion n'était pas dans un bac à sable.** L'iframe portait
+`allow-scripts` *et* `allow-same-origin` sur un cadre de même origine : la combinaison annule le
+sandbox, le document encadré gardant l'accès au parent et pouvant retirer l'attribut lui-même. Ce
+cadre rend de la configuration que le **locataire** contrôle — thème, logo, CSS. `allow-same-origin`
+est retiré : les scripts tournent sous origine opaque, la page se peint, et elle ne peut plus
+toucher ni le parent ni le stockage. Vérifié avant de resserrer que `Preview` ne lit que le
+paramètre `cfg`, sans quoi `localStorage` aurait levé.
+
+---
+
 ## [0.9.1] — 2026-08-07
 
 **La surface que la console n'atteignait pas.** Le backend exposait 194 routes ; la console en
